@@ -134,13 +134,13 @@ This is the main escape hatch for:
 ### Tool access workflow
 
 1. List available toolkit namespaces:
-   - `npx --package @notis_ai/cli@latest -- notis tools toolkits`
+   - `npx --package @notis_ai/cli@latest -- notis tools toolkits --timeout-ms 90000`
 2. Search for the capability you need using natural language:
-   - `npx --package @notis_ai/cli@latest -- notis tools search "<query>"`
+   - `npx --package @notis_ai/cli@latest -- notis tools search "<query>" --timeout-ms 90000`
    - optionally add known field hints with `--known-fields "<key:value>"`
 3. If needed, inspect the exact tool and parameter schema:
-   - `npx --package @notis_ai/cli@latest -- notis tools describe <tool-name>`
-   - `npx --package @notis_ai/cli@latest -- notis tools exec <tool-name> --get-schema`
+   - `npx --package @notis_ai/cli@latest -- notis tools describe <tool-name> --timeout-ms 90000`
+   - `npx --package @notis_ai/cli@latest -- notis tools exec <tool-name> --get-schema --timeout-ms 90000`
 4. Validate arguments before execution when the tool is mutating or the schema is non-trivial:
    - `npx --package @notis_ai/cli@latest -- notis tools exec <tool-name> --dry-run --arguments '<json>'`
 5. Execute the tool:
@@ -150,6 +150,22 @@ This is the main escape hatch for:
 7. If the toolkit is not connected yet, start its connection flow:
    - `npx --package @notis_ai/cli@latest -- notis tools link <toolkit>`
    - For a revoked or invalid credential-based connection, reconnect with credential JSON on stdin: `npx --package @notis_ai/cli@latest -- notis tools link <toolkit> --reconnect --credentials -`
+
+### Discovery latency and caching
+
+The discovery bridge may query several connected MCP servers on a cold run and
+can legitimately take longer than the CLI's general 30-second timeout. Always
+use `--timeout-ms 90000` for `tools toolkits`, `tools search`, `tools describe`,
+and schema-only discovery calls. If a discovery call returns `network_timeout`,
+retry that same command once with `--timeout-ms 90000`; do not start a new
+query, invent a tool name, or loop on the default 30-second command.
+
+Discovery is idempotent but should be bounded: run the toolkit listing once per
+task, run one natural-language search per distinct capability, and cache the
+returned canonical tool names and schemas for the rest of the current turn.
+After a successful search/schema response, call the returned canonical tool
+directly (with a dry-run before mutations) instead of repeating the same
+discovery request before every connected-service action.
 
 ### Tool access rules
 

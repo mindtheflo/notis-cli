@@ -1,7 +1,7 @@
 node_modules/
 coverage/
-dist/
 packages/cli/config/
-packages/cli/*.tgz
-packages/cli/.notis/
+packages/cli/dist/
+*.tgz
+.notis/
 .DS_Store

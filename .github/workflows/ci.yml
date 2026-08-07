@@ -10,20 +10,19 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: packages/cli/package-lock.json
-      - name: Install CLI dependencies
+          node-version: 24
+          package-manager-cache: false
+      - name: Install
         working-directory: packages/cli
-        run: npm ci
-      - name: Run tests
+        run: npm install --no-audit --no-fund
+      - name: Test
         working-directory: packages/cli
         run: npm test
-      - name: Smoke-test packed CLI
+      - name: Fresh-package smoke
         working-directory: packages/cli
         run: npm run smoke
