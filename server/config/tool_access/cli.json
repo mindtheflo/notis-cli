@@ -1,0 +1,13 @@
+{
+  "base": {
+    "preload_tools": []
+  },
+  "additional": {
+    "toolkits": [
+      "local_notis",
+      "composio",
+      "local_postforme",
+      "local_mcp"
+    ]
+  }
+}
