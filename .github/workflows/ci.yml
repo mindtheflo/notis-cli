@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/cli/package-lock.json
+      - name: Install CLI dependencies
+        working-directory: packages/cli
+        run: npm ci
+      - name: Run tests
+        working-directory: packages/cli
+        run: npm test
+      - name: Smoke-test packed CLI
+        working-directory: packages/cli
+        run: npm run smoke

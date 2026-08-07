@@ -1,0 +1,753 @@
+{
+  "tools": {
+    "LOCAL_NOTIS_DATABASE_QUERY": {
+      "status": "success",
+      "documents": [
+        {
+          "id": "roll-1",
+          "title": "73",
+          "created_time": "2026-07-28T09:41:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "73"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 73
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Integer",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 100
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-28T09:41:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-2",
+          "title": "17",
+          "created_time": "2026-07-28T09:38:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "17"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 17
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 20
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-28T09:38:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-3",
+          "title": "4",
+          "created_time": "2026-07-28T09:37:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "4"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 4
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 6
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-28T09:37:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-4",
+          "title": "0.6274",
+          "created_time": "2026-07-28T08:12:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "0.6274"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 0.6274
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Decimal",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 0
+            },
+            "Max": {
+              "type": "number",
+              "number": 1
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-28T08:12:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-5",
+          "title": "42",
+          "created_time": "2026-07-28T07:55:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "42"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 42
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Integer",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 100
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-28T07:55:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-6",
+          "title": "11",
+          "created_time": "2026-07-27T21:04:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "11"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 11
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 12
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-27T21:04:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-7",
+          "title": "2.5081",
+          "created_time": "2026-07-27T18:30:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "2.5081"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 2.5081
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Decimal",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 0
+            },
+            "Max": {
+              "type": "number",
+              "number": 5
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-27T18:30:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-8",
+          "title": "8",
+          "created_time": "2026-07-27T17:22:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "8"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 8
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 8
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-27T17:22:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-9",
+          "title": "256",
+          "created_time": "2026-07-27T14:09:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "256"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 256
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Integer",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 500
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-27T14:09:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-10",
+          "title": "3",
+          "created_time": "2026-07-27T11:47:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "3"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 3
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 4
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-27T11:47:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-11",
+          "title": "89",
+          "created_time": "2026-07-26T20:15:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "89"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 89
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Integer",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 100
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-26T20:15:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-12",
+          "title": "0.1903",
+          "created_time": "2026-07-26T16:41:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "0.1903"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 0.1903
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Decimal",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 0
+            },
+            "Max": {
+              "type": "number",
+              "number": 1
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-26T16:41:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-13",
+          "title": "14",
+          "created_time": "2026-07-26T12:03:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "14"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 14
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 20
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-26T12:03:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-14",
+          "title": "7",
+          "created_time": "2026-07-25T19:52:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "7"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 7
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Integer",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 10
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-25T19:52:00.000Z",
+                "end": null
+              }
+            }
+          }
+        },
+        {
+          "id": "roll-15",
+          "title": "6",
+          "created_time": "2026-07-25T09:18:00.000Z",
+          "properties": {
+            "Name": {
+              "type": "title",
+              "title": [
+                {
+                  "type": "text",
+                  "text": {
+                    "content": "6"
+                  }
+                }
+              ]
+            },
+            "Value": {
+              "type": "number",
+              "number": 6
+            },
+            "Mode": {
+              "type": "select",
+              "select": {
+                "name": "Dice",
+                "color": "blue"
+              }
+            },
+            "Min": {
+              "type": "number",
+              "number": 1
+            },
+            "Max": {
+              "type": "number",
+              "number": 6
+            },
+            "Rolled At": {
+              "type": "date",
+              "date": {
+                "start": "2026-07-25T09:18:00.000Z",
+                "end": null
+              }
+            }
+          }
+        }
+      ],
+      "results_count": 15,
+      "total_matching": 15,
+      "has_more": false,
+      "next_offset": null
+    },
+    "LOCAL_NOTIS_DATABASE_UPSERT_ROLLS": {
+      "status": "success",
+      "document": {
+        "id": "roll-1",
+        "title": "73",
+        "created_time": "2026-07-28T09:41:00.000Z",
+        "properties": {
+          "Name": {
+            "type": "title",
+            "title": [
+              {
+                "type": "text",
+                "text": {
+                  "content": "73"
+                }
+              }
+            ]
+          },
+          "Value": {
+            "type": "number",
+            "number": 73
+          },
+          "Mode": {
+            "type": "select",
+            "select": {
+              "name": "Integer",
+              "color": "blue"
+            }
+          },
+          "Min": {
+            "type": "number",
+            "number": 1
+          },
+          "Max": {
+            "type": "number",
+            "number": 100
+          },
+          "Rolled At": {
+            "type": "date",
+            "date": {
+              "start": "2026-07-28T09:41:00.000Z",
+              "end": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "scenarios": {
+    "generator-idle": {
+      "actions": [
+        {
+          "type": "click",
+          "selector": "[data-action='generate']",
+          "settle_ms": 900
+        }
+      ]
+    },
+    "generator-dice": {
+      "actions": [
+        {
+          "type": "click",
+          "selector": "[data-mode='dice']",
+          "settle_ms": 350
+        },
+        {
+          "type": "click",
+          "selector": "[data-die='20']",
+          "settle_ms": 350
+        },
+        {
+          "type": "click",
+          "selector": "[data-action='generate']",
+          "settle_ms": 900
+        }
+      ]
+    },
+    "history-full": {
+      "actions": []
+    }
+  }
+}

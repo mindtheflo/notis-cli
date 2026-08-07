@@ -1,0 +1,3179 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer as createHttpServer } from 'node:http';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import { gzipSync } from 'node:zlib';
+import { promisify } from 'node:util';
+
+import {
+  buildArtifact,
+  collectSourceFiles,
+  detectProjectWarnings,
+  inspectListingReadiness,
+  loadScaffoldCatalog,
+  pullAppSource,
+  readLinkedState,
+  scaffoldProject,
+  writeLinkedState,
+} from '../src/runtime/app-platform.js';
+import {
+  DOCTOR_TOOL_ROUNDTRIP_TIMEOUT_MS,
+  doctorToolRoundtripRuntime,
+} from '../src/command-specs/meta.js';
+import { startAppDevServer } from '../src/runtime/app-dev-server.js';
+import {
+  appRowFieldsFromManifest,
+  buildDevelopmentAppHref,
+  buildDevelopmentDesktopUrl,
+  buildMountedDevelopmentDesktopUrl,
+  developmentDesktopOpenCommand,
+  doctorLinkSummary,
+  ensureDevInstall,
+  pruneStaleScreenshotFiles,
+  resolveDevelopmentDesktopAppName,
+  resolveDevelopmentDesktopBundleId,
+  resolveDevelopmentDesktopScheme,
+  screenshotExitCode,
+  screenshotIndexByRouteSlug,
+  shouldPruneStaleScreenshotFiles,
+  shouldOpenDevelopmentTab,
+} from '../src/command-specs/apps.js';
+import {
+  heartbeatAppDevSession,
+  readAppDevSessions,
+  removeAppDevSession,
+  upsertAppDevSessions,
+} from '../src/runtime/app-dev-sessions.js';
+import { getApiBase, normalizeConfig, parseDebugEntitlementOverride } from '../src/runtime/profiles.js';
+import { COMMAND_SPECS } from '../src/command-specs/index.js';
+import { validateArguments } from '../src/command-specs/helpers.js';
+import { classifyToolMutation } from '../src/command-specs/tools.js';
+import {
+  buildUserContextSql,
+  extractSqlRows,
+  traceFileDiagnostics,
+} from '../src/command-specs/diagnostics.js';
+
+const cliRoot = resolve(import.meta.dirname, '..');
+const binPath = join(cliRoot, 'bin', 'notis.js');
+const docsScript = join(cliRoot, 'scripts', 'generate-docs.js');
+const execFileAsync = promisify(execFile);
+
+function runCli(args, env = {}) {
+  return spawnSync('node', [binPath, ...args], {
+    cwd: cliRoot,
+    env: {
+      PATH: process.env.PATH,
+      HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
+      NODE_ENV: 'test',
+      NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+      ...env,
+    },
+    encoding: 'utf-8',
+  });
+}
+
+async function runCliAsync(args, env = {}) {
+  const options = {
+    cwd: cliRoot,
+    env: {
+      PATH: process.env.PATH,
+      HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
+      NODE_ENV: 'test',
+      NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+      ...env,
+    },
+    encoding: 'utf-8',
+  };
+
+  try {
+    const result = await execFileAsync('node', [binPath, ...args], options);
+    return { status: 0, stdout: result.stdout, stderr: result.stderr };
+  } catch (error) {
+    return {
+      status: error.code ?? 1,
+      stdout: error.stdout ?? '',
+      stderr: error.stderr ?? '',
+    };
+  }
+}
+
+async function runCliWithInputAsync(args, input, env = {}) {
+  return new Promise((resolvePromise) => {
+    const child = spawn('node', [binPath, ...args], {
+      cwd: cliRoot,
+      env: {
+        PATH: process.env.PATH,
+        HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
+        NODE_ENV: 'test',
+        NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+        ...env,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf-8');
+    child.stderr.setEncoding('utf-8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('close', (status) => resolvePromise({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+async function getAvailablePort() {
+  const server = createHttpServer();
+  await new Promise((resolvePromise, rejectPromise) => {
+    server.once('error', rejectPromise);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', rejectPromise);
+      resolvePromise();
+    });
+  });
+  const { port } = server.address();
+  await new Promise((resolvePromise) => server.close(resolvePromise));
+  return port;
+}
+
+async function waitFor(fn, { timeoutMs = 5000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (Date.now() >= deadline) {
+        throw error;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
+    }
+  }
+}
+
+function tarEntry(name, content) {
+  const data = Buffer.from(content);
+  const header = Buffer.alloc(512);
+  header.write(name, 0, 100, 'utf-8');
+  header.write('0000644\0', 100, 8, 'ascii');
+  header.write('0000000\0', 108, 8, 'ascii');
+  header.write('0000000\0', 116, 8, 'ascii');
+  header.write(data.length.toString(8).padStart(11, '0') + '\0', 124, 12, 'ascii');
+  header.write('00000000000\0', 136, 12, 'ascii');
+  header.fill(32, 148, 156);
+  header.write('0', 156, 1, 'ascii');
+  header.write('ustar\0', 257, 6, 'ascii');
+  header.write('00', 263, 2, 'ascii');
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'ascii');
+  const padding = Buffer.alloc(Math.ceil(data.length / 512) * 512 - data.length);
+  return Buffer.concat([header, data, padding]);
+}
+
+function makeTarGz(files) {
+  const entries = Object.entries(files).map(([name, content]) => tarEntry(name, content));
+  return gzipSync(Buffer.concat([...entries, Buffer.alloc(1024)]));
+}
+
+function makeJwt(sub = 'auth-user-123', exp = 4102444800) {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub, exp })}.sig`;
+}
+
+function makeStoreScreenshotPngHeader() {
+  const buffer = Buffer.alloc(24);
+  Buffer.from('89504e470d0a1a0a', 'hex').copy(buffer, 0);
+  buffer.writeUInt32BE(2000, 16);
+  buffer.writeUInt32BE(1250, 20);
+  return buffer;
+}
+
+test('normalizeConfig migrates the legacy flat config shape', () => {
+  const normalized = normalizeConfig({
+    jwt: 'legacy-jwt',
+    api_base: 'https://legacy.example.com',
+  });
+
+  assert.equal(normalized.current_profile, 'default');
+  assert.equal(normalized.profiles.default.jwt, 'legacy-jwt');
+  assert.equal(normalized.profiles.default.api_base, 'https://legacy.example.com');
+});
+
+test('normalizeConfig preserves dev portal refresh metadata', () => {
+  const normalized = normalizeConfig({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        jwt: 'access-token',
+        api_base: 'http://localhost:3001',
+        auth_mode: 'dev_portal',
+        refresh_token: 'refresh-token',
+        access_expires_at: 123,
+        refresh_expires_at: 456,
+        desktop_app_name: 'Notis Beta',
+        desktop_pid: 4242,
+      },
+    },
+  });
+
+  assert.equal(normalized.profiles.default.auth_mode, 'dev_portal');
+  assert.equal(normalized.profiles.default.refresh_token, 'refresh-token');
+  assert.equal(normalized.profiles.default.access_expires_at, 123);
+  assert.equal(normalized.profiles.default.refresh_expires_at, 456);
+  assert.equal(normalized.profiles.default.desktop_app_name, 'Notis Beta');
+  assert.equal(normalized.profiles.default.desktop_pid, 4242);
+});
+
+test('httpRequest retries with a fresh timeout after the desktop syncs newer auth', () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-home-'));
+  mkdirSync(join(homeDir, '.notis'), { recursive: true });
+  writeFileSync(
+    join(homeDir, '.notis', 'config.json'),
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: {
+        default: {
+          jwt: 'stale-access-token',
+          api_base: 'https://api.example.com',
+          access_expires_at: 4102444800,
+        },
+      },
+    }),
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+        import { mkdirSync, writeFileSync } from 'node:fs';
+        import { httpRequest } from ${JSON.stringify(join(cliRoot, 'src/runtime/transport.js'))};
+
+        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        let protectedCalls = 0;
+
+        globalThis.fetch = async (url, options = {}) => {
+          const target = String(url);
+          if (target.endsWith('/health')) {
+            protectedCalls += 1;
+            if (protectedCalls === 1) {
+              await delay(5);
+              mkdirSync(${JSON.stringify(join(homeDir, '.notis'))}, { recursive: true });
+              writeFileSync(${JSON.stringify(join(homeDir, '.notis', 'config.json'))}, JSON.stringify({
+                current_profile: 'default',
+                profiles: {
+                  default: {
+                    jwt: 'desktop-refreshed-access-token',
+                    api_base: 'https://api.example.com',
+                    auth_mode: 'dev_portal',
+                    refresh_token: 'desktop-refreshed-refresh-token',
+                    access_expires_at: 4102444800,
+                    refresh_expires_at: 4102448400,
+                  },
+                },
+              }));
+              return {
+                ok: false,
+                status: 401,
+                json: async () => ({ error: { message: 'expired token' } }),
+              };
+            }
+
+            if (options.signal?.aborted) {
+              const error = new Error('retry request aborted');
+              error.name = 'AbortError';
+              throw error;
+            }
+
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                ok: true,
+                authorization: options.headers?.Authorization || null,
+              }),
+            };
+          }
+
+          throw new Error(\`Unexpected URL: \${target}\`);
+        };
+
+        const runtime = {
+          profileName: 'default',
+          apiBase: 'https://api.example.com',
+          jwt: 'stale-access-token',
+          authMode: 'dev_portal',
+          refreshToken: 'refresh-token',
+          accessExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+          refreshExpiresAt: Math.floor(Date.now() / 1000) + 7200,
+          timeoutMs: 15,
+          cliVersion: 'test',
+          outputMode: 'json',
+          agentMode: false,
+          nonInteractive: true,
+          credentialSource: 'profile',
+        };
+
+        const response = await httpRequest({
+          runtime,
+          method: 'GET',
+          path: '/health',
+          requireAuth: true,
+        });
+
+        process.stdout.write(JSON.stringify({
+          response,
+          protectedCalls,
+          jwt: runtime.jwt,
+        }));
+      `,
+    ],
+    {
+      cwd: cliRoot,
+      env: {
+        PATH: process.env.PATH,
+        HOME: homeDir,
+      },
+      encoding: 'utf-8',
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.protectedCalls, 2);
+  assert.equal(payload.jwt, 'desktop-refreshed-access-token');
+  assert.deepEqual(payload.response.payload, {
+    ok: true,
+    authorization: 'Bearer desktop-refreshed-access-token',
+  });
+});
+
+test('httpRequest consumes the newest desktop-synced JWT before sending', () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-home-'));
+  mkdirSync(join(homeDir, '.notis'), { recursive: true });
+  writeFileSync(
+    join(homeDir, '.notis', 'config.json'),
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: {
+        default: {
+          jwt: 'fresh-disk-token',
+          api_base: 'https://api.example.com',
+          access_expires_at: 4102444800,
+        },
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+        import { httpRequest } from ${JSON.stringify(join(cliRoot, 'src/runtime/transport.js'))};
+
+        let calls = 0;
+        const seenAuth = [];
+
+        globalThis.fetch = async (url, options = {}) => {
+          if (!String(url).endsWith('/health')) {
+            throw new Error('Unexpected URL: ' + String(url));
+          }
+          calls += 1;
+          seenAuth.push(options.headers?.Authorization || null);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true }),
+          };
+        };
+
+        const runtime = {
+          profileName: 'default',
+          apiBase: 'https://api.example.com',
+          jwt: 'stale-memory-token',
+          authMode: undefined,
+          refreshToken: undefined,
+          accessExpiresAt: undefined,
+          refreshExpiresAt: undefined,
+          timeoutMs: 5000,
+          cliVersion: 'test',
+          outputMode: 'json',
+          agentMode: false,
+          nonInteractive: true,
+          credentialSource: 'profile',
+        };
+
+        const response = await httpRequest({
+          runtime,
+          method: 'GET',
+          path: '/health',
+          requireAuth: true,
+        });
+
+        process.stdout.write(JSON.stringify({
+          response,
+          calls,
+          seenAuth,
+          jwt: runtime.jwt,
+        }));
+      `,
+    ],
+    {
+      cwd: cliRoot,
+      env: {
+        PATH: process.env.PATH,
+        HOME: homeDir,
+      },
+      encoding: 'utf-8',
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.calls, 1);
+  assert.equal(payload.jwt, 'fresh-disk-token');
+  assert.deepEqual(payload.seenAuth, ['Bearer fresh-disk-token']);
+});
+
+test('httpRequest does not retry on 401 when the on-disk JWT matches the in-memory one', () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-home-'));
+  mkdirSync(join(homeDir, '.notis'), { recursive: true });
+  writeFileSync(
+    join(homeDir, '.notis', 'config.json'),
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: {
+        default: {
+          jwt: 'same-token',
+          api_base: 'https://api.example.com',
+          access_expires_at: 4102444800,
+        },
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+        import { httpRequest } from ${JSON.stringify(join(cliRoot, 'src/runtime/transport.js'))};
+
+        let calls = 0;
+        globalThis.fetch = async (url) => {
+          if (!String(url).endsWith('/health')) throw new Error('Unexpected: ' + String(url));
+          calls += 1;
+          return {
+            ok: false,
+            status: 401,
+            json: async () => ({ error: { message: 'expired token' } }),
+          };
+        };
+
+        const runtime = {
+          profileName: 'default',
+          apiBase: 'https://api.example.com',
+          jwt: 'same-token',
+          authMode: undefined,
+          timeoutMs: 5000,
+          cliVersion: 'test',
+          outputMode: 'json',
+          agentMode: false,
+          nonInteractive: true,
+        };
+
+        try {
+          await httpRequest({ runtime, method: 'GET', path: '/health', requireAuth: true });
+          process.stdout.write(JSON.stringify({ calls, error: null }));
+        } catch (error) {
+          process.stdout.write(JSON.stringify({ calls, error: error.code || error.message }));
+        }
+      `,
+    ],
+    {
+      cwd: cliRoot,
+      env: {
+        PATH: process.env.PATH,
+        HOME: homeDir,
+      },
+      encoding: 'utf-8',
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.calls, 1);
+  assert.equal(payload.error, 'auth_invalid');
+});
+
+test('getApiBase defaults to live APIs and ignores stale localhost / Conductor ports', () => {
+  const originalConductorPort = process.env.CONDUCTOR_PORT;
+  const originalApiBase = process.env.NOTIS_API_BASE;
+  delete process.env.CONDUCTOR_PORT;
+  delete process.env.NOTIS_API_BASE;
+  process.env.CONDUCTOR_PORT = '55000';
+  try {
+    const staleLocalhost = getApiBase(
+      {
+        current_profile: 'default',
+        profiles: {
+          default: {
+            api_base: 'http://localhost:3001',
+          },
+        },
+      },
+      'default',
+      undefined,
+    );
+    assert.equal(staleLocalhost, 'https://api.notis.ai');
+
+    const staleConductorLocalhost = getApiBase(
+      {
+        current_profile: 'default',
+        profiles: {
+          default: {
+            api_base: 'http://localhost:55041',
+          },
+        },
+      },
+      'default',
+      undefined,
+    );
+    assert.equal(staleConductorLocalhost, 'https://api.notis.ai');
+
+    const remoteApiBase = getApiBase(
+      {
+        current_profile: 'default',
+        profiles: {
+          default: {
+            api_base: 'https://api.notis.ai',
+          },
+        },
+      },
+      'default',
+      undefined,
+    );
+    assert.equal(remoteApiBase, 'https://api.notis.ai');
+
+    const betaFromFlag = getApiBase(
+      {
+        current_profile: 'default',
+        profiles: {
+          default: {
+            beta: true,
+          },
+        },
+      },
+      'default',
+      undefined,
+    );
+    assert.equal(betaFromFlag, 'https://api-beta.notis.ai');
+
+    const betaFromDesktop = getApiBase(
+      {
+        current_profile: 'default',
+        profiles: {
+          default: {
+            desktop_app_name: 'Notis Beta',
+          },
+        },
+      },
+      'default',
+      undefined,
+    );
+    assert.equal(betaFromDesktop, 'https://api-beta.notis.ai');
+
+    const betaFromStoredApi = getApiBase(
+      {
+        current_profile: 'default',
+        profiles: {
+          default: {
+            api_base: 'https://api-beta.notis.ai',
+          },
+        },
+      },
+      'default',
+      undefined,
+    );
+    assert.equal(betaFromStoredApi, 'https://api-beta.notis.ai');
+  } finally {
+    if (originalConductorPort) {
+      process.env.CONDUCTOR_PORT = originalConductorPort;
+    } else {
+      delete process.env.CONDUCTOR_PORT;
+    }
+    if (originalApiBase) {
+      process.env.NOTIS_API_BASE = originalApiBase;
+    } else {
+      delete process.env.NOTIS_API_BASE;
+    }
+  }
+});
+
+test('top-level help omits the removed db command group', () => {
+  const result = runCli(['--help']);
+  assert.equal(result.status, 0, result.stderr);
+
+  assert.match(result.stdout, /apps\s+Develop, deploy, and submit Notis Apps\./);
+  assert.match(result.stdout, /^\s+tools\s+/m);
+  assert.match(result.stdout, /Discover and execute generic tools exposed/);
+  assert.doesNotMatch(result.stdout, /^\s+db\s/m);
+});
+
+test('db commands are no longer registered', () => {
+  const commandPaths = COMMAND_SPECS.map((spec) => spec.command_path.join(' '));
+  assert.equal(commandPaths.some((commandPath) => commandPath.startsWith('db ')), false);
+
+  const result = runCli(['db', 'list']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unknown command/i);
+});
+
+test('describe removed database query command fails', () => {
+  const result = runCli(['describe', 'db', 'query', '--json']);
+  assert.equal(result.status, 2, result.stdout || result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'usage_error');
+});
+
+test('describe apps create is registered', () => {
+  const result = runCli(['describe', 'apps', 'create', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'apps create');
+  assert.equal(payload.data.spec.backend_call.name, 'LOCAL_NOTIS_CREATE_APP');
+  const optionFlags = (payload.data.spec.args_schema.options || []).map((o) => o.flags);
+  assert.equal(optionFlags.some((flags) => flags.includes('--icon')), false);
+});
+
+test('apps create reads icon metadata from notis.config.ts instead of a CLI flag', async () => {
+  let requestBody = null;
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-create-icon-'));
+  writeFileSync(
+    join(projectDir, 'notis.config.mjs'),
+    `export default {
+      name: 'task-manager',
+      title: 'Task Manager',
+      description: 'Track team tasks',
+      icon: 'phosphor:check-square',
+      routes: [],
+      tools: []
+    };\n`,
+  );
+
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ app: { id: 'app-1', name: 'Task Manager' } }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'create', 'Task Manager', projectDir],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_CREATE_APP');
+    assert.equal(requestBody.arguments.icon, 'phosphor:check-square');
+    assert.equal(requestBody.arguments.description, 'Track team tasks');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('apps duplicate emits machine output and identifies the mutation', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-duplicate-app-'));
+  mkdirSync(join(projectDir, '.notis'), { recursive: true });
+  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
+    app_id: 'app-1',
+    version: 3,
+    linked_at: '2026-07-29T00:00:00.000Z',
+  }));
+
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      app: { id: 'app-copy-1', name: 'Task Manager Copy', slug: 'task-manager-copy' },
+      duplicated_from_app_id: 'app-1',
+      copied_document_count: 4,
+      portal_url: 'https://app.notis.ai/apps/app-copy-1',
+      databases: [{ id: 'db-copy-1', slug: 'tasks', name: 'Tasks' }],
+    }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'apps',
+        'duplicate',
+        projectDir,
+        '--name',
+        'Task Manager Copy',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.app_id, 'app-copy-1');
+    assert.equal(payload.data.duplicated_from_app_id, 'app-1');
+    assert.equal(payload.data.copied_document_count, 4);
+    assert.equal(payload.data.databases[0].id, 'db-copy-1');
+    assert.equal(payload.meta.mutating, true);
+    assert.match(payload.data.idempotency_key, /^[0-9a-f-]{36}$/);
+    assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_DUPLICATE_APP');
+    assert.equal(requestBody.arguments.app_id, 'app-1');
+    assert.equal(requestBody.arguments.name, 'Task Manager Copy');
+    assert.equal(requestBody.arguments.copy_documents, 'declared');
+    assert.equal(requestBody.idempotency_key, payload.data.idempotency_key);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('apps pull and publish are registered for source and Store workflows', () => {
+  const pullSpec = COMMAND_SPECS.find(
+    (spec) => spec.command_path.join(' ') === 'apps pull',
+  );
+  assert.ok(pullSpec, 'apps pull command spec should exist');
+  assert.equal(pullSpec.backend_call.type, 'http');
+  assert.equal(pullSpec.backend_call.name, 'portal_apps/source');
+  assert.equal(pullSpec.mutates, true);
+  assert.equal(pullSpec.require_auth, true);
+
+  const appCommands = COMMAND_SPECS
+    .filter((spec) => spec.command_path[0] === 'apps')
+    .map((spec) => spec.command_path.join(' '));
+  assert.ok(appCommands.includes('apps publish'));
+
+  const publishSpec = COMMAND_SPECS.find(
+    (spec) => spec.command_path.join(' ') === 'apps publish',
+  );
+  assert.equal(publishSpec.backend_call.type, 'http');
+  assert.equal(publishSpec.backend_call.name, 'portal_apps/publish');
+  assert.equal(publishSpec.require_auth, true);
+});
+
+test('cli tool access does not expose store publish tools', () => {
+  const toolAccess = JSON.parse(
+    readFileSync(resolve(cliRoot, '../../server/config/tool_access/cli.json'), 'utf-8'),
+  );
+  const tools = toolAccess?.base?.tools || [];
+
+  assert.ok(!tools.includes('LOCAL_NOTIS_PUBLISH_APP'));
+});
+
+test('apps publish requires explicit App Details confirmation', () => {
+  const result = runCli(['--json', 'apps', 'publish'], { NOTIS_JWT: makeJwt() });
+  assert.notEqual(result.status, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.match(payload.error.message, /--confirm-ready/);
+});
+
+test('apps publish submits the matching deployed version for Store review', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-publish-ready-'));
+  mkdirSync(join(projectDir, '.notis'), { recursive: true });
+  mkdirSync(join(projectDir, 'metadata'), { recursive: true });
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'ready-app',
+    version: '0.1.0',
+    notisAppVersion: '0.1.0',
+  }));
+  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
+    app_id: 'app-1',
+    version: 8,
+    linked_at: '2026-07-16T00:00:00.000Z',
+  }));
+  writeFileSync(join(projectDir, 'notis.config.mjs'), `export default {
+    name: 'ready-app',
+    title: 'Ready App',
+    description: 'Ready for the Store.',
+    tagline: 'A ready Store app.',
+    categories: ['Productivity'],
+    screenshots: [
+      { path: 'metadata/screenshot-1.png', alt: 'First screenshot.' },
+      { path: 'metadata/screenshot-2.png', alt: 'Second screenshot.' },
+      { path: 'metadata/screenshot-3.png', alt: 'Third screenshot.' },
+    ],
+    routes: [],
+    tools: [],
+  };\n`);
+  writeFileSync(join(projectDir, 'CHANGELOG.md'), `# Ready App Changelog
+
+## [Ready for the Store] - 2026-07-16
+
+- Initial Store release.
+`);
+  for (let index = 1; index <= 3; index += 1) {
+    writeFileSync(join(projectDir, 'metadata', `screenshot-${index}.png`), makeStoreScreenshotPngHeader());
+  }
+
+  const requests = [];
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    requests.push({ url: req.url, body });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url === '/cli_tools') {
+      res.end(JSON.stringify({
+        app: {
+          id: 'app-1',
+          visibility: 'public_store_hidden',
+          current_version: 8,
+        },
+        active_submission: { status: 'merged' },
+      }));
+      return;
+    }
+    assert.equal(req.url, '/portal_apps/publish');
+    res.end(JSON.stringify({
+      submission: {
+        id: 'submission-1',
+        app_id: 'app-1',
+        source_version: 8,
+        status: 'pending_review',
+        github_pr_url: 'https://github.com/notis/app-store/pull/8',
+      },
+    }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'apps',
+        'publish',
+        projectDir,
+        '--confirm-ready',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.source_version, 8);
+    assert.equal(payload.data.submission.status, 'pending_review');
+    assert.equal(requests[0].body.tool_name, 'LOCAL_NOTIS_GET_APP');
+    assert.deepEqual(requests[1].body, { app_id: 'app-1' });
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('describe apps pull --json renders the spec', () => {
+  const result = runCli(['describe', 'apps', 'pull', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'apps pull');
+  assert.equal(payload.data.spec.backend_call.name, 'portal_apps/source');
+});
+
+test('pullAppSource downloads source, extracts it, and writes linked state', async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-target-'));
+  const tarball = makeTarGz({
+    'package.json': '{"name":"sample"}\n',
+    'app/page.tsx': 'export default function Page() { return null; }\n',
+  });
+  const server = createHttpServer((req, res) => {
+    assert.equal(req.headers.authorization, 'Bearer jwt-1');
+    assert.equal(req.url, '/portal_apps/source?app_id=app-1&version=latest');
+    res.writeHead(200, {
+      'content-type': 'application/gzip',
+      'content-disposition': 'attachment; filename="sample-v7.tar.gz"',
+    });
+    res.end(tarball);
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    const result = await pullAppSource({
+      apiBase: `http://127.0.0.1:${port}`,
+      jwt: 'jwt-1',
+      appId: 'app-1',
+      targetDir,
+    });
+    assert.equal(result.version, 7);
+    assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"sample"}\n');
+    const state = JSON.parse(readFileSync(join(targetDir, '.notis', 'state.json'), 'utf-8'));
+    assert.equal(state.app_id, 'app-1');
+    assert.equal(state.version, 7);
+    assert.match(state.linked_at, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('apps pull uses the OAuth credential refreshed during app lookup for source download', async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-refreshed-oauth-'));
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-pull-refreshed-config-'));
+  const configFile = join(configHome, 'config.json');
+  const tarball = makeTarGz({ 'package.json': '{"name":"refreshed"}\n' });
+  let sourceAuthorization = null;
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/oauth/token') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: makeJwt('oauth-user'),
+        refresh_token: 'rotated-refresh',
+        expires_in: 900,
+        refresh_expires_in: 3600,
+        scope: 'notis:read notis:apps',
+      }));
+      return;
+    }
+    if (req.url === '/cli_tools') {
+      assert.equal(req.headers.authorization, `Bearer ${makeJwt('oauth-user')}`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ app: { id: 'app-1', slug: 'refreshed-app' } }));
+      return;
+    }
+    if (req.url === '/portal_apps/source?app_id=app-1&version=latest') {
+      sourceAuthorization = req.headers.authorization;
+      res.writeHead(200, {
+        'content-type': 'application/gzip',
+        'content-disposition': 'attachment; filename="refreshed-v3.tar.gz"',
+      });
+      res.end(tarball);
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: apiBase,
+        oauth_access_token: makeJwt('oauth-user', 1),
+        oauth_refresh_token: 'refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: 4102444800,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: apiBase,
+        oauth_scopes: ['notis:read', 'notis:apps'],
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', apiBase, 'apps', 'pull', 'app-1', targetDir],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(sourceAuthorization, `Bearer ${makeJwt('oauth-user')}`);
+    assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"refreshed"}\n');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('pullAppSource reports readable no-source errors', async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-no-source-'));
+  const server = createHttpServer((req, res) => {
+    assert.equal(req.url, '/portal_apps/source?app_id=app-legacy&version=latest');
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'No editable source snapshot exists for this app version. Re-deploy the app with the current Notis CLI, then run `notis apps pull` again.',
+    }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    await assert.rejects(
+      () => pullAppSource({
+        apiBase: `http://127.0.0.1:${port}`,
+        jwt: 'jwt-1',
+        appId: 'app-legacy',
+        targetDir,
+      }),
+      /No editable source snapshot exists/,
+    );
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('pullAppSource rejects unsafe source archive paths', async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-unsafe-'));
+  const tarball = makeTarGz({ '../outside.txt': 'nope' });
+  const server = createHttpServer((_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'application/gzip',
+      'content-disposition': 'attachment; filename="sample-v1.tar.gz"',
+    });
+    res.end(tarball);
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    await assert.rejects(
+      () => pullAppSource({
+        apiBase: `http://127.0.0.1:${port}`,
+        jwt: 'jwt-1',
+        appId: 'app-1',
+        targetDir,
+      }),
+      /unsafe path/,
+    );
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('pullAppSource refuses a non-empty target directory without force', async () => {
+  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-non-empty-'));
+  writeFileSync(join(targetDir, 'existing.txt'), 'x');
+  await assert.rejects(
+    () => pullAppSource({
+      apiBase: 'http://127.0.0.1:9',
+      jwt: 'jwt-1',
+      appId: 'app-1',
+      targetDir,
+    }),
+    /Target directory is not empty/,
+  );
+});
+
+test('collectSourceFiles keeps lockfiles and excludes runtime, build, and secret files', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-source-files-'));
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
+  mkdirSync(join(projectDir, '.notis', 'output'), { recursive: true });
+  mkdirSync(join(projectDir, 'dist'), { recursive: true });
+  writeFileSync(join(projectDir, 'package-lock.json'), '{"lockfileVersion":3}\n');
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default null;\n');
+  writeFileSync(join(projectDir, '.env.local'), 'SECRET=1\n');
+  writeFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'ignored\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), '{}\n');
+  writeFileSync(join(projectDir, 'dist', 'bundle.js'), 'ignored\n');
+  writeFileSync(join(projectDir, 'tsconfig.tsbuildinfo'), '{}\n');
+
+  const sourceFiles = collectSourceFiles(projectDir);
+
+  assert.equal(sourceFiles['package-lock.json'], Buffer.from('{"lockfileVersion":3}\n').toString('base64'));
+  assert.equal(sourceFiles['app/page.tsx'], Buffer.from('export default null;\n').toString('base64'));
+  assert.equal(sourceFiles['.env.local'], undefined);
+  assert.equal(sourceFiles['node_modules/pkg/index.js'], undefined);
+  assert.equal(sourceFiles['.notis/output/manifest.json'], undefined);
+  assert.equal(sourceFiles['dist/bundle.js'], undefined);
+  assert.equal(sourceFiles['tsconfig.tsbuildinfo'], undefined);
+});
+
+test('apps deploy sends pulled base version and updates linked state after deploy', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-deploy-linked-state-'));
+  mkdirSync(join(projectDir, '.notis', 'output', 'bundle'), { recursive: true });
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
+    app_id: 'app-1',
+    version: 7,
+    linked_at: '2026-05-01T00:00:00.000Z',
+  }, null, 2) + '\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export default function App() {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '[data-notis-app-root] {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({
+    version: 7,
+    app: { name: 'Linked App' },
+    routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+    databases: [],
+    tools: [],
+  }));
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ version: 8 }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_SAVE_APP_FILES');
+    assert.equal(requestBody.arguments.app_id, 'app-1');
+    assert.equal(requestBody.arguments.base_version, 7);
+    const state = JSON.parse(readFileSync(join(projectDir, '.notis', 'state.json'), 'utf-8'));
+    assert.equal(state.app_id, 'app-1');
+    assert.equal(state.version, 8);
+    assert.equal(state.linked_at, '2026-05-01T00:00:00.000Z');
+    assert.match(state.deployed_at, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('buildArtifact loads a TypeScript notis.config.ts without CommonJS globals', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-'));
+
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify({
+      name: 'test-app',
+      notisAppVersion: '1.2.3',
+      private: true,
+      scripts: {
+        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','body{}');"`,
+      },
+    }),
+  );
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Test App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+  databases: ['tasks'],
+  tools: [],
+});
+`);
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+
+  const { manifest } = await buildArtifact(projectDir);
+  assert.equal(manifest.app.name, 'Test App');
+  assert.equal(manifest.app.release_version, '1.2.3');
+  assert.equal(manifest.spec_version, 4);
+  assert.equal(manifest.routes[0].path, '/');
+  assert.ok(manifest.routes[0].export_name);
+  assert.ok(manifest.bundle);
+  assert.deepEqual(manifest.databases, ['tasks']);
+});
+
+test('apps build keeps machine output parseable when the project build writes logs', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-json-'));
+  const buildScript = [
+    "console.log('BUILD_LOG_MUST_NOT_REACH_STDOUT')",
+    "const fs=require('fs')",
+    "const p='.notis/output/bundle'",
+    "fs.mkdirSync(p,{recursive:true})",
+    "fs.writeFileSync(p+'/app.js','export default function(){return null;}')",
+    "fs.writeFileSync(p+'/app.css','body{}')",
+  ].join(';');
+
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify({
+      name: 'json-build-app',
+      private: true,
+      scripts: { build: `node -e "${buildScript}"` },
+    }),
+  );
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(
+    join(projectDir, 'notis.config.mjs'),
+    `export default {
+      name: 'JSON Build App',
+      routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+      databases: [],
+      tools: [],
+    };\n`,
+  );
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+
+  const result = runCli(['apps', 'build', projectDir, '--json']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /BUILD_LOG_MUST_NOT_REACH_STDOUT/);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.command, 'apps build');
+});
+
+test('buildArtifact preserves named imports and sanitizes generated route export names', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-edge-'));
+
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify({
+      name: 'edge-test-app',
+      private: true,
+      scripts: {
+        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','body{}');"`,
+      },
+    }),
+  );
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'shared.js'), `
+export const ROUTE_PATHS = ['/step-1', '/api-V2', '/404'];
+export const DB_SLUGS = ['tasks', 'notes'];
+`);
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+import { ROUTE_PATHS, DB_SLUGS } from './shared.js';
+
+export default defineNotisApp({
+  name: 'Edge Test App',
+  routes: ROUTE_PATHS.map((path, index) => ({
+    path,
+    slug: path === '/' ? 'home' : path.slice(1).toLowerCase(),
+    name: path,
+    default: index === 0,
+  })),
+  databases: DB_SLUGS,
+  tools: [],
+});
+`);
+
+  mkdirSync(join(projectDir, 'app', 'step-1'), { recursive: true });
+  mkdirSync(join(projectDir, 'app', 'api-V2'), { recursive: true });
+  mkdirSync(join(projectDir, 'app', '404'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'step-1', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(join(projectDir, 'app', 'api-V2', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(join(projectDir, 'app', '404', 'page.tsx'), 'export default function Page() { return null; }\n');
+
+  const { manifest } = await buildArtifact(projectDir);
+  assert.deepEqual(manifest.databases, ['tasks', 'notes']);
+  assert.deepEqual(
+    manifest.routes.map((route) => route.export_name),
+    ['step1', 'apiV2', 'r404'],
+  );
+
+  const entrySource = readFileSync(join(projectDir, '.notis', '_entry.tsx'), 'utf-8');
+  assert.match(entrySource, /export \{ default as step1 \}/);
+  assert.match(entrySource, /export \{ default as apiV2 \}/);
+  assert.match(entrySource, /export \{ default as r404 \}/);
+});
+
+test('buildArtifact rewrites Tailwind-style global selectors into shadow-safe bundle selectors', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-shadow-css-'));
+
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify({
+      name: 'shadow-css-test-app',
+      private: true,
+      scripts: {
+        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','html,:host{line-height:1.5}:root{--radius:8px}body{margin:0}');"`,
+      },
+    }),
+  );
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Shadow CSS Test App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+});
+`);
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+
+  await buildArtifact(projectDir);
+
+  const css = readFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), 'utf-8');
+  assert.equal(css, ':host{line-height:1.5}:host{--radius:8px}[data-notis-app-root]{margin:0}');
+});
+
+test('buildArtifact rejects source CSS that escapes the app surface', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-invalid-source-'));
+
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'invalid-source-app', private: true }));
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Invalid Source App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+});
+`);
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(join(projectDir, 'app', 'globals.css'), 'body { color: red; }\n');
+
+  await assert.rejects(
+    () => buildArtifact(projectDir),
+    /body selectors are forbidden/i,
+  );
+});
+
+test('buildArtifact rejects artifact JS that reaches for the portal runtime global', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-invalid-artifact-'));
+
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify({
+      name: 'invalid-artifact-app',
+      private: true,
+      scripts: {
+        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','const runtime = window.__NOTIS_RUNTIME__; export default function(){return runtime ? null : null;}'); fs.writeFileSync(p+'/app.css','[data-notis-app-root]{}');"`,
+      },
+    }),
+  );
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Invalid Artifact App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+});
+`);
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+
+  await assert.rejects(
+    () => buildArtifact(projectDir),
+    /window\.__NOTIS_RUNTIME__/i,
+  );
+});
+
+test('startAppDevServer exposes a deployable source snapshot for the portal', async (t) => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-dev-snapshot-'));
+  mkdirSync(join(projectDir, '.notis', 'output', 'bundle'), { recursive: true });
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'console.log("snapshot");');
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), ':host{}');
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(
+    join(projectDir, '.notis', 'output', 'manifest.json'),
+    JSON.stringify({
+      version: 1,
+      app: { name: 'Snapshot App' },
+      routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+      databases: [],
+      tools: [],
+    }),
+  );
+
+  const port = await getAvailablePort();
+  const originalRegistryPath = process.env.NOTIS_APP_DEV_SESSIONS_FILE;
+  const registryPath = join(projectDir, 'app-dev-sessions.json');
+  process.env.NOTIS_APP_DEV_SESSIONS_FILE = registryPath;
+  writeLinkedState(projectDir, {
+    dev_app_id: 'app-1',
+    dev_linked_at: '2026-04-24T00:00:00.000Z',
+  });
+  upsertAppDevSessions({
+    sessionId: 'session-1',
+    userId: 'user-1',
+    apiBase: 'https://api.notis.ai',
+    appId: 'app-1',
+    devSlug: 'snapshot-dev',
+    bundleBaseUrl: `http://127.0.0.1:${port}/a/snapshot-dev`,
+    projectDir,
+    startedAt: '2026-04-24T00:00:00.000Z',
+    lastHeartbeatAt: '2026-04-24T00:00:00.000Z',
+  });
+
+  const server = await startAppDevServer({
+    apps: [{ slug: 'snapshot-dev', appId: 'app-1', targetAppId: 'installed-app-1', userId: 'user-1', projectDir }],
+    port,
+    watch: false,
+    log: () => {},
+    logError: (message) => {
+      throw new Error(message);
+    },
+  });
+
+  t.after(async () => {
+    await server.close();
+    if (originalRegistryPath) {
+      process.env.NOTIS_APP_DEV_SESSIONS_FILE = originalRegistryPath;
+    } else {
+      delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
+    }
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/a/snapshot-dev/snapshot`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.app_id, 'app-1');
+  assert.equal(body.target_app_id, 'installed-app-1');
+  assert.equal(body.manifest.app.name, 'Snapshot App');
+  assert.equal(body.files['bundle/app.js'], Buffer.from('console.log("snapshot");').toString('base64'));
+  assert.equal(body.source_files['app/page.tsx'], Buffer.from('export default function Page() { return null; }\n').toString('base64'));
+  assert.equal(body.source_files['.notis/output/bundle/app.js'], undefined);
+
+  const healthResponse = await fetch(`http://127.0.0.1:${port}/healthz`);
+  assert.equal(healthResponse.status, 200);
+  const health = await healthResponse.json();
+  assert.deepEqual(health.apps, ['snapshot-dev']);
+  assert.equal(health.sessions[0].appId, 'app-1');
+  assert.equal(health.sessions[0].userId, 'user-1');
+  assert.equal(health.sessions[0].devSlug, 'snapshot-dev');
+  assert.equal(health.sessions[0].bundleBaseUrl, `http://127.0.0.1:${port}/a/snapshot-dev`);
+  assert.equal(health.sessions[0].targetAppId, 'installed-app-1');
+
+  const linkResponse = await fetch(`http://127.0.0.1:${port}/a/snapshot-dev/link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: 'installed-app-2' }),
+  });
+  assert.equal(linkResponse.status, 200);
+  const linkBody = await linkResponse.json();
+  assert.equal(linkBody.app_id, 'installed-app-2');
+  assert.equal(linkBody.dev_app_id, 'app-1');
+  const linkedState = readLinkedState(projectDir);
+  assert.equal(linkedState.app_id, 'installed-app-2');
+  assert.equal(linkedState.dev_app_id, 'app-1');
+  assert.equal(linkedState.dev_linked_at, '2026-04-24T00:00:00.000Z');
+  const registry = readAppDevSessions(registryPath);
+  assert.equal(registry.sessions[0].targetAppId, 'installed-app-2');
+});
+
+test('startAppDevServer prepares generated app entry and manifest before serving', async (t) => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-dev-prepare-'));
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify({
+      name: 'prepare-app',
+      private: true,
+      scripts: { build: 'node -e "setInterval(() => {}, 1000)"' },
+    }),
+  );
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Prepare App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+});
+`);
+
+  const port = await getAvailablePort();
+  const server = await startAppDevServer({
+    apps: [{ slug: 'prepare-dev', appId: 'app-prepare', projectDir }],
+    port,
+    watch: true,
+    log: () => {},
+    logError: (message) => {
+      throw new Error(message);
+    },
+  });
+
+  t.after(async () => {
+    await server.close();
+  });
+
+  assert.equal(
+    readFileSync(join(projectDir, '.notis', '_entry.tsx'), 'utf-8'),
+    "export { default as index } from '../app/page';\n",
+  );
+  const manifest = JSON.parse(readFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), 'utf-8'));
+  assert.equal(manifest.app.name, 'Prepare App');
+  assert.equal(manifest.routes[0].export_name, 'index');
+});
+
+test('buildDevelopmentDesktopUrl opens the local dev app when available', () => {
+  assert.equal(buildDevelopmentDesktopUrl('/apps/my-app-123/home'), 'notis://apps/my-app-123/home');
+  assert.equal(buildDevelopmentDesktopUrl(), 'notis://store');
+});
+
+test('buildDevelopmentAppHref matches Portal synthetic local development ids', () => {
+  const manifest = {
+    routes: [{ slug: 'day', default: true }],
+  };
+  assert.equal(
+    buildDevelopmentAppHref({
+      appSlug: 'calories-dev',
+      appId: 'dev-runtime-id',
+      devSlug: 'calories-dev',
+      targetAppId: 'installed-app-id',
+      targetAppSlug: 'calories',
+      manifest,
+    }),
+    '/apps/calories-installed-app-id__local_dev__calories-dev/day',
+  );
+  assert.equal(
+    buildDevelopmentAppHref({
+      appSlug: 'calories-dev',
+      appId: 'dev-runtime-id',
+      devSlug: 'calories-dev',
+      manifest,
+    }),
+    '/apps/calories-dev-dev-runtime-id__local_dev__calories-dev/day',
+  );
+});
+
+test('buildDevelopmentDesktopUrl targets the supplied desktop scheme', () => {
+  // In a dev environment the target is the local dev app (notis-dev), not the
+  // installed prod/beta app (notis).
+  assert.equal(
+    buildDevelopmentDesktopUrl('/apps/my-app-123/home', 'notis-dev'),
+    'notis-dev://apps/my-app-123/home',
+  );
+  assert.equal(buildDevelopmentDesktopUrl(null, 'notis-dev'), 'notis-dev://store');
+  // A malformed scheme falls back to the safe default rather than producing a broken URL.
+  assert.equal(buildDevelopmentDesktopUrl('/store', 'notis://bad'), 'notis://store');
+});
+
+test('buildMountedDevelopmentDesktopUrl makes each mounted route delivery unique', () => {
+  assert.equal(
+    buildMountedDevelopmentDesktopUrl(
+      '/apps/calories-app-id__local_dev__calories-dev/day',
+      'notis',
+      'session-123',
+    ),
+    'notis://apps/calories-app-id__local_dev__calories-dev/day?notis_dev_session=session-123',
+  );
+});
+
+test('resolveDevelopmentDesktopScheme reads NOTIS_DESKTOP_DEEP_LINK_SCHEME', () => {
+  assert.equal(resolveDevelopmentDesktopScheme({ NOTIS_DESKTOP_DEEP_LINK_SCHEME: 'notis-dev' }), 'notis-dev');
+  assert.equal(
+    resolveDevelopmentDesktopScheme(
+      { NOTIS_DESKTOP_DEEP_LINK_SCHEME: 'notis' },
+      { desktop_deep_link_scheme: 'notis-dev-worktree' },
+    ),
+    'notis-dev-worktree',
+  );
+  // Unset or invalid values fall back to the installed-app scheme.
+  assert.equal(resolveDevelopmentDesktopScheme({}), 'notis');
+  assert.equal(resolveDevelopmentDesktopScheme({ NOTIS_DESKTOP_DEEP_LINK_SCHEME: 'Notis Bad' }), 'notis');
+});
+
+test('resolveDevelopmentDesktopAppName selects explicit, beta, and production targets', () => {
+  assert.equal(
+    resolveDevelopmentDesktopAppName({
+      desktopAppName: 'Notis Beta',
+      apiBase: 'https://api.notis.ai',
+    }),
+    'Notis Beta',
+  );
+  assert.equal(
+    resolveDevelopmentDesktopAppName({ apiBase: 'https://api-beta.notis.ai' }),
+    'Notis Beta',
+  );
+  assert.equal(
+    resolveDevelopmentDesktopAppName({ apiBase: 'https://api.notis.ai' }),
+    'Notis',
+  );
+});
+
+test('resolveDevelopmentDesktopBundleId selects installed beta and production bundles', () => {
+  assert.equal(
+    resolveDevelopmentDesktopBundleId({ desktopAppName: 'Notis Beta' }),
+    'ai.notis.desktop.beta',
+  );
+  assert.equal(
+    resolveDevelopmentDesktopBundleId({ apiBase: 'https://api.notis.ai' }),
+    'ai.notis.desktop',
+  );
+});
+
+test('developmentDesktopOpenCommand targets the installed macOS desktop bundle', () => {
+  assert.deepEqual(
+    developmentDesktopOpenCommand('notis://apps/calories/day', {
+      platform: 'darwin',
+      appName: 'Notis Beta',
+      bundleId: 'ai.notis.desktop.beta',
+      scheme: 'notis',
+    }),
+    {
+      command: 'open',
+      args: ['-b', 'ai.notis.desktop.beta', 'notis://apps/calories/day'],
+    },
+  );
+  assert.deepEqual(
+    developmentDesktopOpenCommand('notis-dev-123://apps/calories/day', {
+      platform: 'darwin',
+      appName: 'Notis (worktree)',
+      bundleId: 'ai.notis.desktop',
+      scheme: 'notis-dev-123',
+    }),
+    {
+      command: 'open',
+      args: ['notis-dev-123://apps/calories/day'],
+    },
+  );
+});
+
+test('shouldOpenDevelopmentTab honors the Commander --no-open flag', () => {
+  // Commander represents `--no-open` as { open: false }; default is { open: true }.
+  assert.equal(shouldOpenDevelopmentTab({ open: false }), false);
+  assert.equal(shouldOpenDevelopmentTab({ open: true }), true);
+  assert.equal(shouldOpenDevelopmentTab({}), true);
+  // Regression: the old code read `options.noOpen`, which Commander never sets,
+  // so `--no-open` was ignored and `apps dev` always launched the prod desktop app.
+  assert.equal(shouldOpenDevelopmentTab({ open: false, noOpen: undefined }), false);
+});
+
+// The catalog is derived from `scaffolds/*/notis.config.ts` — every directory there is
+// copied into the published package and offered by `apps init`. This list is the
+// deliberate record of what we ship, so adding an app under `scaffolds/` means updating
+// it here too.
+test('bundled scaffold catalog is available to apps init', () => {
+  const catalog = loadScaffoldCatalog();
+  const slugs = catalog.map((entry) => entry.slug).sort();
+
+  assert.deepEqual(slugs, [
+    'notis-database',
+    'notis-journal',
+    'notis-notes',
+    'notis-random',
+  ]);
+  assert.equal(catalog.find((entry) => entry.slug === 'notis-random')?.categories[0], 'Personal');
+});
+
+test('scaffoldProject copies a bundled scaffold and renames slug plus title', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-from-'));
+
+  scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'notis-random' });
+
+  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8');
+  const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'));
+  assert.match(config, /name:\s*'dice-lab'/);
+  assert.match(config, /title:\s*'Dice Lab'/);
+  assert.equal(existsSync(join(projectDir, 'metadata', 'screenshot-1.png')), true);
+  assert.equal(existsSync(join(projectDir, 'CHANGELOG.md')), true);
+  assert.equal(existsSync(join(projectDir, 'app', 'page.tsx')), true);
+  assert.equal(pkg.dependencies['@notis/sdk'], 'file:./packages/sdk');
+  assert.equal(pkg.notisAppVersion, '0.1.0');
+  assert.equal(existsSync(join(projectDir, 'packages', 'sdk', 'package.json')), true);
+  assert.equal(existsSync(join(projectDir, 'package-lock.json')), true);
+  const lockfile = JSON.parse(readFileSync(join(projectDir, 'package-lock.json'), 'utf-8'));
+  assert.equal(lockfile.name, 'dice-lab');
+  assert.equal(lockfile.packages[''].name, 'dice-lab');
+});
+
+test('apps doctor distinguishes deployed links from local development identities', () => {
+  assert.equal(doctorLinkSummary({ app_id: 'app-1', dev_app_id: 'dev-1' }), ' Linked to app app-1.');
+  assert.equal(
+    doctorLinkSummary({ dev_app_id: 'dev-1' }),
+    ' Local development app dev-1 is active.',
+  );
+  assert.equal(doctorLinkSummary(null), ' Not linked.');
+});
+
+test('scaffoldProject renames the bare template slug plus title', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-bare-'));
+
+  scaffoldProject({ projectDir, appName: 'Mind the Flo' });
+
+  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8');
+  assert.match(config, /name:\s*'mind-the-flo'/);
+  assert.match(config, /title:\s*'Mind the Flo'/);
+});
+
+test('listing readiness validates the locked category enum', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-listing-category-'));
+
+  assert.throws(
+    () => inspectListingReadiness(projectDir, { categories: ['Developer Tools'] }),
+    /Invalid Notis app category/,
+  );
+});
+
+test('workspace database catalog apps do not get an empty database warning', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-workspace-database-warning-'));
+
+  const ordinaryWarnings = detectProjectWarnings(projectDir, { databases: [] });
+  assert.match(ordinaryWarnings.join('\n'), /No database references declared/);
+
+  const catalogWarnings = detectProjectWarnings(projectDir, {
+    databases: [],
+    capabilities: { workspaceDatabases: 'read' },
+  });
+  assert.doesNotMatch(catalogWarnings.join('\n'), /No database references declared/);
+});
+
+function listingPng(width = 2000, height = 1250) {
+  const content = Buffer.alloc(24);
+  Buffer.from('89504e470d0a1a0a', 'hex').copy(content, 0);
+  content.writeUInt32BE(width, 16);
+  content.writeUInt32BE(height, 20);
+  return content;
+}
+
+function writeListingChangelog(projectDir) {
+  writeFileSync(
+    join(projectDir, 'CHANGELOG.md'),
+    '# App Changelog\n\n## [Initial Release] - {PR_MERGE_DATE}\n\n- First release.\n',
+  );
+}
+
+test('listing readiness requires three exact screenshots with alt text', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-listing-media-'));
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'listing-media',
+    version: '0.1.0',
+    notisAppVersion: '0.1.0',
+  }));
+  writeListingChangelog(projectDir);
+  mkdirSync(join(projectDir, 'metadata'));
+  for (let index = 1; index <= 3; index += 1) {
+    writeFileSync(join(projectDir, 'metadata', `screenshot-${index}.png`), listingPng());
+  }
+  const config = {
+    tagline: 'See the patterns in your days.',
+    categories: ['Personal'],
+    screenshots: [1, 2, 3].map((index) => ({
+      path: `metadata/screenshot-${index}.png`,
+      alt: `Journal state ${index}`,
+      focus: index === 2 ? '[data-journal-detail]' : undefined,
+      theme: index === 2 ? 'dark' : 'light',
+    })),
+  };
+
+  const ready = inspectListingReadiness(projectDir, config);
+  assert.equal(ready.ready, true);
+  assert.equal(ready.metadata.screenshots[1].focus, '[data-journal-detail]');
+  assert.equal(ready.metadata.screenshots[1].theme, 'dark');
+
+  config.screenshots[0].alt = '';
+  const missingAlt = inspectListingReadiness(projectDir, config);
+  assert.equal(missingAlt.ready, false);
+  assert.match(missingAlt.errors.join('\n'), /missing descriptive alt text/);
+
+  config.screenshots[0].alt = 'Journal overview';
+  writeFileSync(join(projectDir, 'metadata', 'screenshot-1.png'), listingPng(1600, 1000));
+  const wrongDimensions = inspectListingReadiness(projectDir, config);
+  assert.equal(wrongDimensions.ready, false);
+  assert.match(wrongDimensions.errors.join('\n'), /exactly 2000x1250/);
+
+  config.screenshots[0].theme = 'sepia';
+  assert.throws(
+    () => inspectListingReadiness(projectDir, config),
+    /theme must be light or dark/,
+  );
+});
+
+test('listing readiness requires the registry app version contract', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-listing-version-'));
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'listing-version',
+    version: '0.1.0',
+  }));
+
+  const readiness = inspectListingReadiness(projectDir, {});
+  assert.equal(readiness.ready, false);
+  assert.match(readiness.errors.join('\n'), /notisAppVersion/);
+});
+
+test('screenshot cleanup only prunes stale files during a full successful refresh', () => {
+  assert.equal(shouldPruneStaleScreenshotFiles(null, 0), true);
+  assert.equal(shouldPruneStaleScreenshotFiles(['home'], 0), false);
+  assert.equal(shouldPruneStaleScreenshotFiles(null, 1), false);
+
+  const outputDir = mkdtempSync(join(tmpdir(), 'notis-screenshots-'));
+  writeFileSync(join(outputDir, 'screenshot-1.png'), 'one');
+  writeFileSync(join(outputDir, 'screenshot-2.png'), 'two');
+  writeFileSync(join(outputDir, 'screenshot-3.png'), 'three');
+  writeFileSync(join(outputDir, 'notes.txt'), 'keep');
+
+  pruneStaleScreenshotFiles(outputDir, 2);
+
+  assert.equal(existsSync(join(outputDir, 'screenshot-1.png')), true);
+  assert.equal(existsSync(join(outputDir, 'screenshot-2.png')), true);
+  assert.equal(existsSync(join(outputDir, 'screenshot-3.png')), false);
+  assert.equal(existsSync(join(outputDir, 'notes.txt')), true);
+});
+
+test('selected route screenshots keep their full-manifest slot numbers', () => {
+  const slots = screenshotIndexByRouteSlug({
+    routes: [
+      { slug: 'home' },
+      { slug: 'history' },
+      { slug: 'settings' },
+    ],
+  });
+
+  assert.equal(slots.get('home'), 1);
+  assert.equal(slots.get('history'), 2);
+  assert.equal(slots.get('settings'), 3);
+});
+
+test('manifest app accent is forwarded to app row fields', () => {
+  assert.deepEqual(
+    appRowFieldsFromManifest({ app: { accent: 'mint' } }),
+    { accent: 'mint' },
+  );
+  assert.deepEqual(
+    appRowFieldsFromManifest({ app: {} }),
+    { accent: null },
+  );
+});
+
+test('screenshot command exits nonzero when any capture fails', () => {
+  assert.equal(screenshotExitCode(0), 0);
+  assert.notEqual(screenshotExitCode(1), 0);
+});
+
+test('app dev session registry upserts, heartbeats, and removes sessions', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'notis-app-dev-sessions-'));
+  const registryPath = join(workspace, 'app-dev-sessions.json');
+  const startedAt = new Date(0).toISOString();
+  const lastHeartbeatAt = new Date(1_000).toISOString();
+
+  upsertAppDevSessions({
+    sessionId: 'session-1',
+    userId: 'user-1',
+    apiBase: 'https://api.notis.ai',
+    appId: 'app-1',
+    targetAppId: 'installed-app-1',
+    devSlug: 'notes-dev',
+    bundleBaseUrl: 'http://127.0.0.1:5173/a/notes-dev',
+    projectDir: workspace,
+    startedAt,
+    lastHeartbeatAt,
+  }, registryPath);
+
+  assert.equal(readAppDevSessions(registryPath).sessions.length, 1);
+  assert.equal(readAppDevSessions(registryPath).sessions[0].targetAppId, 'installed-app-1');
+  heartbeatAppDevSession('session-1', new Date(2_000).toISOString(), registryPath);
+  assert.equal(readAppDevSessions(registryPath).sessions[0].lastHeartbeatAt, new Date(2_000).toISOString());
+  removeAppDevSession('session-1', registryPath);
+  assert.deepEqual(readAppDevSessions(registryPath).sessions, []);
+});
+
+test('app dev session registry honors NOTIS_APP_DEV_SESSIONS_FILE', () => {
+  const originalRegistryPath = process.env.NOTIS_APP_DEV_SESSIONS_FILE;
+  const workspace = mkdtempSync(join(tmpdir(), 'notis-app-dev-sessions-env-'));
+  const registryPath = join(workspace, 'app-dev-sessions.json');
+
+  process.env.NOTIS_APP_DEV_SESSIONS_FILE = registryPath;
+  try {
+    upsertAppDevSessions({
+      sessionId: 'session-env',
+      userId: 'user-1',
+      apiBase: 'https://api.notis.ai',
+      appId: 'app-env',
+      devSlug: 'notes-dev',
+      bundleBaseUrl: 'http://127.0.0.1:5173/a/notes-dev',
+      projectDir: workspace,
+      startedAt: new Date(0).toISOString(),
+      lastHeartbeatAt: new Date(1_000).toISOString(),
+    });
+
+    assert.equal(existsSync(registryPath), true);
+    assert.deepEqual(readAppDevSessions().sessions.map((session) => session.appId), ['app-env']);
+  } finally {
+    if (originalRegistryPath) {
+      process.env.NOTIS_APP_DEV_SESSIONS_FILE = originalRegistryPath;
+    } else {
+      delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
+    }
+  }
+});
+
+test('ensureDevInstall keeps installed target separate from hidden dev runtime app', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-ensure-dev-install-'));
+  writeLinkedState(projectDir, {
+    app_id: 'installed-app-1',
+    dev_app_id: 'dev-runtime-app-1',
+    linked_at: '2026-04-24T00:00:00.000Z',
+    dev_linked_at: '2026-04-24T00:00:01.000Z',
+  });
+  const calls = [];
+
+  const result = await ensureDevInstall({
+    ctx: { runtime: { apiBase: 'https://api.notis.ai' } },
+    projectDir,
+    appConfig: {
+      name: 'Notes',
+      routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+    },
+    idempotencyKey: 'test-key',
+    runTool: async (call) => {
+      calls.push(call);
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return call.arguments_.app_id === 'dev-runtime-app-1'
+          ? { payload: { app: { id: 'dev-runtime-app-1', manifest: { is_dev: true } } } }
+          : { payload: { app: { id: 'installed-app-1', manifest: { is_dev: false } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_ENSURE_DEV_APP_INSTALLATION') {
+        return { payload: { app_id: 'dev-runtime-app-1', slug: 'notes-dev' } };
+      }
+      throw new Error(`Unexpected tool ${call.toolName}`);
+    },
+  });
+
+  assert.equal(result.appId, 'dev-runtime-app-1');
+  assert.equal(result.targetAppId, 'installed-app-1');
+  assert.equal(calls[2].toolName, 'LOCAL_NOTIS_ENSURE_DEV_APP_INSTALLATION');
+  assert.equal(calls[2].arguments_.app_id, 'dev-runtime-app-1');
+  const state = readLinkedState(projectDir);
+  assert.equal(state.app_id, 'installed-app-1');
+  assert.equal(state.dev_app_id, 'dev-runtime-app-1');
+});
+
+test('ensureDevInstall migrates legacy dev app links into dev_app_id', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-ensure-dev-legacy-'));
+  writeLinkedState(projectDir, {
+    app_id: 'legacy-dev-app',
+    linked_at: '2026-04-24T00:00:00.000Z',
+    version: 1,
+  });
+
+  await ensureDevInstall({
+    ctx: { runtime: { apiBase: 'https://api.notis.ai' } },
+    projectDir,
+    appConfig: {
+      name: 'Legacy Dev',
+      routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+    },
+    idempotencyKey: 'test-key',
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return { payload: { app: { id: 'legacy-dev-app', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_ENSURE_DEV_APP_INSTALLATION') {
+        assert.equal(call.arguments_.app_id, 'legacy-dev-app');
+        return { payload: { app_id: 'legacy-dev-app', slug: 'legacy-dev-dev' } };
+      }
+      throw new Error(`Unexpected tool ${call.toolName}`);
+    },
+  });
+
+  const state = readLinkedState(projectDir);
+  assert.equal(state.app_id, undefined);
+  assert.equal(state.dev_app_id, 'legacy-dev-app');
+  assert.equal(state.version, undefined);
+});
+
+test.todo('apps dev serves all workspace apps into the Portal Local development group at once');
+
+test('authenticated commands fail with a JSON auth envelope in non-interactive mode', () => {
+  const result = runCli(['apps', 'list', '--json', '--non-interactive'], {
+    NOTIS_API_BASE: 'http://localhost:3001',
+  });
+  assert.equal(result.status, 3);
+  assert.equal(result.stderr, '');
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'auth_missing');
+  // A machine that was never signed in may not have an account yet, so the
+  // account-creating command leads; launching the desktop app follows it.
+  assert.equal(payload.hints[0].command, 'notis login');
+  if (process.platform === 'darwin') {
+    assert.ok(payload.hints.some((hint) => hint.command === "open -a 'Notis'"));
+  }
+});
+
+test('expired desktop auth prompts an agent to start the stopped desktop app', () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-expired-home-'));
+  mkdirSync(join(homeDir, '.notis'), { recursive: true });
+  writeFileSync(
+    join(homeDir, '.notis', 'config.json'),
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: {
+        default: {
+          jwt: makeJwt('auth-user-123', 1),
+          api_base: 'https://api-beta.notis.ai',
+          auth_mode: 'dev_portal',
+          desktop_app_name: 'Notis Beta',
+          desktop_pid: 99999999,
+        },
+      },
+    }),
+  );
+
+  const result = runCli(['apps', 'list', '--json', '--non-interactive'], { HOME: homeDir });
+  assert.equal(result.status, 3, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.error.code, 'auth_expired');
+  assert.equal(payload.error.details.desktop_running, false);
+  assert.equal(payload.error.details.desktop_app_name, 'Notis Beta');
+  if (process.platform === 'darwin') {
+    assert.equal(payload.hints[0].command, "open -a 'Notis Beta'");
+  }
+  assert.match(payload.hints[0].reason, /Start Notis Beta/);
+});
+
+test('expired desktop auth reports when the owning desktop app is still running', () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-expired-running-home-'));
+  mkdirSync(join(homeDir, '.notis'), { recursive: true });
+  writeFileSync(
+    join(homeDir, '.notis', 'config.json'),
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: {
+        default: {
+          jwt: makeJwt('auth-user-123', 1),
+          api_base: 'https://api.notis.ai',
+          auth_mode: 'dev_portal',
+          desktop_app_name: 'Notis',
+          desktop_pid: process.pid,
+        },
+      },
+    }),
+  );
+
+  const result = runCli(['apps', 'list', '--json', '--non-interactive'], { HOME: homeDir });
+  assert.equal(result.status, 3, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.error.code, 'auth_expired');
+  assert.equal(payload.error.details.desktop_running, true);
+  assert.match(payload.hints[0].reason, /Bring Notis forward/);
+});
+
+test('expired NOTIS_JWT never falls back to the desktop profile', () => {
+  const result = runCli(['apps', 'list', '--json', '--non-interactive'], {
+    NOTIS_API_BASE: 'https://api.notis.ai',
+    NOTIS_JWT: makeJwt('auth-user-123', 1),
+  });
+  assert.equal(result.status, 3, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.error.code, 'auth_expired');
+  assert.equal(payload.error.details.credential_source, 'env');
+  assert.match(payload.hints[0].command, /NOTIS_JWT/);
+});
+
+test('describe tools exec includes --get-schema and --dry-run options', () => {
+  const result = runCli(['describe', 'tools', 'exec', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'tools exec');
+
+  const optionFlags = (payload.data.spec.args_schema.options || []).map((o) => o.flags);
+  assert.ok(optionFlags.some((f) => f.includes('--get-schema')), 'should have --get-schema option');
+  assert.ok(optionFlags.some((f) => f.includes('--dry-run')), 'should have --dry-run option');
+  assert.ok(optionFlags.some((f) => f.includes('--arguments-file')), 'should have --arguments-file option');
+  assert.ok(!optionFlags.some((f) => f.includes('--toolkits')), 'should not keep legacy --toolkits option');
+});
+
+test('debug and smoke first-class commands are registered', () => {
+  const userContext = runCli(['describe', 'debug', 'user-context', '--json']);
+  const smoke = runCli(['describe', 'smoke', 'file-upload', '--json']);
+  assert.equal(userContext.status, 0, userContext.stderr);
+  assert.equal(smoke.status, 0, smoke.stderr);
+  assert.equal(JSON.parse(userContext.stdout).data.spec.mutates, false);
+  assert.equal(JSON.parse(smoke.stdout).data.spec.mutates, true);
+});
+
+test('tool mutation metadata distinguishes reads, writes, and unknown tools', () => {
+  assert.equal(classifyToolMutation('LOCAL_NOTIS_DATABASE_QUERY'), false);
+  assert.equal(classifyToolMutation('DROPBOX_GET_METADATA'), false);
+  assert.equal(classifyToolMutation('DROPBOX_UPLOAD_FILE'), true);
+  assert.equal(classifyToolMutation('SLACK_FIND_OR_CREATE_CONVERSATION'), true);
+  assert.equal(classifyToolMutation('GMAIL_GET_OR_CREATE_LABEL'), true);
+  assert.equal(classifyToolMutation('LOCAL_NOTIS_GET_APP_UPDATE_CONTEXT'), false);
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', { query: 'select * from users' }),
+    null,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', { query: 'update users set beta = true' }),
+    true,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', {
+      query: 'EXPLAIN ANALYZE DELETE FROM users WHERE user_id = 1',
+    }),
+    true,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', {
+      query: 'EXPLAIN (ANALYZE, BUFFERS) UPDATE users SET beta = true',
+    }),
+    true,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', {
+      query: 'EXPLAIN DELETE FROM users WHERE user_id = 1',
+    }),
+    false,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', {
+      query: 'SELECT 1; UPDATE users SET beta = true',
+    }),
+    true,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', {
+      query: "SELECT 'a; UPDATE users SET beta = true'",
+    }),
+    null,
+  );
+  assert.equal(
+    classifyToolMutation('LOCAL_MCP_SUPABASE_EXECUTE_SQL', {
+      query: 'SELECT public.portal_delete_automation_template(1)',
+    }),
+    null,
+  );
+  assert.equal(classifyToolMutation('CUSTOM_DO_MAGIC'), null);
+});
+
+test('debug override accepts plain and base64url JSON', () => {
+  const value = { reference_user: 'user-1', expires_at: '2030-01-01T00:00:00Z' };
+  assert.deepEqual(parseDebugEntitlementOverride(JSON.stringify(value)), value);
+  assert.deepEqual(
+    parseDebugEntitlementOverride(Buffer.from(JSON.stringify(value)).toString('base64url')),
+    value,
+  );
+});
+
+test('malformed debug override remains inside the structured CLI error envelope', () => {
+  const result = runCli(['describe', 'whoami', '--json'], {
+    NOTIS_DEBUG_ENTITLEMENT_OVERRIDE: 'not-json',
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, 'debug_entitlement_override_invalid');
+  assert.match(payload.error.message, /JSON object or base64url-encoded JSON object/);
+});
+
+test('user context SQL falls back to a team owned by a user with a stale team id', () => {
+  const sql = buildUserContextSql('user-1');
+  assert.match(sql, /'created_at', to_jsonb\(effective\)->>'created_at'/);
+  assert.match(sql, /OR t\.owner_id = target\.user_id/);
+  assert.doesNotMatch(sql, /target\.team_id IS NULL AND t\.owner_id/);
+  assert.match(sql, /ORDER BY CASE WHEN t\.id::text = target\.team_id::text THEN 0 ELSE 1 END/);
+});
+
+test('trace diagnostics use recorded generation, retry, failure, and model fields', () => {
+  const tracePath = join(mkdtempSync(join(tmpdir(), 'notis-trace-')), 'trace.json');
+  writeFileSync(tracePath, JSON.stringify({
+    observations: [
+      { id: 'gen-1', type: 'GENERATION', model: 'gpt-test', status: 'success' },
+      { id: 'retry-1', type: 'EVENT', name: 'tool retry', status: 'success' },
+      { id: 'tool-1', type: 'TOOL', name: 'Dropbox upload tool', status: 'error' },
+    ],
+  }));
+  assert.deepEqual(traceFileDiagnostics(tracePath), {
+    generations: 1,
+    retries: 1,
+    tool_failures: 1,
+    model_counts: { 'gpt-test': 1 },
+    source: tracePath,
+  });
+});
+
+test('SQL diagnostics parse the Supabase MCP untrusted-data envelope', () => {
+  const payload = {
+    data: {
+      results: [{
+        response: {
+          data: {
+            result: 'Below is data within the below <untrusted-data-abc> boundaries.\\n\\n<untrusted-data-abc>\\n[{"context":{"billing":{"scope_type":"user"}}}]\\n</untrusted-data-abc>',
+          },
+        },
+      }],
+    },
+  };
+  assert.equal(extractSqlRows(payload)[0].context.billing.scope_type, 'user');
+});
+
+test('SQL diagnostics preserve escaped newlines inside untrusted JSON values', () => {
+  const payload = {
+    data: {
+      results: [{
+        response: {
+          data: {
+            result: 'Envelope\\n<untrusted-data-abc>\\n[{"interaction":{"error":"line1\\nline2"}}]\\n</untrusted-data-abc>',
+          },
+        },
+      }],
+    },
+  };
+
+  assert.equal(extractSqlRows(payload)[0].interaction.error, 'line1\nline2');
+});
+
+test('tools exec remains the database execution path', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success', documents: [] }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'exec',
+        'LOCAL_NOTIS_DATABASE_QUERY',
+        '--arguments',
+        '{"database_slug":"tasks","query":{"page_size":10}}',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'COMPOSIO_MULTI_EXECUTE_TOOL');
+    assert.deepEqual(requestBody.arguments, {
+      tools: [{ tool_slug: 'LOCAL_NOTIS_DATABASE_QUERY', arguments: { database_slug: 'tasks', query: { page_size: 10 } } }],
+    });
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.meta.mutating, false);
+    assert.match(payload.meta.idempotency_key, /^[A-Za-z0-9._:~-]{8,160}$/);
+    assert.equal(requestBody.idempotency_key, payload.meta.idempotency_key);
+    assert.match(payload.request_id, /^req_/);
+    assert.match(result.stderr, /\[prepare\].*\[execute\].*\[complete\]/s);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools exec reads JSON from --arguments-file', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success' }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const argumentsPath = join(mkdtempSync(join(tmpdir(), 'notis-cli-args-')), 'arguments.json');
+  writeFileSync(argumentsPath, JSON.stringify({ database_slug: 'tasks', query: { page_size: 3 } }));
+  try {
+    const result = await runCliAsync([
+      '--json', '--api-base', `http://127.0.0.1:${port}`,
+      'tools', 'exec', 'LOCAL_NOTIS_DATABASE_QUERY',
+      '--arguments-file', argumentsPath,
+    ], { NOTIS_JWT: makeJwt() });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.arguments.tools[0].arguments.query.page_size, 3);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools exec does not rewrite unknown underscore aliases', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success' }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'exec',
+        'legacy_query_alias',
+        '--arguments',
+        '{}',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(requestBody.arguments, {
+      tools: [{ tool_slug: 'legacy_query_alias', arguments: {} }],
+    });
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools exec sends multipart file bindings when --file is provided', async () => {
+  let requestContentType = null;
+  let requestBody = null;
+  const uploadPath = join(mkdtempSync(join(tmpdir(), 'notis-cli-upload-')), 'invoice.pdf');
+  writeFileSync(uploadPath, 'pdf-bytes');
+  const expectedHash = '29d1283686193dc1461a7deac4f53d9bc5402a28b95d854f69e94986756fd0a9';
+
+  const server = createHttpServer(async (req, res) => {
+    requestContentType = req.headers['content-type'];
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = Buffer.concat(chunks).toString('utf-8');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success' }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'exec',
+        'composio-dropbox-upload_file',
+        '--arguments',
+        '{"path":"/target/in/dropbox.pdf"}',
+        '--file',
+        `content=${uploadPath}`,
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(requestContentType, /^multipart\/form-data; boundary=/);
+    assert.match(requestBody, /name="payload"/);
+    assert.match(requestBody, /"tool_name":"COMPOSIO_MULTI_EXECUTE_TOOL"/);
+    assert.match(requestBody, /"tool_slug":"composio-dropbox-upload_file"/);
+    assert.match(requestBody, /"argument_path":"content"/);
+    assert.match(requestBody, /"field_name":"file_0"/);
+    assert.match(requestBody, /"basename":"invoice\.pdf"/);
+    assert.match(requestBody, new RegExp(`"sha256":"${expectedHash}"`));
+    assert.match(requestBody, /filename="invoice\.pdf"/);
+    assert.match(requestBody, /pdf-bytes/);
+    assert.equal(requestBody.includes(uploadPath), false);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools exec supports JSON Pointer file binding targets', async () => {
+  let requestBody = null;
+  const uploadPath = join(mkdtempSync(join(tmpdir(), 'notis-cli-upload-')), 'nested.txt');
+  writeFileSync(uploadPath, 'nested');
+
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = Buffer.concat(chunks).toString('utf-8');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success' }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'exec',
+        'composio-example-upload',
+        '--arguments',
+        '{"items":[{"name":"first"}]}',
+        '--file',
+        `/items/0/content=${uploadPath}`,
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(requestBody, /"argument_path":"\/items\/0\/content"/);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools exec rejects missing --file local paths before transport', async () => {
+  const result = await runCliAsync(
+    [
+      '--json',
+      '--api-base',
+      'http://127.0.0.1:9',
+      'tools',
+      'exec',
+      'composio-dropbox-upload_file',
+      '--arguments',
+      '{}',
+      '--file',
+      'content=/tmp/notis-missing-file.pdf',
+    ],
+    { NOTIS_JWT: makeJwt() },
+  );
+
+  assert.equal(result.status, 2);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.error.message, /File not found/);
+});
+
+test('tools exec-parallel rejects --file with a clear usage error', async () => {
+  const uploadPath = join(mkdtempSync(join(tmpdir(), 'notis-cli-upload-')), 'invoice.pdf');
+  writeFileSync(uploadPath, 'pdf-bytes');
+
+  const result = await runCliAsync(
+    [
+      '--json',
+      '--api-base',
+      'http://127.0.0.1:9',
+      'tools',
+      'exec-parallel',
+      '[{"tool_name":"LOCAL_NOTIS_DATABASE_QUERY","arguments":{}}]',
+      '--file',
+      `content=${uploadPath}`,
+    ],
+    { NOTIS_JWT: makeJwt() },
+  );
+
+  assert.equal(result.status, 2);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.error.message, /tools exec/);
+});
+
+test('describe tools exec-parallel is registered', () => {
+  const result = runCli(['describe', 'tools', 'exec-parallel', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'tools exec-parallel');
+  assert.equal(payload.data.spec.backend_call.name, 'COMPOSIO_MULTI_EXECUTE_TOOL');
+});
+
+test('validateArguments reports missing required fields', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      count: { type: 'integer' },
+    },
+    required: ['name'],
+    additionalProperties: false,
+  };
+
+  const errors = validateArguments(schema, { count: 5 });
+  assert.ok(errors.some((e) => e.includes('Missing required field: "name"')));
+});
+
+test('validateArguments reports unknown fields', () => {
+  const schema = {
+    type: 'object',
+    properties: { name: { type: 'string' } },
+    required: [],
+    additionalProperties: false,
+  };
+
+  const errors = validateArguments(schema, { name: 'ok', bogus: true });
+  assert.ok(errors.some((e) => e.includes('Unknown field: "bogus"')));
+});
+
+test('validateArguments reports type mismatches', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      count: { type: 'integer' },
+      tags: { type: 'array' },
+      meta: { type: 'object' },
+    },
+    required: [],
+  };
+
+  const errors = validateArguments(schema, {
+    name: 123,
+    count: 'not-a-number',
+    tags: 'not-an-array',
+    meta: 'not-an-object',
+  });
+
+  assert.equal(errors.length, 4);
+});
+
+test('validateArguments returns empty for valid input', () => {
+  const schema = {
+    type: 'object',
+    properties: { name: { type: 'string' } },
+    required: ['name'],
+    additionalProperties: false,
+  };
+
+  const errors = validateArguments(schema, { name: 'hello' });
+  assert.equal(errors.length, 0);
+});
+
+test('describe whoami is registered', () => {
+  const result = runCli(['describe', 'whoami', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'whoami');
+  assert.equal(payload.data.spec.backend_call.name, 'COMPOSIO_SEARCH_TOOLS');
+});
+
+test('tools toolkits reads canonical toolkit connection statuses', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      results: [],
+      toolkit_connection_statuses: [
+        {
+          toolkit: 'composio-todoist',
+          description: 'Todoist',
+          has_active_connection: true,
+          status_message: 'Connected',
+        },
+        {
+          toolkit: 'composio-notion',
+          description: 'Notion',
+          has_active_connection: false,
+          status_message: 'composio-notion is not connected. Call LOCAL_NOTIS_AUTHENTIFY.',
+        },
+      ],
+      tool_schemas: {},
+      session: { id: 'session-1' },
+    }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'tools', 'toolkits'],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'COMPOSIO_SEARCH_TOOLS');
+    assert.equal(requestBody.arguments.queries[0].use_case, 'List available toolkit namespaces and connection statuses');
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.data.toolkits.map((toolkit) => toolkit.id), [
+      'composio-todoist',
+      'composio-notion',
+    ]);
+    assert.equal(payload.data.toolkits[0].has_active_connection, true);
+    assert.equal(payload.data.toolkits[1].has_active_connection, false);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools search returns full canonical discovery payload', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      error: null,
+      results: [
+        {
+          index: 1,
+          use_case: 'create a Todoist task',
+          primary_tool_slugs: ['composio-todoist-create_task'],
+          related_tool_slugs: [],
+          toolkits: ['composio-todoist'],
+          execution_guidance: 'Use the canonical tool.',
+        },
+      ],
+      toolkit_connection_statuses: [
+        {
+          toolkit: 'composio-todoist',
+          description: 'Todoist',
+          has_active_connection: true,
+          status_message: 'Connected',
+        },
+      ],
+      tool_schemas: {
+        'composio-todoist-create_task': {
+          toolkit: 'composio-todoist',
+          description: 'Create a Todoist task',
+          input_schema: { type: 'object', properties: { content: { type: 'string' } } },
+        },
+      },
+      session: { id: 'session-2' },
+    }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'tools', 'search', 'create a Todoist task'],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'COMPOSIO_SEARCH_TOOLS');
+    assert.equal(requestBody.arguments.queries[0].use_case, 'create a Todoist task');
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.results[0].primary_tool_slugs[0], 'composio-todoist-create_task');
+    assert.equal(payload.data.toolkit_connection_statuses[0].toolkit, 'composio-todoist');
+    assert.equal(
+      payload.data.tool_schemas['composio-todoist-create_task'].input_schema.properties.content.type,
+      'string',
+    );
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools describe fetches an exact canonical schema slug', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      tool_schemas: {
+        'composio-notion-create_notion_page': {
+          toolkit: 'composio-notion',
+          description: 'Create a Notion page',
+          input_schema: { type: 'object', properties: { title: { type: 'string' } } },
+          hasFullSchema: true,
+        },
+      },
+      session: { id: 'session-schema' },
+    }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'describe',
+        'composio-notion-create_notion_page',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'COMPOSIO_GET_TOOL_SCHEMAS');
+    assert.deepEqual(requestBody.arguments.tool_slugs, ['composio-notion-create_notion_page']);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.tool.name, 'composio-notion-create_notion_page');
+    assert.equal(payload.data.tool.parameters.properties.title.type, 'string');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('tools exec --get-schema fetches an exact canonical schema slug', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      tool_schemas: {
+        LOCAL_NOTIS_DATABASE_QUERY: {
+          toolkit: 'notis',
+          description: 'Query native databases',
+          input_schema: { type: 'object', properties: { database_slug: { type: 'string' } } },
+          hasFullSchema: true,
+        },
+      },
+    }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'exec',
+        'notis-query',
+        '--get-schema',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'COMPOSIO_GET_TOOL_SCHEMAS');
+    assert.deepEqual(requestBody.arguments.tool_slugs, ['LOCAL_NOTIS_DATABASE_QUERY']);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.tool.name, 'LOCAL_NOTIS_DATABASE_QUERY');
+    assert.equal(payload.data.tool.parameters.properties.database_slug.type, 'string');
+    assert.equal(payload.data.tool.schema_available, true);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('describe tools link is registered', () => {
+  const result = runCli(['describe', 'tools', 'link', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'tools link');
+  assert.equal(payload.data.spec.backend_call.name, 'LOCAL_NOTIS_AUTHENTIFY');
+  assert.equal(payload.data.spec.mutates, true);
+  assert.equal(payload.data.spec.require_auth, true);
+  const optionFlags = (payload.data.spec.args_schema.options || []).map((option) => option.flags);
+  assert.ok(optionFlags.includes('--reconnect'));
+  assert.ok(optionFlags.some((flags) => flags.startsWith('--connection-id')));
+  assert.ok(optionFlags.some((flags) => flags.startsWith('--credentials')));
+});
+
+test('tools link reconnects through LOCAL_NOTIS_AUTHENTIFY with credentials from stdin', async () => {
+  let requestBody = null;
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'success',
+      auth_type: 'basic',
+      toolkit: 'composio-dataforseo',
+      reconnected: true,
+      replaced_connection_id: 'conn-old',
+      connection_id: 'conn-new',
+      message: 'Authentication completed successfully for composio-dataforseo.',
+    }));
+  });
+
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const credentials = { username: 'fake-user', password: 'fake-secret' };
+
+  try {
+    const result = await runCliWithInputAsync(
+      [
+        '--json',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'tools',
+        'link',
+        'dataforseo',
+        '--reconnect',
+        '--credentials',
+        '-',
+      ],
+      JSON.stringify(credentials),
+      { NOTIS_JWT: makeJwt('user-123') },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_AUTHENTIFY');
+    assert.deepEqual(requestBody.arguments, {
+      toolkit: 'dataforseo',
+      reconnect: true,
+      credentials,
+    });
+    assert.equal(result.stdout.includes('fake-secret'), false);
+    assert.equal(result.stderr.includes('fake-secret'), false);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.reconnected, true);
+    assert.equal(payload.data.connection_id, 'conn-new');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('browser OAuth login is registered as a first-class command', () => {
+  const result = runCli(['describe', 'login', '--json']);
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.data.spec.command_path.join(' '), 'login');
+  assert.equal(payload.data.spec.backend_call.name, 'authorization_code+pkce');
+});
+
+test('start preserves browser OAuth failures when no email fallback exists', async () => {
+  const server = createHttpServer((_req, res) => {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'oauth_temporarily_unavailable',
+      error_description: 'OAuth metadata is temporarily unavailable.',
+    }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-start-oauth-error-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: { default: { api_base: apiBase } },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--api-base', apiBase, 'start'],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.notEqual(result.status, 0);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.error.code, 'oauth_temporarily_unavailable');
+    assert.equal(payload.error.message, 'OAuth metadata is temporarily unavailable.');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('logout reports OAuth disconnection without hiding retained Desktop auth', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-logout-desktop-'));
+  const configFile = join(configHome, 'config.json');
+  const desktopJwt = makeJwt('desktop-user');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: 'https://api.notis.ai',
+        jwt: desktopJwt,
+        access_expires_at: 4102444800,
+        oauth_access_token: makeJwt('oauth-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+
+  const result = runCli(
+    ['logout', '--json'],
+    { NOTIS_CLI_CONFIG_FILE: configFile },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.data.oauth_connected, false);
+  assert.equal('authenticated' in payload.data, false);
+  const stored = JSON.parse(readFileSync(configFile, 'utf-8'));
+  assert.equal(stored.profiles.default.jwt, desktopJwt);
+  assert.equal(stored.profiles.default.oauth_access_token, undefined);
+});
+
+test('doctor can report missing desktop auth without requiring auth first', () => {
+  const result = runCli(['doctor', '--json']);
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.checks.auth, 'missing');
+});
+
+test('start --brief-only refreshes an expired OAuth session instead of requiring a new grant', async () => {
+  let refreshCalls = 0;
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/oauth/token' && req.method === 'POST') {
+      refreshCalls += 1;
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf-8'));
+      assert.equal(form.get('grant_type'), 'refresh_token');
+      assert.equal(form.get('refresh_token'), 'refresh-token');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: makeJwt('oauth-user'),
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 900,
+        refresh_expires_in: 3600,
+        scope: 'notis:read',
+      }));
+      return;
+    }
+    if (req.url === '/signup/onboarding-brief' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ markdown: '# Refreshed session brief' }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-refresh-start-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: apiBase,
+        oauth_access_token: makeJwt('oauth-user', 1),
+        oauth_refresh_token: 'refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: 4102444800,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: apiBase,
+        oauth_scopes: ['notis:read'],
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', apiBase, 'start', '--brief-only'],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.authenticated, true);
+    assert.equal(payload.data.brief, '# Refreshed session brief');
+    assert.equal(refreshCalls, 1);
+    const stored = JSON.parse(readFileSync(configFile, 'utf-8'));
+    assert.equal(stored.profiles.default.oauth_refresh_token, 'rotated-refresh-token');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('doctor reports refreshed OAuth and compares canonical desktop identity', async () => {
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/oauth/token' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: makeJwt('canonical-notis-user'),
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 900,
+        refresh_expires_in: 3600,
+        scope: 'notis:read',
+      }));
+      return;
+    }
+    if (req.url === '/health' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+    if (req.url === '/cli_tools' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ toolkit_connection_statuses: [] }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const desktopJwt = `${encode({ alg: 'none' })}.${encode({
+    sub: 'different-supabase-auth-user',
+    exp: 1,
+    app_metadata: { app_user_id: 'canonical-notis-user' },
+  })}.sig`;
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-refresh-doctor-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: apiBase,
+        jwt: desktopJwt,
+        access_expires_at: 1,
+        oauth_access_token: makeJwt('canonical-notis-user', 1),
+        oauth_refresh_token: 'refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: 4102444800,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: apiBase,
+        oauth_scopes: ['notis:read'],
+        oauth_user_id: 'canonical-notis-user',
+      },
+    },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', apiBase, 'doctor'],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.checks.auth, 'configured');
+    assert.equal(payload.data.checks.identity, 'ok');
+    assert.equal(payload.data.checks.tool_roundtrip, 'ok');
+    assert.equal(
+      payload.hints.some((hint) => /expired|different accounts/i.test(hint.reason || '')),
+      false,
+    );
+    assert.ok(payload.data.oauth_access_expires_at > 1);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('doctor gives a cold connected-tool roundtrip the documented 90 second timeout', () => {
+  const runtime = { timeoutMs: 30_000, marker: 'preserved' };
+  const diagnosticRuntime = doctorToolRoundtripRuntime(runtime);
+
+  assert.equal(DOCTOR_TOOL_ROUNDTRIP_TIMEOUT_MS, 90_000);
+  assert.equal(diagnosticRuntime.timeoutMs, 90_000);
+  assert.equal(diagnosticRuntime.marker, 'preserved');
+  assert.equal(runtime.timeoutMs, 30_000);
+  assert.equal(doctorToolRoundtripRuntime({ timeoutMs: 120_000 }).timeoutMs, 120_000);
+});
+
+test('tools exec does not include --watch option', () => {
+  const result = runCli(['describe', 'tools', 'exec', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  const optionFlags = (payload.data.spec.args_schema.options || []).map((o) => o.flags);
+  assert.equal(optionFlags.some((f) => f.includes('--watch')), false);
+});
+
+test('tools exec accepts @file for --arguments', () => {
+  const result = runCli(['describe', 'tools', 'exec', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  const argDesc = payload.data.spec.args_schema.options.find((o) => o.flags.includes('--arguments'));
+  assert.ok(argDesc.description.includes('@file'), 'should mention @file in description');
+});
+
+test('tools exec gives image generation tools a long-running timeout floor', async () => {
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const payload = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+
+    assert.equal(payload.tool_name, 'COMPOSIO_MULTI_EXECUTE_TOOL');
+    assert.equal(payload.arguments.tools[0].tool_slug, 'LOCAL_NOTIS_GENERATE_IMAGE_OPENAI');
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success', media_urls: ['https://example.com/image.png'] }));
+  });
+
+  await new Promise((resolvePromise, rejectPromise) => {
+    server.once('error', rejectPromise);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', rejectPromise);
+      resolvePromise();
+    });
+  });
+
+  try {
+    const { port } = server.address();
+    const result = await runCliAsync(
+      [
+        '--timeout-ms',
+        '10',
+        '--json',
+        'tools',
+        'exec',
+        'LOCAL_NOTIS_GENERATE_IMAGE_OPENAI',
+        '--arguments',
+        '{"prompt":"banana"}',
+      ],
+      {
+        NOTIS_API_BASE: `http://127.0.0.1:${port}`,
+        NOTIS_JWT: makeJwt(),
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.status, 'success');
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => {
+        if (error) rejectPromise(error);
+        else resolvePromise();
+      });
+    });
+  }
+});
+
+
+test('describe apps dev is registered', () => {
+  const result = runCli(['describe', 'apps', 'dev', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.spec.command_path.join(' '), 'apps dev');
+  const flagTokens = (payload.data.spec.args_schema.options || []).map((o) => o.flags);
+  assert.ok(flagTokens.some((f) => f.startsWith('--port')));
+  assert.ok(!flagTokens.some((f) => f.startsWith('--portal-url')));
+  assert.ok(flagTokens.includes('--no-open'));
+  assert.equal(payload.data.spec.require_auth, true);
+});
+
+test.todo('apps dev describes the Raycast-style workflow and no preview-only local mode');
+
+
+test('deprecated app dev command surfaces are not registered', () => {
+  const commandPaths = COMMAND_SPECS.map((spec) => spec.command_path.join(' '));
+  assert.ok(!commandPaths.includes('run dev'));
+  assert.ok(!commandPaths.includes('apps preview'));
+});
+
+
+test('docs generator stays in sync with committed docs', () => {
+  const result = spawnSync('node', [docsScript, '--check'], {
+    cwd: cliRoot,
+    env: {
+      PATH: process.env.PATH,
+      HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
+    },
+    encoding: 'utf-8',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});

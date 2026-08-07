@@ -1,0 +1,186 @@
+/**
+ * Notis theme CSS variables.
+ *
+ * Import this in your app layout:
+ *
+ *   import '@notis/sdk/styles.css';
+ *
+ * The portal injects the live Notis theme variables at render time.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  [data-notis-app-root] {
+    color: hsl(var(--foreground));
+    display: block;
+    min-height: 100%;
+  }
+}
+
+@layer components {
+  .notis-app-shell {
+    @apply mx-auto w-full max-w-[var(--portal-page-max-width)] px-4 py-6 md:px-4 md:py-8;
+  }
+
+  .notis-app-surface {
+    @apply rounded-2xl border border-border bg-card text-card-foreground shadow-sm;
+  }
+
+  .notis-app-section {
+    @apply p-5 md:p-6;
+  }
+}
+
+/*
+ * Markdown value-type rendering (see the `Markdown` component). Plain CSS on
+ * theme variables so it works inside the portal shadow root and the dev
+ * harness without depending on the app's Tailwind content scan.
+ */
+.notis-markdown {
+  font-size: 14px;
+  line-height: 1.65;
+  color: hsl(var(--foreground));
+  overflow-wrap: break-word;
+}
+
+.notis-markdown--sm {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.notis-markdown > :first-child {
+  margin-top: 0;
+}
+
+.notis-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.notis-markdown p {
+  margin: 0.625em 0;
+}
+
+.notis-markdown h1,
+.notis-markdown h2,
+.notis-markdown h3,
+.notis-markdown h4,
+.notis-markdown h5,
+.notis-markdown h6 {
+  margin: 1.25em 0 0.5em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: hsl(var(--foreground));
+}
+
+.notis-markdown h1 { font-size: 1.5em; }
+.notis-markdown h2 { font-size: 1.25em; }
+.notis-markdown h3 { font-size: 1.1em; }
+.notis-markdown h4,
+.notis-markdown h5,
+.notis-markdown h6 { font-size: 1em; }
+
+.notis-markdown ul,
+.notis-markdown ol {
+  margin: 0.625em 0;
+  padding-left: 1.5em;
+}
+
+.notis-markdown ul { list-style-type: disc; }
+.notis-markdown ol { list-style-type: decimal; }
+
+.notis-markdown li {
+  margin: 0.25em 0;
+}
+
+.notis-markdown li > ul,
+.notis-markdown li > ol {
+  margin: 0.25em 0;
+}
+
+.notis-markdown ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.375em;
+}
+
+.notis-markdown li.task-list-item input[type='checkbox'] {
+  margin-right: 0.5em;
+  accent-color: hsl(var(--primary));
+}
+
+.notis-markdown blockquote {
+  margin: 0.75em 0;
+  padding: 0.125em 0 0.125em 0.875em;
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+
+.notis-markdown a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.35);
+  text-underline-offset: 2px;
+}
+
+.notis-markdown a:hover {
+  text-decoration-color: hsl(var(--primary));
+}
+
+.notis-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  padding: 0.125em 0.375em;
+  border-radius: 0.25rem;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.notis-markdown pre {
+  margin: 0.75em 0;
+  padding: 0.75em 1em;
+  border-radius: 0.5rem;
+  background: hsl(var(--muted));
+  overflow-x: auto;
+}
+
+.notis-markdown pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.875em;
+}
+
+.notis-markdown hr {
+  margin: 1.25em 0;
+  border: 0;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.notis-markdown img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+
+.notis-markdown table {
+  margin: 0.75em 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.notis-markdown th,
+.notis-markdown td {
+  padding: 0.375em 0.75em;
+  border: 1px solid hsl(var(--border));
+  text-align: left;
+}
+
+.notis-markdown th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}

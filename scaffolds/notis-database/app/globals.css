@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * The portal mounts the app inside [data-notis-app-root] (display: block,
+ * min-height: 100% from @notis/sdk/styles.css). Width 100% ensures the
+ * two-pane layout can stretch to the full content area; height stays on
+ * the SDK's min-height: 100% default so the page can grow with content.
+ * The page itself uses `h-screen` to guarantee a fixed viewport height
+ * for the two-pane divider and centered empty states.
+ */
+[data-notis-app-root] {
+  width: 100%;
+}
+
+/*
+ * Dev-preview fallback tokens. Active only when the dev entrypoint sets the
+ * data-dev-preview attribute. Production bundle runs inside the portal
+ * shadow root where the host injects real theme tokens, so this rule is
+ * scoped narrowly enough to never collide with portal-provided values.
+ */
+[data-dev-preview] {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 4%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 4%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 0 0% 9%;
+  --muted: 240 5% 96%;
+  --muted-foreground: 240 4% 46%;
+  --accent: 240 5% 96%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 6% 90%;
+  --input: 240 6% 90%;
+  --ring: 0 0% 4%;
+  --radius: 0.5rem;
+}

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Notis App Harness</title>
+  <script>
+    const harnessTheme = new URLSearchParams(window.location.search).get('theme') === 'dark' ? 'dark' : 'light';
+    document.documentElement.classList.toggle('dark', harnessTheme === 'dark');
+    document.documentElement.dataset.theme = harnessTheme;
+  </script>
+  <link rel="stylesheet" href="./bundle/app.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@{{REACT_VERSION}}",
+      "react-dom": "https://esm.sh/react-dom@{{REACT_VERSION}}",
+      "react/jsx-runtime": "https://esm.sh/react@{{REACT_VERSION}}/jsx-runtime",
+      "react-dom/client": "https://esm.sh/react-dom@{{REACT_VERSION}}/client"
+    }
+  }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <style>
+    /*
+     * Portal-parity theme tokens. In production the portal copies its computed
+     * :root custom properties onto the app root, so app CSS written against
+     * hsl(var(--token)) resolves to the real portal palette. The harness mirrors
+     * the portal's light theme here so dev renders and listing screenshots look
+     * exactly like the app inside the portal. Keep in sync with
+     * portal/src/app/globals.css (:root).
+     */
+    :root {
+      color-scheme: light;
+      --background: 0 0% 100%;
+      --foreground: 222.2 84% 4.9%;
+      --card: 0 0% 100%;
+      --card-foreground: 222.2 84% 4.9%;
+      --popover: 0 0% 100%;
+      --popover-foreground: 222.2 84% 4.9%;
+      --primary: 222.2 47.4% 11.2%;
+      --primary-foreground: 210 40% 98%;
+      --secondary: 210 40% 96.1%;
+      --secondary-foreground: 222.2 47.4% 11.2%;
+      --muted: 210 40% 96.1%;
+      --muted-foreground: 0 0% 46.9%;
+      --accent: 210 40% 96.1%;
+      --accent-foreground: 222.2 47.4% 11.2%;
+      --destructive: 0 84.2% 60.2%;
+      --destructive-foreground: 210 40% 98%;
+      --border: 214.3 31.8% 91.4%;
+      --input: 214.3 31.8% 91.4%;
+      --ring: 222.2 84% 4.9%;
+      --radius: 0.5rem;
+      --chart-1: 210 100% 49%;
+      --chart-2: 173 58% 39%;
+      --chart-3: 197 37% 24%;
+      --chart-4: 43 74% 66%;
+      --chart-5: 27 87% 67%;
+    }
+    :root.dark {
+      color-scheme: dark;
+      --background: 0 0% 13%;
+      --foreground: 210 40% 98%;
+      --card: 0 0% 13%;
+      --card-foreground: 210 40% 98%;
+      --popover: 0 0% 13%;
+      --popover-foreground: 210 40% 98%;
+      --primary: 210 40% 98%;
+      --primary-foreground: 222.2 47.4% 11.2%;
+      --secondary: 0 0% 18%;
+      --secondary-foreground: 210 40% 98%;
+      --muted: 0 0% 18%;
+      --muted-foreground: 0 0% 65.1%;
+      --accent: 0 0% 18%;
+      --accent-foreground: 210 40% 98%;
+      --destructive: 0 84.2% 60.2%;
+      --destructive-foreground: 210 40% 98%;
+      --border: 0 0% 23.5%;
+      --input: 0 0% 23.5%;
+      --ring: 212.7 26.8% 83.9%;
+      --chart-1: 220 70% 50%;
+      --chart-2: 160 60% 45%;
+      --chart-3: 30 80% 55%;
+      --chart-4: 280 65% 60%;
+      --chart-5: 340 75% 55%;
+    }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      -webkit-font-smoothing: antialiased;
+    }
+    #harness-status { position: fixed; top: 0; left: 0; right: 0; padding: 4px 8px; font-size: 11px; background: #111; color: #0f0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; z-index: 9999; }
+    #root { padding-top: 24px; min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="harness-status">harness: booting</div>
+  <div id="root"></div>
+  <script type="module">
+    const routeExport = {{ROUTE_EXPORT}};
+    const descriptor = {{RUNTIME_DESCRIPTOR}};
+    const mode = {{MODE}};
+    const apiBase = {{API_BASE}};
+    const jwt = {{JWT}};
+    const fixtures = {{FIXTURES}};
+
+    /**
+     * Resolves the canned response for one tool call.
+     *
+     * A plain `"TOOL_NAME"` key answers every call to that tool. An app that
+     * reaches several databases through a single tool needs to vary the
+     * payload per call, so a key may also be scoped to one argument with
+     * `"TOOL_NAME#arg=value"` — for example
+     * `"LOCAL_NOTIS_DATABASE_QUERY#database_slug=notes"`. Scoped keys are
+     * checked first; the unscoped key stays the fallback.
+     */
+    function lookupToolFixture(name, args) {
+      const tools = fixtures && fixtures.tools;
+      if (!tools) return undefined;
+      for (const key of Object.keys(tools)) {
+        const sep = key.indexOf('#');
+        if (sep === -1 || key.slice(0, sep) !== name) continue;
+        const scope = key.slice(sep + 1);
+        const eq = scope.indexOf('=');
+        if (eq === -1) continue;
+        if (String(args[scope.slice(0, eq)]) === scope.slice(eq + 1)) {
+          return tools[key];
+        }
+      }
+      return Object.prototype.hasOwnProperty.call(tools, name) ? tools[name] : undefined;
+    }
+
+    const status = document.getElementById('harness-status');
+    const setStatus = (msg, color = '#0f0') => {
+      status.textContent = `harness: ${msg}`;
+      status.style.color = color;
+    };
+
+    window.__harness = {
+      errors: [],
+      runtimeCalls: [],
+      renderStarted: false,
+      mounted: false,
+      mode,
+      route: descriptor.route && descriptor.route.slug,
+      scenario: descriptor.context && descriptor.context.screenshotScenario,
+    };
+
+    window.addEventListener('error', (event) => {
+      window.__harness.errors.push({
+        type: 'window.error',
+        message: event.message,
+        stack: event.error && event.error.stack,
+      });
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      window.__harness.errors.push({
+        type: 'unhandledrejection',
+        reason: String((event.reason && event.reason.stack) || event.reason),
+      });
+    });
+
+    function record(op, args) {
+      window.__harness.runtimeCalls.push({ op, args });
+    }
+
+    async function readJsonOrSnippet(response) {
+      const text = await response.text().catch(() => '');
+      if (!text) return { payload: null, snippet: null };
+      try {
+        return { payload: JSON.parse(text), snippet: null };
+      } catch {
+        const trimmed = text.trim();
+        return { payload: null, snippet: trimmed.length > 120 ? `${trimmed.slice(0, 120)}...` : trimmed };
+      }
+    }
+
+    async function runtimeQuery(body) {
+      if (!apiBase || !jwt || !descriptor.app || !descriptor.app.id) {
+        throw new Error('live harness mode requires apiBase, jwt, and app id');
+      }
+      const response = await fetch(`${String(apiBase).replace(/\/$/, '')}/portal_views/runtime_query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({
+          app_id: descriptor.app.id,
+          route_slug: descriptor.route && descriptor.route.slug,
+          ...body,
+        }),
+      });
+      const { payload, snippet } = await readJsonOrSnippet(response);
+      if (!response.ok) {
+        const message = (payload && (payload.error || payload.message)) || snippet || `status ${response.status}`;
+        throw new Error(`Runtime request failed: ${message}`);
+      }
+      if (!payload) {
+        throw new Error(snippet ? `Runtime response was not JSON: ${snippet}` : 'Runtime response was empty');
+      }
+      if (payload.status === 'error' || payload.error) {
+        throw new Error(payload.message || payload.error || 'Runtime request failed');
+      }
+      return payload;
+    }
+
+    function stubRuntime() {
+      return {
+        app: descriptor.app,
+        route: descriptor.route,
+        context: descriptor.context || {},
+        navigate: (args) => record('navigate', args),
+        registerTopBarSearch: () => {},
+        setTopBarSearchValue: () => {},
+        setTopBarSearchLoading: () => {},
+        listTools: async () => {
+          record('listTools', {});
+          return descriptor.tools || [];
+        },
+        callTool: async (name, args) => {
+          record('callTool', { name, arguments: args || {} });
+          const fixture = lookupToolFixture(name, args || {});
+          if (fixture !== undefined) {
+            return structuredClone(fixture);
+          }
+          return { ok: true, result: null };
+        },
+        request: async (path, options) => {
+          record('request', { path, options });
+          if (fixtures && fixtures.requests && Object.prototype.hasOwnProperty.call(fixtures.requests, path)) {
+            return structuredClone(fixtures.requests[path]);
+          }
+          return null;
+        },
+      };
+    }
+
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    async function applyScenarioActions() {
+      const actions = fixtures && fixtures.scenario && Array.isArray(fixtures.scenario.actions)
+        ? fixtures.scenario.actions
+        : [];
+      for (const action of actions) {
+        if (action && action.type === 'wait') {
+          await delay(Math.max(0, Number(action.ms) || 0));
+          continue;
+        }
+        if (action && action.type === 'click' && typeof action.selector === 'string') {
+          const deadline = Date.now() + 5000;
+          let element = null;
+          while (!element && Date.now() < deadline) {
+            element = document.querySelector(action.selector);
+            if (!element) await delay(50);
+          }
+          if (!element || typeof element.click !== 'function') {
+            throw new Error(`Screenshot scenario could not click ${action.selector}`);
+          }
+          element.click();
+          await delay(Number(action.settle_ms) || 350);
+        }
+      }
+    }
+
+    function liveRuntime() {
+      return {
+        ...stubRuntime(),
+        listTools: async () => {
+          record('listTools', {});
+          const result = await runtimeQuery({ method: 'tools/list' });
+          return result.tools || [];
+        },
+        callTool: async (name, args) => {
+          record('callTool', { name, arguments: args || {} });
+          return runtimeQuery({ method: 'tools/call', name, arguments: args || {} });
+        },
+        request: async (path, options) => {
+          record('request', { path, options });
+          const response = await fetch(`${String(apiBase).replace(/\/$/, '')}${path}`, {
+            method: (options && options.method) || 'GET',
+            headers: {
+              Authorization: `Bearer ${jwt}`,
+              ...((options && options.body) ? { 'Content-Type': 'application/json' } : {}),
+              ...((options && options.headers) || {}),
+            },
+            body: options && options.body ? JSON.stringify(options.body) : undefined,
+          });
+          const { payload, snippet } = await readJsonOrSnippet(response);
+          if (!response.ok) {
+            throw new Error((payload && (payload.error || payload.message)) || snippet || `Request failed with status ${response.status}`);
+          }
+          return payload;
+        },
+      };
+    }
+
+    try {
+      setStatus('loading react');
+      const React = await import('react');
+      const { createRoot } = await import('react-dom/client');
+
+      setStatus('loading bundle');
+      const bundle = await import('./bundle/app.js');
+
+      setStatus('binding runtime context');
+      const RuntimeContext = globalThis[Symbol.for('notis.sdk.runtime_context')];
+      if (!RuntimeContext) {
+        throw new Error('runtime context Symbol not initialized by bundle');
+      }
+
+      const Page = bundle[routeExport];
+      if (!Page) {
+        throw new Error(`bundle has no ${routeExport} export`);
+      }
+      const Shell = bundle.__AppShell;
+      const runtime = mode === 'live' ? liveRuntime() : stubRuntime();
+      const Root = () =>
+        React.createElement(
+          RuntimeContext.Provider,
+          { value: runtime },
+          Shell
+            ? React.createElement(Shell, null, React.createElement(Page, null))
+            : React.createElement(Page, null),
+        );
+
+      setStatus('mounting');
+      window.__harness.renderStarted = true;
+      createRoot(document.getElementById('root')).render(React.createElement(Root));
+
+      requestAnimationFrame(() => requestAnimationFrame(async () => {
+        try {
+          await delay(500);
+          await applyScenarioActions();
+          window.__harness.mounted = true;
+          const errors = window.__harness.errors.length;
+          const calls = window.__harness.runtimeCalls.length;
+          setStatus(`mounted (errors=${errors}, runtimeCalls=${calls})`, errors ? '#f55' : '#0f0');
+        } catch (error) {
+          window.__harness.errors.push({
+            type: 'scenario',
+            message: error && error.message ? error.message : String(error),
+          });
+          setStatus(`scenario failed: ${error && error.message ? error.message : String(error)}`, '#f55');
+        }
+      }));
+    } catch (error) {
+      window.__harness.errors.push({
+        type: 'boot',
+        message: error && error.message ? error.message : String(error),
+        stack: error && error.stack,
+      });
+      setStatus(`boot failed: ${error && error.message ? error.message : String(error)}`, '#f55');
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "name": "@notis_ai/cli",
+  "version": "0.2.0",
+  "description": "Agent-first Notis CLI for apps and generic tool execution",
+  "type": "module",
+  "bin": {
+    "notis": "bin/notis.js"
+  },
+  "files": [
+    "bin/",
+    "config/",
+    "dist/",
+    "src/",
+    "skills/",
+    "template/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node ./scripts/build-scaffolds.js",
+    "docs:generate": "node ./scripts/generate-docs.js",
+    "docs:check": "node ./scripts/generate-docs.js --check",
+    "prepack": "npm run build",
+    "pretest": "npm run build",
+    "release:prepare": "npm run build && node ./scripts/prepare-publish.js --apply",
+    "cli:set-mode": "node ./scripts/set-cli-mode.js",
+    "smoke": "node ./scripts/smoke-package.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "sharp": "^0.34.5"
+  },
+  "keywords": [
+    "notis",
+    "cli",
+    "ai",
+    "agent-skills"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

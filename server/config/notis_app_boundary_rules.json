@@ -1,0 +1,50 @@
+{
+  "javascript": [
+    {
+      "pattern": "window\\.__NOTIS_RUNTIME__",
+      "message": "window.__NOTIS_RUNTIME__ is forbidden; rely on the portal-injected NotisProvider runtime."
+    },
+    {
+      "pattern": "document\\.(?:body|head|documentElement)\\b",
+      "message": "document.body, document.head, and document.documentElement are forbidden; apps must stay inside the app surface."
+    },
+    {
+      "pattern": "document\\.(?:querySelector|querySelectorAll|getElementById|getElementsByClassName|getElementsByTagName)\\s*\\(\\s*(['\"`])[^\\n]*\\[data-notis-",
+      "message": "querying portal-owned [data-notis-*] hooks is forbidden."
+    },
+    {
+      "pattern": "createPortal\\s*\\(",
+      "message": "React portals are unsupported in Notis apps until a shadow-safe overlay contract exists."
+    },
+    {
+      "pattern": "@radix-ui/react-portal",
+      "message": "@radix-ui/react-portal is unsupported in Notis apps until a shadow-safe overlay contract exists."
+    },
+    {
+      "pattern": "PortalPrimitive",
+      "message": "Radix portal primitives are unsupported in Notis apps until a shadow-safe overlay contract exists."
+    }
+  ],
+  "css": [
+    {
+      "pattern": ":root\\b",
+      "message": ":root selectors are forbidden; styles must stay inside the app surface."
+    },
+    {
+      "pattern": "(^|[\\s,>+~])html(?=[\\s.#[:{>+~,]|$)",
+      "message": "html selectors are forbidden; styles must stay inside the app surface."
+    },
+    {
+      "pattern": "(^|[\\s,>+~])body(?=[\\s.#[:{>+~,]|$)",
+      "message": "body selectors are forbidden; styles must stay inside the app surface."
+    },
+    {
+      "pattern": "\\[data-notis-(?!app-root\\b)[^\\]]*\\]",
+      "message": "portal-owned [data-notis-*] selectors are forbidden. Use [data-notis-app-root] only for the app surface itself."
+    },
+    {
+      "pattern": "\\[data-sidebar(?:=[^\\]]+)?\\]",
+      "message": "portal sidebar selectors are forbidden."
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "tools": {
+    "LOCAL_NOTIS_DATABASE_QUERY": {
+      "documents": [
+        {
+          "id": "journal-demo-1",
+          "title": "Journal — 2026-07-16",
+          "content_markdown": "",
+          "created_time": "2026-07-16T08:00:00.000Z",
+          "properties": {
+            "Name": { "type": "title", "title": [{ "type": "text", "text": { "content": "Journal — 2026-07-16" } }] },
+            "Date": { "type": "date", "date": { "start": "2026-07-16", "end": null, "timezone": null } },
+            "Morning Mood": { "type": "number", "number": 6 },
+            "Morning Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "rested" } }] },
+            "Morning Feeling": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Calm and a little excited about the demo this afternoon." } }] },
+            "Energy": { "type": "number", "number": 8 },
+            "Motivation": { "type": "number", "number": 9 },
+            "Gratitude 1": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "A slow coffee on the balcony before anyone was awake" } }] },
+            "Gratitude 2": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Camille laughing at my terrible pun last night" } }] },
+            "Gratitude 3": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "That my back finally feels normal again" } }] },
+            "Intention": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "One deep-work block on the launch page before opening messages." } }] },
+            "Affirmation": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "I am allowed to do one thing at a time." } }] }
+          }
+        },
+        {
+          "id": "journal-demo-2",
+          "title": "Journal — 2026-07-15",
+          "content_markdown": "Started the day convinced it was a write-off. By 16:00 the fix was shipped and the walk with Théo unknotted the roadmap question that has been bugging me for a week. Note to self: leave the house earlier.",
+          "created_time": "2026-07-15T08:00:00.000Z",
+          "properties": {
+            "Name": { "type": "title", "title": [{ "type": "text", "text": { "content": "Journal — 2026-07-15" } }] },
+            "Date": { "type": "date", "date": { "start": "2026-07-15", "end": null, "timezone": null } },
+            "Morning Mood": { "type": "number", "number": 4 },
+            "Morning Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "foggy" } }] },
+            "Morning Feeling": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Slept badly, brain still booting." } }] },
+            "Energy": { "type": "number", "number": 4 },
+            "Motivation": { "type": "number", "number": 6 },
+            "Gratitude 1": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Rain on the window while working" } }] },
+            "Gratitude 2": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "The boulangerie was still open at 19:30" } }] },
+            "Gratitude 3": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "A friend checking in for no reason" } }] },
+            "Intention": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Keep the day small: ship the fix, walk at lunch." } }] },
+            "Affirmation": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "I am steady even on slow days." } }] },
+            "Day Mood": { "type": "number", "number": 6 },
+            "Day Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "redeemed" } }] },
+            "Highlight": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "The afternoon walk turned into an hour of ideas with Théo." } }] },
+            "Lesson": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "A rough morning predicts nothing about the afternoon." } }] }
+          }
+        },
+        {
+          "id": "journal-demo-3",
+          "title": "Journal — 2026-07-14",
+          "content_markdown": "",
+          "created_time": "2026-07-14T08:00:00.000Z",
+          "properties": {
+            "Name": { "type": "title", "title": [{ "type": "text", "text": { "content": "Journal — 2026-07-14" } }] },
+            "Date": { "type": "date", "date": { "start": "2026-07-14", "end": null, "timezone": null } },
+            "Morning Mood": { "type": "number", "number": 7 },
+            "Morning Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "sunny" } }] },
+            "Morning Feeling": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Woke up before the alarm, ready to go." } }] },
+            "Energy": { "type": "number", "number": 9 },
+            "Motivation": { "type": "number", "number": 9 },
+            "Gratitude 1": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Eight hours of sleep, finally" } }] },
+            "Gratitude 2": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "The new espresso beans" } }] },
+            "Gratitude 3": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "A clear calendar until noon" } }] },
+            "Intention": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Finish the investor update and actually send it." } }] },
+            "Affirmation": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "I am building something worth the patience it takes." } }] },
+            "Day Mood": { "type": "number", "number": 7 },
+            "Day Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "unstoppable" } }] },
+            "Highlight": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Sent the update and got two warm replies within the hour." } }] },
+            "Lesson": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Momentum compounds when I front-load the scary task." } }] }
+          }
+        },
+        {
+          "id": "journal-demo-4",
+          "title": "Journal — 2026-07-13",
+          "content_markdown": "",
+          "created_time": "2026-07-13T08:00:00.000Z",
+          "properties": {
+            "Name": { "type": "title", "title": [{ "type": "text", "text": { "content": "Journal — 2026-07-13" } }] },
+            "Date": { "type": "date", "date": { "start": "2026-07-13", "end": null, "timezone": null } },
+            "Morning Mood": { "type": "number", "number": 3 },
+            "Morning Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "heavy" } }] },
+            "Morning Feeling": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Anxious about the support backlog." } }] },
+            "Energy": { "type": "number", "number": 3 },
+            "Motivation": { "type": "number", "number": 4 },
+            "Gratitude 1": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Tea instead of a third coffee" } }] },
+            "Gratitude 2": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "The cat sleeping on my desk all morning" } }] },
+            "Intention": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Answer ten tickets, then stop counting." } }] },
+            "Affirmation": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "I am more than my inbox." } }] },
+            "Day Mood": { "type": "number", "number": 4 },
+            "Day Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "okay" } }] },
+            "Highlight": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Closed the hardest ticket with an actual fix, not a workaround." } }] },
+            "Lesson": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Naming the dread out loud makes it about half as loud." } }] }
+          }
+        },
+        {
+          "id": "journal-demo-5",
+          "title": "Journal — 2026-07-12",
+          "content_markdown": "Quiet, focused day. The kind that does not make stories but makes progress.",
+          "created_time": "2026-07-12T08:00:00.000Z",
+          "properties": {
+            "Name": { "type": "title", "title": [{ "type": "text", "text": { "content": "Journal — 2026-07-12" } }] },
+            "Date": { "type": "date", "date": { "start": "2026-07-12", "end": null, "timezone": null } },
+            "Morning Mood": { "type": "number", "number": 5 },
+            "Morning Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "curious" } }] },
+            "Morning Feeling": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Mildly under-slept but interested in the day." } }] },
+            "Energy": { "type": "number", "number": 6 },
+            "Motivation": { "type": "number", "number": 7 },
+            "Gratitude 1": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Morning light in the kitchen" } }] },
+            "Gratitude 2": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "A podcast that made the dishes disappear" } }] },
+            "Gratitude 3": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Knowing exactly what today is for" } }] },
+            "Intention": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "Prototype the stats page before lunch." } }] },
+            "Affirmation": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "I am learning fast enough." } }] },
+            "Day Mood": { "type": "number", "number": 6 },
+            "Day Mood Word": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "satisfying" } }] },
+            "Highlight": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "The prototype clicked on the third try." } }] },
+            "Lesson": { "type": "rich_text", "rich_text": [{ "type": "text", "text": { "content": "The second draft is where the good ideas live." } }] }
+          }
+        }
+      ]
+    }
+  },
+  "scenarios": {
+    "journal-overview": { "actions": [] },
+    "journal-evening": {
+      "actions": [
+        { "type": "click", "selector": "[data-rail-row='2026-07-15']", "settle_ms": 700 }
+      ]
+    },
+    "journal-stats": { "actions": [] }
+  }
+}
