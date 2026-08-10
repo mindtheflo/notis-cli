@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -279,32 +280,65 @@ test('profile inspection reports the OAuth-owned endpoint over stale legacy rout
   assert.equal(listed[0].api_base, 'https://api.notis.ai');
 });
 
+function readLockConstants(source) {
+  return Object.fromEntries(
+    [...source.matchAll(/const (CONFIG_WRITE_LOCK_[A-Z_]+) = ([\d_]+);/g)]
+      .map(([, name, value]) => [name, Number(value.replaceAll('_', ''))]),
+  );
+}
+
 // Independent `notis` processes serialize writes to ~/.notis/config.json only
 // through a lock directory on disk, so the timings have to stay internally
 // consistent for the reclaim path to be safe.
 test('the config write lock keeps staleness inside its acquisition window', () => {
-  const readLockConstants = (source) => Object.fromEntries(
-    [...source.matchAll(/const (CONFIG_WRITE_LOCK_[A-Z_]+) = ([\d_]+);/g)]
-      .map(([, name, value]) => [name, Number(value.replaceAll('_', ''))]),
-  );
   const cliSource = readFileSync(
     new URL('../src/runtime/profiles.js', import.meta.url),
     'utf-8',
   );
-  const desktopSource = readFileSync(
-    new URL('../../../electron/src/desktop-session.ts', import.meta.url),
-    'utf-8',
-  );
 
   const cliConstants = readLockConstants(cliSource);
-  const desktopConstants = readLockConstants(desktopSource);
   // A rename must fail here rather than silently compare {} to {}.
   assert.equal(Object.keys(cliConstants).length, 3);
-  assert.deepEqual(desktopConstants, cliConstants);
   assert.ok(cliSource.includes('`${configFile}.write-lock`'));
-  assert.ok(desktopSource.includes('`${configFile}.write-lock`'));
 
   // A stale lock is only reclaimable while a waiter is still inside its
   // acquisition window, so staleness must stay below the acquire timeout.
   assert.ok(cliConstants.CONFIG_WRITE_LOCK_STALE_MS < cliConstants.CONFIG_WRITE_LOCK_TIMEOUT_MS);
+});
+
+// Notis Desktop reimplements this lock independently, to scrub the credential
+// older builds wrote into the CLI's config. The two packages coordinate only
+// through the lock directory on disk, so nothing but this test keeps them
+// agreeing on it.
+//
+// This suite is published standalone to the public notis-cli mirror, which
+// copies packages/cli and deliberately not electron/. Reading the counterpart
+// unconditionally made every mirror CI run fail on ENOENT. Skipping when the
+// file is absent would be worse: a rename in the monorepo would silently
+// retire the check. So decide from the checkout, not from the file — inside
+// the monorepo the counterpart must exist.
+test('the desktop config write lock has not drifted from the CLI one', () => {
+  const electronPackage = new URL('../../../electron/package.json', import.meta.url);
+  const desktopSessionPath = new URL('../../../electron/src/desktop-session.ts', import.meta.url);
+  if (!existsSync(electronPackage)) {
+    // Standalone mirror: there is no second implementation to drift from.
+    return;
+  }
+
+  assert.ok(
+    existsSync(desktopSessionPath),
+    'electron/src/desktop-session.ts is missing: if it moved, re-point this drift check at its new home rather than deleting it',
+  );
+
+  const cliSource = readFileSync(
+    new URL('../src/runtime/profiles.js', import.meta.url),
+    'utf-8',
+  );
+  const desktopSource = readFileSync(desktopSessionPath, 'utf-8');
+  const cliConstants = readLockConstants(cliSource);
+  const desktopConstants = readLockConstants(desktopSource);
+
+  assert.equal(Object.keys(desktopConstants).length, 3);
+  assert.deepEqual(desktopConstants, cliConstants);
+  assert.ok(desktopSource.includes('`${configFile}.write-lock`'));
 });
