@@ -239,11 +239,7 @@ export function resolveDevelopmentDesktopScheme(env = process.env, worktreeRunti
 }
 
 export function resolveDevelopmentDesktopAppName(runtime = {}) {
-  const explicit = String(
-    runtime.desktopAppName
-    || runtime.worktreeRuntime?.desktop_app_name
-    || '',
-  ).trim();
+  const explicit = String(runtime.worktreeRuntime?.desktop_app_name || '').trim();
   if (explicit) {
     return explicit;
   }
@@ -798,7 +794,7 @@ async function appsDevHandler(ctx) {
   const mode = getCliMode();
   const identity = decodeJwtSub(ctx.runtime.jwt);
   if (!identity) {
-    throw usageError('Could not determine the current user from the CLI auth token. Open the Notis desktop app, sign in, and retry.');
+    throw usageError('Could not determine the current user from the CLI credential. Run notis login and retry.');
   }
   const apiBase = String(ctx.runtime.apiBase || '').replace(/\/$/, '');
   const sessionsFilePath = getAppDevSessionsFile(
@@ -1107,7 +1103,7 @@ async function appsVerifyHandler(ctx) {
       throw usageError('Live verify mode requires a current OAuth grant. Run `notis login` and retry.');
     }
     if (!ctx.runtime.jwt) {
-      throw usageError('Live verify mode requires CLI auth. Open the Notis desktop app, sign in, and retry.');
+      throw usageError('Live verify mode requires CLI auth. Run notis login and retry.');
     }
     linkedState = readLinkedState(projectDir);
     if (!linkedState?.app_id) {
@@ -1327,7 +1323,7 @@ async function appsScreenshotHandler(ctx) {
       throw usageError('Live mode requires a current OAuth grant. Run `notis login` and retry.');
     }
     if (!ctx.runtime.jwt) {
-      throw usageError('Live mode requires CLI auth. Open the Notis desktop app, sign in, and retry.');
+      throw usageError('Live mode requires CLI auth. Run notis login and retry.');
     }
     linkedState = readLinkedState(projectDir);
     if (!linkedState?.app_id) {

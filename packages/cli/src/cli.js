@@ -69,7 +69,28 @@ function ensureParentCommand(program, parentMap, parentPath) {
 }
 
 function buildRuntime(globalOptions, spec) {
-  const runtime = resolveRuntimeProfile(globalOptions, { requireAuth: spec.require_auth !== false });
+  const localBackendTypes = new Set(['local', 'local_config', 'local_registry']);
+  const commandName = spec.command_path.join(' ');
+  const liveAppHarness = (
+    commandName === 'apps verify' || commandName === 'apps screenshot'
+  ) && globalOptions.mode === 'live';
+  const runtime = resolveRuntimeProfile(globalOptions, {
+    requireAuth: spec.require_auth !== false,
+    allowUnknownProfile: spec.allow_unknown_profile === true,
+    allowUnavailableWorktree:
+      localBackendTypes.has(spec.backend_call?.type) && !liveAppHarness,
+  });
+  // A stopped local-only worktree may keep executing commands whose backend is
+  // entirely local, but it must not carry a shared live credential into those
+  // handlers or their post-command telemetry. Naming --profile explicitly is
+  // the deliberate escape hatch from the worktree boundary.
+  if (runtime.worktreeRuntimeUnavailable && runtime.profileSource !== 'explicit') {
+    runtime.jwt = undefined;
+    runtime.credentialKind = undefined;
+    runtime.credentialSource = undefined;
+    runtime.oauthAccessToken = undefined;
+    runtime.oauthRefreshToken = undefined;
+  }
   return {
     ...runtime,
     cliVersion: CLI_VERSION,
@@ -86,6 +107,7 @@ function buildErrorRuntime(globalOptions) {
       ...resolveRuntimeProfile(globalOptions, {
         requireAuth: false,
         includeDebugEntitlementOverride: false,
+        allowUnknownProfile: true,
       }),
       cliVersion: CLI_VERSION,
       color: globalOptions.color !== false,
@@ -194,7 +216,10 @@ export function createProgram() {
     .option('--quiet', 'Suppress non-essential human output')
     .option('--verbose', 'Show extra human-readable diagnostics')
     .option('--no-color', 'Disable ANSI color output')
-    .option('--profile <name>', 'CLI profile name', 'default')
+    // No default value: commander cannot tell a default apart from an explicit
+    // flag, and a defaulted "default" here silently overrode every
+    // `notis profile use`, pinning all commands to the default profile.
+    .option('--profile <name>', 'CLI profile to run as (defaults to the active profile)')
     .option('--api-base <url>', 'Override the API base URL for this invocation')
     .option('--timeout-ms <n>', 'HTTP timeout in milliseconds')
     .option('--idempotency-key <key>', 'Override the generated idempotency key for mutating commands');

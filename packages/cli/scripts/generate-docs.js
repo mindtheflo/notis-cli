@@ -58,6 +58,7 @@ function renderReadme() {
   const whoamiSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'whoami');
   const describeSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'describe');
   const loginSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'login');
+  const profileSpecs = specsFor('profile');
   const logoutSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'logout');
 
   return `# @notis_ai/cli
@@ -66,7 +67,7 @@ Agent-first Notis CLI for apps and generic tool execution.
 
 ## Install
 
-Use the Notis CLI through NPX; do not rely on an installed \`notis\` command. When Notis Desktop is signed in, its local credential remains the fastest path. On a server, container, or machine without Desktop, run \`notis login\` to authorize a scoped, revocable OAuth credential in the browser.
+Use the Notis CLI through NPX; do not rely on an installed \`notis\` command. Run \`notis login\` once to authorize a scoped, revocable OAuth credential in the browser — that is how the CLI signs in everywhere, including on a machine that also runs Notis Desktop.
 
 For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NOTIS_JWT=<token>\`.
 
@@ -80,7 +81,24 @@ npx --package @notis_ai/cli@latest -- notis apps list
 npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"
 \`\`\`
 
-Credential precedence is worktree runtime, \`NOTIS_JWT\`, a valid Desktop credential, then OAuth. \`notis logout\` revokes and removes OAuth without signing Desktop out. Use \`notis login --paste-code\` for the HTTPS copy-paste fallback on a remote machine.
+Use \`notis login --paste-code\` for the HTTPS copy-paste fallback on a remote machine.
+
+## Profiles
+
+A profile is one account paired with one API endpoint. Every profile keeps its own credential, so switching between them never signs any of them out.
+
+\`\`\`bash
+npx --package @notis_ai/cli@latest -- notis login --profile work
+npx --package @notis_ai/cli@latest -- notis profile list
+npx --package @notis_ai/cli@latest -- notis profile use work
+npx --package @notis_ai/cli@latest -- notis --profile default tools search "..."
+\`\`\`
+
+\`notis logout\` revokes and removes the OAuth grant for one profile; \`--all-profiles\` clears every one.
+
+Credential precedence within the selected profile is: an active \`./dev.sh\` worktree credential, then \`NOTIS_JWT\`, then the profile's OAuth grant.
+
+\`./dev.sh\` exposes its test account as a lease-backed \`dev-<workspace>-<hash>\` profile bound to its loopback backend. The credential stays in the worktree rather than the shared account config. That synthetic profile is the default only inside its active worktree; naming any stored profile with \`--profile\` runs against that real account instead.
 
 The CLI defaults to \`json\` output in agent or non-TTY contexts and \`table\` output in interactive terminals.
 
@@ -89,7 +107,7 @@ The CLI defaults to \`json\` output in agent or non-TTY contexts and \`table\` o
 - \`--json\` — Shortcut for \`--output json\`
 - \`--output <table|json|yaml|ndjson>\` — Output mode override
 - \`--non-interactive\` — Disable prompts
-- \`--profile <name>\` — Select a stored profile
+- \`--profile <name>\` — Run as a stored profile instead of the active one
 - \`--api-base <url>\` — Override the API base for one invocation
 - \`--timeout-ms <n>\` — HTTP timeout in milliseconds
 - \`--idempotency-key <key>\` — Override the generated idempotency key for mutating commands
@@ -106,6 +124,10 @@ ${appSpecs.map(renderCommandBlock).join('\n')}
 ## Generic Tools
 
 ${toolSpecs.map(renderCommandBlock).join('\n')}
+
+## Profile Commands
+
+${profileSpecs.map(renderCommandBlock).join('\n')}
 
 ## Meta Commands
 
@@ -139,7 +161,7 @@ Important: \`notis apps deploy\` updates the linked installed app. It is not an 
 
 ## Setup
 
-Sign into Notis Desktop or run \`${NPX_NOTIS} login\` to authorize the CLI. Run commands through NPX, for example \`${NPX_NOTIS} apps list\`.
+Run \`${NPX_NOTIS} login\` to authorize the CLI. Run commands through NPX, for example \`${NPX_NOTIS} apps list\`.
 
 For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NOTIS_JWT=<token>\` and use \`--api-base <server-url>\` when targeting a non-default server.
 
@@ -199,7 +221,7 @@ Use the generic \`notis tools\` workflow through NPX for native Notis Database o
 
 ## Setup
 
-Sign into Notis Desktop or run \`${NPX_NOTIS} login\` to authorize the CLI. Run commands through NPX, for example \`${NPX_NOTIS} tools search "list Notis databases"\`.
+Run \`${NPX_NOTIS} login\` to authorize the CLI. Run commands through NPX, for example \`${NPX_NOTIS} tools search "list Notis databases"\`.
 
 For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NOTIS_JWT=<token>\` and use \`--api-base <server-url>\` when targeting a non-default server.
 

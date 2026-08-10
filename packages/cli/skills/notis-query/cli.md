@@ -4,7 +4,7 @@ Use the generic `notis tools` workflow through NPX for native Notis Database ope
 
 ## Setup
 
-Sign into Notis Desktop or run `npx --package @notis_ai/cli@latest -- notis login` to authorize the CLI. Run commands through NPX, for example `npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"`.
+Run `npx --package @notis_ai/cli@latest -- notis login` to authorize the CLI. Run commands through NPX, for example `npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"`.
 
 For CI, hosted agents, or internal scripts, pass a non-persisted token with `NOTIS_JWT=<token>` and use `--api-base <server-url>` when targeting a non-default server.
 

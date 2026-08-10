@@ -10,6 +10,22 @@ npx --package @notis_ai/cli@latest -- notis tools exec <TOOL> --arguments '<json
 
 Never invent tool names. `notis tools search "<what you need>"` finds them.
 
+## 0. Read before you ask
+
+```bash
+npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_GET_USER_SETTINGS --arguments '{}'
+```
+
+This returns `onboarding_complete`, the settings already on file, and
+`missing_settings` — the only fields you still have a reason to ask about.
+
+**If `onboarding_complete` is true, stop. Do not run this plan.** The account is
+already set up; say so and get on with whatever the user actually asked for.
+Running onboarding again re-asks a returning user their own name and tells them
+you connected things that were connected long before you arrived.
+
+Otherwise ask only for what is in `missing_settings`.
+
 ## 1. Collect the basics
 
 The fields onboarding collects, wherever it runs. Both the conversational
@@ -35,7 +51,6 @@ Rules that hold on every surface:
   rather than asking the user to confirm a blank.
 * Save as soon as you have the basics rather than batching to the end — a user who
   drops out halfway should not lose what they already told you.
-
 
 You are in a terminal, so there is no phone number to infer a country from. Take
 the language and time zone from the shell environment if you can read them, state
@@ -74,6 +89,9 @@ If they connect nothing, fall back to installing a public app:
 npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_COMPLETE_TUTORIAL --arguments '{}'
 ```
 
+Only if you actually ran this plan. If step 0 told you onboarding was already
+complete, you skipped the plan and there is nothing to finish.
+
 Until this runs, every message the user sends on every channel is routed to the
 onboarding assistant — so an agent that collects everything and skips this leaves
 them permanently stuck talking to an onboarding bot.
@@ -83,10 +101,11 @@ Verify with `LOCAL_NOTIS_GET_INTEGRATIONS_STATUS` and tell them what is connecte
 ## What this plan does not include
 
 Do **not** call `LOCAL_NOTIS_INSERT_REMINDER` or any automation tool during
-onboarding. Reminders, automations, voice, and the messaging channels are paid
-features; calling them here fails at the worst possible moment. If the user asks
-for a reminder or a recurring task, say plainly that it needs an upgrade and offer
-`LOCAL_NOTIS_GET_SUBSCRIPTION_STATUS` so they can see their plan.
+onboarding: on most plans they fail at the worst possible moment. If the user
+asks for a reminder or a recurring task, check what they actually have with
+`LOCAL_NOTIS_GET_SUBSCRIPTION_STATUS` and answer from that rather than from a
+guess about which tier includes what — the entitlement lives in the product, not
+in this document.
 
 What they *do* have: 1,000+ integrations through this CLI, skills that sync to
 their coding agents, long-term memory, notes and databases, and the ability to

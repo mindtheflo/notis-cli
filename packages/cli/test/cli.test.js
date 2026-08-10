@@ -194,16 +194,19 @@ function makeStoreScreenshotPngHeader() {
 
 test('normalizeConfig migrates the legacy flat config shape', () => {
   const normalized = normalizeConfig({
-    jwt: 'legacy-jwt',
+    oauth_access_token: 'legacy-token',
     api_base: 'https://legacy.example.com',
   });
 
   assert.equal(normalized.current_profile, 'default');
-  assert.equal(normalized.profiles.default.jwt, 'legacy-jwt');
+  assert.equal(normalized.profiles.default.oauth_access_token, 'legacy-token');
   assert.equal(normalized.profiles.default.api_base, 'https://legacy.example.com');
 });
 
-test('normalizeConfig preserves dev portal refresh metadata', () => {
+// Every key Notis Desktop used to own is dropped on read. Leaving them
+// readable would let an upgraded machine keep authenticating with a Supabase
+// token nothing renews, instead of being told to run `notis login`.
+test('normalizeConfig drops the credential and liveness keys Notis Desktop wrote', () => {
   const normalized = normalizeConfig({
     current_profile: 'default',
     profiles: {
@@ -220,15 +223,59 @@ test('normalizeConfig preserves dev portal refresh metadata', () => {
     },
   });
 
-  assert.equal(normalized.profiles.default.auth_mode, 'dev_portal');
-  assert.equal(normalized.profiles.default.refresh_token, 'refresh-token');
-  assert.equal(normalized.profiles.default.access_expires_at, 123);
-  assert.equal(normalized.profiles.default.refresh_expires_at, 456);
-  assert.equal(normalized.profiles.default.desktop_app_name, 'Notis Beta');
-  assert.equal(normalized.profiles.default.desktop_pid, 4242);
+  const profile = normalized.profiles.default;
+  for (const key of [
+    'jwt',
+    'auth_mode',
+    'refresh_token',
+    'access_expires_at',
+    'refresh_expires_at',
+    'desktop_app_name',
+    'desktop_pid',
+  ]) {
+    assert.equal(profile[key], undefined, key);
+  }
+  assert.equal(profile.api_base, 'http://localhost:3001');
 });
 
-test('httpRequest retries with a fresh timeout after the desktop syncs newer auth', () => {
+test('normalizeConfig keeps the dev.sh credential a worktree profile is built on', () => {
+  const normalized = normalizeConfig({
+    current_profile: 'dev-workspace',
+    profiles: {
+      'dev-workspace': {
+        api_base: 'http://localhost:4311',
+        label: './dev.sh (test@example.com)',
+        dev_access_token: 'dev-token',
+        dev_access_expires_at: 123,
+        dev_user_id: 'test-user',
+        dev_workspace_root: '/tmp/workspace',
+      },
+    },
+  });
+
+  assert.equal(normalized.current_profile, 'dev-workspace');
+  assert.deepEqual(normalized.profiles['dev-workspace'], {
+    api_base: 'http://localhost:4311',
+    beta: undefined,
+    label: './dev.sh (test@example.com)',
+    dev_access_token: 'dev-token',
+    dev_access_expires_at: 123,
+    dev_user_id: 'test-user',
+    dev_workspace_root: '/tmp/workspace',
+    oauth_access_token: undefined,
+    oauth_refresh_token: undefined,
+    oauth_access_expires_at: undefined,
+    oauth_refresh_expires_at: undefined,
+    oauth_client_id: undefined,
+    oauth_issuer: undefined,
+    oauth_api_base: undefined,
+    oauth_resource: undefined,
+    oauth_scopes: undefined,
+    oauth_user_id: undefined,
+  });
+});
+
+test('httpRequest retries with a fresh timeout after dev.sh re-mints its credential', () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-home-'));
   mkdirSync(join(homeDir, '.notis'), { recursive: true });
   writeFileSync(
@@ -237,9 +284,9 @@ test('httpRequest retries with a fresh timeout after the desktop syncs newer aut
       current_profile: 'default',
       profiles: {
         default: {
-          jwt: 'stale-access-token',
+          dev_access_token: 'stale-access-token',
           api_base: 'https://api.example.com',
-          access_expires_at: 4102444800,
+          dev_access_expires_at: 4102444800,
         },
       },
     }),
@@ -267,12 +314,9 @@ test('httpRequest retries with a fresh timeout after the desktop syncs newer aut
                 current_profile: 'default',
                 profiles: {
                   default: {
-                    jwt: 'desktop-refreshed-access-token',
+                    dev_access_token: 'dev-remitted-access-token',
                     api_base: 'https://api.example.com',
-                    auth_mode: 'dev_portal',
-                    refresh_token: 'desktop-refreshed-refresh-token',
-                    access_expires_at: 4102444800,
-                    refresh_expires_at: 4102448400,
+                    dev_access_expires_at: 4102444800,
                   },
                 },
               }));
@@ -306,16 +350,12 @@ test('httpRequest retries with a fresh timeout after the desktop syncs newer aut
           profileName: 'default',
           apiBase: 'https://api.example.com',
           jwt: 'stale-access-token',
-          authMode: 'dev_portal',
-          refreshToken: 'refresh-token',
-          accessExpiresAt: Math.floor(Date.now() / 1000) + 3600,
-          refreshExpiresAt: Math.floor(Date.now() / 1000) + 7200,
+          credentialKind: 'worktree',
           timeoutMs: 15,
           cliVersion: 'test',
           outputMode: 'json',
           agentMode: false,
           nonInteractive: true,
-          credentialSource: 'profile',
         };
 
         const response = await httpRequest({
@@ -345,14 +385,14 @@ test('httpRequest retries with a fresh timeout after the desktop syncs newer aut
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.protectedCalls, 2);
-  assert.equal(payload.jwt, 'desktop-refreshed-access-token');
+  assert.equal(payload.jwt, 'dev-remitted-access-token');
   assert.deepEqual(payload.response.payload, {
     ok: true,
-    authorization: 'Bearer desktop-refreshed-access-token',
+    authorization: 'Bearer dev-remitted-access-token',
   });
 });
 
-test('httpRequest consumes the newest desktop-synced JWT before sending', () => {
+test('httpRequest consumes the newest dev.sh credential before sending', () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-home-'));
   mkdirSync(join(homeDir, '.notis'), { recursive: true });
   writeFileSync(
@@ -361,9 +401,9 @@ test('httpRequest consumes the newest desktop-synced JWT before sending', () => 
       current_profile: 'default',
       profiles: {
         default: {
-          jwt: 'fresh-disk-token',
+          dev_access_token: 'fresh-disk-token',
           api_base: 'https://api.example.com',
-          access_expires_at: 4102444800,
+          dev_access_expires_at: 4102444800,
         },
       },
     }),
@@ -397,16 +437,12 @@ test('httpRequest consumes the newest desktop-synced JWT before sending', () => 
           profileName: 'default',
           apiBase: 'https://api.example.com',
           jwt: 'stale-memory-token',
-          authMode: undefined,
-          refreshToken: undefined,
-          accessExpiresAt: undefined,
-          refreshExpiresAt: undefined,
+          credentialKind: 'worktree',
           timeoutMs: 5000,
           cliVersion: 'test',
           outputMode: 'json',
           agentMode: false,
           nonInteractive: true,
-          credentialSource: 'profile',
         };
 
         const response = await httpRequest({
@@ -450,9 +486,9 @@ test('httpRequest does not retry on 401 when the on-disk JWT matches the in-memo
       current_profile: 'default',
       profiles: {
         default: {
-          jwt: 'same-token',
+          dev_access_token: 'same-token',
           api_base: 'https://api.example.com',
-          access_expires_at: 4102444800,
+          dev_access_expires_at: 4102444800,
         },
       },
     }),
@@ -481,7 +517,7 @@ test('httpRequest does not retry on 401 when the on-disk JWT matches the in-memo
           profileName: 'default',
           apiBase: 'https://api.example.com',
           jwt: 'same-token',
-          authMode: undefined,
+          credentialKind: 'worktree',
           timeoutMs: 5000,
           cliVersion: 'test',
           outputMode: 'json',
@@ -575,20 +611,6 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
       undefined,
     );
     assert.equal(betaFromFlag, 'https://api-beta.notis.ai');
-
-    const betaFromDesktop = getApiBase(
-      {
-        current_profile: 'default',
-        profiles: {
-          default: {
-            desktop_app_name: 'Notis Beta',
-          },
-        },
-      },
-      'default',
-      undefined,
-    );
-    assert.equal(betaFromDesktop, 'https://api-beta.notis.ai');
 
     const betaFromStoredApi = getApiBase(
       {
@@ -1577,7 +1599,7 @@ test('resolveDevelopmentDesktopScheme reads NOTIS_DESKTOP_DEEP_LINK_SCHEME', () 
 test('resolveDevelopmentDesktopAppName selects explicit, beta, and production targets', () => {
   assert.equal(
     resolveDevelopmentDesktopAppName({
-      desktopAppName: 'Notis Beta',
+      worktreeRuntime: { desktop_app_name: 'Notis Beta' },
       apiBase: 'https://api.notis.ai',
     }),
     'Notis Beta',
@@ -1594,7 +1616,7 @@ test('resolveDevelopmentDesktopAppName selects explicit, beta, and production ta
 
 test('resolveDevelopmentDesktopBundleId selects installed beta and production bundles', () => {
   assert.equal(
-    resolveDevelopmentDesktopBundleId({ desktopAppName: 'Notis Beta' }),
+    resolveDevelopmentDesktopBundleId({ worktreeRuntime: { desktop_app_name: 'Notis Beta' } }),
     'ai.notis.desktop.beta',
   );
   assert.equal(
@@ -1985,28 +2007,31 @@ test('authenticated commands fail with a JSON auth envelope in non-interactive m
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'auth_missing');
-  // A machine that was never signed in may not have an account yet, so the
-  // account-creating command leads; launching the desktop app follows it.
-  assert.equal(payload.hints[0].command, 'notis login');
-  if (process.platform === 'darwin') {
-    assert.ok(payload.hints.some((hint) => hint.command === "open -a 'Notis'"));
-  }
+  // A machine that was never signed in may not have an account yet, and
+  // `notis login` both creates one and authorizes this machine.
+  assert.equal(
+    payload.hints[0].command,
+    'npx --package @notis_ai/cli@latest -- notis login',
+  );
+  assert.ok(payload.hints.some(
+    (hint) => hint.command === 'npx --package @notis_ai/cli@latest -- notis profile list',
+  ));
 });
 
-test('expired desktop auth prompts an agent to start the stopped desktop app', () => {
+test('an expired OAuth grant points at re-authorizing the profile that failed', () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-expired-home-'));
   mkdirSync(join(homeDir, '.notis'), { recursive: true });
   writeFileSync(
     join(homeDir, '.notis', 'config.json'),
     JSON.stringify({
-      current_profile: 'default',
+      current_profile: 'work',
       profiles: {
-        default: {
-          jwt: makeJwt('auth-user-123', 1),
+        default: {},
+        work: {
+          oauth_access_token: makeJwt('auth-user-123', 1),
+          oauth_access_expires_at: 1,
           api_base: 'https://api-beta.notis.ai',
-          auth_mode: 'dev_portal',
-          desktop_app_name: 'Notis Beta',
-          desktop_pid: 99999999,
+          oauth_api_base: 'https://api-beta.notis.ai',
         },
       },
     }),
@@ -2016,42 +2041,47 @@ test('expired desktop auth prompts an agent to start the stopped desktop app', (
   assert.equal(result.status, 3, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.error.code, 'auth_expired');
-  assert.equal(payload.error.details.desktop_running, false);
-  assert.equal(payload.error.details.desktop_app_name, 'Notis Beta');
-  if (process.platform === 'darwin') {
-    assert.equal(payload.hints[0].command, "open -a 'Notis Beta'");
-  }
-  assert.match(payload.hints[0].reason, /Start Notis Beta/);
+  assert.equal(payload.error.details.credential_source, 'oauth');
+  assert.match(payload.error.message, /"work"/);
+  assert.equal(
+    payload.hints[0].command,
+    "npx --package @notis_ai/cli@latest -- notis login --profile 'work'",
+  );
 });
 
-test('expired desktop auth reports when the owning desktop app is still running', () => {
-  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-expired-running-home-'));
+// A dev credential is only spendable against the loopback backend that minted
+// it. Falling through to the live API would authenticate there as the test user.
+test('a dev.sh profile without its runtime refuses to route to the live API', () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-dev-detached-home-'));
   mkdirSync(join(homeDir, '.notis'), { recursive: true });
   writeFileSync(
     join(homeDir, '.notis', 'config.json'),
     JSON.stringify({
       current_profile: 'default',
       profiles: {
-        default: {
-          jwt: makeJwt('auth-user-123', 1),
-          api_base: 'https://api.notis.ai',
-          auth_mode: 'dev_portal',
-          desktop_app_name: 'Notis',
-          desktop_pid: process.pid,
+        default: {},
+        'dev-somewhere': {
+          api_base: 'http://localhost:4311',
+          dev_access_token: makeJwt('test-user'),
+          dev_access_expires_at: 4102444800,
+          dev_user_id: 'test-user',
+          dev_workspace_root: '/tmp/somewhere',
         },
       },
     }),
   );
 
-  const result = runCli(['apps', 'list', '--json', '--non-interactive'], { HOME: homeDir });
-  assert.equal(result.status, 3, result.stderr);
+  const result = runCli(
+    ['--profile', 'dev-somewhere', 'apps', 'list', '--json', '--non-interactive'],
+    { HOME: homeDir },
+  );
+  assert.equal(result.status, 4, result.stderr);
   const payload = JSON.parse(result.stdout);
-  assert.equal(payload.error.code, 'auth_expired');
-  assert.equal(payload.error.details.desktop_running, true);
-  assert.match(payload.hints[0].reason, /Bring Notis forward/);
+  assert.equal(payload.error.code, 'dev_runtime_unavailable');
+  assert.match(payload.hints[0].message, /\/tmp\/somewhere/);
 });
 
-test('expired NOTIS_JWT never falls back to the desktop profile', () => {
+test('expired NOTIS_JWT never falls back to a stored profile', () => {
   const result = runCli(['apps', 'list', '--json', '--non-interactive'], {
     NOTIS_API_BASE: 'https://api.notis.ai',
     NOTIS_JWT: makeJwt('auth-user-123', 1),
@@ -2875,17 +2905,21 @@ test('start preserves browser OAuth failures when no email fallback exists', asy
   }
 });
 
-test('logout reports OAuth disconnection without hiding retained Desktop auth', () => {
-  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-logout-desktop-'));
+// Signing one account out is not a reason to sign the others out with it.
+test('logout clears only the profile it ran against', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-logout-'));
   const configFile = join(configHome, 'config.json');
-  const desktopJwt = makeJwt('desktop-user');
   writeFileSync(configFile, JSON.stringify({
-    current_profile: 'default',
+    current_profile: 'work',
     profiles: {
       default: {
         api_base: 'https://api.notis.ai',
-        jwt: desktopJwt,
-        access_expires_at: 4102444800,
+        oauth_access_token: makeJwt('kept-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'kept-user',
+      },
+      work: {
+        api_base: 'https://api-beta.notis.ai',
         oauth_access_token: makeJwt('oauth-user'),
         oauth_access_expires_at: 4102444800,
         oauth_user_id: 'oauth-user',
@@ -2901,13 +2935,161 @@ test('logout reports OAuth disconnection without hiding retained Desktop auth', 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.data.oauth_connected, false);
-  assert.equal('authenticated' in payload.data, false);
+  assert.deepEqual(payload.data.cleared_profiles, ['work']);
   const stored = JSON.parse(readFileSync(configFile, 'utf-8'));
-  assert.equal(stored.profiles.default.jwt, desktopJwt);
-  assert.equal(stored.profiles.default.oauth_access_token, undefined);
+  assert.equal(stored.profiles.work.oauth_access_token, undefined);
+  assert.equal(stored.profiles.default.oauth_access_token, makeJwt('kept-user'));
 });
 
-test('doctor can report missing desktop auth without requiring auth first', () => {
+test('profile use switches the active account without touching any credential', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-profile-switch-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: 'https://api.notis.ai',
+        oauth_access_token: makeJwt('prod-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'prod-user',
+      },
+      beta: {
+        api_base: 'https://api-beta.notis.ai',
+        oauth_access_token: makeJwt('beta-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'beta-user',
+      },
+    },
+  }));
+
+  const switched = runCli(['profile', 'use', 'beta', '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+  });
+  assert.equal(switched.status, 0, switched.stderr);
+  assert.equal(JSON.parse(switched.stdout).data.active_profile, 'beta');
+
+  const stored = JSON.parse(readFileSync(configFile, 'utf-8'));
+  assert.equal(stored.current_profile, 'beta');
+  assert.equal(stored.profiles.default.oauth_access_token, makeJwt('prod-user'));
+  assert.equal(stored.profiles.beta.oauth_access_token, makeJwt('beta-user'));
+
+  const listed = runCli(['profile', 'list', '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+  });
+  assert.equal(listed.status, 0, listed.stderr);
+  const data = JSON.parse(listed.stdout).data;
+  assert.equal(data.effective_profile, 'beta');
+  assert.deepEqual(
+    data.profiles.map((entry) => [entry.name, entry.api_base, entry.authenticated]),
+    [
+      ['default', 'https://api.notis.ai', true],
+      ['beta', 'https://api-beta.notis.ai', true],
+    ],
+  );
+});
+
+test('profile command hints shell-quote legacy profile names', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-legacy-profile-hints-'));
+  const configFile = join(configHome, 'config.json');
+  const legacyName = "legacy work's; echo unsafe";
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {},
+      [legacyName]: {
+        oauth_access_token: makeJwt('legacy-user'),
+        oauth_access_expires_at: 4102444800,
+      },
+    },
+  }));
+
+  const refused = runCli(['profile', 'remove', legacyName, '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+    NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+  });
+
+  assert.equal(refused.status, 2, refused.stderr);
+  const hints = JSON.parse(refused.stdout).hints.map((hint) => hint.command);
+  const quotedName = `'legacy work'"'"'s; echo unsafe'`;
+  assert.deepEqual(hints, [
+    `notis logout --profile ${quotedName}`,
+    `notis profile remove ${quotedName} --force`,
+  ]);
+});
+
+test('profile commands reject names inherited from Object.prototype', () => {
+  for (const profileName of ['__proto__', 'constructor', 'toString']) {
+    const homeDir = mkdtempSync(join(tmpdir(), 'notis-cli-invalid-profile-home-'));
+    mkdirSync(join(homeDir, '.notis'), { recursive: true });
+    const configFile = join(homeDir, '.notis', 'config.json');
+    writeFileSync(configFile, JSON.stringify({
+      current_profile: 'default',
+      profiles: { default: {} },
+    }));
+    const before = readFileSync(configFile, 'utf8');
+
+    const result = runCli(
+      ['profile', 'use', profileName, '--json'],
+      { HOME: homeDir, NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1', NODE_ENV: 'test' },
+    );
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(JSON.parse(result.stdout).error.code, 'profile_unknown');
+    assert.equal(readFileSync(configFile, 'utf8'), before);
+  }
+});
+
+// In a hosted shell NOTIS_JWT is the credential and every stored profile reads
+// as signed out. Reporting that without context tells an agent whose commands
+// are working fine that it needs to go authorize something.
+test('profile list reports the NOTIS_JWT override instead of claiming signed out', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-profile-env-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: { default: {} },
+  }));
+
+  const result = runCli(['profile', 'list', '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+    NOTIS_JWT: makeJwt('hosted-user'),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const data = JSON.parse(result.stdout).data;
+  assert.equal(data.env_credential_override, true);
+  assert.equal(data.effective_credential_kind, 'env');
+  assert.match(JSON.parse(result.stdout).human_summary, /NOTIS_JWT overrides/);
+});
+
+test('profile remove refuses to discard a profile that is still authorized', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-profile-remove-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {},
+      work: { oauth_access_token: makeJwt('work-user'), oauth_access_expires_at: 4102444800 },
+    },
+  }));
+
+  const refused = runCli(['profile', 'remove', 'work', '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+  });
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.equal(JSON.parse(refused.stdout).error.code, 'profile_still_authorized');
+
+  const forced = runCli(['profile', 'remove', 'work', '--force', '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+  });
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(
+    JSON.parse(readFileSync(configFile, 'utf-8')).profiles.work,
+    undefined,
+  );
+});
+
+test('doctor can report a missing credential without requiring auth first', () => {
   const result = runCli(['doctor', '--json']);
 
   assert.equal(result.status, 0, result.stderr);
@@ -2982,7 +3164,168 @@ test('start --brief-only refreshes an expired OAuth session instead of requiring
   }
 });
 
-test('doctor reports refreshed OAuth and compares canonical desktop identity', async () => {
+// The whole point of the onboarding-state check: a returning user must not be
+// handed the new-user script. Before this, `start` served the same brief to a
+// fresh signup and a year-old account, and a compliant agent re-onboarded them.
+test('start withholds the onboarding brief from an account that is already set up', async () => {
+  let briefRequests = 0;
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/cli_tools' && req.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+      assert.equal(body.tool_name, 'LOCAL_NOTIS_GET_USER_SETTINGS');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        onboarding_complete: true,
+        settings: { full_name: 'Florian', timezone: 'Europe/Paris' },
+        missing_settings: [],
+      }));
+      return;
+    }
+    if (req.url === '/signup/onboarding-brief' && req.method === 'GET') {
+      briefRequests += 1;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ markdown: '# New user onboarding brief' }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-start-onboarded-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: apiBase,
+        oauth_access_token: makeJwt('oauth-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', apiBase, 'start'],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.authenticated, true);
+    assert.equal(payload.data.onboarding_complete, true);
+    assert.equal(payload.data.brief, null);
+    assert.equal(payload.data.brief_source, null);
+    // Not merely withheld from the payload — never fetched.
+    assert.equal(briefRequests, 0);
+    assert.match(payload.human_summary, /already set up/);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('start still serves the brief to an account that has not onboarded', async () => {
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/cli_tools' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        onboarding_complete: false,
+        settings: { email: 'new@example.com' },
+        missing_settings: ['full_name', 'position', 'language', 'timezone', 'attribution'],
+      }));
+      return;
+    }
+    if (req.url === '/signup/onboarding-brief' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ markdown: '# New user onboarding brief' }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-start-fresh-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: apiBase,
+        oauth_access_token: makeJwt('new-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'new-user',
+      },
+    },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', apiBase, 'start'],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.onboarding_complete, false);
+    assert.equal(payload.data.brief, '# New user onboarding brief');
+    // The agent is told exactly which questions are still worth asking.
+    assert.deepEqual(payload.data.missing_settings,
+      ['full_name', 'position', 'language', 'timezone', 'attribution']);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+// An unreachable tool bridge must not block sign-in. Degrading to the old
+// behaviour is the safe direction: worst case the agent sees a brief it should
+// not have, which the brief's own step 0 then catches.
+test('start degrades to serving the brief when onboarding state is unavailable', async () => {
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/signup/onboarding-brief' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ markdown: '# Fallback brief' }));
+      return;
+    }
+    res.writeHead(500).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  const apiBase = `http://127.0.0.1:${port}`;
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-start-degraded-'));
+  const configFile = join(configHome, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: apiBase,
+        oauth_access_token: makeJwt('oauth-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', apiBase, 'start'],
+      { NOTIS_CLI_CONFIG_FILE: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.authenticated, true);
+    assert.equal(payload.data.onboarding_complete, false);
+    assert.equal(payload.data.brief, '# Fallback brief');
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('doctor refreshes a lapsed OAuth grant before reporting on it', async () => {
   const server = createHttpServer(async (req, res) => {
     if (req.url === '/oauth/token' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -3010,12 +3353,6 @@ test('doctor reports refreshed OAuth and compares canonical desktop identity', a
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
   const { port } = server.address();
   const apiBase = `http://127.0.0.1:${port}`;
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const desktopJwt = `${encode({ alg: 'none' })}.${encode({
-    sub: 'different-supabase-auth-user',
-    exp: 1,
-    app_metadata: { app_user_id: 'canonical-notis-user' },
-  })}.sig`;
   const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-refresh-doctor-'));
   const configFile = join(configHome, 'config.json');
   writeFileSync(configFile, JSON.stringify({
@@ -3023,8 +3360,6 @@ test('doctor reports refreshed OAuth and compares canonical desktop identity', a
     profiles: {
       default: {
         api_base: apiBase,
-        jwt: desktopJwt,
-        access_expires_at: 1,
         oauth_access_token: makeJwt('canonical-notis-user', 1),
         oauth_refresh_token: 'refresh-token',
         oauth_access_expires_at: 1,
@@ -3045,7 +3380,7 @@ test('doctor reports refreshed OAuth and compares canonical desktop identity', a
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.data.checks.auth, 'configured');
-    assert.equal(payload.data.checks.identity, 'ok');
+    assert.equal(payload.data.checks.routing, 'ok');
     assert.equal(payload.data.checks.tool_roundtrip, 'ok');
     assert.equal(
       payload.hints.some((hint) => /expired|different accounts/i.test(hint.reason || '')),

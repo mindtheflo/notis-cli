@@ -4,7 +4,7 @@ Agent-first Notis CLI for apps and generic tool execution.
 
 ## Install
 
-Use the Notis CLI through NPX; do not rely on an installed `notis` command. When Notis Desktop is signed in, its local credential remains the fastest path. On a server, container, or machine without Desktop, run `notis login` to authorize a scoped, revocable OAuth credential in the browser.
+Use the Notis CLI through NPX; do not rely on an installed `notis` command. Run `notis login` once to authorize a scoped, revocable OAuth credential in the browser — that is how the CLI signs in everywhere, including on a machine that also runs Notis Desktop.
 
 For CI, hosted agents, or internal scripts, pass a non-persisted token with `NOTIS_JWT=<token>`.
 
@@ -18,7 +18,24 @@ npx --package @notis_ai/cli@latest -- notis apps list
 npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"
 ```
 
-Credential precedence is worktree runtime, `NOTIS_JWT`, a valid Desktop credential, then OAuth. `notis logout` revokes and removes OAuth without signing Desktop out. Use `notis login --paste-code` for the HTTPS copy-paste fallback on a remote machine.
+Use `notis login --paste-code` for the HTTPS copy-paste fallback on a remote machine.
+
+## Profiles
+
+A profile is one account paired with one API endpoint. Every profile keeps its own credential, so switching between them never signs any of them out.
+
+```bash
+npx --package @notis_ai/cli@latest -- notis login --profile work
+npx --package @notis_ai/cli@latest -- notis profile list
+npx --package @notis_ai/cli@latest -- notis profile use work
+npx --package @notis_ai/cli@latest -- notis --profile default tools search "..."
+```
+
+`notis logout` revokes and removes the OAuth grant for one profile; `--all-profiles` clears every one.
+
+Credential precedence within the selected profile is: an active `./dev.sh` worktree credential, then `NOTIS_JWT`, then the profile's OAuth grant.
+
+`./dev.sh` exposes its test account as a lease-backed `dev-<workspace>-<hash>` profile bound to its loopback backend. The credential stays in the worktree rather than the shared account config. That synthetic profile is the default only inside its active worktree; naming any stored profile with `--profile` runs against that real account instead.
 
 The CLI defaults to `json` output in agent or non-TTY contexts and `table` output in interactive terminals.
 
@@ -27,7 +44,7 @@ The CLI defaults to `json` output in agent or non-TTY contexts and `table` outpu
 - `--json` — Shortcut for `--output json`
 - `--output <table|json|yaml|ndjson>` — Output mode override
 - `--non-interactive` — Disable prompts
-- `--profile <name>` — Select a stored profile
+- `--profile <name>` — Run as a stored profile instead of the active one
 - `--api-base <url>` — Override the API base for one invocation
 - `--timeout-ms <n>` — HTTP timeout in milliseconds
 - `--idempotency-key <key>` — Override the generated idempotency key for mutating commands
@@ -36,37 +53,38 @@ The CLI defaults to `json` output in agent or non-TTY contexts and `table` outpu
 
 ### `npx --package @notis_ai/cli@latest -- notis login`
 
-Authorize the Notis CLI in a browser with scoped OAuth access.
+Authorize a CLI profile in a browser with scoped OAuth access.
 
-When to use: Use this on a machine where Notis Desktop is unavailable, signed out, or should not own CLI authentication.
+When to use: Run this once per account you want the CLI to reach. Pass --profile to add a second account without signing the first one out.
 
 Options:
 - `--no-browser` — Print the authorization URL without opening a browser.
 - `--print-url` — Print the authorization URL even when opening a browser.
 - `--paste-code` — Use the copy-paste callback for SSH and headless machines.
-- `--force` — Create an independent OAuth grant even when Desktop is signed in.
 - `--timeout-seconds <n>` — How long to wait for authorization (default 300).
 - `--scope <scope>` — OAuth permission to request (repeatable).
 - `--code <code>` — Redeem the code shown in the browser after a non-interactive login.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis login`
+- `npx --package @notis_ai/cli@latest -- notis login --profile work`
+- `npx --package @notis_ai/cli@latest -- notis login --profile beta --api-base https://api-beta.notis.ai`
 - `npx --package @notis_ai/cli@latest -- notis login --no-browser --print-url`
 - `npx --package @notis_ai/cli@latest -- notis login --paste-code`
 - `npx --package @notis_ai/cli@latest -- notis login --code 4f3c2b1a`
-- `npx --package @notis_ai/cli@latest -- notis login --force`
 
 ### `npx --package @notis_ai/cli@latest -- notis logout`
 
-Revoke and remove the scoped OAuth credential for the active CLI profile.
+Revoke and remove the OAuth credential for one CLI profile.
 
-When to use: Use this to disconnect the command line without signing Notis Desktop out.
+When to use: Use this to disconnect a single account. Other profiles keep their credentials unless you pass --all-profiles.
 
 Options:
 - `--all-profiles` — Remove OAuth credentials from every CLI profile.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis logout`
+- `npx --package @notis_ai/cli@latest -- notis logout --profile work`
 - `npx --package @notis_ai/cli@latest -- notis logout --all-profiles`
 
 
@@ -350,6 +368,52 @@ Options:
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis tools link github`
 - `npx --package @notis_ai/cli@latest -- notis tools link dataforseo --reconnect --credentials - < credentials.json`
+
+
+## Profile Commands
+
+### `npx --package @notis_ai/cli@latest -- notis profile list`
+
+List every CLI profile with its account, API endpoint, and credential state.
+
+When to use: Use this to see which accounts and environments this machine can reach before choosing one.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis profile list`
+- `npx --package @notis_ai/cli@latest -- notis profile list --json`
+
+### `npx --package @notis_ai/cli@latest -- notis profile use <name>`
+
+Switch the default profile without signing any profile out.
+
+When to use: Use this to change which account and API subsequent commands target. Every other profile keeps its credential.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis profile use work`
+- `npx --package @notis_ai/cli@latest -- notis profile use default`
+
+### `npx --package @notis_ai/cli@latest -- notis profile show [name]`
+
+Show one profile in detail, including scopes and credential expiry.
+
+When to use: Use this to inspect exactly which account and endpoint a profile resolves to.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis profile show`
+- `npx --package @notis_ai/cli@latest -- notis profile show work --json`
+
+### `npx --package @notis_ai/cli@latest -- notis profile remove <name>`
+
+Delete a CLI profile from this machine.
+
+When to use: Use this after logging a profile out. Removing a still-authorized profile requires --force and leaves the grant live server-side.
+
+Options:
+- `--force` — Discard a profile that still holds a credential.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis profile remove old-work`
+- `npx --package @notis_ai/cli@latest -- notis profile remove old-work --force`
 
 
 ## Meta Commands

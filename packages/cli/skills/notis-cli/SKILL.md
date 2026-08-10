@@ -29,9 +29,30 @@ Use the registry-resolved published npm package everywhere:
 
 - `npx --package @notis_ai/cli@latest -- notis ...`
 
-Always use this NPX command form so the agent runs the current published CLI. In hosted shells, the CLI is pre-authenticated through `NOTIS_JWT`; locally, Notis Desktop keeps the CLI auth profile current for NPX invocations.
+Always use this NPX command form so the agent runs the current published CLI. In hosted shells, the CLI is pre-authenticated through `NOTIS_JWT`. On a local machine the CLI authorizes itself in the browser with `notis login` — nothing else signs it in, and the Notis desktop app is not involved.
 
-Notis Desktop keeps the CLI auth profile current for NPX runs. This `notis-cli` skill is delivered through normal Notis skill sync for the signed-in user, alongside other curated skills.
+This `notis-cli` skill is delivered through normal Notis skill sync for the signed-in user, alongside other curated skills.
+
+## Profiles: accounts and endpoints
+
+A profile is one account paired with one API endpoint. Profiles live side by side; switching between them never signs any of them out.
+
+- `npx --package @notis_ai/cli@latest -- notis profile list` — every profile on this machine, with its endpoint, user, and whether it is signed in. The active one is marked.
+- `npx --package @notis_ai/cli@latest -- notis profile use <name>` — change which account subsequent commands run as.
+- `npx --package @notis_ai/cli@latest -- notis --profile <name> <command>` — run a single command as another account without changing the active one.
+- `npx --package @notis_ai/cli@latest -- notis login --profile <name>` — add an account. The existing profiles keep their credentials.
+- `npx --package @notis_ai/cli@latest -- notis logout` — sign out of the active profile only; pass `--all-profiles` to clear every one.
+
+Read the profile before acting on the user's data. `notis whoami` reports the account and endpoint a command will hit; if that is not the account the user meant, switch profiles rather than proceeding.
+
+### Working against a local `./dev.sh` backend
+
+`./dev.sh` exposes its test account as a lease-backed profile (`dev-<workspace>-<hash>`) pointing at the local backend, and prints the name on startup. Its credential stays in that worktree and it is the automatic default there, so `notis ...` targets the local API and test user with no extra flags. It is not a stored account profile and cannot be selected outside the worktree.
+
+Two rules follow from the dev credential being scoped to that local backend:
+
+- A `dev-*` profile only exists while its `./dev.sh` lease is running. If it is stopped, the CLI fails with `dev_runtime_unavailable` instead of sending the test user's token to the live API.
+- To reach a real account from inside a worktree — including when the local backend is wedged — name a real profile explicitly: `notis --profile <name> ...`. That is the supported escape hatch.
 
 ## Critical rule for missing tools
 
@@ -257,7 +278,8 @@ When `LOCAL_NOTIS_DATABASE_LIST_DATABASES` or `LOCAL_NOTIS_DATABASE_GET_DATABASE
 
 ## Supporting commands
 
-- `npx --package @notis_ai/cli@latest -- notis doctor` — verify CLI config, auth, and API reachability before relying on the CLI
+- `npx --package @notis_ai/cli@latest -- notis whoami` — confirm which account and endpoint a command will target
+- `npx --package @notis_ai/cli@latest -- notis doctor` — verify CLI config, auth, routing, and API reachability before relying on the CLI
 - `npx --package @notis_ai/cli@latest -- notis describe <command...>` — get the exact command contract for first-class CLI commands
 
 ## Summary
@@ -271,14 +293,16 @@ Most importantly: if you do not currently have the tool you need, especially for
 
 ## Troubleshooting
 
-### CLI returns `auth_expired`
+### CLI returns `auth_expired` or `auth_missing`
 
-Local CLI auth is renewed by Notis Desktop. In JSON/agent mode, follow the
-first hint exactly: on macOS it is an executable `open -a 'Notis'` (or
-`open -a 'Notis Beta'`) command when the owning desktop app is not running.
-Wait for the app to restore the signed-in session, then rerun the original
-command. Do not copy refresh tokens into commands or try to refresh the shared
-desktop session yourself.
+The profile's browser authorization has lapsed or was never granted. Run
+`notis login` (add `--profile <name>` when the failing profile is not the
+active one) and have the user approve the browser prompt. In JSON/agent mode
+the first hint is the exact command to run. Do not copy refresh tokens into
+commands or try to mint a credential yourself.
+
+If the profile is a `dev-*` one, the fix is to restart `./dev.sh` in the
+workspace it belongs to, or to switch to a real account profile.
 
 ### Deploy fails with "network_error" or "fetch failed"
 
@@ -287,9 +311,9 @@ The CLI defaults to the live Notis API (`https://api.notis.ai`, or
 
 1. Run `npx --package @notis_ai/cli@latest -- notis doctor` and confirm `api_base` is a live Notis host
 2. Use `--direct` for app deploys when you only need Supabase storage upload: `npx --package @notis_ai/cli@latest -- notis apps deploy --direct`
-3. If auth looks stale, open Notis Desktop (or `Notis Beta`), wait for it to restore the session, then retry
+3. If auth looks stale, run `npx --package @notis_ai/cli@latest -- notis login` and retry
 
-Localhost backends are a Notis-developer test lane only. Do not retarget the CLI at loopback from this skill — that path is owned by `/notis-tests` via `./dev.sh` and the worktree runtime lease.
+Localhost backends are a Notis-developer test lane only. Do not retarget the CLI at loopback from this skill — that path is owned by `./dev.sh`, which exposes its own lease-backed `dev-*` profile.
 
 ### `npx --package @notis_ai/cli@latest -- notis doctor` shows health/tool_roundtrip errors
 

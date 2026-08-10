@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import { dirname } from 'node:path';
 import { CliError, EXIT_CODES } from './errors.js';
 import {
-  DEFAULT_PROFILE,
   credentialIsExpired,
-  getProfile,
+  getJwtExpiration,
   getJwtSubject,
+  getProfile,
   isJwtExpired,
   loadConfig,
+  resolveWorktreeRuntime,
 } from './profiles.js';
-import { createExpiredAuthError, createInvalidAuthHints } from './desktop-auth.js';
+import { createExpiredAuthError, createInvalidAuthHints } from './auth-recovery.js';
 import { refreshOAuthCredential } from './oauth.js';
 
 function escapeMultipartHeaderValue(value) {
@@ -157,28 +159,68 @@ function normalizeBackendError(status, payload, runtime) {
   });
 }
 
-function reloadJwtFromConfig(runtime, loadedProfile = null) {
-  if (runtime.credentialKind === 'env' || runtime.credentialKind === 'oauth') {
+/**
+ * Pick up a dev credential that `./dev.sh` re-minted mid-process.
+ *
+ * Restarting the local runtime rewrites the worktree lease in place, so a
+ * long-running command can recover from a single 401 instead of failing and
+ * making the caller rerun it. The refreshed token still has to belong to the
+ * worktree's approved test user.
+ */
+function reloadDevJwt(runtime, loadedProfile = null) {
+  if (runtime.credentialKind !== 'worktree') {
     return false;
   }
-  const profileName = runtime.profileName || DEFAULT_PROFILE;
+  let nextJwt = null;
+  const expectedUserId = runtime.worktreeRuntime?.expected_user_id;
+  const runtimePath = runtime.worktreeRuntime?.runtime_path;
+  if (runtimePath) {
+    const refreshedRuntime = resolveWorktreeRuntime(dirname(runtimePath));
+    if (
+      refreshedRuntime
+      && !refreshedRuntime.unavailable
+      && refreshedRuntime.runtime_path === runtimePath
+      && refreshedRuntime.profile === runtime.profileName
+      && refreshedRuntime.api_base === runtime.apiBase
+    ) {
+      if (
+        expectedUserId
+        && refreshedRuntime.expected_user_id !== expectedUserId
+      ) {
+        throw new CliError({
+          code: 'dev_runtime_identity_mismatch',
+          message: 'The restarted worktree runtime belongs to a different test user',
+          exitCode: EXIT_CODES.auth,
+          hints: [
+            { message: 'Restart this CLI command under the worktree\'s current dev identity.' },
+            { message: `Expected user: ${expectedUserId}` },
+          ],
+        });
+      }
+      runtime.worktreeRuntime = refreshedRuntime;
+      nextJwt = refreshedRuntime.dev_access_token;
+    }
+  }
   let profile = loadedProfile;
-  if (!profile) {
+  if (!nextJwt && !profile) {
     try {
-      profile = getProfile(loadConfig(runtime.worktreeRuntime), profileName);
+      profile = getProfile(loadConfig(), runtime.profileName);
     } catch {
       return false;
     }
   }
-  const nextJwt = typeof profile.jwt === 'string' && profile.jwt ? profile.jwt : null;
+  nextJwt = nextJwt || (
+    typeof profile?.dev_access_token === 'string' && profile.dev_access_token
+      ? profile.dev_access_token
+      : null
+  );
   if (!nextJwt || nextJwt === runtime.jwt) {
     return false;
   }
-  const expectedUserId = runtime.worktreeRuntime?.expected_user_id;
   if (expectedUserId && getJwtSubject(nextJwt) !== expectedUserId) {
     throw new CliError({
       code: 'dev_runtime_identity_mismatch',
-      message: 'The refreshed scoped dev credential does not belong to this worktree test user',
+      message: 'The refreshed dev credential does not belong to this worktree test user',
       exitCode: EXIT_CODES.auth,
       hints: [
         { message: 'Restart ./dev.sh to restore the approved worktree identity.' },
@@ -187,10 +229,25 @@ function reloadJwtFromConfig(runtime, loadedProfile = null) {
     });
   }
   runtime.jwt = nextJwt;
-  runtime.credentialKind = runtime.worktreeRuntime ? 'worktree' : 'desktop';
-  runtime.desktopAppName = profile.desktop_app_name;
-  runtime.desktopPid = profile.desktop_pid;
   return true;
+}
+
+/**
+ * A live worktree lease is authoritative over any stale dev metadata left in
+ * the shared profile store. Prefer its explicit expiry, then the active JWT's
+ * expiry, and deliberately fail closed when neither can be verified.
+ */
+export function getActiveWorktreeCredentialProfile(runtime, loadedProfile = {}) {
+  if (runtime.credentialKind !== 'worktree') {
+    return loadedProfile;
+  }
+  return {
+    ...loadedProfile,
+    dev_access_expires_at:
+      runtime.worktreeRuntime?.dev_access_expires_at
+      ?? getJwtExpiration(runtime.jwt)
+      ?? loadedProfile.dev_access_expires_at,
+  };
 }
 
 export async function httpRequest({
@@ -201,10 +258,10 @@ export async function httpRequest({
   multipart = false,
   requireAuth = true,
 }) {
-  // The desktop renderer is the single owner of the rotating Supabase refresh
-  // token. Each CLI request only consumes the newest access token it synced to
-  // disk, avoiding refresh-token races between independent CLI processes and
-  // the running desktop session.
+  // Refresh before spending the credential rather than after a rejection: the
+  // rotating refresh token is shared with every other `notis` process reading
+  // the same profile, so a lapsed access token is renewed once, under the
+  // config write lock, instead of racing on a 401 retry.
   let currentProfile;
   if (runtime.credentialKind === 'oauth') {
     if (requireAuth && credentialIsExpired(runtime, {
@@ -212,16 +269,11 @@ export async function httpRequest({
     })) {
       await refreshOAuthCredential(runtime);
     }
-    currentProfile = getProfile(
-      loadConfig(runtime.worktreeRuntime),
-      runtime.profileName,
-    );
+    currentProfile = getProfile(loadConfig(), runtime.profileName);
   } else {
-    currentProfile = getProfile(
-      loadConfig(runtime.worktreeRuntime),
-      runtime.profileName,
-    );
-    reloadJwtFromConfig(runtime, currentProfile);
+    currentProfile = getProfile(loadConfig(), runtime.profileName);
+    reloadDevJwt(runtime, currentProfile);
+    currentProfile = getActiveWorktreeCredentialProfile(runtime, currentProfile);
   }
   if (requireAuth && credentialIsExpired(runtime, currentProfile)) {
     throw createExpiredAuthError(runtime);
@@ -284,7 +336,7 @@ export async function httpRequest({
     if (response.status === 401) {
       const refreshed = runtime.credentialKind === 'oauth'
         ? await refreshOAuthCredential(runtime)
-        : reloadJwtFromConfig(runtime) && !isJwtExpired(runtime.jwt);
+        : reloadDevJwt(runtime) && !isJwtExpired(runtime.jwt);
       if (refreshed) {
         if (requireAuth && runtime.jwt) {
           headers.Authorization = `Bearer ${runtime.jwt}`;
@@ -313,7 +365,10 @@ export async function httpRequest({
         response.status === 401
         && credentialIsExpired(
           runtime,
-          getProfile(loadConfig(runtime.worktreeRuntime), runtime.profileName),
+          getActiveWorktreeCredentialProfile(
+            runtime,
+            getProfile(loadConfig(), runtime.profileName),
+          ),
         )
       ) {
         throw createExpiredAuthError(runtime);

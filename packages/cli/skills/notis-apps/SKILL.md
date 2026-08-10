@@ -7,7 +7,7 @@ description: Design and package Notis apps. Use when users want an app that grou
 
 Use this skill when the user wants a packaged Notis app -- task manager, CRM, dashboard, internal tool, etc. Notis apps are **Vite + React projects** that deploy into the Notis portal as installed apps for the current user or team.
 
-Run the Notis CLI through NPX, for example `npx --package @notis_ai/cli@latest -- notis apps list`. Notis Desktop keeps the CLI auth profile current. This `notis-apps` skill is delivered through normal Notis skill sync for the signed-in user, alongside other curated skills.
+Run the Notis CLI through NPX, for example `npx --package @notis_ai/cli@latest -- notis apps list`. Sign the CLI in once with `notis login`; each account you authorize is a profile you can switch between with `notis profile use`. This `notis-apps` skill is delivered through normal Notis skill sync for the signed-in user, alongside other curated skills.
 
 ## How Apps Are Built
 

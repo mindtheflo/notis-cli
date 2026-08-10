@@ -1,9 +1,8 @@
 import { COMPOSIO_SEARCH_TOOLS, healthCheck, probeAuth } from './helpers.js';
 import { findCommandSpec, formatDescribe } from '../runtime/help.js';
-import { createExpiredAuthError, getDesktopAuthRecovery } from '../runtime/desktop-auth.js';
+import { createExpiredAuthError, getAuthRecovery } from '../runtime/auth-recovery.js';
 import {
   credentialIsExpired,
-  getJwtCanonicalUserId,
   getProfile,
   loadConfig,
 } from '../runtime/profiles.js';
@@ -22,7 +21,7 @@ async function doctorHandler(ctx) {
   const checks = {
     config: 'ok',
     auth: 'missing',
-    identity: 'ok',
+    routing: 'ok',
     health: 'unknown',
     tool_roundtrip: 'unknown',
   };
@@ -35,17 +34,23 @@ async function doctorHandler(ctx) {
       // refresh endpoint is unavailable or rejects the stored credential.
     }
   }
-  let profile = getProfile(loadConfig(ctx.runtime.worktreeRuntime), ctx.runtime.profileName);
+  let profile = getProfile(loadConfig(), ctx.runtime.profileName);
   checks.auth = ctx.runtime.jwt
     ? (credentialIsExpired(ctx.runtime, profile) ? 'expired' : 'configured')
     : 'missing';
-  const desktopUserId = getJwtCanonicalUserId(profile.jwt);
+  // A worktree whose ./dev.sh has stopped leaves commands with no local
+  // backend to reach. Say so here rather than letting every later command fail
+  // as an opaque network error.
   if (
-    desktopUserId
-    && profile.oauth_user_id
-    && desktopUserId !== profile.oauth_user_id
+    ctx.runtime.worktreeRuntimeUnavailable
+    && ctx.runtime.profileSource !== 'explicit'
   ) {
-    checks.identity = 'error';
+    checks.routing = 'dev_runtime_unavailable';
+  } else if (
+    ctx.runtime.detachedWorktreeRuntime
+    || (ctx.runtime.worktreeRuntimeUnavailable && ctx.runtime.profileSource === 'explicit')
+  ) {
+    checks.routing = 'detached';
   }
 
   try {
@@ -62,7 +67,7 @@ async function doctorHandler(ctx) {
       // because that legitimate roundtrip exceeds the general 30s default.
       const payload = await probeAuth(doctorToolRoundtripRuntime(ctx.runtime));
       checks.tool_roundtrip = Array.isArray(payload.toolkit_connection_statuses) ? 'ok' : 'error';
-      profile = getProfile(loadConfig(ctx.runtime.worktreeRuntime), ctx.runtime.profileName);
+      profile = getProfile(loadConfig(), ctx.runtime.profileName);
       checks.auth = ctx.runtime.jwt
         ? (credentialIsExpired(ctx.runtime, profile) ? 'expired' : 'configured')
         : 'missing';
@@ -73,27 +78,31 @@ async function doctorHandler(ctx) {
 
   const hints = [];
   if (checks.auth === 'missing') {
-    hints.push(...getDesktopAuthRecovery(ctx.runtime, { mode: 'missing' }).hints);
+    hints.push(...getAuthRecovery(ctx.runtime, { mode: 'missing' }).hints);
   } else if (checks.auth === 'expired') {
     hints.push(...createExpiredAuthError(ctx.runtime).hints);
   }
+  if (checks.routing === 'dev_runtime_unavailable') {
+    hints.push(...ctx.runtime.worktreeRuntimeUnavailable.hints);
+  } else if (checks.routing === 'detached') {
+    hints.push({
+      message: ctx.runtime.detachedWorktreeRuntime?.profile
+        ? `This worktree's ./dev.sh profile is "${ctx.runtime.detachedWorktreeRuntime.profile}"; profile "${ctx.runtime.profileName}" bypasses it.`
+        : `Explicit profile "${ctx.runtime.profileName}" bypasses this stopped worktree runtime.`,
+    });
+  }
   if (checks.health === 'error' && checks.auth !== 'expired') {
-    hints.push({ command: 'Open the Notis desktop app and sign in again', reason: 'Refresh local CLI configuration' });
+    hints.push({ command: 'notis profile show', reason: 'Check which API endpoint this profile targets' });
   }
   if (checks.tool_roundtrip === 'error') {
     hints.push({ command: 'notis whoami', reason: 'Verify your account and permissions' });
-  }
-  if (checks.identity === 'error') {
-    hints.push({
-      command: 'notis logout',
-      reason: 'Desktop and OAuth credentials identify different accounts; remove the independent OAuth grant or sign Desktop back into the same account',
-    });
   }
 
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
     data: {
       profile: ctx.runtime.profileName,
+      profile_source: ctx.runtime.profileSource,
       api_base: ctx.runtime.apiBase,
       credential_source: ctx.runtime.credentialKind || null,
       ...(ctx.runtime.credentialKind === 'oauth'
@@ -142,6 +151,7 @@ async function whoamiHandler(ctx) {
     command: ctx.spec.command_path.join(' '),
     data: {
       profile: ctx.runtime.profileName,
+      profile_source: ctx.runtime.profileSource,
       api_base: ctx.runtime.apiBase,
       credential_source: ctx.runtime.credentialKind || null,
       user_id: userId,
@@ -159,8 +169,8 @@ async function whoamiHandler(ctx) {
         `Version:   ${ctx.runtime.cliVersion}`,
       ].join('\n'),
     hints: [
+      { command: 'notis profile list', reason: 'See the other accounts this machine can switch to' },
       { command: 'notis tools toolkits', reason: 'List available toolkit namespaces and connection statuses' },
-      { command: 'notis doctor', reason: 'Run a full health check' },
     ],
   });
 }

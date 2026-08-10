@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 
 import { CliError, EXIT_CODES } from './errors.js';
+import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
   credentialIsExpired,
   ensureProfile,
@@ -43,13 +44,13 @@ const DEFAULT_REFRESH_EXPIRES_IN = 30 * 24 * 60 * 60;
 const PENDING_LOGIN_TTL_SECONDS = 30 * 60;
 const OAUTH_HTTP_TIMEOUT_MS = 10_000;
 
-function oauthError(code, message, details = {}) {
+function oauthError(code, message, hints = null, details = {}) {
   return new CliError({
     code,
     message,
     exitCode: EXIT_CODES.auth,
     details,
-    hints: [
+    hints: hints || [
       { command: 'notis login', reason: 'Start a new browser authorization' },
       { command: 'notis doctor', reason: 'Inspect the active credential state' },
     ],
@@ -82,6 +83,7 @@ async function fetchJson(url, init = {}, fetchImpl = fetch) {
       throw oauthError(
         payload.error || 'oauth_request_failed',
         payload.error_description || payload.message || `OAuth request failed with status ${response.status}`,
+        null,
         payload,
       );
     }
@@ -682,13 +684,11 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
     const profile = next.profiles[runtime.profileName];
     next.profiles[runtime.profileName] = {
       ...profile,
-      // Keep Desktop's api_base intact when an independent OAuth grant refreshes.
-      // Only seed api_base from OAuth when the profile has no live API yet.
-      api_base:
-        profile.api_base && !/^https?:\/\/(localhost|127\.0\.0\.1|::1)(:|\/|$)/i.test(profile.api_base)
-          ? profile.api_base
-          : (oauthApiBase || profile.api_base),
-      beta: typeof profile.beta === 'boolean' ? profile.beta : beta,
+      // The grant defines this profile's endpoint. A profile is one account on
+      // one API, and the environment the user just authorized against is the
+      // only endpoint the resulting token is accepted by.
+      api_base: oauthApiBase || profile.api_base,
+      beta: beta ?? profile.beta,
       oauth_api_base: oauthApiBase || profile.oauth_api_base,
       oauth_resource: metadata.resource,
       oauth_access_token: tokenResponse.access_token,
@@ -702,7 +702,7 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
       oauth_user_id: payload.sub || payload.notis_user_id,
     };
     return next;
-  }, runtime.worktreeRuntime);
+  });
   return config.profiles[runtime.profileName];
 }
 
@@ -711,11 +711,11 @@ function pendingAuthorizationFile(runtime) {
     .update(String(runtime.profileName || 'default'))
     .digest('hex')
     .slice(0, 16);
-  return `${resolveConfigFile(runtime)}.pending-login.${profileKey}`;
+  return `${resolveConfigFile()}.pending-login.${profileKey}`;
 }
 
 function legacyPendingAuthorizationFile(runtime) {
-  return `${resolveConfigFile(runtime)}.pending-login`;
+  return `${resolveConfigFile()}.pending-login`;
 }
 
 // The PKCE verifier outlives the process that created it whenever the browser
@@ -753,10 +753,6 @@ function clearPendingAuthorization(runtime, file = pendingAuthorizationFile(runt
   } catch {
     // Nothing to clear.
   }
-}
-
-function quoteShellArgument(value) {
-  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
 function redeemCommand(profileName) {
@@ -803,7 +799,7 @@ export async function ensureFreshOAuthCredential(runtime, fetchImpl = fetch) {
     return Boolean(runtime.jwt);
   }
 
-  const profile = getProfile(loadConfig(runtime.worktreeRuntime), runtime.profileName);
+  const profile = getProfile(loadConfig(), runtime.profileName);
   assertOAuthApiTarget(runtime, profile);
   if (!credentialIsExpired({ credentialKind: 'oauth' }, profile)) {
     updateRuntimeFromOAuthProfile(runtime, profile);
@@ -869,20 +865,29 @@ async function redeemAuthorizationCode(runtime, code, fetchImpl) {
 }
 
 export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = fetch) {
+  // A worktree profile is authenticated by the running `./dev.sh`, not by a
+  // browser grant. Authorizing over it would replace a scoped test identity
+  // with a real account and quietly point local testing at the wrong user.
+  // Check before both starting and redeeming authorization: a copy-paste flow
+  // may have started before the worktree lease claimed this profile.
+  if (runtime.credentialKind === 'worktree') {
+    throw oauthError(
+      'oauth_profile_is_dev_managed',
+      `Profile "${runtime.profileName}" is managed by ./dev.sh and cannot be authorized in a browser.`,
+      [
+        {
+          command: `notis login --profile ${quoteShellArgument(runtime.profileName === 'default' ? 'personal' : 'default')}`,
+          reason: 'Authorize a real account under a different profile name',
+        },
+        { command: 'notis profile list', reason: 'See the profiles this machine already has' },
+      ],
+    );
+  }
   if (options.code) {
     return redeemAuthorizationCode(runtime, String(options.code).trim(), fetchImpl);
   }
-  if (
-    !options.force
-    && ['desktop', 'worktree'].includes(runtime.credentialKind)
-    && !credentialIsExpired(runtime, getProfile(runtime.config, runtime.profileName))
-  ) {
-    return { desktopFastPath: true, credentialSource: runtime.credentialKind };
-  }
 
   const metadata = await discoverCliOAuth(runtime.apiBase, fetchImpl);
-  const { verifier, challenge } = createPkce();
-  const state = base64url(randomBytes(32));
   const scopes = options.scope?.length
     ? [...new Set(options.scope)]
     : DEFAULT_CLI_OAUTH_SCOPES;
@@ -897,6 +902,44 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
   const pasteCode = Boolean(options.pasteCode || nonBlockingAgent);
   let receiver;
   let redirectUri;
+
+  if (pasteCode) {
+    const pending = readPendingAuthorization(runtime);
+    const pendingScopes = Array.isArray(pending?.scopes) && pending.scopes.length > 0
+      ? pending.scopes
+      : DEFAULT_CLI_OAUTH_SCOPES;
+    const sameAuthorization = Boolean(
+      pending
+      && pending.state
+      && pending.api_base === runtime.apiBase
+      && pending.issuer === metadata.issuer
+      && pending.resource === metadata.resource
+      && pending.client_id === metadata.clientId
+      && pending.token_endpoint === metadata.tokenEndpoint
+      && pending.redirect_uri === metadata.copyPasteRedirectUri
+      && JSON.stringify(pendingScopes) === JSON.stringify(scopes),
+    );
+    if (sameAuthorization) {
+      const challenge = createHash('sha256')
+        .update(pending.verifier, 'ascii')
+        .digest('base64url');
+      return {
+        agentAuthorization: {
+          authorize_url: buildAuthorizeUrl(metadata, {
+            redirectUri: pending.redirect_uri,
+            challenge,
+            state: pending.state,
+            scopes: pendingScopes,
+          }),
+          expires_in: Math.max(0, Number(pending.expires_at) - Math.floor(Date.now() / 1000)),
+          redeem_command: redeemCommand(runtime.profileName),
+        },
+      };
+    }
+  }
+
+  const { verifier, challenge } = createPkce();
+  const state = base64url(randomBytes(32));
 
   if (pasteCode) {
     redirectUri = metadata.copyPasteRedirectUri;
@@ -937,6 +980,8 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
       resource: metadata.resource,
       client_id: metadata.clientId,
       token_endpoint: metadata.tokenEndpoint,
+      authorization_endpoint: metadata.authorizationEndpoint,
+      scopes,
       expires_at: Math.floor(Date.now() / 1000) + PENDING_LOGIN_TTL_SECONDS,
     });
   }
@@ -995,7 +1040,7 @@ async function acquireRefreshLock(runtime, waitMs = 60_000) {
       return true;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
-      const profile = getProfile(loadConfig(runtime.worktreeRuntime), runtime.profileName);
+      const profile = getProfile(loadConfig(), runtime.profileName);
       if (
         profile.oauth_access_token
         && profile.oauth_access_token !== runtime.oauthAccessToken
@@ -1021,10 +1066,11 @@ async function acquireRefreshLock(runtime, waitMs = 60_000) {
 }
 
 export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
-  const ownsLock = await acquireRefreshLock(runtime);
-  if (!ownsLock) return true;
+  let ownsLock = false;
   try {
-    const config = loadConfig(runtime.worktreeRuntime);
+    ownsLock = await acquireRefreshLock(runtime);
+    if (!ownsLock) return true;
+    const config = loadConfig();
     const profile = getProfile(config, runtime.profileName);
     assertOAuthApiTarget(runtime, profile);
     if (
@@ -1057,17 +1103,46 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
     const updated = persistOAuthTokenResponse(runtime, metadata, response);
     updateRuntimeFromOAuthProfile(runtime, updated);
     return true;
+  } catch (error) {
+    if (error instanceof CliError) {
+      throw new CliError({
+        code: error.code,
+        message: error.message,
+        exitCode: error.exitCode,
+        retryable: error.retryable,
+        details: error.details,
+        hints: getAuthRecovery(runtime).hints,
+        warnings: error.warnings,
+        cause: error,
+      });
+    }
+    throw error;
   } finally {
-    try {
-      rmdirSync(OAUTH_LOCK_DIR);
-    } catch {
-      // A process exit or external cleanup may already have removed the lock.
+    if (ownsLock) {
+      try {
+        rmdirSync(OAUTH_LOCK_DIR);
+      } catch {
+        // A process exit or external cleanup may already have removed the lock.
+      }
     }
   }
 }
 
 export async function logoutOAuth(runtime, { allProfiles = false } = {}, fetchImpl = fetch) {
-  const config = loadConfig(runtime.worktreeRuntime);
+  if (runtime.credentialKind === 'worktree' && !allProfiles) {
+    throw oauthError(
+      'oauth_profile_is_dev_managed',
+      `Profile "${runtime.profileName}" is managed by ./dev.sh and has no OAuth grant to remove.`,
+      [
+        {
+          command: 'notis logout --profile <name>',
+          reason: 'Name a stored OAuth profile to disconnect it',
+        },
+        { command: 'notis profile list', reason: 'See the stored account profiles on this machine' },
+      ],
+    );
+  }
+  const config = loadConfig();
   const profileNames = allProfiles
     ? Object.keys(config.profiles)
     : [runtime.profileName];
@@ -1116,6 +1191,6 @@ export async function logoutOAuth(runtime, { allProfiles = false } = {}, fetchIm
       };
     }
     return latest;
-  }, runtime.worktreeRuntime);
+  });
   return { profiles: profileNames };
 }

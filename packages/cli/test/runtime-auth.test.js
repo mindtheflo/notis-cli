@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getDesktopAuthRecovery } from '../src/runtime/desktop-auth.js';
+import { getAuthRecovery } from '../src/runtime/auth-recovery.js';
 
 // CONFIG_FILE is derived from homedir() at import time, so each case points HOME
 // at a scratch directory and re-imports the module with a cache-busting query.
@@ -28,14 +28,14 @@ async function loadProfilesWithHome(home, cacheKey) {
 test('loadConfig degrades to unauthenticated when the config file is corrupt', async () => {
   const home = mkdtempSync(join(tmpdir(), 'notis-cli-corrupt-'));
   mkdirSync(join(home, '.notis'), { recursive: true });
-  // A half-written file is the expected shape here: the desktop app rewrites
-  // config.json while `notis start` is polling it.
-  writeFileSync(join(home, '.notis', 'config.json'), '{"jwt": "abc', 'utf-8');
+  // A half-written file is the expected shape here: one `notis` process
+  // rewrites config.json while another is reading it.
+  writeFileSync(join(home, '.notis', 'config.json'), '{"oauth_access_token": "abc', 'utf-8');
 
   const profiles = await loadProfilesWithHome(home, 'corrupt');
   const config = profiles.loadConfig();
 
-  assert.equal(profiles.getJwt(config, 'default'), undefined);
+  assert.equal(profiles.profileHasCredential(profiles.getProfile(config, 'default')), false);
   assert.equal(config.current_profile, 'default');
 });
 
@@ -44,20 +44,172 @@ test('loadConfig still reads a well-formed config file', async () => {
   mkdirSync(join(home, '.notis'), { recursive: true });
   writeFileSync(
     join(home, '.notis', 'config.json'),
-    JSON.stringify({ current_profile: 'default', profiles: { default: { jwt: 'token-123' } } }),
+    JSON.stringify({
+      current_profile: 'work',
+      profiles: {
+        default: {},
+        work: { oauth_access_token: 'token-123', api_base: 'https://api-beta.notis.ai' },
+      },
+    }),
     'utf-8',
   );
 
   const profiles = await loadProfilesWithHome(home, 'valid');
   const config = profiles.loadConfig();
 
-  const previousEnvJwt = process.env.NOTIS_JWT;
-  delete process.env.NOTIS_JWT;
-  try {
-    assert.equal(profiles.getJwt(config, 'default'), 'token-123');
-  } finally {
-    if (previousEnvJwt !== undefined) process.env.NOTIS_JWT = previousEnvJwt;
-  }
+  assert.equal(config.current_profile, 'work');
+  assert.equal(profiles.getProfile(config, 'work').oauth_access_token, 'token-123');
+  assert.equal(profiles.getApiBase(config, 'work'), 'https://api-beta.notis.ai');
+});
+
+// A credential the desktop app wrote is not one anything renews now. Keeping it
+// readable would leave upgraded machines authenticating with a token that
+// silently stops working, instead of pointing them at `notis login`.
+test('a credential left behind by Notis Desktop no longer authenticates the CLI', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-legacy-desktop-'));
+  mkdirSync(join(home, '.notis'), { recursive: true });
+  writeFileSync(
+    join(home, '.notis', 'config.json'),
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: {
+        default: {
+          jwt: 'desktop-supabase-token',
+          access_expires_at: 4_102_444_800,
+          desktop_app_name: 'Notis',
+          desktop_pid: 4242,
+        },
+      },
+    }),
+    'utf-8',
+  );
+
+  const profiles = await loadProfilesWithHome(home, 'legacy-desktop');
+  const profile = profiles.getProfile(profiles.loadConfig(), 'default');
+
+  assert.equal(profile.jwt, undefined);
+  assert.equal(profile.desktop_app_name, undefined);
+  assert.equal(profile.desktop_pid, undefined);
+  assert.equal(profiles.profileHasCredential(profile), false);
+});
+
+test('ordinary CLI config writes preserve legacy Desktop auth until packaged migration', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-legacy-desktop-preserve-'));
+  const configFile = join(home, '.notis', 'config.json');
+  mkdirSync(join(home, '.notis'), { recursive: true });
+  const legacy = {
+    jwt: 'legacy-desktop-token',
+    auth_mode: 'dev_portal',
+    refresh_token: 'legacy-refresh-token',
+    access_expires_at: 4_102_444_800,
+    refresh_expires_at: 4_102_444_900,
+    desktop_app_name: 'Notis',
+    desktop_pid: 4242,
+  };
+  writeFileSync(
+    configFile,
+    JSON.stringify({
+      current_profile: 'default',
+      profiles: { default: { ...legacy, api_base: 'https://api.notis.ai' } },
+    }),
+    'utf-8',
+  );
+
+  const profiles = await loadProfilesWithHome(home, 'legacy-desktop-preserve');
+  profiles.updateConfig((config) => {
+    config.profiles.default.label = 'Account';
+    return config;
+  });
+
+  const raw = JSON.parse(readFileSync(configFile, 'utf-8'));
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(legacy).map((key) => [key, raw.profiles.default[key]])),
+    legacy,
+  );
+  assert.equal(raw.profiles.default.label, 'Account');
+  assert.equal(profiles.profileHasCredential(profiles.loadConfig().profiles.default), false);
+});
+
+test('legacy profile names remain usable and survive later config writes', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-legacy-profile-name-'));
+  const configFile = join(home, '.notis', 'config.json');
+  const legacyName = 'Work account — Zürich';
+  mkdirSync(join(home, '.notis'), { recursive: true });
+  writeFileSync(
+    configFile,
+    JSON.stringify({
+      current_profile: legacyName,
+      profiles: {
+        default: {},
+        [legacyName]: {
+          api_base: 'https://api.notis.ai',
+          oauth_access_token: 'legacy-oauth-token',
+          oauth_access_expires_at: 4_102_444_800,
+          oauth_user_id: 'legacy-user',
+        },
+      },
+    }),
+    'utf-8',
+  );
+
+  const profiles = await loadProfilesWithHome(home, 'legacy-profile-name');
+  const loaded = profiles.loadConfig();
+  assert.equal(loaded.current_profile, legacyName);
+  assert.equal(profiles.profileExists(loaded, legacyName), true);
+  assert.equal(profiles.getProfile(loaded, legacyName).oauth_access_token, 'legacy-oauth-token');
+
+  profiles.updateConfig((config) => {
+    config.current_profile = 'default';
+    return config;
+  });
+  const raw = JSON.parse(readFileSync(configFile, 'utf-8'));
+  assert.equal(raw.profiles[legacyName].oauth_access_token, 'legacy-oauth-token');
+});
+
+test('worktree cleanup preserves raw legacy Desktop auth until packaged migration', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-archive-preserves-legacy-'));
+  const configFile = join(home, '.notis', 'config.json');
+  mkdirSync(join(home, '.notis'), { recursive: true });
+  writeFileSync(
+    configFile,
+    JSON.stringify({
+      current_profile: 'dev-owned',
+      future_top_level: 'preserve-me',
+      profiles: {
+        default: {
+          jwt: 'legacy-desktop-token',
+          access_expires_at: 4_102_444_800,
+          desktop_app_name: 'Notis',
+          future_profile_field: 'preserve-me-too',
+        },
+        'dev-owned': {
+          dev_access_token: 'dev-token',
+          dev_workspace_root: '/worktree/owned',
+        },
+        'dev-other': {
+          dev_access_token: 'other-token',
+          dev_workspace_root: '/worktree/other',
+        },
+      },
+    }),
+    'utf-8',
+  );
+
+  const profiles = await loadProfilesWithHome(home, 'archive-preserves-legacy');
+  const removed = profiles.removeOwnedDevProfiles(
+    ['dev-owned', 'dev-other'],
+    '/worktree/owned',
+  );
+  const raw = JSON.parse(readFileSync(configFile, 'utf-8'));
+
+  assert.deepEqual(removed, ['dev-owned']);
+  assert.equal(raw.current_profile, 'default');
+  assert.equal(raw.future_top_level, 'preserve-me');
+  assert.equal(raw.profiles.default.jwt, 'legacy-desktop-token');
+  assert.equal(raw.profiles.default.desktop_app_name, 'Notis');
+  assert.equal(raw.profiles.default.future_profile_field, 'preserve-me-too');
+  assert.equal(raw.profiles['dev-other'].dev_access_token, 'other-token');
+  assert.equal(Object.hasOwn(raw.profiles, 'dev-owned'), false);
 });
 
 test('config writes recover an aged ownerless lock from an interrupted acquisition', async () => {
@@ -71,31 +223,66 @@ test('config writes recover an aged ownerless lock from an interrupted acquisiti
   const profiles = await loadProfilesWithHome(home, 'ownerless-lock');
   profiles.saveConfig(profiles.normalizeConfig({
     current_profile: 'default',
-    profiles: { default: { jwt: 'recovered-token' } },
+    profiles: { default: { oauth_access_token: 'recovered-token' } },
   }));
 
   assert.equal(
     JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf-8'))
-      .profiles.default.jwt,
+      .profiles.default.oauth_access_token,
     'recovered-token',
   );
 });
 
 test('missing credentials do not tell the caller to renew a session they never had', () => {
-  const runtime = { apiBase: 'https://api.notis.ai', desktopPid: undefined };
+  const runtime = { profileName: 'default', apiBase: 'https://api.notis.ai' };
 
-  const missing = getDesktopAuthRecovery(runtime, { mode: 'missing' });
-  assert.equal(missing.hints[0].command, 'notis login');
+  const missing = getAuthRecovery(runtime, { mode: 'missing' });
+  assert.equal(
+    missing.hints[0].command,
+    'npx --package @notis_ai/cli@latest -- notis login',
+  );
   assert.ok(missing.hints.every((hint) => !/renew/i.test(hint.reason)));
 
-  const expired = getDesktopAuthRecovery(runtime);
-  assert.match(expired.hints[0].reason, /renew/i);
+  const expired = getAuthRecovery(runtime);
+  assert.match(expired.hints[0].reason, /fresh/i);
 });
 
-// Notis Desktop and the npx CLI are separate packages that serialize writes to
-// ~/.notis/config.json only through a lock directory on disk. Nothing but this
-// test keeps the two independent implementations agreeing on that protocol.
-test('the desktop and CLI config write locks share the same lock directory and timings', () => {
+// Recovery advice that names the wrong profile sends someone to authorize an
+// account they are not running as, which looks like a no-op and is worse than
+// no hint at all.
+test('recovery hints target the profile that actually failed', () => {
+  const hints = getAuthRecovery({ profileName: 'work' }, { mode: 'missing' }).hints;
+  assert.equal(
+    hints[0].command,
+    "npx --package @notis_ai/cli@latest -- notis login --profile 'work'",
+  );
+  assert.equal(
+    hints[2].command,
+    "npx --package @notis_ai/cli@latest -- notis doctor --profile 'work'",
+  );
+});
+
+test('profile inspection reports the OAuth-owned endpoint over stale legacy routing', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-oauth-endpoint-'));
+  const profiles = await loadProfilesWithHome(home, 'oauth-endpoint');
+  const listed = profiles.listProfiles({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: 'http://localhost:4311',
+        oauth_api_base: 'https://api.notis.ai',
+        oauth_access_token: 'oauth-token',
+      },
+    },
+  });
+
+  assert.equal(listed[0].api_base, 'https://api.notis.ai');
+});
+
+// Independent `notis` processes serialize writes to ~/.notis/config.json only
+// through a lock directory on disk, so the timings have to stay internally
+// consistent for the reclaim path to be safe.
+test('the config write lock keeps staleness inside its acquisition window', () => {
   const readLockConstants = (source) => Object.fromEntries(
     [...source.matchAll(/const (CONFIG_WRITE_LOCK_[A-Z_]+) = ([\d_]+);/g)]
       .map(([, name, value]) => [name, Number(value.replaceAll('_', ''))]),
@@ -105,17 +292,17 @@ test('the desktop and CLI config write locks share the same lock directory and t
     'utf-8',
   );
   const desktopSource = readFileSync(
-    new URL('../../../electron/src/cli-auth.ts', import.meta.url),
+    new URL('../../../electron/src/desktop-session.ts', import.meta.url),
     'utf-8',
   );
 
   const cliConstants = readLockConstants(cliSource);
-  // A rename on the CLI side must fail here rather than silently compare {} to {}.
+  const desktopConstants = readLockConstants(desktopSource);
+  // A rename must fail here rather than silently compare {} to {}.
   assert.equal(Object.keys(cliConstants).length, 3);
-  assert.deepEqual(readLockConstants(desktopSource), cliConstants);
-  for (const source of [cliSource, desktopSource]) {
-    assert.ok(source.includes('`${configFile}.write-lock`'));
-  }
+  assert.deepEqual(desktopConstants, cliConstants);
+  assert.ok(cliSource.includes('`${configFile}.write-lock`'));
+  assert.ok(desktopSource.includes('`${configFile}.write-lock`'));
 
   // A stale lock is only reclaimable while a waiter is still inside its
   // acquisition window, so staleness must stay below the acquire timeout.
