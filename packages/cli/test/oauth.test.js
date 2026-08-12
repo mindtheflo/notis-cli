@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
 import { createServer, request } from 'node:http';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -525,6 +527,38 @@ test('loopback receiver validates Host and state, sends no-referrer HTML, and co
     assert.equal(repeated.status, 410);
   } finally {
     await receiver.close();
+  }
+});
+
+test('loopback receiver closes while a browser holds a speculative connection', async () => {
+  const receiver = await createLoopbackReceiver({
+    state: 'expected-state',
+    timeoutMs: 5000,
+    portalOrigin: 'https://portal.notis.test',
+  });
+  // Chrome opens a spare connection alongside the callback navigation and never
+  // sends a request on it. Node treats it as an active connection, so a
+  // `server.close()` that waits for it would hang a login that already worked.
+  const speculative = createConnection({ port: receiver.port, host: '127.0.0.1' });
+  await once(speculative, 'connect');
+  try {
+    const codePromise = receiver.waitForCode();
+    const responsePromise = httpGet(`${receiver.redirectUri}?code=oauth-code&state=expected-state`);
+    assert.equal(await codePromise, 'oauth-code');
+    receiver.complete();
+    assert.equal((await responsePromise).status, 302);
+
+    const startedAt = Date.now();
+    await Promise.race([
+      receiver.close(),
+      new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error('close() waited on the speculative connection')), 4000)
+          .unref?.();
+      }),
+    ]);
+    assert.ok(Date.now() - startedAt < 4000);
+  } finally {
+    speculative.destroy();
   }
 });
 

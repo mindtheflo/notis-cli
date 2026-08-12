@@ -43,6 +43,7 @@ const DEFAULT_REFRESH_EXPIRES_IN = 30 * 24 * 60 * 60;
 // still have to sign up, verify an email, and consent before pasting the code.
 const PENDING_LOGIN_TTL_SECONDS = 30 * 60;
 const OAUTH_HTTP_TIMEOUT_MS = 10_000;
+const RESPONSE_FLUSH_GRACE_MS = 2_000;
 
 function oauthError(code, message, hints = null, details = {}) {
   return new CliError({
@@ -461,10 +462,21 @@ export async function createLoopbackReceiver({
   let rejectCode;
   let timeout;
   let pendingResponse = null;
+  // Browsers routinely park speculative connections that never send a request.
+  // `server.close()` waits for every socket it accepted, so the sockets have to
+  // be tracked and dropped by hand or a finished login would keep waiting.
+  const sockets = new Set();
+  let responseFlushed = Promise.resolve();
   const result = new Promise((resolve, reject) => {
     resolveCode = resolve;
     rejectCode = reject;
   });
+
+  const endResponse = (response, body) => {
+    responseFlushed = new Promise((resolve) => {
+      response.end(body, resolve);
+    });
+  };
 
   const server = createServer((request, response) => {
     const address = server.address();
@@ -478,18 +490,18 @@ export async function createLoopbackReceiver({
 
     if (request.headers.host !== expectedHost) {
       response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(callbackHtml('Invalid callback', 'The callback host was not accepted.'));
+      endResponse(response, callbackHtml('Invalid callback', 'The callback host was not accepted.'));
       return;
     }
     const url = new URL(request.url || '/', `http://${expectedHost}`);
     if (request.method !== 'GET' || url.pathname !== '/callback') {
       response.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(callbackHtml('Not found', 'This callback path does not exist.'));
+      endResponse(response, callbackHtml('Not found', 'This callback path does not exist.'));
       return;
     }
     if (consumed) {
       response.writeHead(410, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(callbackHtml('Already used', 'This authorization callback was already handled.'));
+      endResponse(response, callbackHtml('Already used', 'This authorization callback was already handled.'));
       return;
     }
     consumed = true;
@@ -499,14 +511,14 @@ export async function createLoopbackReceiver({
     const error = url.searchParams.get('error');
     if (!stateMatches(state, returnedState)) {
       response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(callbackHtml('Authorization failed', 'The callback state did not match.'));
+      endResponse(response, callbackHtml('Authorization failed', 'The callback state did not match.'));
       rejectCode(oauthError('oauth_state_mismatch', 'The OAuth callback state did not match.'));
       return;
     }
     if (error || !code) {
       const description = url.searchParams.get('error_description') || 'Authorization was not completed.';
       response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-      response.end(callbackHtml('Authorization not completed', description));
+      endResponse(response, callbackHtml('Authorization not completed', description));
       rejectCode(oauthError(error || 'oauth_code_missing', description));
       return;
     }
@@ -515,6 +527,11 @@ export async function createLoopbackReceiver({
     // that the command line is connected.
     pendingResponse = response;
     resolveCode(code);
+  });
+
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
   });
 
   await new Promise((resolve, reject) => {
@@ -539,12 +556,24 @@ export async function createLoopbackReceiver({
     clearTimeout(timeout);
     if (pendingResponse && !pendingResponse.writableEnded) {
       pendingResponse.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-      pendingResponse.end(callbackHtml(
+      endResponse(pendingResponse, callbackHtml(
         'Authorization did not finish',
         'Return to the terminal for details, then retry sign in.',
       ));
       pendingResponse = null;
     }
+    // The browser answer is already written; wait only for the kernel to take
+    // it so tearing the socket down cannot truncate the connected page.
+    await Promise.race([
+      responseFlushed,
+      new Promise((resolve) => { setTimeout(resolve, RESPONSE_FLUSH_GRACE_MS).unref?.(); }),
+    ]);
+    // Chrome parks a speculative connection next to the one that carried the
+    // callback. It never sends a request, so Node counts it as active and
+    // `server.close()` waits for a socket only the browser will ever release:
+    // a login that already succeeded would sit in the terminal for minutes.
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
     if (!server.listening) return;
     await new Promise((resolve) => server.close(resolve));
   };
@@ -563,13 +592,13 @@ export async function createLoopbackReceiver({
         'Content-Type': 'text/html; charset=utf-8',
         Location: connectedUrl.toString(),
       });
-      pendingResponse.end(connectedCallbackHtml({ portalOrigin }));
+      endResponse(pendingResponse, connectedCallbackHtml({ portalOrigin }));
       pendingResponse = null;
     },
     fail: () => {
       if (!pendingResponse || pendingResponse.writableEnded) return;
       pendingResponse.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-      pendingResponse.end(callbackHtml(
+      endResponse(pendingResponse, callbackHtml(
         'Authorization failed',
         'The CLI could not finish signing in. Return to the terminal for details.',
       ));
