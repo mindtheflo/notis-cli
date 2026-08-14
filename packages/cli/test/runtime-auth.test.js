@@ -306,10 +306,11 @@ test('the config write lock keeps staleness inside its acquisition window', () =
   assert.ok(cliConstants.CONFIG_WRITE_LOCK_STALE_MS < cliConstants.CONFIG_WRITE_LOCK_TIMEOUT_MS);
 });
 
-// Notis Desktop reimplements this lock independently, to scrub the credential
-// older builds wrote into the CLI's config. The two packages coordinate only
-// through the lock directory on disk, so nothing but this test keeps them
-// agreeing on it.
+// Notis Desktop reimplements this lock independently: it scrubs the credential
+// older builds wrote into the CLI's config, and it writes the OAuth grant that
+// signs the CLI in when someone signs in to Desktop. The two packages
+// coordinate only through the lock directory on disk, so nothing but this test
+// keeps them agreeing on it.
 //
 // This suite is published standalone to the public notis-cli mirror, which
 // copies packages/cli and deliberately not electron/. Reading the counterpart
@@ -319,7 +320,13 @@ test('the config write lock keeps staleness inside its acquisition window', () =
 // the monorepo the counterpart must exist.
 test('the desktop config write lock has not drifted from the CLI one', () => {
   const electronPackage = new URL('../../../electron/package.json', import.meta.url);
-  const desktopSessionPath = new URL('../../../electron/src/desktop-session.ts', import.meta.url);
+  // The lock lived in desktop-session.ts until it gained a second caller and
+  // was extracted here. Re-pointed rather than deleted, exactly as the message
+  // below asks of whoever moves it next.
+  const desktopSessionPath = new URL(
+    '../../../electron/src/notis-config-file.ts',
+    import.meta.url,
+  );
   if (!existsSync(electronPackage)) {
     // Standalone mirror: there is no second implementation to drift from.
     return;
@@ -327,7 +334,7 @@ test('the desktop config write lock has not drifted from the CLI one', () => {
 
   assert.ok(
     existsSync(desktopSessionPath),
-    'electron/src/desktop-session.ts is missing: if it moved, re-point this drift check at its new home rather than deleting it',
+    'electron/src/notis-config-file.ts is missing: if it moved, re-point this drift check at its new home rather than deleting it',
   );
 
   const cliSource = readFileSync(

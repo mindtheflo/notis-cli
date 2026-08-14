@@ -29,7 +29,7 @@ Use the registry-resolved published npm package everywhere:
 
 - `npx --package @notis_ai/cli@latest -- notis ...`
 
-Always use this NPX command form so the agent runs the current published CLI. In hosted shells, the CLI is pre-authenticated through `NOTIS_JWT`. On a local machine the CLI authorizes itself in the browser with `notis login` — nothing else signs it in, and the Notis desktop app is not involved.
+Always use this NPX command form so the agent runs the current published CLI. In hosted shells, the CLI is pre-authenticated through `NOTIS_JWT`. On a local machine the CLI holds its own OAuth grant: `notis login` authorizes one in the browser, and signing in to the Notis desktop app authorizes one automatically for that account. Either way the grant belongs to the CLI, which refreshes it without the desktop app running.
 
 This `notis-cli` skill is delivered through normal Notis skill sync for the signed-in user, alongside other curated skills.
 
