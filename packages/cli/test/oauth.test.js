@@ -13,6 +13,8 @@ import { promisify } from 'node:util';
 import {
   credentialIsExpired,
   ensureProfile,
+  getProfile,
+  loadConfig,
   normalizeConfig,
   resolveRuntimeProfile,
   saveConfig,
@@ -990,6 +992,61 @@ test('authorizing one profile leaves every other profile signed in', () => {
 // A non-TTY login cannot block on a terminal, so the process that builds the
 // authorize URL exits before the browser hand-off completes. The PKCE verifier
 // has to survive that exit or the code the user is handed is unusable.
+test('login pins the release channel the deployment advertises', async () => {
+  // Hermetic: resolveConfigFile honours this env var, so the assertions below
+  // never depend on (or rewrite) the developer's real ~/.notis/config.json.
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-')), 'config.json');
+  const previousConfigFile = process.env.NOTIS_CLI_CONFIG_FILE;
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/.well-known/oauth-protected-resource/cli')) {
+      return new Response(JSON.stringify({
+        resource: 'https://api-beta.notis.ai/cli',
+        authorization_servers: ['https://api-beta.notis.ai'],
+        notis_cli_client_id: 'notis_cli',
+        notis_cli_copy_paste_redirect_uri: 'https://beta.notis.ai/cli-setup/code/bootstrap',
+        notis_cli_channel: 'beta',
+      }));
+    }
+    if (String(url).endsWith('/oauth/token')) {
+      return new Response(JSON.stringify({
+        access_token: makeJwt('beta-user'),
+        refresh_token: 'refresh-token',
+        expires_in: 900,
+        scope: 'notis:read notis:write',
+      }));
+    }
+    return new Response(JSON.stringify({
+      authorization_endpoint: 'https://api-beta.notis.ai/oauth/authorize',
+      token_endpoint: 'https://api-beta.notis.ai/oauth/token',
+      revocation_endpoint: 'https://api-beta.notis.ai/oauth/revoke',
+    }));
+  };
+
+  try {
+    const runtime = {
+      agentMode: true,
+      apiBase: 'https://api-beta.notis.ai',
+      profileName: 'beta-channel-test',
+      config: normalizeConfig({}),
+    };
+    const started = await loginWithOAuth(runtime, {}, null, fetchImpl);
+    // Even the command the user is told to paste back belongs to the channel
+    // they just authorized against.
+    assert.match(started.agentAuthorization.redeem_command, /@notis_ai\/cli@beta/);
+
+    const redeemed = await loginWithOAuth(runtime, { code: 'browser-code' }, null, fetchImpl);
+    assert.equal(redeemed.profile.channel, 'beta');
+    assert.equal(
+      getProfile(loadConfig(), 'beta-channel-test').channel,
+      'beta',
+    );
+  } finally {
+    if (previousConfigFile === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
+    else process.env.NOTIS_CLI_CONFIG_FILE = previousConfigFile;
+  }
+});
+
 test('a non-interactive login can be completed later with the browser code', async () => {
   const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-')), 'config.json');
   const tokenCalls = [];
@@ -1061,6 +1118,39 @@ test('a non-interactive login can be completed later with the browser code', asy
     }, { code: 'browser-code' }, null, fetchImpl),
     (error) => error?.code === 'oauth_pending_login_missing',
   );
+});
+
+test('legacy beta metadata still prints a beta redemption command', async () => {
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-legacy-channel-')), 'config.json');
+  const previousConfigFile = process.env.NOTIS_CLI_CONFIG_FILE;
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/.well-known/oauth-protected-resource/cli')) {
+      return new Response(JSON.stringify({
+        resource: 'https://api-beta.notis.ai/cli',
+        authorization_servers: ['https://api-beta.notis.ai'],
+        notis_cli_client_id: 'notis_cli',
+        notis_cli_copy_paste_redirect_uri: 'https://beta.notis.ai/cli-setup/code/bootstrap',
+      }));
+    }
+    return new Response(JSON.stringify({
+      authorization_endpoint: 'https://api-beta.notis.ai/oauth/authorize',
+      token_endpoint: 'https://api-beta.notis.ai/oauth/token',
+      revocation_endpoint: 'https://api-beta.notis.ai/oauth/revoke',
+    }));
+  };
+  try {
+    const started = await loginWithOAuth({
+      agentMode: true,
+      apiBase: 'https://api-beta.notis.ai',
+      profileName: 'legacy-beta',
+      config: normalizeConfig({}),
+    }, {}, null, fetchImpl);
+    assert.match(started.agentAuthorization.redeem_command, /@notis_ai\/cli@beta/);
+  } finally {
+    if (previousConfigFile === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
+    else process.env.NOTIS_CLI_CONFIG_FILE = previousConfigFile;
+  }
 });
 
 test('retrying a pending non-interactive login reuses its PKCE authorization', async () => {

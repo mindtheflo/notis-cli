@@ -20,6 +20,7 @@ import {
   writeLinkedState,
 } from '../src/runtime/app-platform.js';
 import {
+  doctorChannelSummary,
   DOCTOR_TOOL_ROUNDTRIP_TIMEOUT_MS,
   doctorToolRoundtripRuntime,
 } from '../src/command-specs/meta.js';
@@ -61,6 +62,18 @@ const cliRoot = resolve(import.meta.dirname, '..');
 const binPath = join(cliRoot, 'bin', 'notis.js');
 const docsScript = join(cliRoot, 'scripts', 'generate-docs.js');
 const execFileAsync = promisify(execFile);
+
+test('doctor reports a live worktree as the dev channel', () => {
+  const summary = doctorChannelSummary({
+    cliVersion: '0.2.0',
+    channel: null,
+    apiBase: 'http://localhost:4311',
+    worktreeRuntime: { profile: 'dev-worktree' },
+  });
+  assert.equal(summary.releaseChannel, 'dev');
+  assert.equal(summary.status, 'dev');
+  assert.equal(summary.mismatch, false);
+});
 
 function runCli(args, env = {}) {
   return spawnSync('node', [binPath, ...args], {
@@ -257,6 +270,7 @@ test('normalizeConfig keeps the dev.sh credential a worktree profile is built on
   assert.deepEqual(normalized.profiles['dev-workspace'], {
     api_base: 'http://localhost:4311',
     beta: undefined,
+    channel: undefined,
     label: './dev.sh (test@example.com)',
     dev_access_token: 'dev-token',
     dev_access_expires_at: 123,
@@ -2043,9 +2057,11 @@ test('an expired OAuth grant points at re-authorizing the profile that failed', 
   assert.equal(payload.error.code, 'auth_expired');
   assert.equal(payload.error.details.credential_source, 'oauth');
   assert.match(payload.error.message, /"work"/);
+  // The profile lives on api-beta, so recovery must point at the beta build:
+  // reinstalling `@latest` would send it back to the channel it failed on.
   assert.equal(
     payload.hints[0].command,
-    "npx --package @notis_ai/cli@latest -- notis login --profile 'work'",
+    "npx --package @notis_ai/cli@beta -- notis login --profile 'work'",
   );
 });
 

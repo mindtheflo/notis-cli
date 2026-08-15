@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import { dirname, join, parse, resolve } from 'node:path';
 import { CliError, EXIT_CODES } from './errors.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
+import { channelFromProfile, cliCommandForChannel, isReleaseChannel } from './channel.js';
 
 export const CONFIG_DIR = join(homedir(), '.notis');
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -95,6 +96,10 @@ function normalizeProfile(rawProfile = {}) {
   return {
     api_base: typeof raw.api_base === 'string' ? raw.api_base : undefined,
     beta: typeof raw.beta === 'boolean' ? raw.beta : undefined,
+    // Which published CLI build this profile runs, as the deployment reported
+    // it at login. Unknown values are dropped rather than trusted: this key
+    // decides which code executes on the next run.
+    channel: isReleaseChannel(raw.channel) ? raw.channel : undefined,
     label: typeof raw.label === 'string' ? raw.label : undefined,
     dev_access_token:
       typeof raw.dev_access_token === 'string' ? raw.dev_access_token : undefined,
@@ -877,7 +882,7 @@ export function resolveRuntimeProfile(
       exitCode: EXIT_CODES.auth,
       hints: [{
         command: [
-          'npx --package @notis_ai/cli@latest -- notis',
+          cliCommandForChannel(channelFromProfile({ api_base: normalizedRequestedApiBase })),
           `--profile ${quoteShellArgument(profileName)}`,
           `--api-base ${quoteShellArgument(normalizedRequestedApiBase)}`,
           'login',
@@ -929,6 +934,17 @@ export function resolveRuntimeProfile(
     profileName,
     profileSource,
     profileLabel: profile.label,
+    // Which published build serves this profile. Carried on the runtime so
+    // every recovery hint prints the command that will actually run.
+    channel: devRuntime
+      ? null
+      : channelFromProfile(
+          (globalOptions.apiBase || process.env.NOTIS_API_BASE)
+            // An explicit route owns this invocation even when the stored
+            // profile is pinned to the opposite release channel.
+            ? { api_base: apiBase }
+            : { ...profile, api_base: apiBase },
+        ),
     apiBase,
     requestedApiBase: normalizedRequestedApiBase,
     jwt,

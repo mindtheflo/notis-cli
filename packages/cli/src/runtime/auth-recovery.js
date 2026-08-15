@@ -1,6 +1,14 @@
 import { CliError, EXIT_CODES } from './errors.js';
+import { channelFromProfile, cliCommandForChannel } from './channel.js';
 
-const CLI_NPX = 'npx --package @notis_ai/cli@latest -- notis';
+// Recovery is only useful when the printed command is the one that will run:
+// telling a beta profile to reinstall `@latest` sends it back to the build it
+// just failed on.
+function cliNpx(runtime = {}) {
+  return cliCommandForChannel(
+    runtime.channel || channelFromProfile({ api_base: runtime.apiBase }),
+  );
+}
 
 export function quoteShellArgument(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
@@ -19,8 +27,9 @@ function profileSuffix(profileName) {
  * "expired" means the profile holds a grant the browser can renew, while
  * "missing" means this profile has never been authorized at all.
  */
-export function getAuthRecovery({ profileName } = {}, { mode = 'expired' } = {}) {
-  const suffix = profileSuffix(profileName);
+export function getAuthRecovery(runtime = {}, { mode = 'expired' } = {}) {
+  const CLI_NPX = cliNpx(runtime);
+  const suffix = profileSuffix(runtime.profileName);
   const hints = [
     {
       command: `${CLI_NPX} login${suffix}`,
@@ -41,6 +50,7 @@ export function getAuthRecovery({ profileName } = {}, { mode = 'expired' } = {})
 }
 
 export function createExpiredAuthError(runtime) {
+  const CLI_NPX = cliNpx(runtime || {});
   if (runtime?.credentialKind === 'worktree') {
     return new CliError({
       code: 'auth_expired',

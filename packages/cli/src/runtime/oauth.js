@@ -20,6 +20,11 @@ import { createInterface } from 'node:readline/promises';
 import { CliError, EXIT_CODES } from './errors.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
+  channelFromProfile,
+  cliCommandForChannel,
+  isReleaseChannel,
+} from './channel.js';
+import {
   credentialIsExpired,
   ensureProfile,
   getOAuthApiBase,
@@ -137,6 +142,12 @@ export async function discoverCliOAuth(apiBase, fetchImpl = fetch) {
     resource: protectedResource.resource,
     clientId: protectedResource.notis_cli_client_id || 'notis_cli',
     copyPasteRedirectUri: protectedResource.notis_cli_copy_paste_redirect_uri,
+    // A deployment that predates channel advertising, or a local one with no
+    // published build, leaves this null and the profile keeps resolving its
+    // channel from the endpoint it authorized against.
+    channel: isReleaseChannel(protectedResource.notis_cli_channel)
+      ? protectedResource.notis_cli_channel
+      : null,
     authorizationEndpoint: authorizationServer.authorization_endpoint,
     tokenEndpoint: authorizationServer.token_endpoint,
     revocationEndpoint: authorizationServer.revocation_endpoint,
@@ -718,6 +729,13 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
       // only endpoint the resulting token is accepted by.
       api_base: oauthApiBase || profile.api_base,
       beta: beta ?? profile.beta,
+      // The deployment that just authorized this profile also names the
+      // published build that belongs to it. Pinning it here is what lets the
+      // next run correct itself without the user knowing a channel exists.
+      channel: isReleaseChannel(metadata.channel)
+        ? metadata.channel
+        : channelFromProfile({ ...profile, beta: beta ?? profile.beta, api_base: oauthApiBase })
+          ?? profile.channel,
       oauth_api_base: oauthApiBase || profile.oauth_api_base,
       oauth_resource: metadata.resource,
       oauth_access_token: tokenResponse.access_token,
@@ -784,12 +802,18 @@ function clearPendingAuthorization(runtime, file = pendingAuthorizationFile(runt
   }
 }
 
-function redeemCommand(profileName) {
+function redeemCommand(profileName, channel) {
   return [
-    'npx --package @notis_ai/cli@latest -- notis',
+    cliCommandForChannel(channel),
     `--profile ${quoteShellArgument(profileName || 'default')}`,
     'login --code <code>',
   ].join(' ');
+}
+
+function authorizationChannel(metadata, runtime, pending = null) {
+  return metadata.channel
+    || pending?.channel
+    || channelFromProfile({ api_base: pending?.api_base || runtime.apiBase });
 }
 
 function updateRuntimeFromOAuthProfile(runtime, profile) {
@@ -875,6 +899,7 @@ async function redeemAuthorizationCode(runtime, code, fetchImpl) {
     resource: pending.resource,
     clientId: pending.client_id,
     tokenEndpoint: pending.token_endpoint,
+    channel: pending.channel,
   };
   if (!metadata.issuer || !metadata.resource || !metadata.clientId || !metadata.tokenEndpoint) {
     throw oauthError(
@@ -961,7 +986,10 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
             scopes: pendingScopes,
           }),
           expires_in: Math.max(0, Number(pending.expires_at) - Math.floor(Date.now() / 1000)),
-          redeem_command: redeemCommand(runtime.profileName),
+          redeem_command: redeemCommand(
+            runtime.profileName,
+            authorizationChannel(metadata, runtime, pending),
+          ),
         },
       };
     }
@@ -1010,6 +1038,7 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
       client_id: metadata.clientId,
       token_endpoint: metadata.tokenEndpoint,
       authorization_endpoint: metadata.authorizationEndpoint,
+      channel: authorizationChannel(metadata, runtime),
       scopes,
       expires_at: Math.floor(Date.now() / 1000) + PENDING_LOGIN_TTL_SECONDS,
     });
@@ -1021,7 +1050,10 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
       agentAuthorization: {
         authorize_url: authorizeUrl,
         expires_in: PENDING_LOGIN_TTL_SECONDS,
-        redeem_command: redeemCommand(runtime.profileName),
+        redeem_command: redeemCommand(
+          runtime.profileName,
+          authorizationChannel(metadata, runtime),
+        ),
       },
     };
   }

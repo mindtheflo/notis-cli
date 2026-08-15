@@ -83,6 +83,17 @@ npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"
 
 Use \`notis login --paste-code\` for the HTTPS copy-paste fallback on a remote machine.
 
+## Release channels
+
+\`@latest\` is the only tag worth documenting, for beta accounts too.
+
+The npm tag has to be chosen before the CLI starts, and the CLI only learns which Notis it talks to once it reads the profile — so no single install command can be right for both environments on its own. Instead the deployment answers the question: \`/.well-known/oauth-protected-resource/cli\` reports its channel, \`notis login\` pins it on the profile, and any later run that finds itself on the wrong build hands the whole invocation to the right one before it does anything else.
+
+- \`notis doctor\` reports \`release_channel\`, \`cli_version\`, and a \`channel\` check.
+- \`--api-base <url>\` decides the build for that one run, so a one-off call against another environment uses the matching CLI.
+- \`./dev.sh\` profiles and source checkouts are never re-executed: whatever you started stays in control.
+- \`NOTIS_CLI_AUTO_CHANNEL=0\` disables the hand-off; \`doctor\` then reports the mismatch instead of correcting it.
+
 ## Profiles
 
 A profile is one account paired with one API endpoint. Every profile keeps its own credential, so switching between them never signs any of them out.

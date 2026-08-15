@@ -30,6 +30,17 @@ function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf-8', ...opts });
 }
 
+// This gate exists to prove the tarball that is about to be published boots and
+// reports its own version. An installed CLI normally hands its invocation to
+// the channel the local profile is pinned to, which would silently validate a
+// different build than the one being released.
+function runPackagedCli(binPath, args, opts = {}) {
+  return run(process.execPath, [binPath, ...args], {
+    ...opts,
+    env: { ...process.env, NOTIS_CLI_AUTO_CHANNEL: '0' },
+  });
+}
+
 function fail(message) {
   process.stderr.write(`smoke-package: FAIL - ${message}\n`);
   process.exit(1);
@@ -60,14 +71,14 @@ try {
   const binPath = join(installedRoot, 'bin', 'notis.js');
 
   // 4) `--version` must boot AND equal the manifest version (no hardcoded drift).
-  const version = run(process.execPath, [binPath, '--version'], { cwd: sandbox }).trim();
+  const version = runPackagedCli(binPath, ['--version'], { cwd: sandbox }).trim();
   if (version !== expectedVersion) {
     fail(`--version printed "${version}" but package.json is "${expectedVersion}"`);
   }
 
   // 5) `--help` must boot without throwing. This imports the full command graph
   //    (incl. app-boundary-validator), so an import-time crash surfaces here.
-  run(process.execPath, [binPath, '--help'], { cwd: sandbox });
+  runPackagedCli(binPath, ['--help'], { cwd: sandbox });
 
   process.stdout.write(`smoke-package: OK - installed and booted ${packageName}@${version} from a fresh tarball\n`);
 } finally {

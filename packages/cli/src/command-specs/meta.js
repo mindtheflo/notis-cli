@@ -1,6 +1,10 @@
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { COMPOSIO_SEARCH_TOOLS, healthCheck, probeAuth } from './helpers.js';
 import { findCommandSpec, formatDescribe } from '../runtime/help.js';
 import { createExpiredAuthError, getAuthRecovery } from '../runtime/auth-recovery.js';
+import { cliCommandForChannel, resolveChannelSwitch } from '../runtime/channel.js';
 import {
   credentialIsExpired,
   getProfile,
@@ -17,10 +21,40 @@ export function doctorToolRoundtripRuntime(runtime) {
   };
 }
 
+export function doctorChannelSummary(
+  runtime,
+  moduleDirectory = dirname(fileURLToPath(import.meta.url)),
+) {
+  const decision = resolveChannelSwitch({
+    runningVersion: runtime.cliVersion,
+    profile: {
+      channel: runtime.channel,
+      api_base: runtime.apiBase,
+    },
+    moduleDirectory,
+  });
+  const mismatch = Boolean(
+    decision.targetChannel
+    && decision.targetChannel !== decision.runningChannel,
+  );
+  const releaseChannel = runtime.worktreeRuntime ? 'dev' : runtime.channel;
+  return {
+    decision,
+    mismatch,
+    releaseChannel,
+    status: runtime.worktreeRuntime
+      ? 'dev'
+      : mismatch
+        ? `mismatch:${decision.reason}`
+        : decision.runningChannel,
+  };
+}
+
 async function doctorHandler(ctx) {
   const checks = {
     config: 'ok',
     auth: 'missing',
+    channel: 'unknown',
     routing: 'ok',
     health: 'unknown',
     tool_roundtrip: 'unknown',
@@ -76,7 +110,24 @@ async function doctorHandler(ctx) {
     }
   }
 
+  // A mismatch here means the automatic hand-off could not happen: a source
+  // checkout, an explicit opt-out, or a switch that could not reach npm. The
+  // profile still routes to the right API, so this reports rather than fails.
+  const {
+    decision: channelDecision,
+    mismatch: channelMismatch,
+    releaseChannel,
+    status: channelStatus,
+  } = doctorChannelSummary(ctx.runtime);
+  checks.channel = channelStatus;
+
   const hints = [];
+  if (channelMismatch) {
+    hints.push({
+      command: `${cliCommandForChannel(channelDecision.targetChannel)} doctor`,
+      reason: `Profile "${ctx.runtime.profileName}" belongs to the ${channelDecision.targetChannel} CLI channel`,
+    });
+  }
   if (checks.auth === 'missing') {
     hints.push(...getAuthRecovery(ctx.runtime, { mode: 'missing' }).hints);
   } else if (checks.auth === 'expired') {
@@ -104,6 +155,8 @@ async function doctorHandler(ctx) {
       profile: ctx.runtime.profileName,
       profile_source: ctx.runtime.profileSource,
       api_base: ctx.runtime.apiBase,
+      release_channel: releaseChannel || null,
+      cli_version: ctx.runtime.cliVersion || null,
       credential_source: ctx.runtime.credentialKind || null,
       ...(ctx.runtime.credentialKind === 'oauth'
         ? {
