@@ -77,7 +77,7 @@ function filesToAutoCommit(repository) {
 }
 
 /** Refuse files that are unsafe to publish automatically without user review. */
-function sensitiveAutoCommitFiles(repository) {
+export function sensitiveAutoCommitFiles(repository) {
   const root = resolve(repository.toplevel);
   const sensitive = [];
   for (const path of filesToAutoCommit(repository)) {

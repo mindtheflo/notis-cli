@@ -16,7 +16,12 @@
  */
 
 import { CliError, EXIT_CODES, usageError } from '../runtime/errors.js';
-import { commitWorkingTree, inspectRepository, pushBranch } from '../runtime/git.js';
+import {
+  commitWorkingTree,
+  inspectRepository,
+  pushBranch,
+  sensitiveAutoCommitFiles,
+} from '../runtime/git.js';
 import { assertNotDelegated } from '../runtime/delegated-context.js';
 import { fetchToolSchema, nextIdempotencyKey, runToolCommand } from './helpers.js';
 
@@ -159,6 +164,22 @@ async function handoverStartHandler(ctx) {
         hints: [
           { message: 'Commit and push them yourself, then run the hand-over again.' },
           { message: 'Or drop --no-wip and let the hand-over commit them for you.' },
+        ],
+      });
+    }
+    // Scan before announcing anything. commitWorkingTree refuses on a
+    // credential-shaped file, and printing "Committing ... .env" first and then
+    // refusing reads as though the commit happened.
+    const sensitive = sensitiveAutoCommitFiles(repository);
+    if (sensitive.length) {
+      throw new CliError({
+        code: 'sensitive_working_tree',
+        message: 'Refusing to publish files that may contain credentials or private keys.',
+        exitCode: EXIT_CODES.conflict,
+        details: { sensitive_files: sensitive.slice(0, 20) },
+        hints: [
+          { message: 'Review, remove, or ignore these files before handing over.' },
+          { message: 'To publish them deliberately, commit and push them yourself first.' },
         ],
       });
     }
