@@ -153,6 +153,52 @@ test('ensureDevInstall sends source-owned skill content and onboarding metadata'
   assert.equal(captured.arguments_.skills[0].skill_md, '# Journal Onboarding\n\nCurrent local instructions.\n');
 });
 
+test('ensureDevInstall sends a directory skill with its supporting files', async () => {
+  const projectDir = createProject();
+  const skillDir = join(projectDir, 'skills', 'new-workspace');
+  mkdirSync(join(skillDir, 'scripts'), { recursive: true });
+  writeFileSync(join(skillDir, 'SKILL.md'), '# New workspace\n\nRun the scripts.\n');
+  writeFileSync(join(skillDir, 'scripts', 'run_job.sh'), '#!/bin/bash\necho job\n');
+  let captured = null;
+
+  await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: {
+      ...appConfig(),
+      skills: [
+        { key: 'new-workspace', path: './skills/new-workspace/', name: 'New workspace' },
+      ],
+    },
+    projectDir,
+    idempotencyKey: 'idem-skill-dir',
+    runTool: async (call) => {
+      captured = call;
+      return {
+        payload: {
+          app_id: 'dev-app-1',
+          slug: 'notes-dev',
+          created: true,
+          database_materialization: { created: [], unresolved: [] },
+        },
+      };
+    },
+  });
+
+  assert.equal(captured.arguments_.manifest.skills[0].path, 'skills/new-workspace');
+  assert.equal(captured.arguments_.skills[0].skill_md, '# New workspace\n\nRun the scripts.\n');
+  assert.deepEqual(
+    captured.arguments_.skills[0].bundle_files.map((entry) => entry.path),
+    ['SKILL.md', 'scripts/run_job.sh'],
+  );
+  assert.equal(
+    Buffer.from(
+      captured.arguments_.skills[0].bundle_files.find((entry) => entry.path === 'scripts/run_job.sh').content_b64,
+      'base64',
+    ).toString('utf8'),
+    '#!/bin/bash\necho job\n',
+  );
+});
+
 test('ensureDevInstall passes explicit dev_app_id when state has one', async () => {
   const projectDir = createProject({ app_id: 'installed-app-1', dev_app_id: 'dev-app-1' });
   let captured = null;
@@ -367,4 +413,49 @@ test('ensureDevInstall keeps unlinked dev installs separate and reports unresolv
   assert.equal(result.appId, 'dev-app-1');
   assert.equal(result.linkedAppId, null);
   assert.deepEqual(result.databaseMaterialization, { created: [], unresolved: ['notes'] });
+});
+
+test('ensureDevInstall sends the live-data choice on every call', async () => {
+  const calls = [];
+  const runTool = async (call) => {
+    calls.push(call);
+    return {
+      payload: {
+        app_id: 'dev-app-1',
+        slug: 'notes-dev',
+        created: false,
+        database_materialization: { created: [], unresolved: [] },
+        live_data: {
+          requested: true,
+          enabled: true,
+          installed_app_id: 'installed-app-1',
+          warning: null,
+        },
+      },
+    };
+  };
+
+  const live = await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir: createProject(),
+    idempotencyKey: 'idem-live',
+    useInstalledDatabases: true,
+    runTool,
+  });
+
+  assert.equal(calls[0].arguments_.use_installed_databases, true);
+  assert.equal(live.liveData.installed_app_id, 'installed-app-1');
+
+  // Dropping the flag has to put the next session back on its dev copies, so
+  // `false` is sent rather than omitted.
+  await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir: createProject(),
+    idempotencyKey: 'idem-dev-copies',
+    runTool,
+  });
+
+  assert.equal(calls[1].arguments_.use_installed_databases, false);
 });

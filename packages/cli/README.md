@@ -155,11 +155,14 @@ When to use: Run this inside a single app or a monorepo root with apps/<name>/no
 Options:
 - `--port <number>` — Local bundle server port (default: 5173).
 - `--no-open` — Do not auto-open the desktop Portal local development app.
+- `--live-data` — Read and write the installed app's real databases instead of empty dev copies. Applies to this session only; warns and falls back when the app is not installed yet.
+- `--grant-cloud-shell` — Approve a cloudComputer: 'shell' declaration without the interactive prompt. The grant persists for this dev app; authorship alone never grants it.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps dev`
 - `npx --package @notis_ai/cli@latest -- notis apps dev ./my-app`
 - `npx --package @notis_ai/cli@latest -- notis apps dev ./workspace --port 5200`
+- `npx --package @notis_ai/cli@latest -- notis apps dev --live-data  # iterate on a view over the installed app's real rows`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps build [dir]`
 
@@ -173,15 +176,16 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis apps verify [dir]`
 
-Validate every route and the production Store listing contract.
+Validate that every route renders and reports Store listing readiness.
 
-When to use: After notis apps screenshot, before deploy. Catches render-time crashes, missing runtime calls, and incomplete listing media that the build step cannot detect.
+When to use: Any time after notis apps build, and before deploy. Catches render-time crashes and missing runtime calls. Incomplete listing media is reported as a warning; pass --listing to fail on it instead.
 
 Options:
 - `--routes <slugs>` — Comma-separated route slugs. Default: every route in manifest.
 - `--port <n>` — Loopback port. Default: auto-pick.
 - `--skip-build` — Skip notis apps build; reuse existing .notis/output/.
-- `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT.
+- `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.
+- `--listing` — Fail instead of warn when the Store listing (tagline, categories, screenshots, changelog) is incomplete.
 - `--no-browser` — Start the harness server and print URLs; do not drive agent-browser.
 - `--keep-open` — Leave server + browser session running after report (for manual triage).
 
@@ -189,6 +193,7 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps verify`
 - `npx --package @notis_ai/cli@latest -- notis apps verify --routes notes`
 - `npx --package @notis_ai/cli@latest -- notis apps verify --mode live`
+- `npx --package @notis_ai/cli@latest -- notis apps verify --listing  # gate on Store listing readiness before publish`
 - `npx --package @notis_ai/cli@latest -- notis apps verify --no-browser  # start the harness, drive agent-browser yourself`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps screenshot [dir]`
@@ -292,6 +297,43 @@ When to use: Diagnose issues with a Notis app project.
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps doctor`
 - `npx --package @notis_ai/cli@latest -- notis apps doctor ./my-app`
+
+
+## Hand-over
+
+Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. `--route` picks the agent: the hosted Notis agent, or the user's own Codex/Claude Code in the cloud sandbox or on their Mac. `--branch-mode same` makes the agent commit onto your branch; the default cuts a new branch from it.
+
+### `npx --package @notis_ai/cli@latest -- notis handover start <task>`
+
+Hand the current branch to a Notis agent and keep working.
+
+When to use: Use this when you want Notis to continue work on the branch you are on -- long refactors, test fixing, or anything that should keep running after you close the laptop. Pick the agent with --route.
+
+Options:
+- `--branch-mode <mode>` — same = the agent commits onto your branch. new = the agent cuts a new branch from it (default).
+- `--route <target>` — Which agent runs it: notis (hosted, default), codex_cloud, claude_cloud, codex_local, claude_local, or auto.
+- `--repo <slug>` — Configured repository slug on the cloud computer, when you know it.
+- `--no-wip` — Refuse on a dirty tree instead of committing the changes first.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis handover start "fix the failing auth tests"`
+- `npx --package @notis_ai/cli@latest -- notis handover start "finish the migration" --branch-mode same --route codex_cloud`
+- `npx --package @notis_ai/cli@latest -- notis handover start "add integration tests" --route claude_cloud`
+- `npx --package @notis_ai/cli@latest -- notis handover start "review and clean up this branch" --route claude_local`
+
+### `npx --package @notis_ai/cli@latest -- notis handover status`
+
+Show the coding-agent threads Notis is running for you.
+
+When to use: Use this after a hand-over to see whether the agent is still working.
+
+Options:
+- `--provider <provider>` — Filter to codex or claude_code.
+- `--refresh` — Force a live refresh instead of cached state.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis handover status`
+- `npx --package @notis_ai/cli@latest -- notis handover status --provider codex --refresh`
 
 
 ## Generic Tools

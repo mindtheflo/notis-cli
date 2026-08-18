@@ -119,11 +119,14 @@ When to use: Run this inside a single app or a monorepo root with apps/<name>/no
 Options:
 - `--port <number>` — Local bundle server port (default: 5173).
 - `--no-open` — Do not auto-open the desktop Portal local development app.
+- `--live-data` — Read and write the installed app's real databases instead of empty dev copies. Applies to this session only; warns and falls back when the app is not installed yet.
+- `--grant-cloud-shell` — Approve a cloudComputer: 'shell' declaration without the interactive prompt. The grant persists for this dev app; authorship alone never grants it.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps dev`
 - `npx --package @notis_ai/cli@latest -- notis apps dev ./my-app`
 - `npx --package @notis_ai/cli@latest -- notis apps dev ./workspace --port 5200`
+- `npx --package @notis_ai/cli@latest -- notis apps dev --live-data  # iterate on a view over the installed app's real rows`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps build [dir]`
 
@@ -137,15 +140,16 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis apps verify [dir]`
 
-Validate every route and the production Store listing contract.
+Validate that every route renders and reports Store listing readiness.
 
-When to use: After notis apps screenshot, before deploy. Catches render-time crashes, missing runtime calls, and incomplete listing media that the build step cannot detect.
+When to use: Any time after notis apps build, and before deploy. Catches render-time crashes and missing runtime calls. Incomplete listing media is reported as a warning; pass --listing to fail on it instead.
 
 Options:
 - `--routes <slugs>` — Comma-separated route slugs. Default: every route in manifest.
 - `--port <n>` — Loopback port. Default: auto-pick.
 - `--skip-build` — Skip notis apps build; reuse existing .notis/output/.
-- `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT.
+- `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.
+- `--listing` — Fail instead of warn when the Store listing (tagline, categories, screenshots, changelog) is incomplete.
 - `--no-browser` — Start the harness server and print URLs; do not drive agent-browser.
 - `--keep-open` — Leave server + browser session running after report (for manual triage).
 
@@ -153,6 +157,7 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps verify`
 - `npx --package @notis_ai/cli@latest -- notis apps verify --routes notes`
 - `npx --package @notis_ai/cli@latest -- notis apps verify --mode live`
+- `npx --package @notis_ai/cli@latest -- notis apps verify --listing  # gate on Store listing readiness before publish`
 - `npx --package @notis_ai/cli@latest -- notis apps verify --no-browser  # start the harness, drive agent-browser yourself`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps screenshot [dir]`

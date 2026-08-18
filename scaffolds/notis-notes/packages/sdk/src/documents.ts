@@ -12,6 +12,7 @@ import type {
   DatabasePropertyType,
   DocumentContentType,
   DocumentRecord,
+  SecretPropertyValue,
 } from './runtime';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,23 @@ export function extractRichText(value: unknown): string {
       return optionalString(text?.content) ?? optionalString(record?.plain_text) ?? '';
     })
     .join('');
+}
+
+/**
+ * Reads a `secret` property value. The platform only ever sends the pointer
+ * ({present, reference, status, metadata}), so this rebuilds it field by field
+ * rather than passing the payload through — an app can never surface secret
+ * material through this helper, whatever the server sent.
+ */
+export function getSecretValue(value: unknown): SecretPropertyValue {
+  const record = asRecord(value);
+  const metadata = asRecord(record?.metadata);
+  return {
+    present: record?.present === true,
+    reference: optionalString(record?.reference),
+    status: optionalString(record?.status),
+    metadata,
+  };
 }
 
 /** Extracts the ids of a normalized relation property value. */
@@ -81,6 +99,9 @@ export function normalizePropertyValue(value: unknown): unknown {
     return items.map((item) => optionalString(asRecord(item)?.id) ?? item).filter(Boolean);
   }
   if (type === 'date') return optionalString(asRecord(record.date)?.start) ?? record.date ?? null;
+  // Before the `type in record` fallthrough: a secret value has no `secret`
+  // key, so passing it through would hand the caller the raw payload.
+  if (type === 'secret') return getSecretValue(record);
   if (type in record) return record[type];
   return value;
 }

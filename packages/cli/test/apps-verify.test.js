@@ -19,7 +19,10 @@ import { getAvailablePort } from '../src/runtime/ports.js';
 const cliRoot = resolve(import.meta.dirname, '..');
 const binPath = join(cliRoot, 'bin', 'notis.js');
 
-function createAppProject() {
+// Verify only needs a buildable app with routes. Listing metadata (tagline,
+// categories, screenshots, changelog) is a publish concern, so it is opt-in
+// here and exercised by the --listing tests.
+function createAppProject({ listing = false } = {}) {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-verify-'));
   mkdirSync(join(projectDir, 'app'), { recursive: true });
   writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
@@ -30,29 +33,31 @@ import { defineNotisApp } from '@notis/sdk/config';
 export default defineNotisApp({
   name: 'Verify App',
   description: 'A fixture app for verifying the generated harness.',
-  tagline: 'Verify a production-ready app.',
+${listing ? `  tagline: 'Verify a production-ready app.',
   categories: ['Productivity'],
   screenshots: [
     { path: 'metadata/screenshot-1.png', alt: 'Verify App home' },
     { path: 'metadata/screenshot-2.png', alt: 'Verify App detail' },
     { path: 'metadata/screenshot-3.png', alt: 'Verify App final state' },
   ],
-  databases: ['items'],
+` : ''}  databases: ['items'],
   routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
   tools: ['LOCAL_NOTIS_DATABASE_QUERY'],
 });
 `);
-  writeFileSync(
-    join(projectDir, 'CHANGELOG.md'),
-    '# Verify App Changelog\n\n## [Initial Release] - 2026-07-17\n\n- Added the verification fixture.\n',
-  );
-  mkdirSync(join(projectDir, 'metadata'), { recursive: true });
-  for (let index = 1; index <= 3; index += 1) {
-    const png = Buffer.alloc(24);
-    Buffer.from('89504e470d0a1a0a', 'hex').copy(png, 0);
-    png.writeUInt32BE(2000, 16);
-    png.writeUInt32BE(1250, 20);
-    writeFileSync(join(projectDir, 'metadata', `screenshot-${index}.png`), png);
+  if (listing) {
+    writeFileSync(
+      join(projectDir, 'CHANGELOG.md'),
+      '# Verify App Changelog\n\n## [Initial Release] - 2026-07-17\n\n- Added the verification fixture.\n',
+    );
+    mkdirSync(join(projectDir, 'metadata'), { recursive: true });
+    for (let index = 1; index <= 3; index += 1) {
+      const png = Buffer.alloc(24);
+      Buffer.from('89504e470d0a1a0a', 'hex').copy(png, 0);
+      png.writeUInt32BE(2000, 16);
+      png.writeUInt32BE(1250, 20);
+      writeFileSync(join(projectDir, 'metadata', `screenshot-${index}.png`), png);
+    }
   }
   writeFileSync(join(projectDir, 'build.cjs'), `
 const fs = require('fs');
@@ -74,8 +79,8 @@ fs.writeFileSync(path.join(out, 'app.css'), '[data-notis-app-root]{display:block
   return projectDir;
 }
 
-async function buildAppProject() {
-  const projectDir = createAppProject();
+async function buildAppProject(options = {}) {
+  const projectDir = createAppProject(options);
   await buildArtifact(projectDir);
   return projectDir;
 }
@@ -202,6 +207,46 @@ test('harness injects synthetic tool data and a named screenshot scenario', asyn
   assert.match(html, /color-scheme: dark/);
 });
 
+test('a screenshot scenario overrides the file-level tool fixtures', async (t) => {
+  const projectDir = await buildAppProject();
+  mkdirSync(join(projectDir, 'metadata'), { recursive: true });
+  writeFileSync(
+    join(projectDir, 'metadata', 'screenshot-fixtures.json'),
+    JSON.stringify({
+      tools: { LOCAL_NOTIS_DATABASE_QUERY: { documents: [{ id: 'demo-entry' }] } },
+      requests: { '/portal_apps/status': { state: 'connected' } },
+      scenarios: {
+        empty: {
+          tools: { LOCAL_NOTIS_DATABASE_QUERY: { documents: [] } },
+          requests: { '/portal_apps/status': { state: 'disconnected' } },
+        },
+      },
+    }),
+  );
+  const port = await getAvailablePort();
+  const server = await startAppDevServer({
+    apps: [{ slug: 'verify-app', projectDir }],
+    port,
+    watch: false,
+    log: () => {},
+    logError: (message) => {
+      throw new Error(message);
+    },
+  });
+  t.after(async () => server.close());
+
+  const overridden = await (await fetch(
+    `http://127.0.0.1:${port}/a/verify-app/harness?route=home&scenario=empty`,
+  )).text();
+  assert.doesNotMatch(overridden, /"demo-entry"/);
+  assert.match(overridden, /"documents":\[\]/);
+  assert.match(overridden, /"state":"disconnected"/);
+
+  const base = await (await fetch(`http://127.0.0.1:${port}/a/verify-app/harness?route=home`)).text();
+  assert.match(base, /"demo-entry"/);
+  assert.match(base, /"state":"connected"/);
+});
+
 test('screenshot capture hides the harness banner without removing its compositor layer', () => {
   assert.match(HIDE_HARNESS_STATUS_SCRIPT, /opacity = '0'/);
   assert.doesNotMatch(HIDE_HARNESS_STATUS_SCRIPT, /display = 'none'/);
@@ -281,4 +326,194 @@ test('apps verify rejects runtime database queries missing from the app declarat
     payload.data.results[0].assertions.map((assertion) => assertion.code),
     ['undeclared_database_query'],
   );
+});
+
+test('apps verify reports Store listing gaps as warnings instead of failing', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [],
+  });
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.data.status, 'passed');
+  assert.equal(payload.data.listing.ready, false);
+  const readinessWarnings = payload.warnings.filter((warning) => warning.startsWith('Store readiness:'));
+  assert.ok(readinessWarnings.some((warning) => warning.includes('tagline')));
+  assert.ok(readinessWarnings.some((warning) => warning.includes('screenshot')));
+});
+
+test('apps verify --listing restores the Store listing gate', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [],
+  });
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--listing', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /Listing metadata has problems/);
+});
+
+test('apps verify --listing passes once the listing is complete', async () => {
+  const projectDir = await buildAppProject({ listing: true });
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [],
+  });
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--listing', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.data.listing.ready, true);
+  assert.deepEqual(payload.warnings.filter((warning) => warning.startsWith('Store readiness:')), []);
+});
+
+test('apps verify warns when a configured screenshot names an undefined scenario', async () => {
+  const projectDir = await buildAppProject({ listing: true });
+  writeFileSync(
+    join(projectDir, 'metadata', 'screenshot-fixtures.json'),
+    JSON.stringify({ tools: {}, scenarios: { populated: { actions: [] } } }),
+  );
+  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8').replace(
+    "{ path: 'metadata/screenshot-1.png', alt: 'Verify App home' }",
+    "{ path: 'metadata/screenshot-1.png', alt: 'Verify App home', route: 'home', scenario: 'nonexistent' }",
+  );
+  writeFileSync(join(projectDir, 'notis.config.ts'), config);
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [],
+  });
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.ok(
+    payload.warnings.some((warning) => warning.includes('names scenario "nonexistent"')),
+    JSON.stringify(payload.warnings),
+  );
+});
+
+function liveVerifyEnv(projectDir, mockBin) {
+  writeFileSync(
+    join(projectDir, '.notis', 'state.json'),
+    JSON.stringify({ app_id: 'app-verify-fixture' }),
+  );
+  return {
+    PATH: `${mockBin}:${process.env.PATH}`,
+    NOTIS_JWT: 'test-jwt',
+  };
+}
+
+test('apps verify --mode live fails a route whose runtime calls all failed', async () => {
+  const projectDir = await buildAppProject();
+  const harness = {
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [
+      {
+        op: 'callTool',
+        args: { name: 'LOCAL_NOTIS_DATABASE_QUERY', arguments: { database_slug: 'items' } },
+        ok: false,
+        error: 'Runtime request failed: status 403',
+        durationMs: 12,
+      },
+    ],
+  };
+  const mockBin = writeMockAgentBrowser(harness);
+
+  const live = runCli(
+    ['apps', 'verify', projectDir, '--skip-build', '--mode', 'live', '--json'],
+    liveVerifyEnv(projectDir, mockBin),
+  );
+  assert.notEqual(live.status, 0, live.stdout);
+  const livePayload = JSON.parse(live.stdout);
+  assert.deepEqual(
+    livePayload.data.results[0].assertions.map((assertion) => assertion.code),
+    ['all_runtime_calls_failed', 'failed_database_query'],
+  );
+  assert.match(livePayload.data.results[0].assertions[0].message, /status 403/);
+
+  // The same failure is invisible in stub mode: stub responses cannot fail, so
+  // the outcome fields are not asserted there.
+  const stub = runCli(['apps', 'verify', projectDir, '--skip-build', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+  assert.equal(stub.status, 0, stub.stderr || stub.stdout);
+  assert.equal(JSON.parse(stub.stdout).data.results[0].assertions.length, 0);
+});
+
+test('apps verify --mode live passes when one runtime call succeeded', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [
+      {
+        op: 'callTool',
+        args: { name: 'LOCAL_NOTIS_DATABASE_QUERY', arguments: { database_slug: 'items' } },
+        ok: false,
+        error: 'Runtime request failed: status 500',
+        durationMs: 8,
+      },
+      {
+        op: 'callTool',
+        args: { name: 'LOCAL_NOTIS_DATABASE_QUERY', arguments: { database_slug: 'items' } },
+        ok: true,
+        error: null,
+        durationMs: 21,
+      },
+    ],
+  });
+
+  const result = runCli(
+    ['apps', 'verify', projectDir, '--skip-build', '--mode', 'live', '--json'],
+    liveVerifyEnv(projectDir, mockBin),
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).data.results[0].assertions.length, 0);
+});
+
+test('apps verify --mode live passes a route that makes no runtime calls', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [],
+  });
+
+  const result = runCli(
+    ['apps', 'verify', projectDir, '--skip-build', '--mode', 'live', '--json'],
+    liveVerifyEnv(projectDir, mockBin),
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).data.results[0].assertions.length, 0);
 });

@@ -83,23 +83,45 @@ export interface NotisAppAuthor {
 }
 
 export interface NotisAppSkillConfig {
+  /** Stable source-owned key used by other app declarations. */
   key: string;
+  /**
+   * Path to the skill, relative to notis.config.ts. Either a Markdown file
+   * (`./skills/onboarding.md`) or a directory holding SKILL.md plus its
+   * supporting files (`./skills/onboarding/`), which are packaged on deploy
+   * and materialized next to SKILL.md in the sandbox.
+   */
   path: string;
+  /** User-facing name used for the installed skill. */
   name: string;
   description?: string;
 }
 
 export interface NotisAppOnboardingConfig {
+  /** Key of a skill declared in `skills`. */
   skill: string;
+  /** Editable message placed in Notis when onboarding is opened. */
   prompt: string;
 }
 
 export interface NotisAppScreenshotConfig {
+  /** Conventional metadata/screenshot-N.png source path. */
   path: string;
+  /** Meaningful description used by the Store gallery and assistive technology. */
   alt: string;
+  /** Route slug captured by `notis apps screenshot`. */
   route?: string;
+  /**
+   * Named scenario from metadata/screenshot-fixtures.json. Its `tools` and
+   * `requests` override the file-level ones key by key for this capture, and
+   * its `actions` run once the route has mounted -- so one route can be shown
+   * in several states (populated, empty, a panel opened) without the states
+   * leaking into each other.
+   */
   scenario?: string;
+  /** Optional CSS selector captured as the truthful focal region for this Store image. */
   focus?: string;
+  /** Portal color scheme used while rendering this screenshot. Defaults to light. */
   theme?: 'light' | 'dark';
 }
 
@@ -131,6 +153,25 @@ export interface NotisAppCapabilities {
    * bound to the app's own databases.
    */
   workspaceDatabases?: 'read';
+
+  /**
+   * Read a few facts about the user's cloud computer: whether a sandbox exists
+   * and is running, and whether the GitHub CLI is signed in there.
+   *
+   * Without this an app has to infer them — the Workspaces app treated a
+   * configured repository as proof that `gh auth login` had happened, which
+   * cannot show an account name and cannot notice a revoked credential.
+   * `'read'` never creates, resumes or commands a sandbox. Read it with
+   * `useCloudComputer()`.
+   *
+   * `'shell'` additionally asks to command the cloud computer: it unlocks
+   * `LOCAL_NOTIS_RUN_SANDBOX_SHELL` and the sandbox file tools from this app's
+   * views (they are denied to every view otherwise), and implies the read
+   * facts. This is the same authority the user's own agent has on the sandbox,
+   * so the user is asked for it explicitly at install or in the Store grant
+   * step; declare it only when the app's core actions genuinely run there.
+   */
+  cloudComputer?: 'read' | 'shell';
 }
 
 export interface NotisAppConfig {
@@ -154,6 +195,7 @@ export interface NotisAppConfig {
   tagline?: string;
   /** @deprecated Add release entries to the root CHANGELOG.md instead. */
   versionNotes?: string;
+  /** Editorial screenshot order and capture scenarios for the Store listing. */
   screenshots?: NotisAppScreenshotConfig[];
   /**
    * Databases this app owns. A bare string publishes structure only; use the
@@ -168,7 +210,9 @@ export interface NotisAppConfig {
   capabilities?: NotisAppCapabilities;
   routes?: NotisRouteConfig[];
   tools?: string[];
+  /** Skills shipped from this app's source tree. */
   skills?: NotisAppSkillConfig[];
+  /** Optional onboarding entrypoint exposed from the app sidebar. */
   onboarding?: NotisAppOnboardingConfig;
 }
 

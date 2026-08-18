@@ -2,6 +2,7 @@ import { accessSync, constants as fsConstants, createReadStream, existsSync, rea
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { usageError } from '../runtime/errors.js';
+import { assertToolNotDelegated } from '../runtime/delegated-context.js';
 import {
   COMPOSIO_GET_TOOL_SCHEMAS,
   COMPOSIO_MULTI_EXECUTE_TOOL,
@@ -380,6 +381,9 @@ async function toolsDescribeHandler(ctx) {
 
 async function toolsExecHandler(ctx) {
   const requestedToolName = localNotisToolSlug(ctx.args.toolName);
+  // `tools exec` is the escape hatch around every first-class command, so the
+  // hand-over guard has to live here too or it guards nothing.
+  assertToolNotDelegated(requestedToolName);
   let targetMutating = classifyToolMutation(requestedToolName);
   ensureLongRunningToolTimeout(ctx, requestedToolName);
   ctx.output.emitProgress({
@@ -495,6 +499,8 @@ async function toolsExecParallelHandler(ctx) {
     if (!call.tool_name || typeof call.tool_name !== 'string') {
       throw usageError(`calls[${i}] missing required "tool_name" string`);
     }
+    // A batch is just as good an escape hatch as a single exec.
+    assertToolNotDelegated(localNotisToolSlug(call.tool_name));
   }
   ensureLongRunningToolTimeout(ctx, calls.map((call) => localNotisToolSlug(call.tool_name)));
 

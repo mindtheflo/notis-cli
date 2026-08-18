@@ -53,6 +53,7 @@ function specsFor(prefix) {
 
 function renderReadme() {
   const appSpecs = specsFor('apps');
+  const handoverSpecs = specsFor('handover');
   const toolSpecs = specsFor('tools');
   const doctorSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'doctor');
   const whoamiSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'whoami');
@@ -131,6 +132,12 @@ ${renderCommandBlock(logoutSpec)}
 ## Apps
 
 ${appSpecs.map(renderCommandBlock).join('\n')}
+
+## Hand-over
+
+Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. \`--route\` picks the agent: the hosted Notis agent, or the user's own Codex/Claude Code in the cloud sandbox or on their Mac. \`--branch-mode same\` makes the agent commit onto your branch; the default cuts a new branch from it.
+
+${handoverSpecs.map(renderCommandBlock).join('\n')}
 
 ## Generic Tools
 

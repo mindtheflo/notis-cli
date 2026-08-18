@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 
-import { EXIT_CODES, usageError } from '../runtime/errors.js';
+import { CliError, EXIT_CODES, usageError } from '../runtime/errors.js';
 import { formatTable } from '../runtime/output.js';
 import {
   resolveProjectDir,
@@ -27,12 +27,14 @@ import {
   requireLinkedAppId,
   scaffoldProject,
   loadScaffoldCatalog,
+  findUnknownScreenshotScenarios,
   inspectListingReadiness,
   resolveListingScreenshots,
   collectArtifactFiles,
   collectSourceFiles,
   resolveConfiguredAppSkills,
   normalizeAppCapabilities,
+  normalizeAppSkillManifestPath,
   directDeploy,
   pullAppSource,
 } from '../runtime/app-platform.js';
@@ -72,6 +74,7 @@ const LIST_APPS_TOOL = 'LOCAL_NOTIS_LIST_APPS';
 const CREATE_APP_TOOL = 'LOCAL_NOTIS_CREATE_APP';
 const DUPLICATE_APP_TOOL = 'LOCAL_NOTIS_DUPLICATE_APP';
 const SAVE_APP_FILES_TOOL = 'LOCAL_NOTIS_SAVE_APP_FILES';
+const APP_DEPLOY_TIMEOUT_MS = 120_000;
 
 // ---------------------------------------------------------------------------
 // Formatters
@@ -404,7 +407,17 @@ function harnessErrorMessage(error) {
   return error.message || error.reason || error.type || JSON.stringify(error);
 }
 
-function assertHarnessResult(result, route, databaseSlugs) {
+function runtimeCallLabel(call) {
+  if (call?.op === 'callTool') {
+    return call?.args?.name || 'callTool';
+  }
+  if (call?.op === 'request') {
+    return `request ${call?.args?.path || ''}`.trim();
+  }
+  return call?.op || 'runtime call';
+}
+
+function assertHarnessResult(result, route, databaseSlugs, mode = 'stub') {
   const assertions = [];
   if (result.tool_error) {
     assertions.push({
@@ -436,8 +449,9 @@ function assertHarnessResult(result, route, databaseSlugs) {
       details: error,
     });
   }
+  const runtimeCalls = result.runtimeCalls || [];
   const declaredDatabaseSet = new Set(databaseSlugs);
-  const databaseQueries = (result.runtimeCalls || []).filter(
+  const databaseQueries = runtimeCalls.filter(
     (call) =>
       call?.op === 'callTool'
       && localNotisToolSlug(call?.args?.name) === 'LOCAL_NOTIS_DATABASE_QUERY',
@@ -465,6 +479,36 @@ function assertHarnessResult(result, route, databaseSlugs) {
       details: { databaseSlug: collectionDatabase },
     });
   }
+  if (mode === 'live') {
+    // In live mode an app that catches every failed call and renders its error
+    // state still mounts cleanly, so the render assertions above all pass. Only
+    // the recorded outcomes reveal that nothing real came back.
+    if (runtimeCalls.length > 0 && runtimeCalls.every((call) => call?.ok === false)) {
+      assertions.push({
+        ok: false,
+        code: 'all_runtime_calls_failed',
+        message: `Route "${route.slug}" rendered without data: all ${runtimeCalls.length} runtime call(s) failed. First error: ${runtimeCalls[0]?.error || 'unknown'}.`,
+        details: {
+          failed: runtimeCalls.map((call) => ({ call: runtimeCallLabel(call), error: call?.error || null })),
+        },
+      });
+    }
+    for (const databaseSlug of databaseSlugs) {
+      const queries = databaseQueries.filter(
+        (call) => call?.args?.arguments?.database_slug === databaseSlug,
+      );
+      // A call still in flight when the harness was read has ok === null; only
+      // an explicit failure with no successful sibling is a real problem.
+      if (queries.some((call) => call?.ok === false) && !queries.some((call) => call?.ok === true)) {
+        assertions.push({
+          ok: false,
+          code: 'failed_database_query',
+          message: `Route "${route.slug}" never got a successful "${databaseSlug}" query. Last error: ${queries[queries.length - 1]?.error || 'unknown'}.`,
+          details: { databaseSlug },
+        });
+      }
+    }
+  }
   return assertions;
 }
 
@@ -479,6 +523,9 @@ function renderVerifyReport({ summary, results, noBrowser }) {
     lines.push(`${marker.padEnd(4)} ${result.route.padEnd(18)} ${result.url}`);
     for (const assertion of result.assertions || []) {
       lines.push(`     - ${assertion.message}`);
+      for (const failure of assertion.details?.failed || []) {
+        lines.push(`       ${failure.call}: ${failure.error || 'unknown error'}`);
+      }
     }
   }
   if (noBrowser) {
@@ -516,7 +563,7 @@ function buildManifestForDev(appConfig) {
     tools: appConfig.tools || [],
     skills: (appConfig.skills || []).map((skill) => ({
       key: skill.key,
-      path: String(skill.path || '').replace(/^\.\/+/, ''),
+      path: normalizeAppSkillManifestPath(skill.path),
       name: skill.name,
       description: skill.description || null,
     })),
@@ -524,7 +571,14 @@ function buildManifestForDev(appConfig) {
   };
 }
 
-export function buildEnsureDevInstallArguments({ appConfig, manifest, linkedState, skills }) {
+export function buildEnsureDevInstallArguments({
+  appConfig,
+  manifest,
+  linkedState,
+  skills,
+  useInstalledDatabases = false,
+  approvedCapabilities = null,
+}) {
   const devSlug = buildDevInstallSlug(appConfig.name);
   const arguments_ = {
     dev_slug: devSlug,
@@ -535,7 +589,78 @@ export function buildEnsureDevInstallArguments({ appConfig, manifest, linkedStat
   if (linkedState?.dev_app_id) {
     arguments_.app_id = linkedState.dev_app_id;
   }
+  // Sent on every ensure call, including as `false`, so dropping `--live-data`
+  // puts the next session back on its own dev copies.
+  arguments_.use_installed_databases = Boolean(useInstalledDatabases);
+  if (Array.isArray(approvedCapabilities) && approvedCapabilities.length > 0) {
+    arguments_.approved_capabilities = approvedCapabilities;
+  }
   return arguments_;
+}
+
+const CLOUD_SHELL_CONSENT_KEY = 'cloud_computer_shell_consent';
+
+/**
+ * Collect the developer's explicit approval for `cloudComputer: 'shell'`.
+ *
+ * The server never grants shell from authorship alone — holding an app's source
+ * (a scaffold, a pulled repo) is not consent to full-authority commands on the
+ * cloud computer — so `apps dev` asks once, records the answer in the linked
+ * state, and passes the grant with the ensure call. Runs before the parallel
+ * ensure fan-out so the prompt cannot interleave.
+ */
+export async function resolveCloudShellConsent({
+  appConfig,
+  projectDir,
+  grantCloudShell = false,
+  logger = console,
+}) {
+  const capabilities = normalizeAppCapabilities(appConfig.capabilities);
+  if (capabilities.cloudComputer !== 'shell') {
+    return null;
+  }
+  const approved = ['cloud_computer_read', 'cloud_computer_shell'];
+  const linkedState = readLinkedState(projectDir) || {};
+  const recordDecision = (decision) => {
+    writeLinkedState(projectDir, { ...linkedState, [CLOUD_SHELL_CONSENT_KEY]: decision });
+  };
+
+  if (grantCloudShell) {
+    recordDecision('granted');
+    return approved;
+  }
+  const recorded = linkedState[CLOUD_SHELL_CONSENT_KEY];
+  if (recorded === 'granted') {
+    return approved;
+  }
+  const declineHint =
+    `${appConfig.name}: cloud computer shell stays denied for this dev session. `
+    + 'Re-run with --grant-cloud-shell to approve it.';
+  if (recorded === 'declined') {
+    logger.warn(declineHint);
+    return null;
+  }
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
+    logger.warn(declineHint);
+    return null;
+  }
+  const { createInterface } = await import('node:readline/promises');
+  const prompt = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = (await prompt.question(
+      `${appConfig.name} declares cloudComputer: 'shell' - its views will run commands and `
+      + 'read or write files on your cloud computer with the same authority as your own '
+      + 'agent. Allow for this dev app? [y/N] ',
+    )).trim().toLowerCase();
+    const granted = answer === 'y' || answer === 'yes';
+    recordDecision(granted ? 'granted' : 'declined');
+    if (!granted) {
+      logger.warn(declineHint);
+    }
+    return granted ? approved : null;
+  } finally {
+    prompt.close();
+  }
 }
 
 export async function ensureDevInstall({
@@ -543,6 +668,8 @@ export async function ensureDevInstall({
   appConfig,
   projectDir,
   idempotencyKey,
+  useInstalledDatabases = false,
+  approvedCapabilities = null,
   runTool = runToolCommand,
 }) {
   if (!appConfig.name) {
@@ -581,7 +708,14 @@ export async function ensureDevInstall({
       linkedApp = null;
     }
   }
-  const ensureArguments = buildEnsureDevInstallArguments({ appConfig, manifest, linkedState, skills });
+  const ensureArguments = buildEnsureDevInstallArguments({
+    appConfig,
+    manifest,
+    linkedState,
+    skills,
+    useInstalledDatabases,
+    approvedCapabilities,
+  });
   const ensureResult = await runTool({
     runtime: ctx.runtime,
     toolName: ENSURE_DEV_APP_INSTALLATION_TOOL,
@@ -613,6 +747,7 @@ export async function ensureDevInstall({
     targetAppId: linkedState?.app_id || null,
     targetAppSlug: linkedApp?.slug || null,
     databaseMaterialization: ensureResult.payload.database_materialization || { created: [], unresolved: [] },
+    liveData: ensureResult.payload.live_data || null,
   };
 }
 
@@ -629,6 +764,12 @@ function databaseMaterializationWarnings(apps) {
     );
   }
   return warnings;
+}
+
+function liveDataWarnings(apps) {
+  return apps
+    .filter((app) => app.liveData?.warning)
+    .map((app) => `${app.name}: ${app.liveData.warning}`);
 }
 
 async function getAccessibleApp(runtime, appId, runTool = runToolCommand) {
@@ -807,6 +948,7 @@ async function appsDevHandler(ctx) {
   const desktopAppName = resolveDevelopmentDesktopAppName(ctx.runtime);
   const desktopBundleId = resolveDevelopmentDesktopBundleId(ctx.runtime);
   const sessionId = randomUUID();
+  const useInstalledDatabases = Boolean(ctx.options?.liveData);
 
   const candidates = [];
   for (const projectDir of appDirs) {
@@ -818,7 +960,14 @@ async function appsDevHandler(ctx) {
     if (!devSlug) {
       throw usageError(`notis.config.ts name in ${projectDir} must slugify to a non-empty value.`);
     }
-    candidates.push({ appConfig, devSlug, projectDir });
+    // Sequential on purpose: the shell-consent prompt must never interleave
+    // with another app's, and the ensure fan-out below runs in parallel.
+    const approvedCapabilities = await resolveCloudShellConsent({
+      appConfig,
+      projectDir,
+      grantCloudShell: Boolean(ctx.options?.grantCloudShell),
+    });
+    candidates.push({ appConfig, devSlug, projectDir, approvedCapabilities });
   }
 
   const seenSlugs = new Map();
@@ -833,7 +982,7 @@ async function appsDevHandler(ctx) {
 
   const registrationStartedAt = process.hrtime.bigint();
   const registered = await Promise.all(
-    candidates.map(async ({ appConfig, devSlug, projectDir }) => {
+    candidates.map(async ({ appConfig, devSlug, projectDir, approvedCapabilities }) => {
       const appStartedAt = process.hrtime.bigint();
       try {
         return await ensureDevInstall({
@@ -841,6 +990,8 @@ async function appsDevHandler(ctx) {
           appConfig,
           projectDir,
           idempotencyKey: nextDevInstallIdempotencyKey(ctx.globalOptions, devSlug),
+          useInstalledDatabases,
+          approvedCapabilities,
         });
       } finally {
         logAppsTiming('ensure-dev-install', {
@@ -881,7 +1032,7 @@ async function appsDevHandler(ctx) {
     desktopScheme,
     sessionId,
   );
-  const warnings = databaseMaterializationWarnings(apps);
+  const warnings = [...databaseMaterializationWarnings(apps), ...liveDataWarnings(apps)];
 
   const devServer = await startAppDevServer({
     apps: apps.map((app) => ({
@@ -958,12 +1109,16 @@ async function appsDevHandler(ctx) {
         created: app.created,
         linked_app_id: app.linkedAppId,
         database_materialization: app.databaseMaterialization,
+        live_data: app.liveData,
       })),
     },
     warnings,
     humanSummary: [
       `Running apps dev against ${apiBase} as ${identity} (mode: ${mode})`,
       `Target desktop: ${desktopAppName}`,
+      ...(useInstalledDatabases
+        ? [`Databases: ${apps.filter((app) => app.liveData?.enabled).length}/${apps.length} app(s) reading the installed app's live rows`]
+        : []),
       '',
       `Open in desktop: ${developmentTabUrl}`,
       '',
@@ -1120,10 +1275,16 @@ async function appsVerifyHandler(ctx) {
   const manifest = readManifest(projectDir);
   const appConfig = await loadAppConfig(projectDir);
   const listing = inspectListingReadiness(projectDir, appConfig);
-  if (listing.errors.length) {
+  // Store readiness is a publish concern, not a render concern. Verify reports
+  // it so the gaps stay visible while the app is still being built; only
+  // --listing (and `apps publish`) turn it back into a hard gate.
+  if (listing.errors.length && ctx.options.listing === true) {
     throw usageError(`Listing metadata has problems:\n${listing.errors.map((error) => `  - ${error}`).join('\n')}`);
   }
-  const listingWarnings = listing.warnings;
+  const listingWarnings = [
+    ...[...listing.errors, ...listing.warnings].map((message) => `Store readiness: ${message}`),
+    ...findUnknownScreenshotScenarios(projectDir, resolveListingScreenshots(projectDir, appConfig)),
+  ];
   const routes = routeSelection(manifest, parseRouteSlugs(ctx.options.routes));
   const port = parsePort(ctx.options.port) || await getAvailablePort();
   const appSlug = slugify(appConfig.name || manifest.app?.name || 'app') || 'app';
@@ -1195,6 +1356,7 @@ async function appsVerifyHandler(ctx) {
           result,
           route,
           declaredDatabaseSlugs(appConfig, manifest, route),
+          mode,
         );
         return {
           ...result,
@@ -1219,6 +1381,7 @@ async function appsVerifyHandler(ctx) {
           result,
           route,
           declaredDatabaseSlugs(appConfig, manifest, route),
+          mode,
         );
         results.push({
           route: route.slug,
@@ -1259,6 +1422,11 @@ async function appsVerifyHandler(ctx) {
       },
       summary,
       results,
+      listing: {
+        ready: listing.ready,
+        gated: ctx.options.listing === true,
+        problems: listing.errors,
+      },
     };
 
     ctx.output.emitSuccess({
@@ -1360,6 +1528,7 @@ async function appsScreenshotHandler(ctx) {
   const configuredScreenshots = resolveListingScreenshots(projectDir, appConfig)
     .filter((screenshot) => screenshot.route)
     .filter((screenshot) => !selectedRouteSlugs || selectedRouteSlugs.includes(screenshot.route));
+  const scenarioWarnings = findUnknownScreenshotScenarios(projectDir, configuredScreenshots);
   const routeBySlug = new Map(routes.map((route) => [route.slug, route]));
   const captures = configuredScreenshots.length > 0
     ? configuredScreenshots.map((screenshot) => {
@@ -1471,7 +1640,7 @@ async function appsScreenshotHandler(ctx) {
 
     const captured = results.filter((r) => r.ok);
     const failed = results.filter((r) => !r.ok);
-    const warnings = [];
+    const warnings = [...scenarioWarnings];
 
     // Drop stale screenshots only after a full refresh. A selected-route
     // capture intentionally leaves other listing screenshots untouched.
@@ -1642,7 +1811,14 @@ async function appsDeployHandler(ctx) {
   let result;
   try {
     result = await runToolCommand({
-      runtime: ctx.runtime,
+      // App deploys upload both the built artifact and the editable source
+      // snapshot. The ordinary 30s CLI timeout is too short for larger apps,
+      // and timing out a mutation is ambiguous: the backend may commit after
+      // the client disconnects. Give this operation its real completion window.
+      runtime: {
+        ...ctx.runtime,
+        timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, APP_DEPLOY_TIMEOUT_MS),
+      },
       toolName: SAVE_APP_FILES_TOOL,
       arguments_: {
         app_id: appId,
@@ -1660,51 +1836,47 @@ async function appsDeployHandler(ctx) {
       throw toolConflictToError(error.details, 'Deploy conflict');
     }
 
-    // Auto-fallback to direct deploy on network errors
-    const isNetworkError = error.code === 'network_error'
-      || error.code === 'network_timeout'
-      || (error.message && /fetch failed|ECONNREFUSED|network/i.test(error.message));
+    // A timed-out mutation may already have committed on the backend. A direct
+    // upload here would create a second revision, so fail closed and let the
+    // caller inspect/pull the app before deciding whether to retry.
+    if (error.code === 'network_timeout') {
+      error.message = `${error.message}. The backend may still complete this deploy; direct fallback was not attempted to avoid creating a duplicate revision. Inspect the app version, then pull before retrying if needed.`;
+      throw error;
+    }
 
-    if (isNetworkError) {
-      try {
-        await assertDirectDeployAccess(ctx.runtime, appId);
-      } catch (accessError) {
-        throw usageError(
-          `Backend deploy failed (${error.message}) and direct fallback was blocked because app access ` +
-          `could not be verified (${accessError.message}).`,
-        );
-      }
-
-      try {
-        const { version } = await directDeploy(projectDir, appId);
-        updateLinkedDeployState(projectDir, linkedState, appId, version);
-        return ctx.output.emitSuccess({
-          command: ctx.spec.command_path.join(' '),
-          data: { app_id: appId, version, mode: 'direct-fallback' },
-          humanSummary: `Backend unavailable -- deployed to app ${appId} (version ${version}) via direct upload`,
-          warnings: ['Backend server was unreachable. Used direct Supabase upload as fallback.'],
-          meta: { mutating: true },
-        });
-      } catch (directError) {
-        throw usageError(
-          `Backend deploy failed (${error.message}) and direct fallback also failed (${directError.message}). ` +
-          'Check server/.env for Supabase credentials or start the backend server.',
-        );
-      }
+    // A network failure is ambiguous for a mutation. It can happen after the
+    // backend committed but before undici finished reading the response (for
+    // example ECONNRESET / UND_ERR_SOCKET). Never infer pre-dispatch from a
+    // generic network_error or its message: an automatic direct upload could
+    // create a second revision. Operators who have proved the backend is down
+    // can still choose the explicit --direct mode.
+    if (error.code === 'network_error') {
+      error.message = `${error.message}. The backend may have committed this deploy; direct fallback was not attempted to avoid creating a duplicate revision. Inspect the app version, then pull before retrying, or use --direct only after proving the backend mutation did not land.`;
+      throw error;
     }
 
     throw error;
   }
 
-  updateLinkedDeployState(projectDir, linkedState, appId, Number(result.payload.version));
+  const deployedVersion = Number(result?.payload?.version);
+  if (!Number.isFinite(deployedVersion) || deployedVersion <= 0) {
+    throw new CliError({
+      code: 'network_error',
+      message: 'The backend returned an incomplete deploy response. The deploy may have committed; inspect the app version and pull before retrying. Direct fallback was not attempted to avoid creating a duplicate revision.',
+      exitCode: EXIT_CODES.network,
+      retryable: true,
+    });
+  }
+
+  updateLinkedDeployState(projectDir, linkedState, appId, deployedVersion);
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
     data: {
       app_id: appId,
-      version: result.payload.version,
+      version: deployedVersion,
       idempotency_key: idempotencyKey,
     },
-    humanSummary: `Deployed to app ${appId} (version ${result.payload.version})`,
+    humanSummary: `Deployed to app ${appId} (version ${deployedVersion})`,
     meta: { mutating: true, idempotency_key: idempotencyKey },
   });
 }
@@ -1988,12 +2160,25 @@ export const appsCommandSpecs = [
       options: [
         { flags: '--port <number>', description: `Local bundle server port (default: ${DEFAULT_DEV_PORT}).` },
         { flags: '--no-open', description: 'Do not auto-open the desktop Portal local development app.' },
+        {
+          flags: '--live-data',
+          description:
+            "Read and write the installed app's real databases instead of empty dev copies. "
+            + 'Applies to this session only; warns and falls back when the app is not installed yet.',
+        },
+        {
+          flags: '--grant-cloud-shell',
+          description:
+            "Approve a cloudComputer: 'shell' declaration without the interactive prompt. "
+            + 'The grant persists for this dev app; authorship alone never grants it.',
+        },
       ],
     },
     examples: [
       'notis apps dev',
       'notis apps dev ./my-app',
       'notis apps dev ./workspace --port 5200',
+      'notis apps dev --live-data  # iterate on a view over the installed app\'s real rows',
     ],
     mutates: true,
     idempotent: true,
@@ -2020,10 +2205,11 @@ export const appsCommandSpecs = [
   },
   {
     command_path: ['apps', 'verify'],
-    summary: 'Validate every route and the production Store listing contract.',
+    summary: 'Validate that every route renders and reports Store listing readiness.',
     when_to_use:
-      'After notis apps screenshot, before deploy. Catches render-time crashes, ' +
-      'missing runtime calls, and incomplete listing media that the build step cannot detect.',
+      'Any time after notis apps build, and before deploy. Catches render-time crashes and ' +
+      'missing runtime calls. Incomplete listing media is reported as a warning; pass --listing ' +
+      'to fail on it instead.',
     args_schema: {
       arguments: [
         { token: '[dir]', key: 'dir', description: 'Project directory (default: current dir).' },
@@ -2032,7 +2218,8 @@ export const appsCommandSpecs = [
         { flags: '--routes <slugs>', description: 'Comma-separated route slugs. Default: every route in manifest.' },
         { flags: '--port <n>', description: 'Loopback port. Default: auto-pick.' },
         { flags: '--skip-build', description: 'Skip notis apps build; reuse existing .notis/output/.' },
-        { flags: '--mode <mode>', description: 'stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT.' },
+        { flags: '--mode <mode>', description: 'stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.' },
+        { flags: '--listing', description: 'Fail instead of warn when the Store listing (tagline, categories, screenshots, changelog) is incomplete.' },
         { flags: '--no-browser', description: 'Start the harness server and print URLs; do not drive agent-browser.' },
         { flags: '--keep-open', description: 'Leave server + browser session running after report (for manual triage).' },
       ],
@@ -2041,6 +2228,7 @@ export const appsCommandSpecs = [
       'notis apps verify',
       'notis apps verify --routes notes',
       'notis apps verify --mode live',
+      'notis apps verify --listing  # gate on Store listing readiness before publish',
       'notis apps verify --no-browser  # start the harness, drive agent-browser yourself',
     ],
     mutates: false,

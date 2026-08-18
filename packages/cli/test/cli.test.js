@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile, spawn, spawnSync } from 'node:child_process';
@@ -14,6 +14,7 @@ import {
   detectProjectWarnings,
   inspectListingReadiness,
   loadScaffoldCatalog,
+  normalizeAppCapabilities,
   pullAppSource,
   readLinkedState,
   scaffoldProject,
@@ -1183,6 +1184,153 @@ test('apps deploy sends pulled base version and updates linked state after deplo
   }
 });
 
+test('apps deploy does not direct-fallback after an ambiguous backend timeout', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-deploy-timeout-'));
+  mkdirSync(join(projectDir, '.notis', 'output', 'bundle'), { recursive: true });
+  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
+    app_id: 'app-1',
+    version: 7,
+  }));
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export default function App() {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '[data-notis-app-root] {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({
+    version: 7,
+    app: { name: 'Timeout App' },
+    routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+    databases: [],
+    tools: [],
+  }));
+
+  let mutationCount = 0;
+  const server = createHttpServer(async (_req, res) => {
+    mutationCount += 1;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ version: 8 }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    const result = await runCliAsync(
+      [
+        '--json',
+        '--timeout-ms',
+        '50',
+        '--api-base',
+        `http://127.0.0.1:${port}`,
+        'apps',
+        'deploy',
+        projectDir,
+        '--skip-build',
+      ],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    // Deploy raises its operation-specific timeout above the short global
+    // default, so this delayed-but-successful mutation completes once.
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(mutationCount, 1);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.version, 8);
+    assert.equal(payload.data.mode, undefined);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('apps deploy does not direct-fallback after a post-commit socket reset', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-deploy-reset-'));
+  mkdirSync(join(projectDir, '.notis', 'output', 'bundle'), { recursive: true });
+  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
+    app_id: 'app-1',
+    version: 7,
+  }));
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export default function App() {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '[data-notis-app-root] {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({
+    version: 7,
+    app: { name: 'Reset App' },
+    routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+    databases: [],
+    tools: [],
+  }));
+
+  let mutationCount = 0;
+  const server = createHttpServer(async (req, res) => {
+    for await (const _chunk of req) {
+      // Drain the complete mutation request before simulating a lost response.
+    }
+    mutationCount += 1;
+    res.socket.destroy();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.equal(mutationCount, 1);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.error.code, 'network_error');
+    assert.match(payload.error.message, /direct fallback was not attempted/i);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('apps deploy fails closed after a partial successful response body', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-deploy-partial-response-'));
+  mkdirSync(join(projectDir, '.notis', 'output', 'bundle'), { recursive: true });
+  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
+    app_id: 'app-1',
+    version: 7,
+  }));
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export default function App() {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '[data-notis-app-root] {}\n');
+  writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({
+    version: 7,
+    app: { name: 'Partial Response App' },
+    routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+    databases: [],
+    tools: [],
+  }));
+
+  let mutationCount = 0;
+  const server = createHttpServer(async (req, res) => {
+    for await (const _chunk of req) {
+      // Drain the complete mutation request before simulating a torn response.
+    }
+    mutationCount += 1;
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': '64',
+    });
+    res.write('{"version":8');
+    res.socket.destroy();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const { port } = server.address();
+  try {
+    const result = await runCliAsync(
+      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
+      { NOTIS_JWT: makeJwt() },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.equal(mutationCount, 1);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.error.code, 'network_error');
+    assert.match(payload.error.message, /direct fallback was not attempted/i);
+    const state = JSON.parse(readFileSync(join(projectDir, '.notis', 'state.json'), 'utf-8'));
+    assert.equal(state.version, 7);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
 test('buildArtifact loads a TypeScript notis.config.ts without CommonJS globals', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-'));
 
@@ -1702,7 +1850,6 @@ test('scaffoldProject copies a bundled scaffold and renames slug plus title', ()
   const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'));
   assert.match(config, /name:\s*'dice-lab'/);
   assert.match(config, /title:\s*'Dice Lab'/);
-  assert.equal(existsSync(join(projectDir, 'metadata', 'screenshot-1.png')), true);
   assert.equal(existsSync(join(projectDir, 'CHANGELOG.md')), true);
   assert.equal(existsSync(join(projectDir, 'app', 'page.tsx')), true);
   assert.equal(pkg.dependencies['@notis/sdk'], 'file:./packages/sdk');
@@ -1712,6 +1859,31 @@ test('scaffoldProject copies a bundled scaffold and renames slug plus title', ()
   const lockfile = JSON.parse(readFileSync(join(projectDir, 'package-lock.json'), 'utf-8'));
   assert.equal(lockfile.name, 'dice-lab');
   assert.equal(lockfile.packages[''].name, 'dice-lab');
+});
+
+test('scaffoldProject leaves the scaffold listing gallery behind', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-listing-'));
+
+  scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'notis-random' });
+
+  const metadata = existsSync(join(projectDir, 'metadata'))
+    ? readdirSync(join(projectDir, 'metadata'))
+    : [];
+  assert.deepEqual(metadata.filter((entry) => /^screenshot-\d+\.png$/.test(entry)), []);
+  // The fixtures file is harness stub data, not listing media: a fresh project
+  // must keep it or every route renders its empty state under `apps dev`.
+  assert.ok(metadata.includes('screenshot-fixtures.json'));
+
+  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8');
+  assert.doesNotMatch(config, /screenshots\s*:/);
+  assert.doesNotMatch(config, /metadata\/screenshot-/);
+  // The rest of the listing declaration must survive the screenshot removal.
+  assert.match(config, /tagline:/);
+  assert.match(config, /routes:\s*\[/);
+
+  const changelog = readFileSync(join(projectDir, 'CHANGELOG.md'), 'utf-8');
+  assert.match(changelog, /^# Dice Lab Changelog/);
+  assert.equal(changelog.match(/^## \[/gm).length, 1);
 });
 
 test('apps doctor distinguishes deployed links from local development identities', () => {
@@ -1753,6 +1925,51 @@ test('workspace database catalog apps do not get an empty database warning', () 
     capabilities: { workspaceDatabases: 'read' },
   });
   assert.doesNotMatch(catalogWarnings.join('\n'), /No database references declared/);
+});
+
+test('cloud shell consent is explicit, recorded, and never inferred from authorship', async () => {
+  const { resolveCloudShellConsent } = await import('../src/command-specs/apps.js');
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-cloud-shell-consent-'));
+  mkdirSync(join(projectDir, '.notis'), { recursive: true });
+  const warnings = [];
+  const logger = { warn: (message) => warnings.push(message) };
+  const shellApp = { name: 'Workspaces', capabilities: { cloudComputer: 'shell' } };
+
+  // A read-only declaration asks for nothing here.
+  assert.equal(
+    await resolveCloudShellConsent({
+      appConfig: { name: 'Reader', capabilities: { cloudComputer: 'read' } },
+      projectDir,
+      logger,
+    }),
+    null,
+  );
+
+  // Non-interactive without a recorded decision: no grant, actionable warning.
+  const denied = await resolveCloudShellConsent({ appConfig: shellApp, projectDir, logger });
+  assert.equal(denied, null);
+  assert.match(warnings.join('\n'), /--grant-cloud-shell/);
+
+  // The flag grants and records; the next run reuses the recorded decision.
+  const granted = await resolveCloudShellConsent({
+    appConfig: shellApp,
+    projectDir,
+    grantCloudShell: true,
+    logger,
+  });
+  assert.deepEqual(granted, ['cloud_computer_read', 'cloud_computer_shell']);
+  const remembered = await resolveCloudShellConsent({ appConfig: shellApp, projectDir, logger });
+  assert.deepEqual(remembered, ['cloud_computer_read', 'cloud_computer_shell']);
+});
+
+test('capability normalization accepts both cloudComputer values and drops the rest', () => {
+  assert.deepEqual(normalizeAppCapabilities({ cloudComputer: 'read' }), { cloudComputer: 'read' });
+  assert.deepEqual(normalizeAppCapabilities({ cloudComputer: 'shell' }), { cloudComputer: 'shell' });
+  assert.deepEqual(normalizeAppCapabilities({ cloudComputer: 'write' }), {});
+  assert.deepEqual(
+    normalizeAppCapabilities({ workspaceDatabases: 'read', cloudComputer: 'shell', bogus: true }),
+    { workspaceDatabases: 'read', cloudComputer: 'shell' },
+  );
 });
 
 function listingPng(width = 2000, height = 1250) {

@@ -181,6 +181,8 @@ export function installMockRuntime(): NotisRuntime {
     registerTopBarSearch: () => {},
     setTopBarSearchValue: () => {},
     setTopBarSearchLoading: () => {},
+    // No change feed in the mock: `useDatabaseSubscription` reports live=false.
+    subscribeDatabase: () => () => {},
     async listTools() {
       return [];
     },

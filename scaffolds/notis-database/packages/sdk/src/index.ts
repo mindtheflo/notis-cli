@@ -13,6 +13,11 @@ export { NotisProvider, useNotisRuntime } from './provider';
 export { useNotis } from './hooks/useNotis';
 export { useDocuments } from './hooks/useDocuments';
 export type { UseDocumentsOptions, UseDocumentsResult } from './hooks/useDocuments';
+export { useDatabaseSubscription } from './hooks/useDatabaseSubscription';
+export type {
+  UseDatabaseSubscriptionOptions,
+  UseDatabaseSubscriptionResult,
+} from './hooks/useDatabaseSubscription';
 export { useDocument } from './hooks/useDocument';
 export type { UseDocumentOptions, UseDocumentResult } from './hooks/useDocument';
 export { useUpsertDocument } from './hooks/useUpsertDocument';
@@ -22,6 +27,10 @@ export type { UseDatabaseSchemaResult } from './hooks/useDatabaseSchema';
 export { useTool } from './hooks/useTool';
 export type { ToolCallState, UseToolResult } from './hooks/useTool';
 export { useTools } from './hooks/useTools';
+export { useHandover } from './hooks/useHandover';
+export type { UseHandoverResult } from './hooks/useHandover';
+export { useCloudComputer } from './hooks/useCloudComputer';
+export type { UseCloudComputerResult } from './hooks/useCloudComputer';
 export { useNotisNavigation } from './hooks/useNotisNavigation';
 export { useTopBarSearch } from './hooks/useTopBarSearch';
 export { useBackend } from './hooks/useBackend';
@@ -37,6 +46,7 @@ export {
   extractRichText,
   getDocumentPreview,
   getRelationIds,
+  getSecretValue,
   isPresentString,
   markdownToPlainText,
   normalizeDatabaseProperty,
@@ -64,6 +74,9 @@ export type { MultiSelectDragOverlayProps } from './components/MultiSelectDragOv
 // Types (re-exported for convenience)
 export type {
   AppDescriptor,
+  CloudComputerCliAuthFacts,
+  CloudComputerFacts,
+  CloudComputerSandboxFacts,
   CollectionItem,
   CollectionItemDetail,
   DatabaseDescriptor,
@@ -72,12 +85,16 @@ export type {
   DatabasePropertyType,
   DocumentContentType,
   DocumentRecord,
+  HandoverPayload,
+  HandoverResult,
   NotisDocumentEditorProps,
   NotisRuntime,
   NotisRuntimeContext,
   NotisRuntimeUI,
   QueryFilter,
   RouteDescriptor,
+  SecretPropertyValue,
+  SubscribeDatabaseOptions,
   ToolDescriptor,
   ToolInputSchema,
 } from './runtime';

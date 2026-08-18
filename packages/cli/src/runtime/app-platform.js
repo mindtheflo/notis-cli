@@ -7,7 +7,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ import { gunzipSync } from 'node:zlib';
 
 import { usageError } from './errors.js';
 import { validateArtifactBoundary, validateProjectBoundary } from './app-boundary-validator.js';
-import { readAppChangelog } from './app-changelog.js';
+import { CHANGELOG_MERGE_DATE, readAppChangelog } from './app-changelog.js';
 
 const NOTIS_DIR = '.notis';
 const STATE_FILE = join(NOTIS_DIR, 'state.json');
@@ -44,6 +44,9 @@ const SOURCE_COPY_EXCLUDES = new Set([
   'dist',
   'tsconfig.tsbuildinfo',
   '.DS_Store',
+  // Interpreter droppings: a stray `python -m py_compile` in a skill's
+  // scripts/ directory must not ship version-specific bytecode in the bundle.
+  '__pycache__',
 ]);
 const SCAFFOLD_COPY_EXCLUDES = new Set([
   ...SOURCE_COPY_EXCLUDES,
@@ -51,6 +54,17 @@ const SCAFFOLD_COPY_EXCLUDES = new Set([
   '.next',
   '.turbo',
 ]);
+// Listing media describes the scaffold's own Store entry, so a new project must
+// never inherit it. Scaffold packaging still ships these files -- only the
+// `apps init` copy drops them. Screenshots only: `screenshot-fixtures.json` is
+// not listing media, it is the stub data the dev harness serves, and dropping
+// it would make every route of a fresh project render its empty state.
+const SCAFFOLD_LISTING_MEDIA = /^metadata\/screenshot-\d+\.png$/i;
+// A directory-declared skill ships every supporting file to the sandbox, so it
+// needs a ceiling of its own. Kept well above the 512 KB SKILL.md limit so a
+// handful of scripts always fits, and far below the bundle machinery's own
+// limits so an accidental asset dump fails on the client with a clear message.
+export const MAX_APP_SKILL_BUNDLE_BYTES = 5 * 1024 * 1024;
 let appConfigImportNonce = 0;
 
 // ---------------------------------------------------------------------------
@@ -427,6 +441,39 @@ export function resolveListingScreenshots(projectDir, appConfig = null) {
   });
 }
 
+/**
+ * Screenshot scenarios named in notis.config.ts that metadata/screenshot-fixtures.json
+ * does not define. A missing scenario is silent at capture time -- the harness
+ * simply falls back to the default fixtures -- so it is reported as a warning.
+ */
+export function findUnknownScreenshotScenarios(projectDir, screenshots = []) {
+  const named = screenshots.filter((entry) => entry?.scenario);
+  if (named.length === 0) {
+    return [];
+  }
+  const fixturesPath = join(projectDir, METADATA_DIR, 'screenshot-fixtures.json');
+  if (!existsSync(fixturesPath)) {
+    return ['metadata/screenshot-fixtures.json is missing, so screenshot scenarios cannot be applied.'];
+  }
+  let defined;
+  try {
+    const parsed = JSON.parse(readFileSync(fixturesPath, 'utf-8'));
+    const scenarios = parsed?.scenarios && typeof parsed.scenarios === 'object' ? parsed.scenarios : {};
+    defined = new Set(Object.keys(scenarios));
+  } catch {
+    return ['metadata/screenshot-fixtures.json is not valid JSON, so screenshot scenarios cannot be applied.'];
+  }
+  const warnings = [];
+  for (const entry of named) {
+    if (!defined.has(entry.scenario)) {
+      warnings.push(
+        `${entry.path} names scenario "${entry.scenario}", which metadata/screenshot-fixtures.json does not define.`,
+      );
+    }
+  }
+  return warnings;
+}
+
 export function inspectListingReadiness(projectDir, appConfig = null) {
   const config = appConfig || {};
   const warnings = [];
@@ -738,7 +785,7 @@ export function generateManifest(appConfig, projectDir) {
   const displayTitle = appConfig.title || appConfig.displayName || appConfig.name;
   const skills = (Array.isArray(appConfig.skills) ? appConfig.skills : []).map((skill) => ({
     key: skill.key,
-    path: String(skill.path || '').replace(/^\.\/+/, ''),
+    path: normalizeAppSkillManifestPath(skill.path),
     name: skill.name,
     description: skill.description || null,
   }));
@@ -830,12 +877,54 @@ export function normalizeAppCapabilities(capabilities) {
   if (capabilities.workspaceDatabases === 'read') {
     normalized.workspaceDatabases = 'read';
   }
+  if (capabilities.cloudComputer === 'read' || capabilities.cloudComputer === 'shell') {
+    normalized.cloudComputer = capabilities.cloudComputer;
+  }
   return normalized;
+}
+
+/**
+ * Manifest form of a declared skill path: no leading `./`, no trailing slash.
+ * A directory declaration is the same string as the source-tree prefix the
+ * server matches the uploaded source files against.
+ */
+export function normalizeAppSkillManifestPath(sourcePath) {
+  return String(sourcePath || '').replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
+}
+
+/**
+ * Every packageable file under a declared skill directory, relative to that
+ * directory, in stable order. Excludes match `readSourceFiles` so the files a
+ * dev session sends inline are exactly the ones a deploy uploads as source.
+ */
+function readAppSkillDirectoryFiles(skillDir) {
+  const entries = [];
+
+  function walk(dir, prefix) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (shouldExcludeSourceEntry(entry.name) || entry.isSymbolicLink()) {
+        continue;
+      }
+      const fullPath = join(dir, entry.name);
+      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        entries.push({ path: relPath, absolutePath: fullPath });
+      }
+    }
+  }
+
+  walk(skillDir, '');
+  // Byte order, not locale order: the server sorts the same file set the same
+  // way before hashing it, so a dev session and a deploy agree on the hash.
+  return entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 export function resolveConfiguredAppSkills(appConfig, projectDir) {
   const configured = Array.isArray(appConfig.skills) ? appConfig.skills : [];
   const projectRoot = resolve(projectDir);
+  const realProjectRoot = realpathSync(projectRoot);
   const seenKeys = new Set();
 
   return configured.map((skill, index) => {
@@ -855,7 +944,49 @@ export function resolveConfiguredAppSkills(appConfig, projectDir) {
     if (!relativePath || relativePath.startsWith('../') || relativePath === '..') {
       throw usageError(`App skill path must stay inside the project: ${sourcePath}`);
     }
-    if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) {
+    if (!existsSync(absolutePath)) {
+      throw usageError(`App skill entrypoint not found: ${sourcePath}`);
+    }
+    if (lstatSync(absolutePath).isSymbolicLink()) {
+      throw usageError(`App skill entrypoint cannot be a symbolic link: ${sourcePath}`);
+    }
+    const realAbsolutePath = realpathSync(absolutePath);
+    const realRelativePath = relative(realProjectRoot, realAbsolutePath).replace(/\\/g, '/');
+    if (!realRelativePath || realRelativePath.startsWith('../') || realRelativePath === '..') {
+      throw usageError(`App skill path must stay inside the project after resolving links: ${sourcePath}`);
+    }
+
+    const description = typeof skill.description === 'string' ? skill.description.trim() : null;
+    const stats = statSync(absolutePath);
+    if (stats.isDirectory()) {
+      const entries = readAppSkillDirectoryFiles(absolutePath);
+      if (!entries.some((entry) => entry.path === 'SKILL.md')) {
+        throw usageError(`App skill directory must contain SKILL.md: ${sourcePath}`);
+      }
+      const bundleFiles = entries.map((entry) => ({
+        path: entry.path,
+        content: readFileSync(entry.absolutePath),
+      }));
+      const totalBytes = bundleFiles.reduce((total, entry) => total + entry.content.length, 0);
+      if (totalBytes > MAX_APP_SKILL_BUNDLE_BYTES) {
+        throw usageError(
+          `App skill "${key}" bundles ${totalBytes} bytes, above the ${MAX_APP_SKILL_BUNDLE_BYTES} byte limit.`,
+        );
+      }
+      const skillMd = bundleFiles.find((entry) => entry.path === 'SKILL.md');
+      return {
+        key,
+        path: relativePath,
+        name,
+        description,
+        skill_md: skillMd.content.toString('utf8'),
+        bundle_files: bundleFiles.map((entry) => ({
+          path: entry.path,
+          content_b64: entry.content.toString('base64'),
+        })),
+      };
+    }
+    if (!stats.isFile()) {
       throw usageError(`App skill entrypoint not found: ${sourcePath}`);
     }
 
@@ -863,7 +994,7 @@ export function resolveConfiguredAppSkills(appConfig, projectDir) {
       key,
       path: relativePath,
       name,
-      description: typeof skill.description === 'string' ? skill.description.trim() : null,
+      description,
       skill_md: readFileSync(absolutePath, 'utf8'),
     };
   });
@@ -1024,10 +1155,83 @@ export function scaffoldProject({ projectDir, appName, fromSlug = null }) {
         config = config.replace(/'My Notis App'/, displayName);
       }
     }
+    config = removeConfigArrayProperty(config, 'screenshots');
     writeFileSync(configPath, config);
   }
 
+  resetScaffoldChangelog(projectDir, appName);
+
   return { projectDir };
+}
+
+/**
+ * Drop `property: [ ... ]` from a notis.config.ts source.
+ *
+ * The scan tracks bracket depth while skipping string literals, so entries
+ * whose text contains a bracket (alt text, selectors) cannot end the array
+ * early. When the array cannot be resolved the source is returned untouched --
+ * a stale screenshots list is a warning at verify time, a broken config is not.
+ */
+function removeConfigArrayProperty(source, property) {
+  const start = source.search(new RegExp(`^[ \\t]*${property}[ \\t]*:[ \\t]*\\[`, 'm'));
+  if (start === -1) {
+    return source;
+  }
+  let index = source.indexOf('[', start);
+  let depth = 0;
+  let quote = null;
+  for (; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (char === '\\') {
+        index += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '\'' || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '[') {
+      depth += 1;
+    } else if (char === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        break;
+      }
+    }
+  }
+  if (depth !== 0) {
+    return source;
+  }
+  let end = index + 1;
+  if (source[end] === ',') {
+    end += 1;
+  }
+  while (end < source.length && (source[end] === ' ' || source[end] === '\t')) {
+    end += 1;
+  }
+  if (source[end] === '\n') {
+    end += 1;
+  }
+  return source.slice(0, start) + source.slice(end);
+}
+
+/**
+ * A new project starts its own release history: the scaffold's entries describe
+ * releases of a different app.
+ */
+function resetScaffoldChangelog(projectDir, appName) {
+  const changelogPath = join(projectDir, 'CHANGELOG.md');
+  if (!existsSync(changelogPath)) {
+    return;
+  }
+  writeFileSync(
+    changelogPath,
+    `# ${appName} Changelog\n\n## [Initial Release] - ${CHANGELOG_MERGE_DATE}\n\n- First Store release.\n`,
+  );
 }
 
 function normalizeScaffoldLockfile(projectDir, pkg) {
@@ -1126,6 +1330,9 @@ function copyScaffoldSource(sourceDir, targetDir) {
   function shouldCopy(path) {
     const name = path.split(/[\\/]/).pop();
     if (!name) return true;
+    if (SCAFFOLD_LISTING_MEDIA.test(relative(sourceDir, path).replace(/\\/g, '/'))) {
+      return false;
+    }
     return !SCAFFOLD_COPY_EXCLUDES.has(name)
       && !name.startsWith('.env')
       && !/\.(test|spec)\.[cm]?[jt]sx?$/i.test(name);
@@ -1187,7 +1394,12 @@ export function collectArtifactFiles(projectDir) {
 }
 
 function shouldExcludeSourceEntry(name) {
-  return SOURCE_COPY_EXCLUDES.has(name) || name.startsWith('.env');
+  return (
+    SOURCE_COPY_EXCLUDES.has(name)
+    || name.startsWith('.env')
+    || name.endsWith('.pyc')
+    || name.endsWith('.pyo')
+  );
 }
 
 function readSourceFiles(projectDir) {

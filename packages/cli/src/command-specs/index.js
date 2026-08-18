@@ -6,9 +6,11 @@ import { diagnosticCommandSpecs } from './diagnostics.js';
 import { smokeCommandSpecs } from './smoke.js';
 import { authCommandSpecs } from './auth.js';
 import { profileCommandSpecs } from './profile.js';
+import { handoverCommandSpecs } from './handover.js';
 
 export const GROUP_SUMMARIES = {
   apps: 'Develop, deploy, and submit Notis Apps.',
+  handover: 'Hand the branch you are on to a Notis agent, hosted or your own Codex/Claude.',
   tools: 'Discover and execute generic tools exposed through Notis.',
   profile: 'Switch between signed-in accounts and their API endpoints.',
   debug: 'Inspect effective runtime context, worker identity, and trace costs.',
@@ -20,6 +22,7 @@ export const COMMAND_SPECS = [
   ...profileCommandSpecs,
   ...onboardingCommandSpecs,
   ...appsCommandSpecs,
+  ...handoverCommandSpecs,
   ...toolsCommandSpecs,
   ...diagnosticCommandSpecs,
   ...smokeCommandSpecs,

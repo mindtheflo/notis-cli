@@ -251,17 +251,26 @@ function buildHarnessDescriptor({ state, manifest, appConfig, route, scenario = 
   };
 }
 
+function plainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+/**
+ * Resolve the fixture payload injected into one harness page load.
+ *
+ * A scenario may override individual `tools` / `requests` keys on top of the
+ * file-level defaults, which is how one route renders both its populated and
+ * its empty state. Each capture is its own page load, so a shallow per-key
+ * merge is all the isolation a scenario needs.
+ */
 function harnessFixtures(projectDir, scenario) {
   const fixtureConfig = readJsonFile(join(projectDir, 'metadata', 'screenshot-fixtures.json')) || {};
-  const scenarios = fixtureConfig.scenarios && typeof fixtureConfig.scenarios === 'object'
-    ? fixtureConfig.scenarios
-    : {};
+  const scenarios = plainObject(fixtureConfig.scenarios);
+  const selected = scenario ? plainObject(scenarios[scenario]) : null;
   return {
-    tools: fixtureConfig.tools && typeof fixtureConfig.tools === 'object' ? fixtureConfig.tools : {},
-    requests: fixtureConfig.requests && typeof fixtureConfig.requests === 'object' ? fixtureConfig.requests : {},
-    scenario: scenario && scenarios[scenario] && typeof scenarios[scenario] === 'object'
-      ? scenarios[scenario]
-      : null,
+    tools: { ...plainObject(fixtureConfig.tools), ...plainObject(selected?.tools) },
+    requests: { ...plainObject(fixtureConfig.requests), ...plainObject(selected?.requests) },
+    scenario: selected && Object.keys(selected).length > 0 ? selected : null,
   };
 }
 

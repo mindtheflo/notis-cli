@@ -164,8 +164,35 @@
       });
     });
 
+    /**
+     * Records one runtime call and hands back the entry so the caller can
+     * stamp its outcome once the promise settles. Verify reads `ok` to tell a
+     * route that rendered from real data apart from one that only rendered its
+     * error states, so every runtime path must settle its own entry.
+     */
     function record(op, args) {
-      window.__harness.runtimeCalls.push({ op, args });
+      const entry = { op, args, ok: null, error: null, durationMs: null };
+      entry.startedAt = Date.now();
+      window.__harness.runtimeCalls.push(entry);
+      return entry;
+    }
+
+    function settle(entry, error) {
+      entry.durationMs = Date.now() - entry.startedAt;
+      delete entry.startedAt;
+      entry.ok = !error;
+      entry.error = error ? (error.message ? String(error.message) : String(error)) : null;
+    }
+
+    async function tracked(entry, run) {
+      try {
+        const value = await run();
+        settle(entry, null);
+        return value;
+      } catch (error) {
+        settle(entry, error);
+        throw error;
+      }
     }
 
     async function readJsonOrSnippet(response) {
@@ -214,29 +241,58 @@
         app: descriptor.app,
         route: descriptor.route,
         context: descriptor.context || {},
-        navigate: (args) => record('navigate', args),
+        navigate: (args) => {
+          settle(record('navigate', args), null);
+        },
+        // There is no manager chat here, so the handover is recorded and
+        // reported as drafted without any UI.
+        handover: async (payload) => {
+          settle(record('handover', payload), null);
+          return { status: 'drafted' };
+        },
         registerTopBarSearch: () => {},
         setTopBarSearchValue: () => {},
         setTopBarSearchLoading: () => {},
-        listTools: async () => {
-          record('listTools', {});
-          return descriptor.tools || [];
-        },
-        callTool: async (name, args) => {
-          record('callTool', { name, arguments: args || {} });
-          const fixture = lookupToolFixture(name, args || {});
-          if (fixture !== undefined) {
-            return structuredClone(fixture);
-          }
-          return { ok: true, result: null };
-        },
-        request: async (path, options) => {
-          record('request', { path, options });
-          if (fixtures && fixtures.requests && Object.prototype.hasOwnProperty.call(fixtures.requests, path)) {
-            return structuredClone(fixtures.requests[path]);
-          }
-          return null;
-        },
+        // No change feed here, so `useDatabaseSubscription` reports live=false
+        // and the app keeps whatever manual refresh it offers.
+        subscribeDatabase: () => () => {},
+        // There is no cloud computer behind the harness. Answering "not
+        // available" rather than throwing keeps `useCloudComputer` on the same
+        // fallback branch a user without a cloud computer would see.
+        cloudComputerFacts: async () => tracked(
+          record('cloudComputerFacts', {}),
+          async () => ({
+            available: false,
+            reason: 'unsupported_host',
+            sandbox: null,
+            cli_auth: {
+              gh: { authenticated: null, account: null, checked_at: null, reason: 'unsupported_host' },
+            },
+          }),
+        ),
+        listTools: async () => tracked(
+          record('listTools', {}),
+          async () => descriptor.tools || [],
+        ),
+        callTool: async (name, args) => tracked(
+          record('callTool', { name, arguments: args || {} }),
+          async () => {
+            const fixture = lookupToolFixture(name, args || {});
+            if (fixture !== undefined) {
+              return structuredClone(fixture);
+            }
+            return { ok: true, result: null };
+          },
+        ),
+        request: async (path, options) => tracked(
+          record('request', { path, options }),
+          async () => {
+            if (fixtures && fixtures.requests && Object.prototype.hasOwnProperty.call(fixtures.requests, path)) {
+              return structuredClone(fixtures.requests[path]);
+            }
+            return null;
+          },
+        ),
       };
     }
 
@@ -270,32 +326,45 @@
     function liveRuntime() {
       return {
         ...stubRuntime(),
-        listTools: async () => {
-          record('listTools', {});
-          const result = await runtimeQuery({ method: 'tools/list' });
-          return result.tools || [];
-        },
-        callTool: async (name, args) => {
-          record('callTool', { name, arguments: args || {} });
-          return runtimeQuery({ method: 'tools/call', name, arguments: args || {} });
-        },
-        request: async (path, options) => {
-          record('request', { path, options });
-          const response = await fetch(`${String(apiBase).replace(/\/$/, '')}${path}`, {
-            method: (options && options.method) || 'GET',
-            headers: {
-              Authorization: `Bearer ${jwt}`,
-              ...((options && options.body) ? { 'Content-Type': 'application/json' } : {}),
-              ...((options && options.headers) || {}),
-            },
-            body: options && options.body ? JSON.stringify(options.body) : undefined,
-          });
-          const { payload, snippet } = await readJsonOrSnippet(response);
-          if (!response.ok) {
-            throw new Error((payload && (payload.error || payload.message)) || snippet || `Request failed with status ${response.status}`);
-          }
-          return payload;
-        },
+        listTools: async () => tracked(
+          record('listTools', {}),
+          async () => {
+            const result = await runtimeQuery({ method: 'tools/list' });
+            return result.tools || [];
+          },
+        ),
+        callTool: async (name, args) => tracked(
+          record('callTool', { name, arguments: args || {} }),
+          async () => runtimeQuery({ method: 'tools/call', name, arguments: args || {} }),
+        ),
+        // Live mode must not inherit the stub's canned answer: it would settle
+        // ok: true with fake data and soften the all-calls-failed assertion.
+        cloudComputerFacts: async (options) => tracked(
+          record('cloudComputerFacts', options || {}),
+          async () => runtimeQuery({
+            method: 'cloud_computer/facts',
+            ...(options && options.refresh ? { refresh: true } : {}),
+          }),
+        ),
+        request: async (path, options) => tracked(
+          record('request', { path, options }),
+          async () => {
+            const response = await fetch(`${String(apiBase).replace(/\/$/, '')}${path}`, {
+              method: (options && options.method) || 'GET',
+              headers: {
+                Authorization: `Bearer ${jwt}`,
+                ...((options && options.body) ? { 'Content-Type': 'application/json' } : {}),
+                ...((options && options.headers) || {}),
+              },
+              body: options && options.body ? JSON.stringify(options.body) : undefined,
+            });
+            const { payload, snippet } = await readJsonOrSnippet(response);
+            if (!response.ok) {
+              throw new Error((payload && (payload.error || payload.message)) || snippet || `Request failed with status ${response.status}`);
+            }
+            return payload;
+          },
+        ),
       };
     }
 
