@@ -209,6 +209,14 @@ export interface NotisAppConfig {
    */
   capabilities?: NotisAppCapabilities;
   routes?: NotisRouteConfig[];
+  /**
+   * Final tool names this app can call at runtime, enforced server-side. Use
+   * names returned by shared discovery, including native `LOCAL_NOTIS_*`,
+   * connected-service names such as `GMAIL_SEND_EMAIL`,
+   * `LOCAL_POSTFORME_*`, and `LOCAL_MCP_<SERVER>_<TOOL>`. App code calls
+   * each declared name directly with `useTool`; metered calls use the shared
+   * credit-cap and usage-billing path.
+   */
   tools?: string[];
   /** Skills shipped from this app's source tree. */
   skills?: NotisAppSkillConfig[];

@@ -77,7 +77,7 @@ App code never accesses the runtime directly -- it uses SDK hooks (`useTool`, `u
 3. **Component rendering** -- Apps render as React components directly in the portal. No iframes.
    The portal owns the `ShadowRoot`, theme tokens, and runtime provider.
 4. **HTTP bridge** -- Runtime calls use fetch to `/portal_views/runtime_query`
-5. **Declarative tools** -- Tool access declared in `notis.config.ts`, enforced server-side
+5. **Declarative tools** -- Tool access is declared in `notis.config.ts` by the final names returned by tool discovery and enforced server-side. Views can call native Notis, connected integrations, PostForMe, and MCP tools directly; metered calls use the same credit-cap and usage-billing path as the CLI.
 6. **shadcn + Notis theme** -- Apps must use shadcn components with the live Notis theme provided by the portal
 7. **Phosphor icons only** -- Always `phosphor:` prefix. Never emojis.
 8. **Database refs only** -- `notis.config.ts` references existing databases by slug. The schema source of truth lives in the `databases` table, not in the manifest. Every native database is owned by exactly one app (`databases.owner_app_id`): creating one through `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` requires the owning app's slug or id in the `app` argument, install/dev materialization stamps ownership automatically, and deleting an app deletes its databases and their documents.
@@ -195,7 +195,7 @@ Create `notis.config.ts` with:
 - **name** -- Display name
 - **databases** -- Slug references to existing Notis databases
 - **routes** -- Route-first sidebar entries with explicit `slug`, optional `parentSlug`, and optional `collection.sidebar` tree config
-- **tools** -- Tool names the app can call at runtime
+- **tools** -- Final tool names the app can call at runtime. Use the shared discovery flow (`COMPOSIO_SEARCH_TOOLS`, then `COMPOSIO_GET_TOOL_SCHEMAS`) while building the app, and copy the returned final names into this list. Examples include `LOCAL_NOTIS_DATABASE_QUERY`, `LOCAL_NOTIS_MONID_RUN`, `GMAIL_SEND_EMAIL`, `LOCAL_POSTFORME_CREATE_POST`, and `LOCAL_MCP_<SERVER>_<TOOL>`. App code calls each declared name directly through `useTool`; it does not wrap provider or MCP calls in `COMPOSIO_MULTI_EXECUTE_TOOL`. Access stays scoped to the signed-in user's own connections, native database tools stay scoped to the app's databases unless `capabilities.workspaceDatabases: 'read'` is granted, and metered tools use the CLI-equivalent credit-cap and fail-closed usage-billing path.
 
 For collection-backed sidebars, use the route schema directly:
 
