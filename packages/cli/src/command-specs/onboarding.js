@@ -11,6 +11,7 @@ import {
 } from '../runtime/profiles.js';
 import { ensureFreshOAuthCredential, loginWithOAuth } from '../runtime/oauth.js';
 import { runToolCommand } from './helpers.js';
+import { installLocalAgentContext } from './agents.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_BRIEF_PATH = join(HERE, '..', '..', 'skills', 'notis-onboarding', 'BRIEF.md');
@@ -86,6 +87,44 @@ function isAuthenticated(runtime) {
     && !credentialIsExpired(runtime, getProfile(loadConfig(), runtime.profileName));
 }
 
+function renderAgentSetup(results) {
+  const configured = (results || []).filter((result) => result?.agent && result?.instructions);
+  if (!configured.length) return '';
+  const lines = configured.map((result) => {
+    const label = result.agent === 'claude-code' ? 'Claude Code' : 'Codex';
+    const instructions = result.instructions?.status || 'skipped';
+    const memoryStatus = result.memory_hook?.status || 'skipped';
+    const memory = memoryStatus === 'preserved'
+      ? 'memory hooks not changed'
+      : `memory recall and capture ${memoryStatus}`;
+    return `- ${label}: instructions ${instructions}; ${memory}`;
+  });
+  if (configured.some((result) => (
+    result.agent === 'codex'
+    && ['installed', 'updated', 'unchanged'].includes(result.memory_hook?.status)
+  ))) {
+    lines.push('- Codex: open /hooks once and trust the Notis hooks before they can run.');
+  }
+  return ['## Coding-agent setup', ...lines].join('\n');
+}
+
+function agentSetupHints(results) {
+  const hints = [];
+  if ((results || []).some((result) => (
+    result.agent === 'codex'
+    && ['installed', 'updated', 'unchanged'].includes(result.memory_hook?.status)
+  ))) {
+    hints.push({ message: 'In Codex, open /hooks once and trust the Notis hooks.' });
+  }
+  if ((results || []).some((result) => result.status === 'not_detected')) {
+    hints.push({ command: 'notis agents install', reason: 'Configure Codex and Claude Code later if they were not detected now' });
+  }
+  if ((results || []).some((result) => result.memory_hook?.status === 'preserved')) {
+    hints.push({ command: 'notis agents install', reason: 'Explicitly enable Notis memory recall and completed-turn capture' });
+  }
+  return hints;
+}
+
 /**
  * What an authenticated `start` reports.
  *
@@ -105,9 +144,20 @@ async function authenticatedResult(ctx) {
     onboarding_complete: onboardingComplete,
     ...(state ? { known_settings: state.settings, missing_settings: state.missingSettings } : {}),
   };
+  try {
+    base.agent_setup = installLocalAgentContext(ctx, {
+      onlyExisting: true,
+      memoryHooks: null,
+    });
+  } catch {
+    // Authentication and onboarding remain usable if a local vendor config is
+    // malformed or read-only. `notis agents install` reports the exact path.
+    base.agent_setup = [];
+  }
 
   if (onboardingComplete) {
     const name = state?.settings?.full_name;
+    const setupSummary = renderAgentSetup(base.agent_setup);
     return ctx.output.emitSuccess({
       command: 'start',
       data: { ...base, brief: null, brief_source: null },
@@ -120,20 +170,27 @@ async function authenticatedResult(ctx) {
           '',
           'This account has already completed onboarding. Do not run an onboarding',
           'flow and do not call LOCAL_NOTIS_COMPLETE_TUTORIAL.',
+          ...(setupSummary ? ['', setupSummary] : []),
         ].join('\n'),
       hints: [
         { command: 'notis whoami', reason: 'Show the account and its connected toolkits' },
         { command: 'notis tools search "<what you need>"', reason: 'Find a tool and get on with the task' },
+        ...agentSetupHints(base.agent_setup),
       ],
     });
   }
 
   const brief = await fetchBrief(ctx.runtime.apiBase, ctx.runtime.timeoutMs);
+  const setupSummary = renderAgentSetup(base.agent_setup);
   return ctx.output.emitSuccess({
     command: 'start',
     data: { ...base, brief: brief.markdown, brief_source: brief.source },
     humanSummary: `Notis CLI is authenticated for profile "${ctx.runtime.profileName}". Onboarding is not complete.`,
-    renderHuman: () => brief.markdown || 'Notis CLI is authenticated.',
+    renderHuman: () => [
+      brief.markdown || 'Notis CLI is authenticated.',
+      setupSummary,
+    ].filter(Boolean).join('\n\n'),
+    hints: agentSetupHints(base.agent_setup),
   });
 }
 
@@ -214,7 +271,7 @@ export const onboardingCommandSpecs = [
       'notis start --json',
     ],
     output_schema:
-      'Returns {authenticated, profile, api_base, onboarding_complete, known_settings, missing_settings, brief, brief_source} once signed in — brief is null when onboarding_complete is true — or {authorize_url, expires_in, redeem_command} while waiting for browser authorization.',
+      'Returns {authenticated, profile, api_base, onboarding_complete, known_settings, missing_settings, agent_setup, brief, brief_source} once signed in — brief is null when onboarding_complete is true — or {authorize_url, expires_in, redeem_command} while waiting for browser authorization.',
     mutates: true,
     idempotent: true,
     require_auth: false,

@@ -2,6 +2,22 @@ You are onboarding someone to Notis from inside their coding agent. You already
 have a shell and an authenticated Notis CLI, so you do the setup for them and
 report what you did.
 
+`notis start` also returns `agent_setup`. When Codex or Claude Code is detected,
+Notis has already installed its durable CLI instructions without changing the
+user's hooks. Tell the user which agents were configured. If they want
+cross-session memory recall and completed-turn capture, ask before running
+`notis agents install`. After that explicit command, Codex requires one visible
+trust step: ask the user to open `/hooks`, inspect the Notis entries, and trust
+them once. Claude Code needs no separate trust step. Do not ask the user to edit
+files or paste configuration manually.
+
+When explicitly enabled, the memory flow mirrors Notis itself: stable profile
+context loads at session start, each substantive prompt recalls only new
+relevant memories, and each completed turn is saved as automatic coding-agent
+context. An explicit “remember this” still uses
+`LOCAL_NOTIS_SAVE_LONG_TERM_MEMORY`; a user request not to save a turn must be
+honored.
+
 Run every Notis operation as:
 
 ```bash

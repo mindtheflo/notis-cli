@@ -90,6 +90,15 @@ function runCli(args, env = {}) {
   });
 }
 
+test('unauthenticated skills sync still repairs auth-independent base skills', () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-base-preflight-'));
+  const result = runCli(['--json', 'skills', 'sync'], { HOME: home });
+  assert.notEqual(result.status, 0);
+  for (const agent of ['.codex', '.claude']) {
+    assert.equal(existsSync(join(home, agent, 'skills', 'notis-cli')), true);
+  }
+});
+
 async function runCliAsync(args, env = {}) {
   const options = {
     cwd: cliRoot,
@@ -662,6 +671,25 @@ test('top-level help omits the removed db command group', () => {
   assert.match(result.stdout, /^\s+tools\s+/m);
   assert.match(result.stdout, /Discover and execute generic tools exposed/);
   assert.doesNotMatch(result.stdout, /^\s+db\s/m);
+  assert.doesNotMatch(result.stdout, /^\s+agent-context\s/m);
+  assert.doesNotMatch(result.stdout, /^\s+agent-capture\s/m);
+});
+
+test('coding-agent setup is registered while hook adapters stay hidden', () => {
+  const result = runCli(['describe', 'agents', 'install', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.data.spec.command_path.join(' '), 'agents install');
+  assert.equal(payload.data.spec.idempotent, true);
+  assert.equal(
+    COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'agent-context')?.hidden,
+    true,
+  );
+  assert.equal(
+    COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'agent-capture')?.hidden,
+    true,
+  );
 });
 
 test('db commands are no longer registered', () => {
@@ -3484,6 +3512,9 @@ test('start still serves the brief to an account that has not onboarded', async 
   const { port } = server.address();
   const apiBase = `http://127.0.0.1:${port}`;
   const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-start-fresh-'));
+  const agentHome = mkdtempSync(join(tmpdir(), 'notis-cli-start-agent-home-'));
+  mkdirSync(join(agentHome, '.codex'), { recursive: true });
+  writeFileSync(join(agentHome, '.codex', 'config.toml'), 'model = "auto"\n');
   const configFile = join(configHome, 'config.json');
   writeFileSync(configFile, JSON.stringify({
     current_profile: 'default',
@@ -3500,7 +3531,7 @@ test('start still serves the brief to an account that has not onboarded', async 
   try {
     const result = await runCliAsync(
       ['--json', '--api-base', apiBase, 'start'],
-      { NOTIS_CLI_CONFIG_FILE: configFile },
+      { NOTIS_CLI_CONFIG_FILE: configFile, HOME: agentHome },
     );
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout);
@@ -3509,6 +3540,17 @@ test('start still serves the brief to an account that has not onboarded', async 
     // The agent is told exactly which questions are still worth asking.
     assert.deepEqual(payload.data.missing_settings,
       ['full_name', 'position', 'language', 'timezone', 'attribution']);
+    assert.equal(payload.data.agent_setup[0].agent, 'codex');
+    assert.match(
+      readFileSync(join(agentHome, '.codex', 'AGENTS.md'), 'utf-8'),
+      /notis-cli:instructions:start/,
+    );
+    assert.equal(payload.data.agent_setup[0].memory_hook.status, 'preserved');
+    assert.equal(existsSync(join(agentHome, '.codex', 'hooks.json')), false);
+    assert.match(
+      payload.hints.map((hint) => hint.command || hint.message).join('\n'),
+      /notis agents install/,
+    );
   } finally {
     await new Promise((resolvePromise) => server.close(resolvePromise));
   }

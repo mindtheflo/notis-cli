@@ -33,7 +33,7 @@ Always use this NPX command form so the agent runs the current published CLI. In
 
 `@latest` is correct for every account, including beta ones. Each deployment reports which published build belongs to it, `notis login` pins that on the profile, and a later run that finds itself on the wrong build hands the invocation to the right one before doing anything. Never substitute a channel by hand: pinning `@beta` on a production profile is how a machine ends up running a build its API does not expect. `notis doctor` reports the active channel, and `NOTIS_CLI_AUTO_CHANNEL=0` turns the hand-off off for a run.
 
-This `notis-cli` skill is delivered through normal Notis skill sync for the signed-in user, alongside other curated skills.
+The CLI bundles this `notis-cli` base skill and refreshes its canonical copy under `~/.notis/skills/base/` on every launch. It is independent of account-skill sync, feature flags, target selection, and cloud deletion.
 
 ## Profiles: accounts and endpoints
 

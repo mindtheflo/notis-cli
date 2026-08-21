@@ -33,6 +33,9 @@
     "commander": "^12.0.0",
     "sharp": "^0.34.5"
   },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
   "keywords": [
     "notis",
     "cli",

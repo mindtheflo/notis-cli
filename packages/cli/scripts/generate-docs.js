@@ -53,6 +53,8 @@ function specsFor(prefix) {
 
 function renderReadme() {
   const appSpecs = specsFor('apps');
+  const agentSpecs = specsFor('agents');
+  const skillSpecs = specsFor('skills');
   const handoverSpecs = specsFor('handover');
   const toolSpecs = specsFor('tools');
   const doctorSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'doctor');
@@ -69,6 +71,8 @@ Agent-first Notis CLI for apps and generic tool execution.
 ## Install
 
 Use the Notis CLI through NPX; do not rely on an installed \`notis\` command. Run \`notis login\` once to authorize a scoped, revocable OAuth credential in the browser — that is how the CLI signs in everywhere, including on a machine that also runs Notis Desktop.
+
+After local login, the CLI idempotently adds static Notis guidance to detected Codex and Claude Code user instruction files without changing their hooks. Run \`notis agents install\` when you explicitly want memory hooks that load the user's profile at session start, recall only new relevant memories before prompts, and save completed turns as automatic cross-session context. Codex then asks you to review and trust those hooks once in \`/hooks\`.
 
 For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NOTIS_JWT=<token>\`.
 
@@ -128,6 +132,14 @@ The CLI defaults to \`json\` output in agent or non-TTY contexts and \`table\` o
 
 ${renderCommandBlock(loginSpec)}
 ${renderCommandBlock(logoutSpec)}
+
+## Coding-agent context
+
+${agentSpecs.map(renderCommandBlock).join('\n')}
+
+## Skills
+
+${skillSpecs.map(renderCommandBlock).join('\n')}
 
 ## Apps
 

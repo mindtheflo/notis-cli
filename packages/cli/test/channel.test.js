@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  isSkillsSyncInvocation,
   channelProfileForArgs,
   executeChannelSwitch,
   readChannelRelevantFlags,
@@ -19,6 +20,12 @@ import {
   resolveChannelSwitch,
 } from '../src/runtime/channel.js';
 import { resolveRuntimeProfile } from '../src/runtime/profiles.js';
+
+test('CLI launch defers base refresh only to the already-locked skills sync command', () => {
+  assert.equal(isSkillsSyncInvocation(['--json', 'skills', 'sync']), true);
+  assert.equal(isSkillsSyncInvocation(['skills', 'list']), false);
+  assert.equal(isSkillsSyncInvocation(['tools', 'search', 'skills sync']), false);
+});
 
 const INSTALLED = '/Users/x/.npm/_npx/abc/node_modules/@notis_ai/cli/src/runtime';
 const CHECKOUT = '/Users/x/code/notis/packages/cli/src/runtime';

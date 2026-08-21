@@ -6,6 +6,8 @@ Agent-first Notis CLI for apps and generic tool execution.
 
 Use the Notis CLI through NPX; do not rely on an installed `notis` command. Run `notis login` once to authorize a scoped, revocable OAuth credential in the browser — that is how the CLI signs in everywhere, including on a machine that also runs Notis Desktop.
 
+After local login, the CLI idempotently adds static Notis guidance to detected Codex and Claude Code user instruction files without changing their hooks. Run `notis agents install` when you explicitly want memory hooks that load the user's profile at session start, recall only new relevant memories before prompts, and save completed turns as automatic cross-session context. Codex then asks you to review and trust those hooks once in `/hooks`.
+
 For CI, hosted agents, or internal scripts, pass a non-persisted token with `NOTIS_JWT=<token>`.
 
 ## Quick Start
@@ -97,6 +99,42 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis logout`
 - `npx --package @notis_ai/cli@latest -- notis logout --profile work`
 - `npx --package @notis_ai/cli@latest -- notis logout --all-profiles`
+
+
+## Coding-agent context
+
+### `npx --package @notis_ai/cli@latest -- notis agents install`
+
+Install Notis instructions and recall/capture hooks for local Codex and Claude Code.
+
+When to use: Run after login to give local coding agents durable Notis CLI guidance, session-start profile context, deduplicated relevant recall, and automatic completed-turn capture. Hosted Notis sandboxes already receive prompt context and are skipped.
+
+Options:
+- `--codex-only` — Configure only Codex.
+- `--claude-only` — Configure only Claude Code.
+- `--no-memory-hooks` — Install static instructions and remove Notis recall/capture hooks.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis agents install`
+- `npx --package @notis_ai/cli@latest -- notis agents install --codex-only`
+- `npx --package @notis_ai/cli@latest -- notis agents install --claude-only`
+- `npx --package @notis_ai/cli@latest -- notis agents install --no-memory-hooks`
+
+
+## Skills
+
+### `npx --package @notis_ai/cli@latest -- notis skills sync`
+
+Synchronize account skills and keep the three Notis base skills current.
+
+When to use: Run manually whenever local agent skills should be reconciled. Manual runs ignore the Desktop automatic-sync preference.
+
+Options:
+- `--electron-repeat` — Honor the automatic Desktop sync preference (used by Notis Desktop).
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis skills sync`
+- `npx --package @notis_ai/cli@latest -- notis skills sync --json`
 
 
 ## Apps

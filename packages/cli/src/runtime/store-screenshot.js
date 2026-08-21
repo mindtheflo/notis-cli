@@ -1,4 +1,3 @@
-import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 
 const STORE_SCREENSHOT_ASPECT = 16 / 10;
@@ -18,6 +17,10 @@ const ACCENT_PALETTES = {
 };
 
 const ACCENT_NAMES = Object.keys(ACCENT_PALETTES);
+
+async function loadSharp() {
+  return (await import('sharp')).default;
+}
 
 function stableHash(value) {
   let hash = 2166136261;
@@ -59,6 +62,7 @@ export function storeScreenshotLayout(width = 2000, height = 1250) {
 }
 
 async function backdropImage(layout) {
+  const sharp = await loadSharp();
   return sharp(SHARED_BACKDROP_PATH)
     .resize(layout.width, layout.height, { fit: 'cover', position: 'centre' })
     .png()
@@ -88,6 +92,7 @@ export async function composeStoreScreenshot({
   focused = false,
   theme = 'light',
 }) {
+  const sharp = await loadSharp();
   const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
   const layout = storeScreenshotLayout(width, height);
   const resolvedAccent = resolveStoreScreenshotAccent(accent, seed);

@@ -29,7 +29,16 @@ test('npm pack includes the bin entry and the app boundary rules (0.2.2 boot-cra
   const packed = JSON.parse(raw);
   const files = (packed[0]?.files || []).map((file) => file.path);
 
-  for (const required of ['bin/notis.js', 'config/notis_app_boundary_rules.json']) {
+  for (const required of [
+    'bin/notis.js',
+    'config/notis_app_boundary_rules.json',
+    'skills/notis-cli/AGENT_INSTRUCTIONS.md',
+    'dist/skill-sync/index.js',
+    'dist/agent-hooks/notis-agent-hook.mjs',
+    'dist/base-skills/notis-apps/SKILL.md',
+    'dist/base-skills/notis-query/SKILL.md',
+    'dist/base-skills/notis-cli/SKILL.md',
+  ]) {
     assert.ok(files.includes(required), `npm pack must include ${required}; packed ${files.length} files`);
   }
 });

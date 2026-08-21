@@ -1,4 +1,5 @@
 import { loginWithOAuth, logoutOAuth } from '../runtime/oauth.js';
+import { installLocalAgentContext } from './agents.js';
 
 async function loginHandler(ctx) {
   const result = await loginWithOAuth(ctx.runtime, ctx.options, ctx.output);
@@ -8,6 +9,18 @@ async function loginHandler(ctx) {
       data: result.agentAuthorization,
       humanSummary: 'Open the authorization URL in a browser to continue.',
     });
+  }
+  let agentSetup = [];
+  const setupWarnings = [];
+  try {
+    // Login may add static CLI guidance, but automatic capture is a separate
+    // explicit choice made through `notis agents install`.
+    agentSetup = installLocalAgentContext(ctx, {
+      onlyExisting: true,
+      memoryHooks: null,
+    });
+  } catch (error) {
+    setupWarnings.push(`Notis CLI login succeeded, but local agent context setup failed: ${error.message}`);
   }
   return ctx.output.emitSuccess({
     command: 'login',
@@ -20,10 +33,13 @@ async function loginHandler(ctx) {
       scopes: result.profile.oauth_scopes,
       access_expires_at: result.profile.oauth_access_expires_at,
       refresh_expires_at: result.profile.oauth_refresh_expires_at,
+      agent_setup: agentSetup,
     },
     humanSummary: `Notis CLI is authorized for profile "${ctx.runtime.profileName}".`,
+    warnings: setupWarnings,
     hints: [
       { command: 'notis profile list', reason: 'See every account this machine can switch between' },
+      { command: 'notis agents install', reason: 'Install or refresh Notis context for Codex and Claude Code' },
     ],
   });
 }

@@ -2,11 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { COMMAND_SPECS, GROUP_SUMMARIES } from './command-specs/index.js';
 import { OutputManager } from './runtime/output.js';
 import { asCliError } from './runtime/errors.js';
 import { reportCliCommand } from './runtime/telemetry.js';
+import { reconcileBaseSkillsBestEffort } from './runtime/base-skills.js';
+import { detectedAgentIds } from './runtime/agent-setup.js';
+import { withSkillSyncLock } from './runtime/sync-skills.js';
 import {
   CHANNEL_SWITCH_ENV,
   resolveChannelSwitch,
@@ -137,10 +140,10 @@ function buildErrorRuntime(globalOptions) {
   }
 }
 
-function attachSpec(program, parentMap, spec, specs) {
+function attachSpec(program, parentMap, spec, specs, launchContext = {}) {
   const parent = ensureParentCommand(program, parentMap, spec.command_path.slice(0, -1));
   const leaf = spec.command_path[spec.command_path.length - 1];
-  const command = parent.command(leaf).description(spec.summary);
+  const command = parent.command(leaf, spec.hidden ? { hidden: true } : undefined).description(spec.summary);
   command.addHelpText('after', buildHelpFooter(spec));
 
   for (const argument of spec.args_schema?.arguments || []) {
@@ -182,6 +185,7 @@ function attachSpec(program, parentMap, spec, specs) {
         globalOptions,
         runtime,
         output,
+        ...launchContext,
       });
       process.exitCode = typeof exitCode === 'number' ? exitCode : 0;
       await reportCliCommand({
@@ -210,7 +214,7 @@ function attachSpec(program, parentMap, spec, specs) {
   });
 }
 
-export function createProgram() {
+export function createProgram(launchContext = {}) {
   const program = new Command();
 
   program
@@ -230,11 +234,12 @@ export function createProgram() {
     .option('--profile <name>', 'CLI profile to run as (defaults to the active profile)')
     .option('--api-base <url>', 'Override the API base URL for this invocation')
     .option('--timeout-ms <n>', 'HTTP timeout in milliseconds')
-    .option('--idempotency-key <key>', 'Override the generated idempotency key for mutating commands');
+    .option('--idempotency-key <key>', 'Override the generated idempotency key for mutating commands')
+    .addOption(new Option('--notis-managed-agent-hook').hideHelp());
 
   const parentMap = new Map([['', program]]);
   for (const spec of COMMAND_SPECS) {
-    attachSpec(program, parentMap, spec, COMMAND_SPECS);
+    attachSpec(program, parentMap, spec, COMMAND_SPECS, launchContext);
   }
 
   return program;
@@ -385,19 +390,23 @@ export function switchChannelIfNeeded(
   return result;
 }
 
+export function isSkillsSyncInvocation(args) {
+  return args.some((value, index) => value === 'skills' && args[index + 1] === 'sync');
+}
+
 export async function run(argv = process.argv) {
   const switched = switchChannelIfNeeded(argv);
   if (switched.switch) {
     process.exitCode = switched.exitCode;
     return;
   }
-  const program = createProgram();
+  const preexistingAgentIds = detectedAgentIds();
+  // Every actual CLI launch repairs the three system skills before doing any
+  // command work, including before an authenticated command can fail. Capture
+  // vendor presence first because reconciliation creates their skill roots.
+  const basePreflightResult = await withSkillSyncLock(
+    async () => reconcileBaseSkillsBestEffort(),
+  ).catch(() => undefined);
+  const program = createProgram({ preexistingAgentIds, basePreflightResult });
   await program.parseAsync(argv);
-}
-
-const isDirectInvocation =
-  process.argv[1] && import.meta.url === new URL(process.argv[1], 'file://').href;
-
-if (isDirectInvocation) {
-  run();
 }
