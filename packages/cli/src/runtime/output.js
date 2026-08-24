@@ -108,6 +108,13 @@ export class OutputManager {
     process.stderr.write(`${message}\n`);
   }
 
+  notice(message) {
+    // Some pre-result instructions are required to make progress. They belong
+    // on stderr so stdout stays one valid machine envelope, but unlike ordinary
+    // table notes they must remain visible in JSON/YAML/NDJSON modes.
+    process.stderr.write(`${message}\n`);
+  }
+
   emitProgress({ phase, message, requestId = null }) {
     if (this.runtime.quiet) {
       return;

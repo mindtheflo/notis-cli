@@ -73,8 +73,9 @@ When to use: Run this once per account you want the CLI to reach. Pass --profile
 Options:
 - `--no-browser` — Print the authorization URL without opening a browser.
 - `--print-url` — Print the authorization URL even when opening a browser.
-- `--paste-code` — Use the copy-paste callback for SSH and headless machines.
-- `--timeout-seconds <n>` — How long to wait for authorization (default 300).
+- `--mode <mode>` — auto (default) hands the browser callback to a background listener when this command cannot wait; browser waits in-process; code shows a one-time code to copy.
+- `--paste-code` — Alias for --mode code.
+- `--timeout-seconds <n>` — Authorization lifetime in seconds (default 300 while waiting in a terminal; 1800 for detached or code hand-offs).
 - `--scope <scope>` — OAuth permission to request (repeatable).
 - `--code <code>` — Redeem the code shown in the browser after a non-interactive login.
 
@@ -83,7 +84,8 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis login --profile work`
 - `npx --package @notis_ai/cli@latest -- notis login --profile beta --api-base https://api-beta.notis.ai`
 - `npx --package @notis_ai/cli@latest -- notis login --no-browser --print-url`
-- `npx --package @notis_ai/cli@latest -- notis login --paste-code`
+- `npx --package @notis_ai/cli@latest -- notis login --mode browser`
+- `npx --package @notis_ai/cli@latest -- notis login --mode code`
 - `npx --package @notis_ai/cli@latest -- notis login --code 4f3c2b1a`
 
 ### `npx --package @notis_ai/cli@latest -- notis logout`
@@ -93,7 +95,7 @@ Revoke and remove the OAuth credential for one CLI profile.
 When to use: Use this to disconnect a single account. Other profiles keep their credentials unless you pass --all-profiles.
 
 Options:
-- `--all-profiles` — Remove OAuth credentials from every CLI profile.
+- `--all-profiles` — Clear OAuth credentials and pending authorizations from every CLI profile.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis logout`

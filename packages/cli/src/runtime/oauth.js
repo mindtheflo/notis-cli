@@ -5,7 +5,9 @@ import {
 } from 'node:crypto';
 import {
   mkdirSync,
+  readdirSync,
   readFileSync,
+  renameSync,
   rmdirSync,
   rmSync,
   statSync,
@@ -13,11 +15,12 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 
-import { CliError, EXIT_CODES } from './errors.js';
+import { CliError, EXIT_CODES, usageError } from './errors.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
   channelFromProfile,
@@ -49,6 +52,7 @@ const DEFAULT_REFRESH_EXPIRES_IN = 30 * 24 * 60 * 60;
 const PENDING_LOGIN_TTL_SECONDS = 30 * 60;
 const OAUTH_HTTP_TIMEOUT_MS = 10_000;
 const RESPONSE_FLUSH_GRACE_MS = 2_000;
+const MAX_NODE_TIMER_MS = 2_147_483_647;
 
 function oauthError(code, message, hints = null, details = {}) {
   return new CliError({
@@ -515,17 +519,17 @@ export async function createLoopbackReceiver({
       endResponse(response, callbackHtml('Already used', 'This authorization callback was already handled.'));
       return;
     }
-    consumed = true;
-
     const returnedState = url.searchParams.get('state') || '';
     const code = url.searchParams.get('code');
     const error = url.searchParams.get('error');
     if (!stateMatches(state, returnedState)) {
       response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
       endResponse(response, callbackHtml('Authorization failed', 'The callback state did not match.'));
-      rejectCode(oauthError('oauth_state_mismatch', 'The OAuth callback state did not match.'));
       return;
     }
+    // A stray or malicious request must not burn the one legitimate callback.
+    // Only a request carrying this authorization's state consumes the receiver.
+    consumed = true;
     if (error || !code) {
       const description = url.searchParams.get('error_description') || 'Authorization was not completed.';
       response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -606,14 +610,19 @@ export async function createLoopbackReceiver({
       endResponse(pendingResponse, connectedCallbackHtml({ portalOrigin }));
       pendingResponse = null;
     },
-    fail: () => {
+    fail: ({ detached = false } = {}) => {
       if (!pendingResponse || pendingResponse.writableEnded) return;
       pendingResponse.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
       endResponse(pendingResponse, callbackHtml(
         'Authorization failed',
-        'The CLI could not finish signing in. Return to the terminal for details.',
+        detached
+          ? 'The CLI could not finish signing in. Start sign in again from your agent or terminal.'
+          : 'The CLI could not finish signing in. Return to the terminal for details.',
       ));
       pendingResponse = null;
+    },
+    cancel: () => {
+      rejectCode(oauthError('oauth_listener_cancelled', 'This browser authorization is no longer active.'));
     },
     close,
   };
@@ -775,7 +784,7 @@ function savePendingAuthorization(runtime, pending) {
   writeFileSync(file, JSON.stringify(pending, null, 2), { mode: 0o600 });
 }
 
-function readPendingAuthorization(runtime) {
+function readPendingAuthorization(runtime, { includeExpired = false } = {}) {
   for (const file of [
     pendingAuthorizationFile(runtime),
     legacyPendingAuthorizationFile(runtime),
@@ -787,7 +796,7 @@ function readPendingAuthorization(runtime) {
       continue;
     }
     if (!pending?.verifier || !pending?.redirect_uri) continue;
-    if (Number(pending.expires_at) <= Math.floor(Date.now() / 1000)) continue;
+    if (!includeExpired && Number(pending.expires_at) <= Math.floor(Date.now() / 1000)) continue;
     if (pending.profile !== runtime.profileName) continue;
     return { ...pending, pending_file: file };
   }
@@ -802,11 +811,890 @@ function clearPendingAuthorization(runtime, file = pendingAuthorizationFile(runt
   }
 }
 
+function clearPendingAuthorizations(runtime) {
+  clearPendingAuthorization(runtime);
+  const legacyFile = legacyPendingAuthorizationFile(runtime);
+  try {
+    const pending = JSON.parse(readFileSync(legacyFile, 'utf-8'));
+    if (pending?.profile === runtime.profileName) rmSync(legacyFile);
+  } catch {
+    // Missing, malformed, or owned by another profile.
+  }
+}
+
+function pendingAuthorizationOwnedBy(pending, owner) {
+  return Boolean(
+    pending
+    && pending.hand_off === owner.hand_off
+    && pending.state === owner.state
+    && pending.verifier === owner.verifier
+    && pending.redirect_uri === owner.redirect_uri
+    && pending.api_base === owner.api_base
+  );
+}
+
+function clearPendingAuthorizationIfOwner(runtime, owner) {
+  // Cleanup must still remove an owner that expired at the same instant as a
+  // receiver timeout; ordinary reads continue to ignore expired grants.
+  const pending = readPendingAuthorization(runtime, { includeExpired: true });
+  if (!pendingAuthorizationOwnedBy(pending, owner)) return false;
+  clearPendingAuthorization(runtime, pending.pending_file);
+  return true;
+}
+
+async function publishForegroundAuthorization(runtime, authorization) {
+  const globalLock = await acquireListenerGlobalLock();
+  let lockDir = null;
+  try {
+    lockDir = await acquireListenerStartLock(runtime);
+    stopPendingListener(runtime);
+    clearPendingAuthorizations(runtime);
+    savePendingAuthorization(runtime, authorization);
+  } finally {
+    releaseListenerStartLock(lockDir);
+    releaseListenerGlobalLock(globalLock);
+  }
+}
+
+const LISTENER_SCRIPT = fileURLToPath(new URL('./login-listener.js', import.meta.url));
+const LISTENER_SCRIPT_NAME = 'login-listener.js';
+// How long the parent waits for the detached child to bind and report its port.
+// Only a bind, so this is generous; exceeding it means the child is not coming.
+const LISTENER_HANDSHAKE_TIMEOUT_MS = 10_000;
+const LISTENER_START_LOCK_STALE_MS = LISTENER_HANDSHAKE_TIMEOUT_MS * 2;
+const LISTENER_GLOBAL_LOCK_HEARTBEAT_MS = 5_000;
+const LISTENER_CANCELLATION_POLL_MS = 100;
+const LISTENER_IDENTITY_PROBE_TIMEOUT_MS = 2_000;
+
+const LISTENER_CHILD_ENV_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'SystemRoot',
+  'WINDIR',
+  'ComSpec',
+  'PATH',
+  'Path',
+  'PATHEXT',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+];
+
+/**
+ * A detached listener outlives the command that launched it. Give it only the
+ * OS/runtime values needed to start Node and find its private config, never the
+ * caller's unrelated API keys, service credentials, or inherited NOTIS_JWT.
+ */
+export function listenerChildEnvironment(env = process.env) {
+  const childEnv = {};
+  for (const key of LISTENER_CHILD_ENV_KEYS) {
+    if (typeof env[key] === 'string' && env[key]) childEnv[key] = env[key];
+  }
+  childEnv.NOTIS_CLI_CONFIG_FILE = resolveConfigFile();
+  return childEnv;
+}
+
+function listenerStateFile(runtime) {
+  const profileKey = createHash('sha256')
+    .update(String(runtime.profileName || 'default'))
+    .digest('hex')
+    .slice(0, 16);
+  return `${resolveConfigFile()}.login-listener.${profileKey}`;
+}
+
+function listenerStartLockDir(runtime) {
+  return `${listenerStateFile(runtime)}.lock`;
+}
+
+function listenerGlobalLockDir() {
+  return `${resolveConfigFile()}.oauth-listener-global.lock`;
+}
+
+function listenerGlobalLockOwnerFile(lockDir) {
+  return join(lockDir, 'owner.json');
+}
+
+function readListenerGlobalLockOwner(lockDir) {
+  try {
+    return JSON.parse(readFileSync(listenerGlobalLockOwnerFile(lockDir), 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeListenerGlobalLockOwner(lock) {
+  const current = readListenerGlobalLockOwner(lock.lockDir);
+  if (current && current.owner_token !== lock.ownerToken) return false;
+  writeFileSync(listenerGlobalLockOwnerFile(lock.lockDir), JSON.stringify({
+    owner_token: lock.ownerToken,
+    owner_pid: process.pid,
+    updated_at: Date.now(),
+  }), { mode: 0o600 });
+  return true;
+}
+
+function listenerGlobalLockIsStale(lockDir, staleMs) {
+  try {
+    return Date.now() - statSync(listenerGlobalLockOwnerFile(lockDir)).mtimeMs > staleMs;
+  } catch {
+    try {
+      return Date.now() - statSync(lockDir).mtimeMs > staleMs;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function retireStaleListenerGlobalLock(lockDir) {
+  const retiredDir = `${lockDir}.stale-${process.pid}-${base64url(randomBytes(8))}`;
+  try {
+    renameSync(lockDir, retiredDir);
+  } catch {
+    return false;
+  }
+  rmSync(retiredDir, { recursive: true, force: true });
+  return true;
+}
+
+async function acquireListenerStartLock(runtime) {
+  const lockDir = listenerStartLockDir(runtime);
+  mkdirSync(dirname(lockDir), { recursive: true });
+  const deadline = Date.now() + LISTENER_START_LOCK_STALE_MS * 2;
+  for (;;) {
+    try {
+      mkdirSync(lockDir);
+      return lockDir;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - statSync(lockDir).mtimeMs > LISTENER_START_LOCK_STALE_MS) {
+          rmdirSync(lockDir);
+          continue;
+        }
+      } catch {
+        // The owner may have released the lock between stat and removal.
+      }
+      if (Date.now() >= deadline) {
+        throw oauthError(
+          'oauth_listener_lock_timeout',
+          'Timed out waiting for another CLI process to start browser authorization.',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
+function releaseListenerStartLock(lockDir) {
+  if (!lockDir) return;
+  try {
+    rmdirSync(lockDir);
+  } catch {
+    // A crashed owner or stale-lock cleanup may already have removed it.
+  }
+}
+
+export async function acquireListenerGlobalLock({
+  staleMs = LISTENER_START_LOCK_STALE_MS,
+  waitMs = LISTENER_START_LOCK_STALE_MS * 2,
+  heartbeatMs = LISTENER_GLOBAL_LOCK_HEARTBEAT_MS,
+} = {}) {
+  const lockDir = listenerGlobalLockDir();
+  mkdirSync(dirname(lockDir), { recursive: true });
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      mkdirSync(lockDir);
+      const lock = {
+        lockDir,
+        ownerToken: base64url(randomBytes(24)),
+        heartbeat: null,
+      };
+      writeListenerGlobalLockOwner(lock);
+      lock.heartbeat = setInterval(() => {
+        try {
+          writeListenerGlobalLockOwner(lock);
+        } catch {
+          // A stale-lock recovery may have retired this directory. Ownership-
+          // qualified release below must not disturb the successor.
+        }
+      }, heartbeatMs);
+      lock.heartbeat.unref?.();
+      return lock;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      if (
+        listenerGlobalLockIsStale(lockDir, staleMs)
+        && retireStaleListenerGlobalLock(lockDir)
+      ) {
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw oauthError(
+          'oauth_listener_global_lock_timeout',
+          'Timed out waiting for another CLI process to finish OAuth account changes.',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
+export function releaseListenerGlobalLock(lock) {
+  if (!lock) return;
+  clearInterval(lock.heartbeat);
+  const owner = readListenerGlobalLockOwner(lock.lockDir);
+  if (owner?.owner_token !== lock.ownerToken) return;
+  const releasedDir = `${lock.lockDir}.released-${process.pid}-${lock.ownerToken}`;
+  try {
+    renameSync(lock.lockDir, releasedDir);
+  } catch {
+    return;
+  }
+  const movedOwner = readListenerGlobalLockOwner(releasedDir);
+  if (movedOwner?.owner_token !== lock.ownerToken) {
+    try { renameSync(releasedDir, lock.lockDir); } catch { /* successor already owns the path */ }
+    return;
+  }
+  rmSync(releasedDir, { recursive: true, force: true });
+}
+
+function saveListenerState(runtime, state) {
+  const file = listenerStateFile(runtime);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(state, null, 2), { mode: 0o600 });
+}
+
+function readListenerState(runtime) {
+  try {
+    const state = JSON.parse(readFileSync(listenerStateFile(runtime), 'utf-8'));
+    return state?.profile === runtime.profileName ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function listenerStateAllowsPersistence(runtime, ownerPid) {
+  const state = readListenerState(runtime);
+  return Boolean(
+    state
+    && Number(state.pid) === Number(ownerPid)
+    && state.cancelled !== true
+    && Number(state.expires_at) > Math.floor(Date.now() / 1000),
+  );
+}
+
+/**
+ * Drop the listener record, optionally only when it still describes `ownerPid`.
+ *
+ * A child that times out must not delete a record a newer child already wrote:
+ * losing it orphans the live listener, because every later stop and reuse finds
+ * the profile through this file.
+ */
+export function clearListenerState(runtime, { ownerPid = null } = {}) {
+  if (ownerPid !== null) {
+    try {
+      const state = JSON.parse(readFileSync(listenerStateFile(runtime), 'utf-8'));
+      if (Number(state?.pid) !== Number(ownerPid)) return;
+    } catch {
+      return;
+    }
+  }
+  try {
+    rmSync(listenerStateFile(runtime));
+  } catch {
+    // Nothing to clear.
+  }
+}
+
+/**
+ * A listener from an earlier run that is still waiting for the same browser.
+ *
+ * Re-running `notis start` is routine — an agent does it to check whether the
+ * user has finished — and each run would otherwise strand another detached
+ * process holding another port. Handing back the authorization URL the user was
+ * already given is also the only answer that stays true: the earlier URL is the
+ * one whose PKCE verifier the live listener holds.
+ */
+function readLiveListener(runtime, { sameApiBase = true } = {}) {
+  const state = readListenerState(runtime);
+  if (!state?.pid || !state?.authorize_url) return null;
+  if (state.cancelled === true) return null;
+  // Reuse needs the endpoint to match, because a grant belongs to the API that
+  // issued it. Stopping one does not: a listener for any endpoint is still
+  // about to write this profile.
+  if (sameApiBase && state.api_base !== runtime.apiBase) return null;
+  if (Number(state.expires_at) <= Math.floor(Date.now() / 1000)) return null;
+  if (!listenerProcessIsAlive(state.pid, {
+    expectedIdentity: state.identity_token,
+    expectedScriptPath: state.listener_script,
+  })) return null;
+  return state;
+}
+
+/**
+ * Is this pid still *our* listener?
+ *
+ * A bare `kill(pid, 0)` only proves some process holds the number. State files
+ * outlive reboots and SIGKILLs, and pids are recycled, so that test eventually
+ * reports a stranger as the listener — which would hand out an authorize URL
+ * whose loopback port is dead, and let `logout` signal an unrelated process.
+ * Matching the command line costs one `ps` on a rare path and rules both out.
+ */
+export function listenerProcessIsAlive(
+  pid,
+  {
+    platform = process.platform,
+    run = execFileSync,
+    signal = process.kill.bind(process),
+    expectedIdentity = null,
+    expectedScriptPath = null,
+  } = {},
+) {
+  const numericPid = Number(pid);
+  if (!Number.isSafeInteger(numericPid) || numericPid <= 0) return false;
+  try {
+    // Signal 0 tests for a live process without touching it.
+    signal(numericPid, 0);
+  } catch {
+    return false;
+  }
+  // tasklist's verbose view does not contain a process command line, so it can
+  // never identify the script behind node.exe. CIM exposes the actual command
+  // line and is available through Windows PowerShell and modern PowerShell.
+  const windowsCommand = `(Get-CimInstance Win32_Process -Filter "ProcessId = ${numericPid}").CommandLine`;
+  const probes = platform === 'win32'
+    ? [
+      ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsCommand]],
+      ['pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsCommand]],
+    ]
+    : [['ps', ['-o', 'command=', '-p', String(numericPid)]]];
+  for (const [command, args] of probes) {
+    try {
+      const output = run(command, args, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: LISTENER_IDENTITY_PROBE_TIMEOUT_MS,
+      });
+      return Boolean(
+        expectedIdentity
+        && expectedScriptPath
+        && output.includes(expectedScriptPath)
+        && output.includes(LISTENER_SCRIPT_NAME)
+        && output.includes(expectedIdentity),
+      );
+    } catch {
+      // Try the next probe.
+    }
+  }
+  // Nothing here can tell this pid apart from a stranger that inherited the
+  // number. Fail closed: the cost is a listener we stop reusing, against
+  // signalling an unrelated process, which is the failure that cannot be undone.
+  return false;
+}
+
+/**
+ * End an authorization that is still in flight for this profile.
+ *
+ * Best effort by design: the listener may already have exited, and failing to
+ * reach it is never a reason to fail the command that asked for this.
+ */
+export function stopPendingListener(
+  runtime,
+  {
+    platform = process.platform,
+    signal = process.kill.bind(process),
+  } = {},
+) {
+  const state = readListenerState(runtime);
+  const live = readLiveListener(runtime, { sameApiBase: false });
+  if (live) {
+    // Persist cancellation before notifying the child. POSIX can deliver a
+    // catchable SIGTERM, but Windows terminates Node immediately for that
+    // signal. On Windows the child observes this tombstone through its polling
+    // channel and stays alive long enough to revoke an in-flight exchange.
+    saveListenerState(runtime, { ...live, cancelled: true });
+    if (platform === 'win32') return;
+    try {
+      signal(live.pid, 'SIGTERM');
+      clearListenerState(runtime, { ownerPid: live.pid });
+    } catch {
+      // Already gone, or owned by another user. Keep the tombstone so a child
+      // that is still alive cannot persist this authorization.
+    }
+    return;
+  }
+  if (
+    state?.pid
+    && Number(state.expires_at) > Math.floor(Date.now() / 1000)
+  ) {
+    // Signal 0 may prove the PID exists while ps/CIM cannot prove it is ours.
+    // Never signal that process, but keep a cancellation tombstone the child
+    // must observe under the start lock before it can persist credentials.
+    saveListenerState(runtime, { ...state, cancelled: true });
+    return;
+  }
+  clearListenerState(runtime);
+}
+
+async function stopPendingListenerAfterStart(runtime) {
+  const lockDir = await acquireListenerStartLock(runtime);
+  try {
+    stopPendingListener(runtime);
+  } finally {
+    releaseListenerStartLock(lockDir);
+  }
+}
+
+async function clearListenerStateAfterStart(runtime, { ownerPid }) {
+  const lockDir = await acquireListenerStartLock(runtime);
+  try {
+    clearListenerState(runtime, { ownerPid });
+  } finally {
+    releaseListenerStartLock(lockDir);
+  }
+}
+
+/**
+ * Hand the loopback callback to a process that outlives this command.
+ *
+ * An agent reads a command's output only once the command exits, so a login
+ * that waited in-process would hold the authorization URL hostage inside a
+ * command that cannot finish until the user opens the URL they were never
+ * shown. Detaching breaks that deadlock: this process prints the URL and exits
+ * while the child keeps the listener, so an agent-driven signup gets the same
+ * no-copy browser hand-off a human at a terminal gets.
+ *
+ * Returns null rather than throwing when the child cannot be started or cannot
+ * bind — a sandbox that forbids either is a reason to fall back to the code
+ * flow, not to fail the login.
+ */
+async function startDetachedLoopbackListener(runtime, {
+  metadata,
+  verifier,
+  state,
+  scopes,
+  timeoutMs,
+  portalOrigin,
+}) {
+  // A retry can start in another process before this child consumes its input.
+  // Keep each verifier/state payload private to exactly one child.
+  const identityToken = randomBytes(24).toString('base64url');
+  const payloadFile = `${listenerStateFile(runtime)}.payload.${process.pid}.${randomBytes(8).toString('hex')}`;
+  try {
+    mkdirSync(dirname(payloadFile), { recursive: true });
+    writeFileSync(payloadFile, JSON.stringify({
+      profile: runtime.profileName,
+      api_base: runtime.apiBase,
+      verifier,
+      state,
+      scopes,
+      timeout_ms: timeoutMs,
+      portal_origin: portalOrigin,
+      metadata,
+    }), { mode: 0o600, flag: 'wx' });
+  } catch {
+    return null;
+  }
+
+  let child;
+  try {
+    child = spawn(process.execPath, [LISTENER_SCRIPT, payloadFile, identityToken], {
+      detached: true,
+      windowsHide: true,
+      // An IPC channel only so the child can report the port it bound. Every
+      // other stream is dropped: the child must not write to a terminal the
+      // parent no longer owns.
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env: listenerChildEnvironment(),
+    });
+  } catch {
+    try { rmSync(payloadFile); } catch { /* best effort */ }
+    return null;
+  }
+
+  const port = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off('message', onMessage);
+      child.off('error', onFailure);
+      child.off('exit', onFailure);
+      resolve(value);
+    };
+    const onMessage = (message) => finish(Number(message?.port) || null);
+    const onFailure = () => finish(null);
+    const timer = setTimeout(() => finish(null), LISTENER_HANDSHAKE_TIMEOUT_MS);
+    child.once('message', onMessage);
+    child.once('error', onFailure);
+    child.once('exit', onFailure);
+  });
+
+  if (!port) {
+    try { child.kill(); } catch { /* already gone */ }
+    try { rmSync(payloadFile); } catch { /* the child may have consumed it */ }
+    return null;
+  }
+
+  // The child owns its lifetime from here. Disconnecting drops the only handle
+  // keeping this process's event loop alive on its behalf.
+  try { child.disconnect(); } catch { /* already disconnected */ }
+  child.unref();
+  return {
+    pid: child.pid,
+    port,
+    redirectUri: `http://127.0.0.1:${port}/callback`,
+    identityToken,
+    scriptPath: LISTENER_SCRIPT,
+  };
+}
+
+async function revokeCancelledToken(metadata, tokenResponse, fetchImpl) {
+  const token = tokenResponse?.refresh_token || tokenResponse?.access_token;
+  if (!token || !metadata?.revocationEndpoint || !metadata?.clientId) return;
+  try {
+    await fetchJson(
+      metadata.revocationEndpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token, client_id: metadata.clientId }),
+      },
+      fetchImpl,
+    );
+  } catch {
+    // The child still refuses local persistence. Revocation is compensating
+    // cleanup and must not turn a cancelled browser page into a credential.
+  }
+}
+
+/**
+ * The detached child's whole life: bind, report the port, wait, persist.
+ *
+ * Runs in its own process with no terminal, so nothing here may write to stdout
+ * or throw past the top level — a crash would leave the user staring at a
+ * browser page that never resolves.
+ */
+export async function runDetachedLoginListener(
+  payloadFile,
+  fetchImpl = fetch,
+  identityToken = process.argv[3] || null,
+) {
+  let payload;
+  try {
+    payload = JSON.parse(readFileSync(payloadFile, 'utf-8'));
+  } catch {
+    return 1;
+  }
+  // The verifier is a bearer secret for this authorization. It has been read;
+  // it should not outlive the read.
+  try { rmSync(payloadFile); } catch { /* best effort */ }
+
+  const runtime = { profileName: payload.profile, apiBase: payload.api_base };
+  let receiver;
+  try {
+    receiver = await createLoopbackReceiver({
+      state: payload.state,
+      timeoutMs: Number(payload.timeout_ms) || DEFAULT_LOGIN_TIMEOUT_MS,
+      portalOrigin: payload.portal_origin,
+    });
+  } catch {
+    return 1;
+  }
+
+  process.send?.({ port: receiver.port });
+
+  // Logout signals the child instead of killing it blindly. Before exchange,
+  // cancellation closes the wait immediately. During exchange, the child stays
+  // alive long enough to revoke any grant the server may already have issued.
+  let terminationRequested = false;
+  const requestTermination = () => {
+    if (terminationRequested) return;
+    terminationRequested = true;
+    receiver.cancel();
+  };
+  process.once('SIGTERM', requestTermination);
+  // Windows cannot deliver a catchable SIGTERM to another Node process. The
+  // state file is therefore also a cross-platform cancellation channel. A
+  // replacement listener changes the owner pid; logout marks this owner as
+  // cancelled. Either transition must stop this child before it can persist.
+  let ownPublicationObserved = false;
+  const cancellationPoll = setInterval(() => {
+    const state = readListenerState(runtime);
+    if (!state) return;
+    const stateBelongsToThisChild = Boolean(
+      Number(state.pid) === Number(process.pid)
+      && (!identityToken || state.identity_token === identityToken),
+    );
+    // The parent publishes this child's ownership only after the child has
+    // bound and reported its port. Until that publication is visible, an old
+    // Windows/unverifiable cancellation tombstone still belongs to the
+    // predecessor and must not make the replacement cancel itself.
+    if (!ownPublicationObserved) {
+      if (!stateBelongsToThisChild) return;
+      ownPublicationObserved = true;
+    }
+    if (
+      !stateBelongsToThisChild
+      || state.cancelled === true
+      || Number(state.expires_at) <= Math.floor(Date.now() / 1000)
+    ) {
+      requestTermination();
+    }
+  }, LISTENER_CANCELLATION_POLL_MS);
+  cancellationPoll.unref?.();
+
+  let tokenResponse = null;
+  let tokenPersisted = false;
+  try {
+    const code = await receiver.waitForCode();
+    // Keep replacement publication and logout serialized across the whole
+    // exchange. Revoking an old refresh token revokes the CLI grant, not just
+    // one token family, so compensation must complete before a successor can
+    // exchange and persist under that same grant.
+    const globalLock = await acquireListenerGlobalLock();
+    let lockDir = null;
+    try {
+      lockDir = await acquireListenerStartLock(runtime);
+      if (terminationRequested || !listenerStateAllowsPersistence(runtime, process.pid)) {
+        throw oauthError(
+          'oauth_listener_cancelled',
+          'This browser authorization is no longer active.',
+        );
+      }
+      tokenResponse = await exchangeCode(
+        payload.metadata,
+        { code, redirectUri: receiver.redirectUri, verifier: payload.verifier },
+        fetchImpl,
+      );
+      if (terminationRequested || !listenerStateAllowsPersistence(runtime, process.pid)) {
+        throw oauthError(
+          'oauth_listener_cancelled',
+          'This browser authorization is no longer active.',
+        );
+      }
+      persistOAuthTokenResponse(runtime, payload.metadata, tokenResponse);
+      tokenPersisted = true;
+      clearListenerState(runtime, { ownerPid: process.pid });
+      receiver.complete();
+    } catch (error) {
+      if (tokenResponse && !tokenPersisted) {
+        await revokeCancelledToken(payload.metadata, tokenResponse, fetchImpl);
+      }
+      throw error;
+    } finally {
+      releaseListenerStartLock(lockDir);
+      releaseListenerGlobalLock(globalLock);
+    }
+    return 0;
+  } catch {
+    receiver.fail({ detached: true });
+    return 1;
+  } finally {
+    clearInterval(cancellationPoll);
+    process.off('SIGTERM', requestTermination);
+    await receiver.close();
+    try {
+      await clearListenerStateAfterStart(runtime, { ownerPid: process.pid });
+    } catch {
+      // The child is exiting and can no longer authorize anything. A stale
+      // owner-qualified record is safe for the next login to replace.
+    }
+  }
+}
+
+/**
+ * Would a `127.0.0.1` callback on this host reach the browser the user is in?
+ *
+ * Over SSH or inside a container it usually would not: the listener binds fine,
+ * so nothing fails, and the user's own machine answers the callback URL with a
+ * connection refused. The Portal code hand-off works from any browser, so an
+ * uncertain answer has to resolve to `false` — the cost of choosing it wrongly
+ * is one copied code, against a login that cannot be completed at all.
+ *
+ * `--mode browser` still forces the loopback for anyone who has forwarded the
+ * port and knows better.
+ */
+export function loopbackReachesTheUsersBrowser(
+  env = process.env,
+  pathExists = (path) => {
+    try {
+      statSync(path);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  platform = process.platform,
+) {
+  // Connection markers carry identity/address data, so their presence is the
+  // signal. CI/provider flags are booleans encoded as strings; conventional
+  // disabled values must not turn a local machine into a remote host merely
+  // because non-empty strings are truthy in JavaScript.
+  const remoteConnectionMarkers = [
+    'SSH_CONNECTION',
+    'SSH_CLIENT',
+    'SSH_TTY',
+    'JENKINS_URL',
+    'CODEBUILD_BUILD_ID',
+  ];
+  const remoteBooleanMarkers = [
+    'CODESPACES',
+    'REMOTE_CONTAINERS',
+    'DEVCONTAINER',
+    'CI',
+    'GITHUB_ACTIONS',
+    'GITLAB_CI',
+    'BUILDKITE',
+    'CIRCLECI',
+    'TF_BUILD',
+    'RENDER',
+    'VERCEL',
+  ];
+  const disabledFlagValues = new Set(['', '0', 'false', 'no', 'off']);
+  const remoteFlagEnabled = (name) => {
+    if (env[name] === undefined || env[name] === null) return false;
+    return !disabledFlagValues.has(String(env[name]).trim().toLowerCase());
+  };
+  if (
+    remoteConnectionMarkers.some((name) => Boolean(env[name]))
+    || remoteBooleanMarkers.some(remoteFlagEnabled)
+  ) return false;
+  // Notis cloud agents run under this canonical root. Their browser belongs to
+  // the user, not the Vercel VM, so a listener on the VM's loopback is unreachable.
+  if (pathExists('/vercel/sandbox') || pathExists('/.dockerenv')) return false;
+  // macOS and Windows browser launches are local unless one of the remote
+  // markers above says otherwise. On Linux, require a graphical session:
+  // marker-free cloud workers are commonly plain VMs where 127.0.0.1 belongs
+  // to the worker rather than to the user's browser.
+  if (platform === 'darwin' || platform === 'win32') return true;
+  if (platform === 'linux') {
+    return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY || env.MIR_SOCKET);
+  }
+  return false;
+}
+
+const LOGIN_MODES = new Set(['auto', 'browser', 'code']);
+
+function requestedLoginMode(options) {
+  const requested = options.mode ? String(options.mode).toLowerCase() : null;
+  if (requested && !LOGIN_MODES.has(requested)) {
+    throw usageError(
+      `Unknown login mode "${requested}". Use auto, browser, or code.`,
+      { code: 'oauth_login_mode_invalid', mode: requested },
+    );
+  }
+  return requested;
+}
+
+function requestedAuthorizationTimeoutMs(options) {
+  const hasSeconds = options.timeoutSeconds !== undefined && options.timeoutSeconds !== null;
+  const hasMilliseconds = options.timeoutMs !== undefined && options.timeoutMs !== null;
+  if (!hasSeconds && !hasMilliseconds) return null;
+  const raw = hasSeconds ? options.timeoutSeconds : options.timeoutMs;
+  const numeric = Number(raw);
+  const milliseconds = hasSeconds ? numeric * 1000 : numeric;
+  if (
+    !Number.isFinite(numeric)
+    || numeric <= 0
+    || !Number.isInteger(numeric)
+    || !Number.isSafeInteger(milliseconds)
+    || milliseconds > MAX_NODE_TIMER_MS
+  ) {
+    throw usageError(
+      '--timeout-seconds must be a positive whole number within the supported timer range.',
+      { timeout_seconds: raw },
+    );
+  }
+  return milliseconds;
+}
+
+/**
+ * Which hand-off the browser uses to return the authorization code.
+ *
+ * `auto`, the default, always tries the loopback hand-off first so nobody has
+ * to copy a code. Whether this process can wait for the browser decides only
+ * *who* holds the listener: a terminal login keeps it in-process, and a login
+ * that has to return immediately hands it to a detached child. The Portal code
+ * flow is the fallback when no listener can start or the user's browser cannot
+ * safely reach this machine's loopback callback.
+ *
+ * `browser` additionally insists on waiting in-process, which is what a piped
+ * but human-driven run (CI, `| tee`) wants. `code` forces the Portal flow for
+ * an SSH session where no browser on this machine can reach 127.0.0.1.
+ */
+function resolveLoginMode(runtime, options) {
+  const requested = requestedLoginMode(options);
+  // --paste-code predates --mode and stays an alias so published commands and
+  // documented recipes keep working unchanged.
+  const mode = requested || (options.pasteCode ? 'code' : 'auto');
+  const wantsNonBlocking = Boolean(
+    runtime.agentMode
+    || ['json', 'yaml', 'ndjson'].includes(runtime.outputMode)
+    || runtime.nonInteractive,
+  );
+
+  if (mode === 'browser' && runtime.agentMode) {
+    throw oauthError(
+      'oauth_login_mode_unavailable',
+      'Agent mode cannot block on a browser callback: the authorization URL only reaches the user once this command exits.',
+      [
+        {
+          command: 'notis login',
+          reason: 'The default already hands the browser callback to a background listener, so no code is copied',
+        },
+        { command: 'notis login --mode code', reason: 'Show a code the agent can hand to the user instead' },
+      ],
+    );
+  }
+
+  const loopbackReachable = loopbackReachesTheUsersBrowser(
+    runtime.hostEnvironment ?? process.env,
+    undefined,
+    runtime.hostPlatform ?? process.platform,
+  );
+  return {
+    automaticMode: mode === 'auto',
+    wantsNonBlocking,
+    // An explicit --mode browser is a promise to wait, so it overrides the
+    // non-blocking default that a piped stdout would otherwise imply.
+    nonBlocking: wantsNonBlocking && mode !== 'browser',
+    // Only an explicit request starts on the code flow. Every other mode earns
+    // its way there by failing to bind a loopback port -- except on a host whose
+    // loopback the user's browser cannot reach, where binding succeeds and the
+    // callback is unreachable anyway.
+    usePasteCode: mode === 'code' || (mode === 'auto' && !loopbackReachable),
+  };
+}
+
 function redeemCommand(profileName, channel) {
   return [
     cliCommandForChannel(channel),
     `--profile ${quoteShellArgument(profileName || 'default')}`,
     'login --code <code>',
+  ].join(' ');
+}
+
+/**
+ * What to run once the browser has finished, when there is no code to redeem.
+ *
+ * The detached listener writes the credential itself, so the only thing left is
+ * to observe that it landed. `start` is idempotent and reports the account, so
+ * it doubles as the confirmation step.
+ */
+function confirmCommand(profileName, channel, apiBase) {
+  return [
+    cliCommandForChannel(channel),
+    `--profile ${quoteShellArgument(profileName || 'default')}`,
+    `--api-base ${quoteShellArgument(apiBase)}`,
+    'start',
   ].join(' ');
 }
 
@@ -882,43 +1770,174 @@ async function redeemAuthorizationCode(runtime, code, fetchImpl) {
   if (!code) {
     throw oauthError('oauth_code_missing', 'No authorization code was provided.');
   }
-  const pending = readPendingAuthorization(runtime);
-  if (!pending) {
-    throw oauthError(
-      'oauth_pending_login_missing',
-      'No pending authorization for this profile. Run notis login again to start one.',
+  const globalLock = await acquireListenerGlobalLock();
+  let lockDir = null;
+  let metadata = null;
+  let tokenResponse = null;
+  let tokenPersisted = false;
+  try {
+    lockDir = await acquireListenerStartLock(runtime);
+    const pending = readPendingAuthorization(runtime);
+    if (!pending) {
+      throw oauthError(
+        'oauth_pending_login_missing',
+        'No pending authorization for this profile. Run notis login again to start one.',
+      );
+    }
+    // The grant belongs to the environment that issued it. Redeeming without
+    // repeating --api-base must not persist a token under a different backend.
+    if (pending.api_base) {
+      runtime.apiBase = pending.api_base;
+    }
+    metadata = {
+      apiBase: pending.api_base,
+      issuer: pending.issuer,
+      resource: pending.resource,
+      clientId: pending.client_id,
+      tokenEndpoint: pending.token_endpoint,
+      revocationEndpoint: pending.revocation_endpoint
+        || `${String(pending.issuer || '').replace(/\/+$/, '')}/oauth/revoke`,
+      channel: pending.channel,
+    };
+    if (!metadata.issuer || !metadata.resource || !metadata.clientId || !metadata.tokenEndpoint) {
+      throw oauthError(
+        'oauth_pending_login_invalid',
+        'The pending authorization is incomplete. Run notis login again.',
+      );
+    }
+    // Hold publication ownership through exchange and persistence. Otherwise a
+    // new browser start can retire this verifier while its request is in flight
+    // and the stale result can overwrite the newer authorization afterward.
+    tokenResponse = await exchangeCode(
+      metadata,
+      { code, redirectUri: pending.redirect_uri, verifier: pending.verifier },
+      fetchImpl,
     );
+    stopPendingListener(runtime);
+    const profile = persistOAuthTokenResponse(runtime, metadata, tokenResponse);
+    tokenPersisted = true;
+    clearPendingAuthorization(runtime, pending.pending_file);
+    updateRuntimeFromOAuthProfile(runtime, profile);
+    return { profile, metadata };
+  } catch (error) {
+    if (tokenResponse && !tokenPersisted) {
+      await revokeCancelledToken(metadata, tokenResponse, fetchImpl);
+    }
+    throw error;
+  } finally {
+    releaseListenerStartLock(lockDir);
+    releaseListenerGlobalLock(globalLock);
   }
-  // The grant belongs to the environment that issued it. Redeeming without
-  // repeating --api-base must not persist a token under a different backend.
-  if (pending.api_base) {
-    runtime.apiBase = pending.api_base;
-  }
-  const metadata = {
-    issuer: pending.issuer,
-    resource: pending.resource,
-    clientId: pending.client_id,
-    tokenEndpoint: pending.token_endpoint,
-    channel: pending.channel,
-  };
-  if (!metadata.issuer || !metadata.resource || !metadata.clientId || !metadata.tokenEndpoint) {
-    throw oauthError(
-      'oauth_pending_login_invalid',
-      'The pending authorization is incomplete. Run notis login again.',
-    );
-  }
-  const tokenResponse = await exchangeCode(
-    metadata,
-    { code, redirectUri: pending.redirect_uri, verifier: pending.verifier },
-    fetchImpl,
-  );
-  clearPendingAuthorization(runtime, pending.pending_file);
-  const profile = persistOAuthTokenResponse(runtime, metadata, tokenResponse);
-  updateRuntimeFromOAuthProfile(runtime, profile);
-  return { profile, metadata };
 }
 
-export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = fetch) {
+async function exchangeAndPersistForegroundAuthorization(
+  runtime,
+  metadata,
+  authorization,
+  fetchImpl,
+) {
+  const globalLock = await acquireListenerGlobalLock();
+  let lockDir = null;
+  let tokenResponse = null;
+  let tokenPersisted = false;
+  try {
+    lockDir = await acquireListenerStartLock(runtime);
+    const pending = readPendingAuthorization(runtime);
+    if (!pendingAuthorizationOwnedBy(pending, authorization)) {
+      throw oauthError(
+        'oauth_listener_cancelled',
+        'This browser authorization is no longer active.',
+      );
+    }
+    // Linearize exchange and persistence with both detached publication and
+    // logout. If logout won first, it removed the owner-qualified pending
+    // record above and no grant is minted. If it starts later, it waits and
+    // clears the credential after this operation completes.
+    stopPendingListener(runtime);
+    tokenResponse = await exchangeCode(
+      metadata,
+      {
+        code: authorization.code,
+        redirectUri: authorization.redirect_uri,
+        verifier: authorization.verifier,
+      },
+      fetchImpl,
+    );
+    const profile = persistOAuthTokenResponse(runtime, metadata, tokenResponse);
+    tokenPersisted = true;
+    clearPendingAuthorizationIfOwner(runtime, authorization);
+    return profile;
+  } catch (error) {
+    if (tokenResponse && !tokenPersisted) {
+      await revokeCancelledToken(metadata, tokenResponse, fetchImpl);
+    }
+    throw error;
+  } finally {
+    releaseListenerStartLock(lockDir);
+    releaseListenerGlobalLock(globalLock);
+  }
+}
+
+/**
+ * The parked authorization this profile is already waiting on, if this run is
+ * asking for the same thing.
+ *
+ * Minting a fresh verifier instead would silently invalidate the URL the user
+ * was already handed: the code it returns can only be redeemed against the
+ * verifier that was parked with it. Re-running a login is routine -- an agent
+ * does it to check progress -- so the answer has to stay the same URL.
+ */
+function reusablePendingAuthorization(runtime, metadata, scopes, requestedTimeoutMs = null) {
+  const pending = readPendingAuthorization(runtime);
+  const pendingScopes = Array.isArray(pending?.scopes) && pending.scopes.length > 0
+    ? pending.scopes
+    : DEFAULT_CLI_OAUTH_SCOPES;
+  const sameAuthorization = Boolean(
+    pending
+    && pending.state
+    && pending.api_base === runtime.apiBase
+    && pending.issuer === metadata.issuer
+    && pending.resource === metadata.resource
+    && pending.client_id === metadata.clientId
+    && pending.token_endpoint === metadata.tokenEndpoint
+    && pending.redirect_uri === metadata.copyPasteRedirectUri
+    && (
+      requestedTimeoutMs === null
+      || Number(pending.authorization_timeout_ms) === requestedTimeoutMs
+    )
+    && JSON.stringify(pendingScopes) === JSON.stringify(scopes),
+  );
+  if (!sameAuthorization) return null;
+  const challenge = createHash('sha256')
+    .update(pending.verifier, 'ascii')
+    .digest('base64url');
+  return {
+    agentAuthorization: {
+      authorize_url: buildAuthorizeUrl(metadata, {
+        redirectUri: pending.redirect_uri,
+        challenge,
+        state: pending.state,
+        scopes: pendingScopes,
+      }),
+      expires_in: Math.max(0, Number(pending.expires_at) - Math.floor(Date.now() / 1000)),
+      hand_off: 'code',
+      redeem_command: redeemCommand(
+        runtime.profileName,
+        authorizationChannel(metadata, runtime, pending),
+      ),
+    },
+  };
+}
+
+export async function loginWithOAuth(
+  runtime,
+  options = {},
+  output,
+  fetchImpl = fetch,
+  createReceiver = createLoopbackReceiver,
+  spawnListener = startDetachedLoopbackListener,
+  readCode = readPastedCode,
+) {
   // A worktree profile is authenticated by the running `./dev.sh`, not by a
   // browser grant. Authorizing over it would replace a scoped test identity
   // with a real account and quietly point local testing at the wrong user.
@@ -937,73 +1956,166 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
       ],
     );
   }
+  // Even redemption is a mutating invocation, so malformed local options must
+  // fail before reading pending state or contacting the token endpoint.
+  requestedLoginMode(options);
+  const requestedTimeoutMs = requestedAuthorizationTimeoutMs(options);
   if (options.code) {
     return redeemAuthorizationCode(runtime, String(options.code).trim(), fetchImpl);
   }
 
+  // Reject a malformed local invocation before making discovery requests.
+  const loginMode = resolveLoginMode(runtime, options);
   const metadata = await discoverCliOAuth(runtime.apiBase, fetchImpl);
   const scopes = options.scope?.length
     ? [...new Set(options.scope)]
     : DEFAULT_CLI_OAUTH_SCOPES;
-  const timeoutMs = Number(options.timeoutSeconds) > 0
-    ? Number(options.timeoutSeconds) * 1000
-    : Number(options.timeoutMs) > 0
-      ? Number(options.timeoutMs)
-      : DEFAULT_LOGIN_TIMEOUT_MS;
-  const nonBlockingAgent = Boolean(
-    runtime.agentMode || runtime.outputMode === 'json',
-  );
-  const pasteCode = Boolean(options.pasteCode || nonBlockingAgent);
+  const timeoutMs = requestedTimeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
+  // A detached listener is not a terminal waiting on a prompt: nobody is held
+  // up by it, and the user still has to sign up and verify an email, so its
+  // default is the parked-authorization window rather than the blocking one.
+  // An explicit --timeout-seconds still wins; the flag documents how long the
+  // authorization stays open, and silently ignoring it here made it a lie.
+  const parkedAuthorizationTimeoutMs = requestedTimeoutMs ?? PENDING_LOGIN_TTL_SECONDS * 1000;
+  const {
+    automaticMode,
+    wantsNonBlocking,
+    nonBlocking,
+    usePasteCode,
+  } = loginMode;
+  let nonBlockingAgent = nonBlocking;
+  let listenerGlobalLock = null;
+  let listenerStartLock = null;
   let receiver;
+  let detachedListener = null;
+  let detachedListenerPublished = false;
   let redirectUri;
+  let foregroundAuthorization = null;
 
-  if (pasteCode) {
-    const pending = readPendingAuthorization(runtime);
-    const pendingScopes = Array.isArray(pending?.scopes) && pending.scopes.length > 0
-      ? pending.scopes
-      : DEFAULT_CLI_OAUTH_SCOPES;
-    const sameAuthorization = Boolean(
-      pending
-      && pending.state
-      && pending.api_base === runtime.apiBase
-      && pending.issuer === metadata.issuer
-      && pending.resource === metadata.resource
-      && pending.client_id === metadata.clientId
-      && pending.token_endpoint === metadata.tokenEndpoint
-      && pending.redirect_uri === metadata.copyPasteRedirectUri
-      && JSON.stringify(pendingScopes) === JSON.stringify(scopes),
+  if (automaticMode || nonBlockingAgent || usePasteCode || options.reusePersistedCredential) {
+    listenerGlobalLock = await acquireListenerGlobalLock();
+    try {
+      listenerStartLock = await acquireListenerStartLock(runtime);
+    } catch (error) {
+      releaseListenerGlobalLock(listenerGlobalLock);
+      listenerGlobalLock = null;
+      throw error;
+    }
+  }
+
+  try {
+  if (options.reusePersistedCredential) {
+    // `start` doubles as the confirmation command for a detached login. The
+    // child can persist its token while this invocation is doing discovery;
+    // re-read under the publication lock so an idempotent confirmation cannot
+    // mint a second grant from a stale runtime snapshot.
+    const storedProfile = getProfile(loadConfig(), runtime.profileName);
+    if (
+      storedProfile.oauth_access_token
+      && !credentialIsExpired({ credentialKind: 'oauth' }, storedProfile)
+    ) {
+      assertOAuthApiTarget(runtime, storedProfile);
+      updateRuntimeFromOAuthProfile(runtime, storedProfile);
+      return { profile: storedProfile, metadata, reusedPersistedCredential: true };
+    }
+  }
+  // A listener spawned by an earlier run is still holding the browser hand-off,
+  // and its URL is the only one whose verifier that process knows.
+  if (automaticMode && !usePasteCode) {
+    // Auto mode may have degraded to the copy-code hand-off on an earlier run.
+    // That parked verifier owns the URL the user already received, so keep the
+    // hand-off sticky instead of publishing a competing loopback authorization.
+    const parked = reusablePendingAuthorization(runtime, metadata, scopes, requestedTimeoutMs);
+    if (parked) return parked;
+    // A non-reusable sidecar belongs to a different/expired authorization. It
+    // must not survive beside the listener this run is about to publish.
+    clearPendingAuthorizations(runtime);
+    const live = readLiveListener(runtime, { sameApiBase: false });
+    // Reuse is only safe when the live listener is authorizing the *same*
+    // thing. The copy-paste path below already compares the full authorization;
+    // matching only the profile here would hand back a URL carrying the scopes
+    // of the earlier run, silently ignoring this one's --scope.
+    const sameListenerAuthorization = Boolean(
+      live
+      && live.api_base === runtime.apiBase
+      && live.issuer === metadata.issuer
+      && live.resource === metadata.resource
+      && live.client_id === metadata.clientId
+      && live.token_endpoint === metadata.tokenEndpoint
+      && (
+        requestedTimeoutMs === null
+        || Number(live.authorization_timeout_ms) === requestedTimeoutMs
+      )
+      && JSON.stringify(live.scopes || []) === JSON.stringify(scopes),
     );
-    if (sameAuthorization) {
-      const challenge = createHash('sha256')
-        .update(pending.verifier, 'ascii')
-        .digest('base64url');
+    if (live && !sameListenerAuthorization) {
+      // A different authorization is being requested, so the old listener is
+      // now unreachable work holding a port. Stop it before spawning another.
+      stopPendingListener(runtime);
+    }
+    if (live && sameListenerAuthorization) {
       return {
         agentAuthorization: {
-          authorize_url: buildAuthorizeUrl(metadata, {
-            redirectUri: pending.redirect_uri,
-            challenge,
-            state: pending.state,
-            scopes: pendingScopes,
-          }),
-          expires_in: Math.max(0, Number(pending.expires_at) - Math.floor(Date.now() / 1000)),
-          redeem_command: redeemCommand(
+          authorize_url: live.authorize_url,
+          expires_in: Math.max(0, Number(live.expires_at) - Math.floor(Date.now() / 1000)),
+          hand_off: 'browser_callback',
+          confirm_command: confirmCommand(
             runtime.profileName,
-            authorizationChannel(metadata, runtime, pending),
+            authorizationChannel(metadata, runtime),
+            live.api_base,
           ),
         },
       };
     }
   }
 
+  if (!nonBlockingAgent && !usePasteCode) {
+    // A foreground browser flow never holds publication locks while a person
+    // completes authorization. This also covers explicit browser mode and a
+    // start command checking for an already-persisted credential.
+    releaseListenerStartLock(listenerStartLock);
+    listenerStartLock = null;
+    releaseListenerGlobalLock(listenerGlobalLock);
+    listenerGlobalLock = null;
+  }
+
+  if (usePasteCode) {
+    const reused = reusablePendingAuthorization(runtime, metadata, scopes, requestedTimeoutMs);
+    if (reused) return reused;
+    // Code and loopback hand-offs are mutually exclusive for one profile. This
+    // runs under the same publication lock as detached starts so a code request
+    // cannot leave a second valid authorization beside a listener that is
+    // still being published.
+    stopPendingListener(runtime);
+  }
+
   const { verifier, challenge } = createPkce();
   const state = base64url(randomBytes(32));
 
-  if (pasteCode) {
-    redirectUri = metadata.copyPasteRedirectUri;
-    if (!redirectUri) {
-      throw oauthError('oauth_metadata_invalid', 'Notis did not advertise a copy-paste callback.');
-    }
-  } else {
+  // May flip to true below: the browser hand-off is a preference, not a
+  // guarantee, and the redirect URI is signed into the authorize URL before the
+  // user ever sees it. Deciding here is the last moment a fallback is free.
+  let pasteCode = usePasteCode;
+
+  const degradeToCode = (error) => {
+    // A locked-down machine that cannot bind 127.0.0.1 used to dead-end here
+    // with no way forward, even though the Portal hand-off would have worked.
+    // Only a missing copy-paste callback is genuinely unrecoverable.
+    if (!metadata.copyPasteRedirectUri) throw error;
+    receiver = undefined;
+    pasteCode = true;
+    // --mode browser promised to wait for a browser callback, not for someone
+    // to type into a pipe. Once no listener exists, returning the URL beats
+    // prompting on a stdout nobody is reading. A caller that declared itself
+    // non-interactive is in the same position: `readPastedCode` would block on
+    // a stdin prompt it has already said it cannot answer.
+    nonBlockingAgent = wantsNonBlocking || Boolean(runtime.nonInteractive);
+    output?.note?.(
+      'The local callback listener could not start, so this login switched to the copy-paste code flow.',
+    );
+  };
+
+  if (!pasteCode) {
     let portalOrigin = 'https://app.notis.ai';
     try {
       portalOrigin = new URL(metadata.copyPasteRedirectUri).origin;
@@ -1011,8 +2123,62 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
       // The OAuth server owns this metadata. Keep the public Portal fallback if
       // a development server omits or returns an invalid copy-paste URL.
     }
-    receiver = await createLoopbackReceiver({ state, timeoutMs, portalOrigin });
-    redirectUri = receiver.redirectUri;
+    if (nonBlockingAgent) {
+      // This command has to return before the user has even opened the URL, so
+      // the listener has to belong to something else.
+      detachedListener = await spawnListener(runtime, {
+        metadata,
+        verifier,
+        state,
+        scopes,
+        timeoutMs: parkedAuthorizationTimeoutMs,
+        portalOrigin,
+      });
+      if (detachedListener) {
+        redirectUri = detachedListener.redirectUri;
+      } else {
+        degradeToCode(oauthError(
+          'oauth_loopback_failed',
+          'Could not start a background OAuth callback listener.',
+        ));
+      }
+    } else {
+      try {
+        receiver = await createReceiver({ state, timeoutMs, portalOrigin });
+        redirectUri = receiver.redirectUri;
+      } catch (error) {
+        degradeToCode(error);
+      }
+    }
+  }
+
+  if (pasteCode) {
+    // A loopback bind may have degraded after the initial mode decision. Code
+    // publication still has to join the same serialization protocol as every
+    // detached start before it writes a verifier sidecar.
+    if (!listenerStartLock) {
+      listenerGlobalLock = await acquireListenerGlobalLock();
+      try {
+        listenerStartLock = await acquireListenerStartLock(runtime);
+      } catch (error) {
+        releaseListenerGlobalLock(listenerGlobalLock);
+        listenerGlobalLock = null;
+        throw error;
+      }
+      const live = readLiveListener(runtime, { sameApiBase: false });
+      if (live) stopPendingListener(runtime);
+    }
+    if (!usePasteCode) {
+      // This run degraded into the code flow rather than starting there, so it
+      // has not yet checked for a parked authorization. Overwriting one would
+      // make the URL an earlier run already handed the user unredeemable.
+      const reused = reusablePendingAuthorization(runtime, metadata, scopes, requestedTimeoutMs);
+      if (reused) return reused;
+    }
+    redirectUri = metadata.copyPasteRedirectUri;
+    if (!redirectUri) {
+      throw oauthError('oauth_metadata_invalid', 'Notis did not advertise a copy-paste callback.');
+    }
   }
 
   const authorizeUrl = buildAuthorizeUrl(metadata, {
@@ -1037,19 +2203,81 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
       resource: metadata.resource,
       client_id: metadata.clientId,
       token_endpoint: metadata.tokenEndpoint,
+      revocation_endpoint: metadata.revocationEndpoint,
       authorization_endpoint: metadata.authorizationEndpoint,
       channel: authorizationChannel(metadata, runtime),
       scopes,
-      expires_at: Math.floor(Date.now() / 1000) + PENDING_LOGIN_TTL_SECONDS,
+      authorization_timeout_ms: parkedAuthorizationTimeoutMs,
+      expires_at: Math.floor(Date.now() / 1000) + Math.ceil(parkedAuthorizationTimeoutMs / 1000),
     });
+  } else if (!nonBlockingAgent) {
+    foregroundAuthorization = {
+      profile: runtime.profileName,
+      api_base: runtime.apiBase,
+      verifier,
+      state,
+      redirect_uri: redirectUri,
+      hand_off: 'browser_callback',
+      issuer: metadata.issuer,
+      resource: metadata.resource,
+      client_id: metadata.clientId,
+      token_endpoint: metadata.tokenEndpoint,
+      revocation_endpoint: metadata.revocationEndpoint,
+      authorization_endpoint: metadata.authorizationEndpoint,
+      channel: authorizationChannel(metadata, runtime),
+      scopes,
+      authorization_timeout_ms: timeoutMs,
+      expires_at: Math.floor(Date.now() / 1000) + Math.ceil(timeoutMs / 1000),
+    };
+    // Logout and competing logins use this owner-qualified sidecar to cancel
+    // a foreground authorization before it can exchange or persist a grant.
+    await publishForegroundAuthorization(runtime, foregroundAuthorization);
   }
 
   if (nonBlockingAgent) {
     await receiver?.close();
+    if (detachedListener) {
+      const listenerTtlSeconds = Math.round(parkedAuthorizationTimeoutMs / 1000);
+      saveListenerState(runtime, {
+        profile: runtime.profileName,
+        api_base: runtime.apiBase,
+        pid: detachedListener.pid,
+        port: detachedListener.port,
+        authorize_url: authorizeUrl,
+        issuer: metadata.issuer,
+        resource: metadata.resource,
+        client_id: metadata.clientId,
+        token_endpoint: metadata.tokenEndpoint,
+        scopes,
+        authorization_timeout_ms: parkedAuthorizationTimeoutMs,
+        identity_token: detachedListener.identityToken,
+        listener_script: detachedListener.scriptPath,
+        // The record must not outlive the child it points at, or reuse hands
+        // back a URL whose listener has already given up.
+        expires_at: Math.floor(Date.now() / 1000) + listenerTtlSeconds,
+      });
+      detachedListenerPublished = true;
+      return {
+        agentAuthorization: {
+          authorize_url: authorizeUrl,
+          expires_in: listenerTtlSeconds,
+          // Nothing to copy: the browser returns the code to the listener the
+          // child is holding, and the credential is written before the user is
+          // told they are connected.
+          hand_off: 'browser_callback',
+          confirm_command: confirmCommand(
+            runtime.profileName,
+            authorizationChannel(metadata, runtime),
+            runtime.apiBase,
+          ),
+        },
+      };
+    }
     return {
       agentAuthorization: {
         authorize_url: authorizeUrl,
-        expires_in: PENDING_LOGIN_TTL_SECONDS,
+        expires_in: Math.round(parkedAuthorizationTimeoutMs / 1000),
+        hand_off: 'code',
         redeem_command: redeemCommand(
           runtime.profileName,
           authorizationChannel(metadata, runtime),
@@ -1058,21 +2286,35 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
     };
   }
 
+  if (pasteCode) {
+    // Do not hold publication locks while a human finds and pastes a code. The
+    // parked verifier is now authoritative; redemption reacquires both locks
+    // and validates that it still owns the profile before exchanging.
+    releaseListenerStartLock(listenerStartLock);
+    listenerStartLock = null;
+    releaseListenerGlobalLock(listenerGlobalLock);
+    listenerGlobalLock = null;
+  }
+
   // Always surface the URL: opening the browser can fail silently, and the
   // wait below is useless without something the user can paste themselves.
-  output?.note?.(`Authorize Notis CLI: ${authorizeUrl}`);
+  const announceAuthorization = output?.notice || output?.note;
+  announceAuthorization?.call(output, `Authorize Notis CLI: ${authorizeUrl}`);
   if (options.browser !== false && !pasteCode) {
     openBrowser(authorizeUrl);
   }
 
   try {
-    const code = pasteCode ? await readPastedCode() : await receiver.waitForCode();
-    const tokenResponse = await exchangeCode(
+    if (pasteCode) {
+      return await redeemAuthorizationCode(runtime, await readCode(), fetchImpl);
+    }
+    const code = await receiver.waitForCode();
+    const profile = await exchangeAndPersistForegroundAuthorization(
+      runtime,
       metadata,
-      { code, redirectUri, verifier },
+      { ...foregroundAuthorization, code },
       fetchImpl,
     );
-    const profile = persistOAuthTokenResponse(runtime, metadata, tokenResponse);
     updateRuntimeFromOAuthProfile(runtime, profile);
     receiver?.complete();
     return { profile, metadata };
@@ -1081,7 +2323,72 @@ export async function loginWithOAuth(runtime, options = {}, output, fetchImpl = 
     throw error;
   } finally {
     await receiver?.close();
+    if (foregroundAuthorization) {
+      const globalLock = await acquireListenerGlobalLock();
+      let lockDir = null;
+      try {
+        lockDir = await acquireListenerStartLock(runtime);
+        clearPendingAuthorizationIfOwner(runtime, foregroundAuthorization);
+      } finally {
+        releaseListenerStartLock(lockDir);
+        releaseListenerGlobalLock(globalLock);
+      }
+    }
   }
+  } finally {
+    if (detachedListener && !detachedListenerPublished) {
+      try { process.kill(detachedListener.pid); } catch { /* already gone */ }
+      clearListenerState(runtime, { ownerPid: detachedListener.pid });
+    }
+    releaseListenerStartLock(listenerStartLock);
+    releaseListenerGlobalLock(listenerGlobalLock);
+  }
+}
+
+function pendingListenerProfiles() {
+  const configFile = resolveConfigFile();
+  const prefix = `${basename(configFile)}.login-listener.`;
+  let entries;
+  try {
+    entries = readdirSync(dirname(configFile));
+  } catch {
+    return [];
+  }
+  const profiles = new Set();
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix) || entry.includes('.payload') || entry.endsWith('.lock')) continue;
+    try {
+      const state = JSON.parse(readFileSync(join(dirname(configFile), entry), 'utf-8'));
+      if (typeof state?.profile === 'string' && state.profile) profiles.add(state.profile);
+    } catch {
+      // Ignore malformed or concurrently removed sidecars.
+    }
+  }
+  return [...profiles];
+}
+
+function pendingAuthorizationProfiles() {
+  const configFile = resolveConfigFile();
+  const configName = basename(configFile);
+  const prefix = `${configName}.pending-login.`;
+  const legacyName = `${configName}.pending-login`;
+  let entries;
+  try {
+    entries = readdirSync(dirname(configFile));
+  } catch {
+    return [];
+  }
+  const profiles = new Set();
+  for (const entry of entries) {
+    if (entry !== legacyName && !entry.startsWith(prefix)) continue;
+    try {
+      const pending = JSON.parse(readFileSync(join(dirname(configFile), entry), 'utf-8'));
+      if (typeof pending?.profile === 'string' && pending.profile) profiles.add(pending.profile);
+    } catch {
+      // Ignore malformed or concurrently removed sidecars.
+    }
+  }
+  return [...profiles];
 }
 
 function lockIsStale() {
@@ -1127,8 +2434,17 @@ async function acquireRefreshLock(runtime, waitMs = 60_000) {
 }
 
 export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
+  // Refresh rotates the same stored grant that login publishes and logout
+  // removes. Join their global -> profile lock order so a token rotation can
+  // never be mistaken for a successor authorization by a concurrent logout.
+  const globalLock = await acquireListenerGlobalLock();
+  let profileLock = null;
   let ownsLock = false;
+  let metadata = null;
+  let rotatedResponse = null;
+  let rotatedPersisted = false;
   try {
+    profileLock = await acquireListenerStartLock(runtime);
     ownsLock = await acquireRefreshLock(runtime);
     if (!ownsLock) return true;
     const config = loadConfig();
@@ -1146,8 +2462,8 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
       return false;
     }
 
-    const metadata = storedOAuthMetadata(runtime, profile);
-    const response = await fetchJson(
+    metadata = storedOAuthMetadata(runtime, profile);
+    rotatedResponse = await fetchJson(
       metadata.tokenEndpoint,
       {
         method: 'POST',
@@ -1161,10 +2477,14 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
       },
       fetchImpl,
     );
-    const updated = persistOAuthTokenResponse(runtime, metadata, response);
+    const updated = persistOAuthTokenResponse(runtime, metadata, rotatedResponse);
+    rotatedPersisted = true;
     updateRuntimeFromOAuthProfile(runtime, updated);
     return true;
   } catch (error) {
+    if (rotatedResponse && !rotatedPersisted) {
+      await revokeCancelledToken(metadata, rotatedResponse, fetchImpl);
+    }
     if (error instanceof CliError) {
       throw new CliError({
         code: error.code,
@@ -1186,6 +2506,8 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
         // A process exit or external cleanup may already have removed the lock.
       }
     }
+    releaseListenerStartLock(profileLock);
+    releaseListenerGlobalLock(globalLock);
   }
 }
 
@@ -1203,55 +2525,98 @@ export async function logoutOAuth(runtime, { allProfiles = false } = {}, fetchIm
       ],
     );
   }
-  const config = loadConfig();
-  const profileNames = allProfiles
-    ? Object.keys(config.profiles)
-    : [runtime.profileName];
-  for (const profileName of profileNames) {
-    const profile = config.profiles[profileName] || {};
-    if (
-      profile.oauth_refresh_token
-      && profile.oauth_client_id
-      && profile.oauth_issuer
-    ) {
+  // A single-profile logout mutates the same state as login publication and
+  // refresh, so it needs the global lock just as much as --all-profiles does.
+  const globalLock = await acquireListenerGlobalLock();
+  try {
+    const config = loadConfig();
+    const profileNames = allProfiles
+      ? [...new Set([
+        ...Object.keys(config.profiles),
+        ...pendingListenerProfiles(),
+        ...pendingAuthorizationProfiles(),
+      ])]
+      : [runtime.profileName];
+    const clearedProfiles = [];
+    for (const profileName of profileNames) {
+      // An unfinished login is still holding a listener that would write this
+      // profile back in the moment the old URL is opened. Signing out has to end
+      // the authorization in flight, not just the one already stored.
+      const profileRuntime = { ...runtime, profileName };
+      const profileLock = await acquireListenerStartLock(profileRuntime);
       try {
-        const metadata = storedOAuthMetadata(runtime, profile);
-        await fetchJson(
-          metadata.revocationEndpoint,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              token: profile.oauth_refresh_token,
-              client_id: profile.oauth_client_id,
-            }),
-          },
-          fetchImpl,
+        const latestBeforeClear = loadConfig();
+        const storedProfile = latestBeforeClear.profiles[profileName] || {};
+        const hadStoredGrant = Boolean(
+          storedProfile.oauth_access_token
+          || storedProfile.oauth_refresh_token
+          || storedProfile.oauth_client_id
+          || storedProfile.oauth_issuer
+          || storedProfile.oauth_resource
+          || storedProfile.oauth_user_id
         );
-      } catch {
-        // Local credential removal still succeeds when the remote grant is
-        // already gone or the network is unavailable.
+        const hadPendingAuthorization = Boolean(readPendingAuthorization(profileRuntime));
+        const hadListener = Boolean(readListenerState(profileRuntime));
+        if (hadStoredGrant || hadPendingAuthorization || hadListener) {
+          clearedProfiles.push(profileName);
+        }
+        clearPendingAuthorizations(profileRuntime);
+        stopPendingListener(profileRuntime);
+        // Read only after both locks are held. A publication or refresh that
+        // won first is part of this logout; one that starts later observes the
+        // cleared profile instead of resurrecting it afterward.
+        const profile = loadConfig().profiles[profileName] || {};
+        const revocationToken = profile.oauth_refresh_token || profile.oauth_access_token;
+        if (
+          revocationToken
+          && profile.oauth_client_id
+          && profile.oauth_issuer
+        ) {
+          try {
+            const metadata = storedOAuthMetadata(runtime, profile);
+            await fetchJson(
+              metadata.revocationEndpoint,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                  token: revocationToken,
+                  client_id: profile.oauth_client_id,
+                }),
+              },
+              fetchImpl,
+            );
+          } catch {
+            // Local credential removal still succeeds when the remote grant is
+            // already gone or the network is unavailable.
+          }
+        }
+        updateConfig((latest) => {
+          const current = latest.profiles[profileName];
+          // A named pending login has no stored profile yet. Cancelling it must
+          // not create an empty profile as a side effect of logout.
+          if (!current) return latest;
+          latest.profiles[profileName] = {
+            ...current,
+            oauth_access_token: undefined,
+            oauth_refresh_token: undefined,
+            oauth_access_expires_at: undefined,
+            oauth_refresh_expires_at: undefined,
+            oauth_client_id: undefined,
+            oauth_issuer: undefined,
+            oauth_api_base: undefined,
+            oauth_resource: undefined,
+            oauth_scopes: undefined,
+            oauth_user_id: undefined,
+          };
+          return latest;
+        });
+      } finally {
+        releaseListenerStartLock(profileLock);
       }
     }
+    return { profiles: clearedProfiles };
+  } finally {
+    releaseListenerGlobalLock(globalLock);
   }
-  updateConfig((latest) => {
-    for (const profileName of profileNames) {
-      const profile = latest.profiles[profileName] || {};
-      latest.profiles[profileName] = {
-        ...profile,
-        oauth_access_token: undefined,
-        oauth_refresh_token: undefined,
-        oauth_access_expires_at: undefined,
-        oauth_refresh_expires_at: undefined,
-        oauth_client_id: undefined,
-        oauth_issuer: undefined,
-        oauth_api_base: undefined,
-        oauth_resource: undefined,
-        oauth_scopes: undefined,
-        oauth_user_id: undefined,
-      };
-    }
-    return latest;
-  });
-  return { profiles: profileNames };
 }

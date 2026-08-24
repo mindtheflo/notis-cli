@@ -11,6 +11,7 @@ import {
 } from '../runtime/profiles.js';
 import { ensureFreshOAuthCredential, loginWithOAuth } from '../runtime/oauth.js';
 import { runToolCommand } from './helpers.js';
+import { loginAgentAuthorizationPresentation } from './auth.js';
 import { installLocalAgentContext } from './agents.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -223,8 +224,13 @@ async function startHandler(ctx) {
   // Browser authorization is the whole signup path: it creates the account when
   // the address is new and authorizes this machine either way. There is nothing
   // for the CLI to collect up front, and nothing to wait on afterwards.
-  const authorization = await loginWithOAuth(runtime, { browser: true }, output);
+  const authorization = await loginWithOAuth(
+    runtime,
+    { browser: true, mode: options.mode, reusePersistedCredential: true },
+    output,
+  );
   if (authorization?.agentAuthorization) {
+    const presentation = loginAgentAuthorizationPresentation(authorization.agentAuthorization);
     return output.emitSuccess({
       command: 'start',
       data: {
@@ -232,8 +238,7 @@ async function startHandler(ctx) {
         profile: runtime.profileName,
         ...authorization.agentAuthorization,
       },
-      humanSummary: 'Open the authorization URL to create or access the Notis account.',
-      renderHuman: () => `Authorize Notis CLI: ${authorization.agentAuthorization.authorize_url}`,
+      ...presentation,
     });
   }
 
@@ -262,16 +267,18 @@ export const onboardingCommandSpecs = [
       arguments: [],
       options: [
         { flags: '--brief-only', description: 'Print the onboarding brief for an already-signed-in profile.' },
+        { flags: '--mode <mode>', description: 'auto (default) hands the browser callback to a background listener when this command cannot wait; browser waits in-process; code shows a one-time code to copy.' },
       ],
     },
     examples: [
       'notis start',
       'notis start --profile work',
+      'notis start --mode browser',
       'notis start --brief-only',
       'notis start --json',
     ],
     output_schema:
-      'Returns {authenticated, profile, api_base, onboarding_complete, known_settings, missing_settings, agent_setup, brief, brief_source} once signed in — brief is null when onboarding_complete is true — or {authorize_url, expires_in, redeem_command} while waiting for browser authorization.',
+      'Returns {authenticated, profile, api_base, onboarding_complete, known_settings, missing_settings, agent_setup, brief, brief_source} once signed in — brief is null when onboarding_complete is true — or {authorize_url, expires_in, hand_off, ...} while waiting for browser authorization. hand_off is "browser_callback" when signing in finishes the login by itself (re-run confirm_command to see it land) or "code" when the user must be asked for the code the page shows and it redeemed with redeem_command.',
     mutates: true,
     idempotent: true,
     require_auth: false,
