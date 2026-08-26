@@ -2,12 +2,13 @@
 
 import { useCallback, useState } from 'react';
 import { useNotisRuntime } from '../provider';
+import type { ToolCallOptions } from '../runtime';
 
 type ToolArguments = Record<string, unknown>;
 
 type ToolCall<TArgs extends ToolArguments | undefined, TResult> = undefined extends TArgs
-  ? (args?: Exclude<TArgs, undefined>) => Promise<TResult>
-  : (args: TArgs) => Promise<TResult>;
+  ? (args?: Exclude<TArgs, undefined>, options?: ToolCallOptions) => Promise<TResult>
+  : (args: TArgs, options?: ToolCallOptions) => Promise<TResult>;
 
 export interface ToolCallState {
   loading: boolean;
@@ -38,7 +39,7 @@ export function useTool<
   const [error, setError] = useState<Error | null>(null);
 
   const call = useCallback(
-    async (args?: ToolArguments): Promise<TResult> => {
+    async (args?: ToolArguments, options?: ToolCallOptions): Promise<TResult> => {
       if (!runtime) {
         throw new Error('Notis runtime not available. Ensure NotisProvider is mounted.');
       }
@@ -47,7 +48,7 @@ export function useTool<
       setError(null);
 
       try {
-        const result = await runtime.callTool<TResult>(toolName, args);
+        const result = await runtime.callTool<TResult>(toolName, args, options);
         return result;
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));

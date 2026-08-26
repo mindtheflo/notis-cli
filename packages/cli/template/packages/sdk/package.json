@@ -1,10 +1,11 @@
 {
   "name": "@notis/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./interactions": "./src/interactions.ts",
     "./config": "./src/config.ts",
     "./vite": "./src/vite.ts",
     "./ui": "./src/ui.ts",

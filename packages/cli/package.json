@@ -24,7 +24,7 @@
     "release:prepare": "npm run build && node ./scripts/prepare-publish.js --apply",
     "cli:set-mode": "node ./scripts/set-cli-mode.js",
     "smoke": "node ./scripts/smoke-package.js",
-    "test": "node --test"
+    "test": "node --test --test-timeout=120000"
   },
   "engines": {
     "node": ">=18.0.0"

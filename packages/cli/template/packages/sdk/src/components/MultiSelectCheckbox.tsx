@@ -1,10 +1,11 @@
 'use client';
 
-import { type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
+import React, { type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactElement } from 'react';
 
 export interface MultiSelectCheckboxProps {
   isSelected: boolean;
   onClick: (event: ReactMouseEvent) => void;
+  disabled?: boolean;
   /** When true, the checkbox is always visible. Default false (hover/focus reveal via the parent's :hover state). */
   alwaysVisible?: boolean;
   /** Optional aria-label override. Defaults to "Select item" / "Deselect item". */
@@ -40,6 +41,7 @@ const checkPath = 'M3.5 7.5l2.5 2.5 6.5-6.5';
 export function MultiSelectCheckbox({
   isSelected,
   onClick,
+  disabled = false,
   alwaysVisible = false,
   ariaLabel,
   className,
@@ -49,6 +51,7 @@ export function MultiSelectCheckbox({
     ...baseStyle,
     ...(isSelected ? selectedStyle : null),
     ...(alwaysVisible || isSelected ? { opacity: 1 } : null),
+    ...(disabled ? { opacity: 0.45, cursor: 'not-allowed' } : null),
     ...(style || null),
   };
 
@@ -62,6 +65,7 @@ export function MultiSelectCheckbox({
       type="button"
       role="checkbox"
       aria-checked={isSelected}
+      disabled={disabled}
       aria-label={ariaLabel ?? (isSelected ? 'Deselect item' : 'Select item')}
       onClick={onClick}
       onMouseDown={(e) => e.stopPropagation()}

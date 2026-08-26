@@ -1,0 +1,15 @@
+{
+  "name": "demo-dice",
+  "private": true,
+  "version": "0.0.0",
+  "notisAppVersion": "0.3.0",
+  "scripts": {
+    "build": "vite build",
+    "generate-entry": "tsx ../../scripts/generate-entry.ts .",
+    "prebuild": "npm run generate-entry"
+  },
+  "dependencies": {
+    "@notis/sdk": "file:./packages/sdk",
+    "react": "^18.3.1"
+  }
+}

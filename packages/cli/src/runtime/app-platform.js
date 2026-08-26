@@ -7,13 +7,16 @@
  */
 
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { closeSync, constants as fsConstants, copyFileSync, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
 import { usageError } from './errors.js';
+import { acquireScaffoldSource, loadScaffoldCatalog } from './app-registry-scaffolds.js';
 import { validateArtifactBoundary, validateProjectBoundary } from './app-boundary-validator.js';
 import { CHANGELOG_MERGE_DATE, readAppChangelog } from './app-changelog.js';
 
@@ -24,10 +27,6 @@ const BUNDLE_DIR = join(OUTPUT_DIR, 'bundle');
 const MANIFEST_FILE = join(OUTPUT_DIR, 'manifest.json');
 const METADATA_DIR = 'metadata';
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const MONOREPO_SCAFFOLDS_DIR = resolve(CLI_ROOT, '../..', 'scaffolds');
-const DIST_DIR = join(CLI_ROOT, 'dist');
-const SCAFFOLD_CATALOG_FILE = join(DIST_DIR, 'scaffolds.json');
-const SCAFFOLD_SOURCE_DIR = join(DIST_DIR, 'scaffolds');
 const TEMPLATE_SDK_DIR = join(CLI_ROOT, 'template', 'packages', 'sdk');
 export const NOTIS_APP_CATEGORIES = [
   'Productivity',
@@ -48,6 +47,9 @@ const SOURCE_COPY_EXCLUDES = new Set([
   // scripts/ directory must not ship version-specific bytecode in the bundle.
   '__pycache__',
 ]);
+const SOURCE_COPY_EXCLUDES_CASEFOLDED = new Set(
+  [...SOURCE_COPY_EXCLUDES].map((name) => name.toLocaleLowerCase('en-US')),
+);
 const SCAFFOLD_COPY_EXCLUDES = new Set([
   ...SOURCE_COPY_EXCLUDES,
   'coverage',
@@ -60,6 +62,11 @@ const SCAFFOLD_COPY_EXCLUDES = new Set([
 // not listing media, it is the stub data the dev harness serves, and dropping
 // it would make every route of a fresh project render its empty state.
 const SCAFFOLD_LISTING_MEDIA = /^metadata\/screenshot-\d+\.png$/i;
+const PULL_LOCK_TIMEOUT_MS = 30_000;
+const PULL_LOCK_POLL_MS = 25;
+const STATE_WRITE_LOCK_TIMEOUT_MS = 5_000;
+const STATE_WRITE_LOCK_STALE_MS = 2_000;
+const stateWriteLockWait = new Int32Array(new SharedArrayBuffer(4));
 // A directory-declared skill ships every supporting file to the sandbox, so it
 // needs a ceiling of its own. Kept well above the 512 KB SKILL.md limit so a
 // handful of scripts always fits, and far below the bundle machinery's own
@@ -71,8 +78,38 @@ let appConfigImportNonce = 0;
 // Project directory resolution
 // ---------------------------------------------------------------------------
 
+// Every Notis app the user did not deliberately place lives here, mirroring the
+// desktop's synced-skills root (~/.notis/skills). A default that depends on the
+// caller's working directory is unusable for agents: the shell sits wherever
+// the previous command left it, so `apps init` would scatter projects into
+// unrelated checkouts. Pass an explicit [dir] to override -- that is how an app
+// ends up in a tracked git repo or an existing monorepo.
+export const DEFAULT_APPS_ROOT = join(homedir(), NOTIS_DIR, 'apps');
+
+export function defaultAppProjectDir(slug) {
+  const safeSlug = String(slug || '').trim();
+  if (!safeSlug || safeSlug.includes('/') || safeSlug.includes('\\') || safeSlug.startsWith('.')) {
+    throw usageError(`Cannot derive a default project directory from "${slug}". Pass an explicit target directory.`);
+  }
+  return join(DEFAULT_APPS_ROOT, safeSlug);
+}
+
+// A `~/...` path only expands when a shell is involved. Agents routinely spawn
+// the CLI without one, and the documented default home is written with a tilde,
+// so expand it here instead of creating a literal "~" directory.
+export function expandHomePath(inputPath) {
+  const value = String(inputPath ?? '');
+  if (value === '~') {
+    return homedir();
+  }
+  if (value.startsWith('~/') || value.startsWith('~\\')) {
+    return join(homedir(), value.slice(2));
+  }
+  return value;
+}
+
 export function resolveProjectDir(inputDir = '.') {
-  return resolve(process.cwd(), inputDir);
+  return resolve(process.cwd(), expandHomePath(inputDir));
 }
 
 export function getBundleDir(projectDir) {
@@ -859,9 +896,23 @@ export function generateManifest(appConfig, projectDir) {
     databases,
     capabilities: normalizeAppCapabilities(appConfig.capabilities),
     tools: appConfig.tools || [],
+    tool_bindings: normalizeAppToolBindings(appConfig.toolBindings),
     skills,
     onboarding: appConfig.onboarding || null,
   };
+}
+
+export function normalizeAppToolBindings(bindings) {
+  return (Array.isArray(bindings) ? bindings : [])
+    .map((binding) => {
+      const name = typeof binding?.name === 'string' ? binding.name.trim() : '';
+      const providerToolName =
+        typeof binding?.providerToolName === 'string' ? binding.providerToolName.trim() : '';
+      return name && providerToolName
+        ? { name, provider_tool_name: providerToolName }
+        : null;
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -1065,21 +1116,212 @@ function copyMetadataAssets(projectDir) {
 // Linking
 // ---------------------------------------------------------------------------
 
-export function readLinkedState(projectDir) {
+const PROFILE_LINK_FIELDS = new Set([
+  'app_id',
+  'linked_at',
+  'deployed_at',
+  'version',
+  'dev_app_id',
+  'dev_linked_at',
+  'auto_linked_at',
+  'cloud_computer_shell_consent',
+]);
+
+function splitLinkedState(state) {
+  const base = {};
+  const link = {};
+  for (const [key, value] of Object.entries(state || {})) {
+    if (key === 'profiles') continue;
+    (PROFILE_LINK_FIELDS.has(key) ? link : base)[key] = value;
+  }
+  return { base, link };
+}
+
+export function appLinkedStateProfileKey({ apiBase, userId }) {
+  const normalizedApi = String(apiBase || '').trim().replace(/\/$/, '');
+  const normalizedUser = String(userId || '').trim();
+  if (!normalizedApi || !normalizedUser) return null;
+  return Buffer.from(`${normalizedApi}\0${normalizedUser}`).toString('base64url');
+}
+
+export function readLinkedState(projectDir, profileKey = null) {
   const statePath = join(projectDir, STATE_FILE);
+  assertLinkedStatePathSafe(projectDir);
   if (!existsSync(statePath)) return null;
-  return JSON.parse(readFileSync(statePath, 'utf-8'));
+  const raw = JSON.parse(readFileSync(statePath, 'utf-8'));
+  if (!profileKey) return raw;
+  const { base, link: legacyLink } = splitLinkedState(raw);
+  const profiles = raw?.profiles && typeof raw.profiles === 'object' ? raw.profiles : {};
+  const scoped = profiles[profileKey];
+  return {
+    ...base,
+    ...(scoped && typeof scoped === 'object' ? scoped : legacyLink),
+  };
 }
 
-export function writeLinkedState(projectDir, state) {
+function readStateWriteLockOwner(lockPath) {
+  try {
+    return readFileSync(join(lockPath, 'owner'), 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function reclaimStaleStateWriteLock(lockPath, observedOwner, observedMtimeMs) {
+  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(lockPath, quarantinePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+
+  let unchanged = false;
+  try {
+    const quarantinedStat = lstatSync(quarantinePath);
+    unchanged = readStateWriteLockOwner(quarantinePath) === observedOwner
+      && quarantinedStat.mtimeMs === observedMtimeMs;
+  } catch (error) {
+    try {
+      renameSync(quarantinePath, lockPath);
+    } catch {
+      // Fail closed below if the quarantined lock cannot be restored.
+    }
+    throw error;
+  }
+
+  if (!unchanged) {
+    try {
+      renameSync(quarantinePath, lockPath);
+    } catch {
+      throw usageError(`Notis app state lock changed while it was being recovered: ${lockPath}`);
+    }
+    return false;
+  }
+
+  rmSync(quarantinePath, { recursive: true, force: true });
+  return true;
+}
+
+function withStateWriteLock(statePath, callback) {
+  mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 });
+  const lockPath = `${statePath}.write-lock`;
+  const ownerId = `${process.pid}.${randomUUID()}`;
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      mkdirSync(lockPath, { mode: 0o700 });
+      try {
+        writeFileSync(join(lockPath, 'owner'), ownerId, { mode: 0o600, flag: 'wx' });
+      } catch (error) {
+        // A stale-lock recovery may have moved this candidate while the owner
+        // record was being written. Never remove a replacement writer's lock.
+        if (readStateWriteLockOwner(lockPath) === ownerId) {
+          rmSync(lockPath, { recursive: true, force: true });
+        }
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      try {
+        const lockStat = lstatSync(lockPath);
+        if (lockStat.isSymbolicLink() || !lockStat.isDirectory()) {
+          throw usageError(`Refusing unsafe Notis app state lock: ${lockPath}`);
+        }
+        const observedOwner = readStateWriteLockOwner(lockPath);
+        const ownerPidText = String(observedOwner || '').split('.')[0];
+        const ownerPid = /^\d+$/.test(ownerPidText) ? Number.parseInt(ownerPidText, 10) : null;
+        // PID liveness alone is insufficient: operating systems can reuse a
+        // crashed writer's PID for an unrelated process. A linked-state write
+        // is synchronous and normally holds this lock only for milliseconds,
+        // so an aged lock is stale even when that numeric PID now exists.
+        let stale = Date.now() - lockStat.mtimeMs >= STATE_WRITE_LOCK_STALE_MS;
+        if (!stale && Number.isInteger(ownerPid) && ownerPid > 0) {
+          try {
+            process.kill(ownerPid, 0);
+          } catch (ownerError) {
+            if (ownerError?.code === 'ESRCH') {
+              stale = true;
+            }
+          }
+        }
+        if (stale && reclaimStaleStateWriteLock(lockPath, observedOwner, lockStat.mtimeMs)) {
+          continue;
+        }
+      } catch (statError) {
+        if (statError?.code === 'ENOENT') continue;
+        throw statError;
+      }
+      if (Date.now() - startedAt >= STATE_WRITE_LOCK_TIMEOUT_MS) {
+        throw usageError(`Timed out waiting to update Notis app state: ${statePath}`);
+      }
+      Atomics.wait(stateWriteLockWait, 0, 0, 10);
+    }
+  }
+  try {
+    return callback();
+  } finally {
+    try {
+      if (readStateWriteLockOwner(lockPath) === ownerId) {
+        rmSync(lockPath, { recursive: true, force: true });
+      }
+    } catch {
+      // Never remove a lock that no longer belongs to this writer.
+    }
+  }
+}
+
+export function writeLinkedState(projectDir, state, profileKey = null) {
   const statePath = join(projectDir, STATE_FILE);
-  mkdirSync(dirname(statePath), { recursive: true });
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n');
+  assertLinkedStatePathSafe(projectDir);
+  return withStateWriteLock(statePath, () => {
+    let nextState = state;
+    if (profileKey) {
+      let current = {};
+      if (existsSync(statePath)) {
+        current = JSON.parse(readFileSync(statePath, 'utf-8'));
+      }
+      const { base: currentBase } = splitLinkedState(current);
+      const { base } = splitLinkedState(state);
+      const { link } = splitLinkedState(state);
+      const profiles = current?.profiles && typeof current.profiles === 'object'
+        ? { ...current.profiles }
+        : {};
+      profiles[profileKey] = link;
+      nextState = { ...currentBase, ...base, profiles };
+    }
+    const temporary = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, JSON.stringify(nextState, null, 2) + '\n');
+    renameSync(temporary, statePath);
+  });
 }
 
-export function requireLinkedAppId(projectDir, explicitAppId) {
+function assertLinkedStatePathSafe(projectDir) {
+  const notisDir = join(projectDir, NOTIS_DIR);
+  try {
+    const directoryStat = lstatSync(notisDir);
+    if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+      throw usageError(`Refusing to use unsafe Notis state directory: ${notisDir}`);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+
+  const statePath = join(projectDir, STATE_FILE);
+  try {
+    const stateStat = lstatSync(statePath);
+    if (stateStat.isSymbolicLink() || !stateStat.isFile()) {
+      throw usageError(`Refusing to use unsafe Notis state file: ${statePath}`);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
+
+export function requireLinkedAppId(projectDir, explicitAppId, profileKey = null) {
   if (explicitAppId) return explicitAppId;
-  const state = readLinkedState(projectDir);
+  const state = readLinkedState(projectDir, profileKey);
   if (state?.app_id) return state.app_id;
   throw usageError('This project is not linked to a Notis app. Run "notis apps link <app-id> ." first.');
 }
@@ -1089,79 +1331,342 @@ export function requireLinkedAppId(projectDir, explicitAppId) {
 // ---------------------------------------------------------------------------
 
 /**
- * Scaffold a new Notis app project from the SDK template.
+ * Scaffold a new Notis app project from the SDK template or from a published
+ * Store app downloaded from the public registry repository.
  */
-export function loadScaffoldCatalog() {
-  if (existsSync(SCAFFOLD_CATALOG_FILE)) {
-    const parsed = JSON.parse(readFileSync(SCAFFOLD_CATALOG_FILE, 'utf-8'));
-    const scaffolds = Array.isArray(parsed?.scaffolds) ? parsed.scaffolds : parsed;
-    return Array.isArray(scaffolds)
-      ? scaffolds.filter((entry) => entry && typeof entry.slug === 'string')
-      : [];
-  }
-  return loadMonorepoScaffoldCatalog();
-}
-
-export function scaffoldProject({ projectDir, appName, fromSlug = null }) {
-  const templateDir = fromSlug ? resolveScaffoldSourceDir(fromSlug) : join(CLI_ROOT, 'template');
-
-  if (!existsSync(templateDir)) {
-    if (fromSlug) {
-      const known = loadScaffoldCatalog().map((entry) => entry.slug).join(', ') || 'none';
+export async function scaffoldProject({ projectDir, appName, fromSlug = null }) {
+  let scaffoldSource = null;
+  if (fromSlug) {
+    scaffoldSource = await acquireScaffoldSource(fromSlug);
+    if (!scaffoldSource) {
+      const known = (await loadScaffoldCatalog()).map((entry) => entry.slug).join(', ') || 'none';
       throw usageError(`Unknown scaffold "${fromSlug}". Available scaffolds: ${known}.`);
     }
-    throw usageError(`SDK template not found at ${templateDir}. Ensure @notis_ai/cli is installed correctly.`);
+  }
+  try {
+    return scaffoldProjectFromDir({
+      projectDir,
+      appName,
+      fromSlug,
+      templateDir: scaffoldSource ? scaffoldSource.dir : join(CLI_ROOT, 'template'),
+    });
+  } finally {
+    scaffoldSource?.cleanup();
+  }
+}
+
+function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) {
+  const sourceDir = resolve(templateDir);
+  const requestedProjectDir = resolve(projectDir);
+  if (!existsSync(sourceDir)) {
+    throw usageError(`SDK template not found at ${sourceDir}. Ensure @notis_ai/cli is installed correctly.`);
   }
 
-  mkdirSync(projectDir, { recursive: true });
-  copyScaffoldSource(templateDir, projectDir);
-
-  // Update package.json with the app name
-  const pkgPath = join(projectDir, 'package.json');
-  if (existsSync(pkgPath)) {
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    pkg.name = appName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
-    // A scaffold creates a new app identity, even when its source comes from a
-    // versioned Store example. New apps must therefore start their own release
-    // history instead of inheriting the example app's registry version.
-    pkg.notisAppVersion = '0.1.0';
-    ensureScaffoldLocalSdk(projectDir, pkg);
-    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-    normalizeScaffoldLockfile(projectDir, pkg);
-  }
-
-  // Update notis.config.ts with the app name
-  const configPath = join(projectDir, 'notis.config.ts');
-  if (existsSync(configPath)) {
-    let config = readFileSync(configPath, 'utf-8');
-    const displayName = jsStringLiteral(appName);
-    const slugName = jsStringLiteral(safeKebab(appName) || 'my-notis-app');
-    if (fromSlug) {
-      if (/name\s*:/.test(config)) {
-        config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName}`);
-      }
-      if (/title\s*:/.test(config)) {
-        config = config.replace(/title\s*:\s*(['"`])[\s\S]*?\1/, `title: ${displayName}`);
-      } else {
-        config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName},\n  title: ${displayName}`);
-      }
-    } else {
-      if (/name\s*:/.test(config)) {
-        config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName}`);
-      }
-      if (/title\s*:/.test(config)) {
-        config = config.replace(/title\s*:\s*(['"`])[\s\S]*?\1/, `title: ${displayName}`);
-      } else {
-        config = config.replace(/'My Notis App'/, displayName);
+  const parentDir = dirname(requestedProjectDir);
+  const targetName = basename(requestedProjectDir);
+  mkdirSync(parentDir, { recursive: true });
+  const canonicalParent = realpathSync(parentDir);
+  const parentIdentity = capturePullTargetIdentity(canonicalParent);
+  const initialTargetIdentity = captureScaffoldTargetIdentity(requestedProjectDir);
+  const previousCwd = process.cwd();
+  const previousCwdIdentity = capturePullTargetIdentity(previousCwd);
+  let cwdPinned = false;
+  let stageName = null;
+  let cleanupStage = true;
+  let activeTargetIdentity = null;
+  const scaffoldLockName = '.notis-app-scaffold-lock';
+  const scaffoldLockOwnerId = `${process.pid}.${randomUUID()}`;
+  try {
+    process.chdir(canonicalParent);
+    cwdPinned = true;
+    assertPullTargetIdentity('.', parentIdentity);
+    const lockedTargetIdentity = captureScaffoldTargetIdentity(targetName);
+    if (!pullTargetIdentitiesMatch(initialTargetIdentity, lockedTargetIdentity)) {
+      throw usageError(`App scaffold target changed before copying: ${requestedProjectDir}`);
+    }
+    if (!lockedTargetIdentity.exists) {
+      try {
+        mkdirSync(targetName);
+      } catch (error) {
+        if (error?.code === 'EEXIST') {
+          throw usageError(`App scaffold target changed before copying: ${requestedProjectDir}`);
+        }
+        throw error;
       }
     }
-    config = removeConfigArrayProperty(config, 'screenshots');
-    writeFileSync(configPath, config);
+    activeTargetIdentity = captureScaffoldTargetIdentity(targetName);
+    process.chdir(targetName);
+    if (!pullTargetIdentitiesMatch(
+      activeTargetIdentity,
+      captureScaffoldTargetIdentity('.'),
+    )) {
+      throw usageError(`App scaffold target changed before copying: ${requestedProjectDir}`);
+    }
+    mkdirSync(scaffoldLockName, { mode: 0o700 });
+    writeFileSync(
+      join(scaffoldLockName, 'owner'),
+      JSON.stringify({ id: scaffoldLockOwnerId }),
+      { mode: 0o600 },
+    );
+
+    stageName = basename(mkdtempSync(join('.', '.notis-app-scaffold-')));
+    projectDir = stageName;
+
+    copyScaffoldSource(sourceDir, projectDir);
+
+    // Update package.json with the app name
+    const pkgPath = join(projectDir, 'package.json');
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      pkg.name = appName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+      // A scaffold creates a new app identity, even when its source comes from a
+      // versioned Store example. New apps must therefore start their own release
+      // history instead of inheriting the example app's registry version.
+      pkg.notisAppVersion = '0.1.0';
+      normalizeScaffoldPackageScripts(pkg);
+      ensureScaffoldLocalSdk(projectDir, pkg);
+      writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+      normalizeScaffoldLockfile(projectDir, pkg);
+    }
+
+    // Update notis.config.ts with the app name
+    const configPath = join(projectDir, 'notis.config.ts');
+    if (existsSync(configPath)) {
+      let config = readFileSync(configPath, 'utf-8');
+      const displayName = jsStringLiteral(appName);
+      const slugName = jsStringLiteral(safeKebab(appName) || 'my-notis-app');
+      if (fromSlug) {
+        if (/name\s*:/.test(config)) {
+          config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName}`);
+        }
+        if (/title\s*:/.test(config)) {
+          config = config.replace(/title\s*:\s*(['"`])[\s\S]*?\1/, `title: ${displayName}`);
+        } else {
+          config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName},\n  title: ${displayName}`);
+        }
+      } else {
+        if (/name\s*:/.test(config)) {
+          config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName}`);
+        }
+        if (/title\s*:/.test(config)) {
+          config = config.replace(/title\s*:\s*(['"`])[\s\S]*?\1/, `title: ${displayName}`);
+        } else {
+          config = config.replace(/'My Notis App'/, displayName);
+        }
+      }
+      if (/devSlug\s*:/.test(config)) {
+        config = config.replace(/devSlug\s*:\s*(['"`])[\s\S]*?\1/, `devSlug: ${slugName}`);
+      } else {
+        config = config.replace(
+          /name\s*:\s*(['"`])[\s\S]*?\1/,
+          (nameDeclaration) => `${nameDeclaration},\n  devSlug: ${slugName}`,
+        );
+      }
+      config = removeConfigArrayProperty(config, 'screenshots');
+      writeFileSync(configPath, config);
+    }
+
+    resetScaffoldChangelog(projectDir, appName);
+
+    assertPullParentIdentity(parentDir, canonicalParent, parentIdentity);
+    assertPullTargetIdentity(requestedProjectDir, activeTargetIdentity);
+    const stageRoot = realpathSync(stageName);
+    const installedEntries = [];
+    const installedDirectoryIdentities = new Map([['', activeTargetIdentity]]);
+    const captureInstalledEntry = (entryPath) => {
+      const entryStat = lstatSync(entryPath, { bigint: true });
+      return {
+        exists: true,
+        path: entryPath,
+        dev: entryStat.dev,
+        ino: entryStat.ino,
+        directory: entryStat.isDirectory(),
+      };
+    };
+    const installExclusive = (sourcePath, destinationName, relativePath, parentIdentity) => {
+      const sourceStat = lstatSync(sourcePath);
+      if (sourceStat.isSymbolicLink()) {
+        throw usageError(`Refusing symlinked scaffold source entry: ${sourcePath}`);
+      }
+      if (sourceStat.isDirectory()) {
+        mkdirSync(destinationName, { mode: sourceStat.mode & 0o777 });
+        const installedDirectory = captureInstalledEntry(destinationName);
+        installedDirectory.path = relativePath;
+        installedEntries.push(installedDirectory);
+        installedDirectoryIdentities.set(relativePath, installedDirectory);
+        process.chdir(destinationName);
+        if (!pullTargetIdentitiesMatch(
+          installedDirectory,
+          capturePullTargetIdentity('.'),
+        )) {
+          throw usageError(`App scaffold destination changed during installation: ${relativePath}`);
+        }
+        try {
+          for (const name of readdirSync(sourcePath)) {
+            installExclusive(
+              join(sourcePath, name),
+              name,
+              `${relativePath}/${name}`,
+              installedDirectory,
+            );
+          }
+        } finally {
+          const parentRelativePath = dirname(relativePath) === '.' ? '' : dirname(relativePath);
+          process.chdir(parentRelativePath
+            ? join(requestedProjectDir, parentRelativePath)
+            : requestedProjectDir);
+          if (!pullTargetIdentitiesMatch(
+            parentIdentity,
+            capturePullTargetIdentity('.'),
+          )) {
+            throw usageError(`App scaffold destination changed during installation: ${parentRelativePath || '.'}`);
+          }
+        }
+        return;
+      }
+      if (!sourceStat.isFile()) {
+        throw usageError(`Refusing unsupported scaffold source entry: ${sourcePath}`);
+      }
+      copyFileSync(sourcePath, destinationName, fsConstants.COPYFILE_EXCL);
+      const installedFile = captureInstalledEntry(destinationName);
+      installedFile.path = relativePath;
+      installedEntries.push(installedFile);
+    };
+    try {
+      for (const name of readdirSync(stageName)) {
+        installExclusive(join(stageRoot, name), name, name, activeTargetIdentity);
+      }
+      assertPullParentIdentity(parentDir, canonicalParent, parentIdentity);
+      assertPullTargetIdentity(requestedProjectDir, activeTargetIdentity);
+    } catch (error) {
+      try {
+        for (const installed of installedEntries.reverse()) {
+          const parentRelativePath = dirname(installed.path) === '.' ? '' : dirname(installed.path);
+          const parentPath = parentRelativePath
+            ? join(requestedProjectDir, parentRelativePath)
+            : requestedProjectDir;
+          const expectedParentIdentity = installedDirectoryIdentities.get(parentRelativePath);
+          process.chdir(parentPath);
+          if (!expectedParentIdentity || !pullTargetIdentitiesMatch(
+            expectedParentIdentity,
+            capturePullTargetIdentity('.'),
+          )) {
+            throw usageError(
+              `Refusing to roll back a scaffold directory that changed concurrently: ${parentPath}`,
+            );
+          }
+          const entryName = basename(installed.path);
+          const current = captureInstalledEntry(entryName);
+          if (
+            current.dev !== installed.dev
+            || current.ino !== installed.ino
+            || current.directory !== installed.directory
+          ) {
+            throw usageError(
+              `Refusing to roll back a scaffold entry that changed concurrently: ${installed.path}`,
+            );
+          }
+          if (installed.directory) {
+            rmdirSync(entryName);
+          } else {
+            unlinkSync(entryName);
+          }
+        }
+      } catch (rollbackError) {
+        cleanupStage = false;
+        throw usageError(
+          `${error instanceof Error ? error.message : String(error)} `
+          + `Scaffold rollback failed; recovery files were retained at `
+          + `${join(requestedProjectDir, stageName)}: `
+          + `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+      throw error;
+    }
+    try {
+      rmSync(stageName, { recursive: true, force: true });
+      stageName = null;
+    } catch (error) {
+      cleanupStage = false;
+      throw usageError(
+        `App scaffold was installed, but staging cleanup failed; recovery files were retained at `
+        + `${join(requestedProjectDir, stageName)}: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  } finally {
+    try {
+      let targetPinnedForCleanup = false;
+      if (activeTargetIdentity) {
+        try {
+          process.chdir(requestedProjectDir);
+          targetPinnedForCleanup = pullTargetIdentitiesMatch(
+            activeTargetIdentity,
+            capturePullTargetIdentity('.'),
+          );
+        } catch {
+          targetPinnedForCleanup = false;
+        }
+      }
+      if (targetPinnedForCleanup && cleanupStage && stageName) {
+        rmSync(stageName, { recursive: true, force: true });
+      }
+      if (
+        targetPinnedForCleanup
+        && readPullLockOwner(scaffoldLockName)?.id === scaffoldLockOwnerId
+      ) {
+        rmSync(scaffoldLockName, { recursive: true, force: true });
+      }
+    } finally {
+      if (cwdPinned) {
+        const cwdMatchesPrevious = (
+          previousCwdIdentity.exists
+          && pullTargetIdentitiesMatch(previousCwdIdentity, capturePullTargetIdentity('.'))
+        );
+        if (!cwdMatchesPrevious) {
+          process.chdir(previousCwd);
+        }
+      }
+    }
   }
 
-  resetScaffoldChangelog(projectDir, appName);
+  return { projectDir: requestedProjectDir };
+}
 
-  return { projectDir };
+function normalizeScaffoldPackageScripts(pkg) {
+  const scripts = pkg?.scripts;
+  if (!scripts || typeof scripts !== 'object' || Array.isArray(scripts)) {
+    return;
+  }
+  const generateEntry = String(scripts['generate-entry'] || '').trim();
+  if (!/^tsx\s+\.\.\/\.\.\/scripts\/generate-entry\.ts\s+\.$/.test(generateEntry)) {
+    return;
+  }
+  for (const [name, command] of Object.entries(scripts)) {
+    if (name === 'generate-entry' || typeof command !== 'string') {
+      continue;
+    }
+    if (command.trim() === 'npm run generate-entry') {
+      delete scripts[name];
+    }
+  }
+  scripts['generate-entry'] = 'node -e ""';
+}
+
+function captureScaffoldTargetIdentity(targetDir) {
+  try {
+    const targetStat = lstatSync(targetDir, { bigint: true });
+    if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
+      throw usageError(`Refusing to scaffold through an unsafe target: ${targetDir}`);
+    }
+    if (readdirSync(targetDir).length > 0) {
+      throw usageError(`App scaffold target must be empty: ${targetDir}`);
+    }
+    return { exists: true, dev: targetStat.dev, ino: targetStat.ino };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { exists: false, dev: null, ino: null };
+    throw error;
+  }
 }
 
 /**
@@ -1274,89 +1779,189 @@ function ensureScaffoldLocalSdk(projectDir, pkg) {
   cpSync(TEMPLATE_SDK_DIR, localSdkDir, { recursive: true, dereference: true });
 }
 
-function resolveScaffoldSourceDir(fromSlug) {
-  const bundledDir = join(SCAFFOLD_SOURCE_DIR, fromSlug);
-  if (existsSync(bundledDir)) {
-    return bundledDir;
+// Registry bookkeeping shipped alongside a published app's source: the listing
+// descriptor and the rendered Store gallery describe the published app, so a
+// scaffold copy must not inherit them.
+const REGISTRY_ARTIFACTS = /^(notis-listing\.json$|screenshots(\/|$))/;
+
+function readStablePinnedFile(descriptor, expectedStat, label) {
+  const before = fstatSync(descriptor, { bigint: true });
+  if (
+    !before.isFile()
+    || before.dev !== expectedStat.dev
+    || before.ino !== expectedStat.ino
+  ) {
+    throw usageError(`${label} changed before it could be read.`);
   }
-  const monorepoDir = join(MONOREPO_SCAFFOLDS_DIR, fromSlug);
-  if (existsSync(join(monorepoDir, 'notis.config.ts'))) {
-    return monorepoDir;
+  const content = readFileSync(descriptor);
+  const after = fstatSync(descriptor, { bigint: true });
+  if (
+    after.dev !== before.dev
+    || after.ino !== before.ino
+    || after.size !== before.size
+    || after.mtimeNs !== before.mtimeNs
+    || after.ctimeNs !== before.ctimeNs
+  ) {
+    throw usageError(`${label} changed while it was being read.`);
   }
-  return bundledDir;
+  return content;
 }
 
-function loadMonorepoScaffoldCatalog() {
-  if (!existsSync(MONOREPO_SCAFFOLDS_DIR)) {
-    return [];
-  }
-  const scaffolds = [];
-  for (const entry of readdirSync(MONOREPO_SCAFFOLDS_DIR, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name.startsWith('_')) {
-      continue;
-    }
-    const configPath = join(MONOREPO_SCAFFOLDS_DIR, entry.name, 'notis.config.ts');
-    if (!existsSync(configPath)) {
-      continue;
-    }
-    const configSource = readFileSync(configPath, 'utf-8');
-    const description = readTsStringProperty(configSource, 'description') || '';
-    scaffolds.push({
-      slug: entry.name,
-      name: readTsStringProperty(configSource, 'title') || readTsStringProperty(configSource, 'name') || entry.name,
-      description,
-      icon: readTsStringProperty(configSource, 'icon') || 'phosphor:squares-four',
-      categories: readTsStringArrayProperty(configSource, 'categories'),
-      tagline: readTsStringProperty(configSource, 'tagline') || description,
-    });
-  }
-  return scaffolds.sort((a, b) => a.slug.localeCompare(b.slug));
+function captureDirectoryRevision() {
+  const stat = statSync('.', { bigint: true });
+  return { dev: stat.dev, ino: stat.ino, mtimeNs: stat.mtimeNs, ctimeNs: stat.ctimeNs };
 }
 
-function readTsStringProperty(source, propertyName) {
-  const match = source.match(new RegExp(`\\b${propertyName}\\s*:\\s*(['"\`])([\\s\\S]*?)\\1`));
-  return match ? match[2] : null;
-}
-
-function readTsStringArrayProperty(source, propertyName) {
-  const match = source.match(new RegExp(`\\b${propertyName}\\s*:\\s*\\[([\\s\\S]*?)\\]`));
-  if (!match) {
-    return [];
+function assertDirectoryRevisionUnchanged(before, label) {
+  const after = captureDirectoryRevision();
+  if (
+    after.dev !== before.dev
+    || after.ino !== before.ino
+    || after.mtimeNs !== before.mtimeNs
+    || after.ctimeNs !== before.ctimeNs
+  ) {
+    throw usageError(`${label} changed while it was being read.`);
   }
-  return Array.from(match[1].matchAll(/(['"`])([\s\S]*?)\1/g), (entry) => entry[2].trim()).filter(Boolean);
 }
 
 function copyScaffoldSource(sourceDir, targetDir) {
   function shouldCopy(path) {
     const name = path.split(/[\\/]/).pop();
     if (!name) return true;
-    if (SCAFFOLD_LISTING_MEDIA.test(relative(sourceDir, path).replace(/\\/g, '/'))) {
+    const relPath = relative(sourceDir, path).replace(/\\/g, '/');
+    if (SCAFFOLD_LISTING_MEDIA.test(relPath) || REGISTRY_ARTIFACTS.test(relPath)) {
       return false;
     }
     return !SCAFFOLD_COPY_EXCLUDES.has(name)
+      && !name.toLocaleLowerCase('en-US').startsWith('.notis-app-scaffold-')
       && !name.startsWith('.env')
       && !/\.(test|spec)\.[cm]?[jt]sx?$/i.test(name);
   }
 
-  function walk(src, dest) {
-    if (!shouldCopy(src)) {
-      return;
+  const canonicalSource = realpathSync(sourceDir);
+  const sourceIdentity = capturePullTargetIdentity(canonicalSource);
+  const previousCwd = process.cwd();
+  const previousCwdIdentity = capturePullTargetIdentity(previousCwd);
+  const destinationIdentity = capturePullTargetIdentity(targetDir);
+  const snapshot = { directories: [], files: [] };
+
+  function snapshotCurrent(sourcePath, node, expectedDirectoryIdentity) {
+    if (!pullTargetIdentitiesMatch(expectedDirectoryIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`Scaffold source directory changed while copying: ${sourcePath}`);
     }
-    const stat = statSync(src);
-    if (stat.isDirectory()) {
-      mkdirSync(dest, { recursive: true });
-      for (const entry of readdirSync(src)) {
-        walk(join(src, entry), join(dest, entry));
+    const directoryRevision = captureDirectoryRevision();
+    const parentIdentity = expectedDirectoryIdentity;
+    for (const name of readdirSync('.')) {
+      const logicalSourcePath = join(sourcePath, name);
+      if (!shouldCopy(logicalSourcePath)) {
+        continue;
       }
-      return;
+      const sourceStat = lstatSync(name, { bigint: true });
+      if (sourceStat.isSymbolicLink()) {
+        throw usageError(`Refusing symlinked scaffold source entry: ${logicalSourcePath}`);
+      }
+      if (sourceStat.isDirectory()) {
+        const childNode = {
+          name,
+          mode: Number(sourceStat.mode & 0o777n),
+          directories: [],
+          files: [],
+        };
+        node.directories.push(childNode);
+        process.chdir(name);
+        const childIdentity = capturePullTargetIdentity('.');
+        if (!pullTargetIdentitiesMatch(
+          { exists: true, dev: sourceStat.dev, ino: sourceStat.ino },
+          childIdentity,
+        )) {
+          throw usageError(`Scaffold source directory changed while copying: ${logicalSourcePath}`);
+        }
+        try {
+          snapshotCurrent(logicalSourcePath, childNode, childIdentity);
+        } finally {
+          process.chdir('..');
+          if (!pullTargetIdentitiesMatch(parentIdentity, capturePullTargetIdentity('.'))) {
+            throw usageError(`Scaffold source directory changed while copying: ${sourcePath}`);
+          }
+        }
+        continue;
+      }
+      if (!sourceStat.isFile()) {
+        throw usageError(`Refusing unsupported scaffold source entry: ${logicalSourcePath}`);
+      }
+      const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      try {
+        node.files.push({
+          name,
+          mode: Number(sourceStat.mode & 0o777n),
+          content: readStablePinnedFile(
+            descriptor,
+            sourceStat,
+            `Scaffold source file ${logicalSourcePath}`,
+          ),
+        });
+      } finally {
+        closeSync(descriptor);
+      }
     }
-    if (stat.isFile()) {
-      mkdirSync(dirname(dest), { recursive: true });
-      cpSync(src, dest);
+    assertDirectoryRevisionUnchanged(directoryRevision, `Scaffold source directory ${sourcePath}`);
+  }
+
+  try {
+    process.chdir(canonicalSource);
+    snapshotCurrent(canonicalSource, snapshot, sourceIdentity);
+  } finally {
+    process.chdir(previousCwd);
+    if (!pullTargetIdentitiesMatch(previousCwdIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`Working directory changed while copying scaffold source: ${previousCwd}`);
     }
   }
 
-  walk(sourceDir, targetDir);
+  function writeSnapshot(node, logicalPath, expectedDirectoryIdentity) {
+    if (!pullTargetIdentitiesMatch(expectedDirectoryIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`Scaffold destination changed while copying: ${logicalPath || '.'}`);
+    }
+    const parentIdentity = expectedDirectoryIdentity;
+    for (const directory of node.directories) {
+      mkdirSync(directory.name, { mode: directory.mode });
+      const directoryStat = lstatSync(directory.name, { bigint: true });
+      if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+        throw usageError(`Refusing unsafe scaffold destination: ${join(logicalPath, directory.name)}`);
+      }
+      process.chdir(directory.name);
+      const childIdentity = capturePullTargetIdentity('.');
+      if (!pullTargetIdentitiesMatch(
+        { exists: true, dev: directoryStat.dev, ino: directoryStat.ino },
+        childIdentity,
+      )) {
+        throw usageError(`Scaffold destination changed while copying: ${join(logicalPath, directory.name)}`);
+      }
+      try {
+        writeSnapshot(directory, join(logicalPath, directory.name), childIdentity);
+      } finally {
+        process.chdir('..');
+        if (!pullTargetIdentitiesMatch(parentIdentity, capturePullTargetIdentity('.'))) {
+          throw usageError(`Scaffold destination changed while copying: ${logicalPath || '.'}`);
+        }
+      }
+    }
+    for (const file of node.files) {
+      writeFileSync(file.name, file.content, { flag: 'wx', mode: file.mode });
+    }
+  }
+
+  try {
+    process.chdir(targetDir);
+    if (!pullTargetIdentitiesMatch(destinationIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`Scaffold destination changed while copying: ${targetDir}`);
+    }
+    writeSnapshot(snapshot, '', destinationIdentity);
+  } finally {
+    process.chdir(previousCwd);
+    if (!pullTargetIdentitiesMatch(previousCwdIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`Working directory changed while copying scaffold source: ${previousCwd}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1394,34 +1999,81 @@ export function collectArtifactFiles(projectDir) {
 }
 
 function shouldExcludeSourceEntry(name) {
+  const casefolded = String(name || '').toLocaleLowerCase('en-US');
   return (
-    SOURCE_COPY_EXCLUDES.has(name)
-    || name.startsWith('.env')
-    || name.endsWith('.pyc')
-    || name.endsWith('.pyo')
+    SOURCE_COPY_EXCLUDES_CASEFOLDED.has(casefolded)
+    || casefolded.startsWith('.notis-app-pull-')
+    || casefolded.startsWith('.notis-app-scaffold-')
+    || casefolded.startsWith('.env')
+    || casefolded.endsWith('.pyc')
+    || casefolded.endsWith('.pyo')
   );
 }
 
 function readSourceFiles(projectDir) {
   const files = {};
+  const canonicalProjectDir = realpathSync(projectDir);
+  const projectIdentity = capturePullTargetIdentity(canonicalProjectDir);
+  const previousCwd = process.cwd();
+  const previousCwdIdentity = capturePullTargetIdentity(previousCwd);
 
-  function walk(dir, prefix) {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (shouldExcludeSourceEntry(entry.name) || entry.isSymbolicLink()) {
+  function walkCurrent(prefix, expectedDirectoryIdentity) {
+    if (!pullTargetIdentitiesMatch(expectedDirectoryIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`App source directory changed while packaging: ${prefix || '.'}`);
+    }
+    const directoryRevision = captureDirectoryRevision();
+    const parentIdentity = expectedDirectoryIdentity;
+    for (const name of readdirSync('.')) {
+      if (shouldExcludeSourceEntry(name)) {
         continue;
       }
-      const fullPath = join(dir, entry.name);
-      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        walk(fullPath, relPath);
-      } else if (entry.isFile()) {
-        files[relPath] = readFileSync(fullPath);
+      const entryStat = lstatSync(name, { bigint: true });
+      if (entryStat.isSymbolicLink()) {
+        continue;
+      }
+      const relPath = prefix ? `${prefix}/${name}` : name;
+      if (entryStat.isDirectory()) {
+        process.chdir(name);
+        const childIdentity = capturePullTargetIdentity('.');
+        if (!pullTargetIdentitiesMatch(
+          { exists: true, dev: entryStat.dev, ino: entryStat.ino },
+          childIdentity,
+        )) {
+          throw usageError(`App source directory changed while packaging: ${relPath}`);
+        }
+        try {
+          walkCurrent(relPath, childIdentity);
+        } finally {
+          process.chdir('..');
+          if (!pullTargetIdentitiesMatch(parentIdentity, capturePullTargetIdentity('.'))) {
+            throw usageError(`App source directory changed while packaging: ${prefix || '.'}`);
+          }
+        }
+      } else if (entryStat.isFile()) {
+        const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+        try {
+          files[relPath] = readStablePinnedFile(
+            descriptor,
+            entryStat,
+            `App source file ${relPath}`,
+          );
+        } finally {
+          closeSync(descriptor);
+        }
       }
     }
+    assertDirectoryRevisionUnchanged(directoryRevision, `App source directory ${prefix || '.'}`);
   }
 
-  walk(projectDir, '');
+  try {
+    process.chdir(canonicalProjectDir);
+    walkCurrent('', projectIdentity);
+  } finally {
+    process.chdir(previousCwd);
+    if (!pullTargetIdentitiesMatch(previousCwdIdentity, capturePullTargetIdentity('.'))) {
+      throw usageError(`Working directory changed while packaging app source: ${previousCwd}`);
+    }
+  }
   return files;
 }
 
@@ -1443,9 +2095,55 @@ function cleanTarPath(name) {
   return parts.join('/');
 }
 
+function parsePaxPath(data) {
+  if (data.length === 0 || data.length > 64 * 1024) {
+    throw usageError('Refusing to extract an invalid PAX source archive header.');
+  }
+  let offset = 0;
+  let path = null;
+  while (offset < data.length) {
+    const space = data.indexOf(0x20, offset);
+    if (space <= offset) {
+      throw usageError('Refusing to extract a malformed PAX source archive header.');
+    }
+    const lengthText = data.subarray(offset, space).toString('ascii');
+    if (!/^\d+$/.test(lengthText)) {
+      throw usageError('Refusing to extract a malformed PAX source archive header.');
+    }
+    const recordLength = Number.parseInt(lengthText, 10);
+    const recordEnd = offset + recordLength;
+    if (recordLength <= space - offset + 3 || recordEnd > data.length || data[recordEnd - 1] !== 0x0a) {
+      throw usageError('Refusing to extract a malformed PAX source archive header.');
+    }
+    const record = data.subarray(space + 1, recordEnd - 1);
+    const equals = record.indexOf(0x3d);
+    if (equals <= 0) {
+      throw usageError('Refusing to extract a malformed PAX source archive header.');
+    }
+    const key = record.subarray(0, equals).toString('ascii');
+    if (key === 'path') {
+      try {
+        path = new TextDecoder('utf-8', { fatal: true }).decode(record.subarray(equals + 1));
+      } catch {
+        throw usageError('Refusing to extract a PAX source path with invalid UTF-8.');
+      }
+      if (!path || Buffer.byteLength(path, 'utf-8') > 4096) {
+        throw usageError('Refusing to extract an invalid PAX source path.');
+      }
+    }
+    offset = recordEnd;
+  }
+  if (!path) {
+    throw usageError('Refusing to extract a PAX source header without a path.');
+  }
+  return path;
+}
+
 function extractTarGz(buffer, targetDir) {
   const tar = gunzipSync(buffer);
   let offset = 0;
+  let pendingPaxPath = null;
+  const extractedPaths = new Map();
   while (offset + 512 <= tar.length) {
     const header = tar.subarray(offset, offset + 512);
     offset += 512;
@@ -1459,35 +2157,251 @@ function extractTarGz(buffer, targetDir) {
     const sizeRaw = header.subarray(124, 136).toString('utf-8').replace(/\0.*$/, '').trim();
     const size = Number.parseInt(sizeRaw || '0', 8);
     const typeFlag = header[156];
-    const relPath = cleanTarPath(fullName);
+    if (!Number.isSafeInteger(size) || size < 0 || offset + size > tar.length) {
+      throw usageError('Refusing to extract a malformed source archive entry size.');
+    }
+    const data = tar.subarray(offset, offset + size);
+    if (typeFlag === 120) {
+      if (pendingPaxPath !== null) {
+        throw usageError('Refusing to extract stacked PAX source archive headers.');
+      }
+      pendingPaxPath = parsePaxPath(data);
+      offset += Math.ceil(size / 512) * 512;
+      continue;
+    }
+
+    const relPath = cleanTarPath(pendingPaxPath || fullName);
+    pendingPaxPath = null;
+    const parts = relPath.split('/');
+    for (let index = 1; index <= parts.length; index += 1) {
+      const pathPrefix = parts.slice(0, index).join('/');
+      const casefoldedPath = pathPrefix.toLocaleLowerCase('en-US');
+      const priorPath = extractedPaths.get(casefoldedPath);
+      if (priorPath && priorPath !== pathPrefix) {
+        throw usageError(
+          `Refusing to extract case-colliding source archive paths: ${priorPath} and ${pathPrefix}`,
+        );
+      }
+      extractedPaths.set(casefoldedPath, pathPrefix);
+    }
+    if (relPath.split('/').some((part) => shouldExcludeSourceEntry(part))) {
+      throw usageError(`Refusing to extract local-only path from source archive: ${relPath}`);
+    }
     const outputPath = join(targetDir, relPath);
 
     if (typeFlag === 53) {
       mkdirSync(outputPath, { recursive: true });
-    } else {
+    } else if (typeFlag === 0 || typeFlag === 48) {
       mkdirSync(dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, tar.subarray(offset, offset + size));
+      writeFileSync(outputPath, data);
+    } else {
+      throw usageError(`Refusing to extract unsupported source archive entry: ${relPath}`);
     }
 
     offset += Math.ceil(size / 512) * 512;
   }
+  if (pendingPaxPath !== null) {
+    throw usageError('Refusing to extract a dangling PAX source archive header.');
+  }
 }
 
-export async function pullAppSource({
+function collectPullPreservedPaths(targetDir) {
+  const paths = [];
+
+  function walk(dir, prefix) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isSymbolicLink() || shouldExcludeSourceEntry(entry.name)) {
+        paths.push(relPath);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), relPath);
+      }
+    }
+  }
+
+  if (existsSync(targetDir)) {
+    walk(targetDir, '');
+  }
+  return paths;
+}
+
+function readPullLockOwner(lockDirectory) {
+  try {
+    return JSON.parse(readFileSync(join(lockDirectory, 'owner'), 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function capturePullTargetIdentity(targetDir) {
+  try {
+    const targetStat = lstatSync(targetDir, { bigint: true });
+    if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
+      throw usageError(`Refusing to pull app source through an unsafe target: ${targetDir}`);
+    }
+    return { exists: true, dev: targetStat.dev, ino: targetStat.ino };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { exists: false, dev: null, ino: null };
+    throw error;
+  }
+}
+
+function assertPullTargetIdentity(targetDir, expected) {
+  const current = capturePullTargetIdentity(targetDir);
+  if (!pullTargetIdentitiesMatch(current, expected)) {
+    throw usageError(`App source pull target changed while the download was in progress: ${targetDir}`);
+  }
+}
+
+function pullTargetIdentitiesMatch(left, right) {
+  return (
+    left.exists === right.exists
+    && (!left.exists || (left.dev === right.dev && left.ino === right.ino))
+  );
+}
+
+function assertPullParentIdentity(parentDir, canonicalParent, expectedIdentity) {
+  let currentCanonicalParent;
+  try {
+    currentCanonicalParent = realpathSync(parentDir);
+  } catch {
+    throw usageError(`App source pull parent changed while the download was in progress: ${parentDir}`);
+  }
+  if (
+    currentCanonicalParent !== canonicalParent
+    || !pullTargetIdentitiesMatch(
+      capturePullTargetIdentity(canonicalParent),
+      expectedIdentity,
+    )
+  ) {
+    throw usageError(`App source pull parent changed while the download was in progress: ${parentDir}`);
+  }
+}
+
+async function withPullTargetLock(targetDir, callback) {
+  const requestedTarget = resolve(targetDir);
+  const parentDir = dirname(requestedTarget);
+  mkdirSync(parentDir, { recursive: true });
+  const canonicalParent = realpathSync(parentDir);
+  const canonicalParentIdentity = capturePullTargetIdentity(canonicalParent);
+  const initialRequestedIdentity = capturePullTargetIdentity(requestedTarget);
+  const canonicalTarget = initialRequestedIdentity.exists
+    ? realpathSync(requestedTarget)
+    : join(canonicalParent, basename(requestedTarget));
+  if (
+    initialRequestedIdentity.exists
+    && !pullTargetIdentitiesMatch(
+      initialRequestedIdentity,
+      capturePullTargetIdentity(canonicalTarget),
+    )
+  ) {
+    throw usageError(`App source pull target changed before locking: ${requestedTarget}`);
+  }
+  const lockDirectory = join(canonicalParent, `.${basename(canonicalTarget)}.notis-pull-lock`);
+  const ownerId = `${process.pid}.${randomUUID()}`;
+  const deadline = Date.now() + PULL_LOCK_TIMEOUT_MS;
+
+  for (;;) {
+    try {
+      mkdirSync(lockDirectory, { mode: 0o700 });
+      writeFileSync(
+        join(lockDirectory, 'owner'),
+        JSON.stringify({ id: ownerId, pid: process.pid, at: Date.now() }),
+        { mode: 0o600 },
+      );
+      break;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      let lockStat;
+      try {
+        lockStat = lstatSync(lockDirectory);
+      } catch (statError) {
+        if (statError?.code === 'ENOENT') continue;
+        throw statError;
+      }
+      if (lockStat.isSymbolicLink() || !lockStat.isDirectory()) {
+        throw usageError(`Refusing to use unsafe app source pull lock: ${lockDirectory}`);
+      }
+      if (Date.now() >= deadline) {
+        throw usageError(
+          `Timed out waiting to pull app source into ${targetDir}. `
+          + `If no pull process is running, remove the orphaned lock: ${lockDirectory}`,
+        );
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, PULL_LOCK_POLL_MS));
+    }
+  }
+
+  try {
+    const assertOwnership = () => {
+      if (readPullLockOwner(lockDirectory)?.id !== ownerId) {
+        throw usageError(`Lost the app source pull lock for ${targetDir}.`);
+      }
+    };
+    const assertParentIdentity = () => assertPullParentIdentity(
+      parentDir,
+      canonicalParent,
+      canonicalParentIdentity,
+    );
+    assertParentIdentity();
+    const lockedTargetIdentity = capturePullTargetIdentity(canonicalTarget);
+    if (!pullTargetIdentitiesMatch(initialRequestedIdentity, lockedTargetIdentity)) {
+      throw usageError(`App source pull target changed before locking: ${requestedTarget}`);
+    }
+    return await callback(
+      assertOwnership,
+      assertParentIdentity,
+      canonicalTarget,
+      lockedTargetIdentity,
+    );
+  } finally {
+    try {
+      if (readPullLockOwner(lockDirectory)?.id === ownerId) {
+        rmSync(lockDirectory, { recursive: true, force: true });
+      }
+    } catch {
+      // A reclaimed lock belongs to its new owner and must not be removed.
+    }
+  }
+}
+
+export async function pullAppSource(args) {
+  const targetDir = resolve(args.targetDir);
+  return withPullTargetLock(
+    targetDir,
+    (
+      assertLockOwnership,
+      assertParentIdentity,
+      canonicalTarget,
+      targetIdentity,
+    ) => pullAppSourceUnlocked(
+      { ...args, targetDir: canonicalTarget },
+      assertLockOwnership,
+      assertParentIdentity,
+      targetIdentity,
+    ),
+  );
+}
+
+async function pullAppSourceUnlocked({
   apiBase,
   jwt,
   appId,
   targetDir,
   version = 'latest',
   force = false,
-}) {
-  if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
+  profileKey = null,
+}, assertLockOwnership, assertParentIdentity, initialTargetIdentity) {
+  assertLockOwnership();
+  assertParentIdentity();
+  const targetWasNonEmpty = existsSync(targetDir) && readdirSync(targetDir).length > 0;
+  if (targetWasNonEmpty) {
     if (!force) {
       throw usageError(`Target directory is not empty: ${targetDir}. Pass --force to overwrite it.`);
     }
-    rmSync(targetDir, { recursive: true, force: true });
   }
-  mkdirSync(targetDir, { recursive: true });
 
   const params = new URLSearchParams({ app_id: appId, version: String(version || 'latest') });
   const response = await fetch(`${apiBase.replace(/\/$/, '')}/portal_apps/source?${params.toString()}`, {
@@ -1501,17 +2415,229 @@ export async function pullAppSource({
   const contentDisposition = response.headers.get('content-disposition') || '';
   const versionMatch = /-v(\d+)\.tar\.gz/i.exec(contentDisposition);
   const pulledVersion = versionMatch ? Number.parseInt(versionMatch[1], 10) : null;
-  extractTarGz(Buffer.from(await response.arrayBuffer()), targetDir);
-  const linkedVersion = pulledVersion || (
-    String(version || 'latest') === 'latest'
-      ? undefined
-      : Number.parseInt(String(version), 10)
-  );
-  writeLinkedState(targetDir, {
-    app_id: appId,
-    ...(Number.isFinite(linkedVersion) ? { version: linkedVersion } : {}),
-    linked_at: new Date().toISOString(),
-  });
+  const requestedVersion = String(version || 'latest') === 'latest'
+    ? null
+    : Number.parseInt(String(version), 10);
+  if (!Number.isInteger(pulledVersion) || pulledVersion <= 0) {
+    throw usageError('The app source response did not identify a valid positive version.');
+  }
+  if (requestedVersion !== null && (!Number.isInteger(requestedVersion) || requestedVersion <= 0)) {
+    throw usageError(`Invalid app source version: ${version}`);
+  }
+  if (
+    requestedVersion !== null
+    && pulledVersion !== requestedVersion
+  ) {
+    throw usageError(
+      `Requested app source version ${requestedVersion}, but the server returned version ${pulledVersion}.`,
+    );
+  }
+  const linkedVersion = pulledVersion;
+  const archiveBuffer = Buffer.from(await response.arrayBuffer());
+  assertParentIdentity();
+  assertLockOwnership();
+
+  // A failed download or malformed archive must never damage an existing
+  // checkout. Extract into a transaction directory under the pinned target,
+  // then replace
+  // only source-managed entries. Local-only state such as .git, .env files,
+  // dependencies, symlinks, build output, and .notis runtime directories is
+  // moved aside recursively and restored into the new source tree.
+  let cleanupTransaction = true;
+  let cwdPinned = false;
+  let transactionDir = null;
+  let transactionDisplayPath = null;
+  let operationError = null;
+  const previousCwd = process.cwd();
+  const previousCwdIdentity = capturePullTargetIdentity(previousCwd);
+  try {
+    const parentDir = dirname(targetDir);
+    const targetName = basename(targetDir);
+    const parentIdentity = capturePullTargetIdentity(parentDir);
+    assertParentIdentity();
+    process.chdir(parentDir);
+    cwdPinned = true;
+    assertPullTargetIdentity('.', parentIdentity);
+
+    assertParentIdentity();
+    assertPullTargetIdentity(targetName, initialTargetIdentity);
+    if (!initialTargetIdentity.exists) {
+      try {
+        mkdirSync(targetName);
+      } catch (error) {
+        if (error?.code === 'EEXIST') {
+          throw usageError(`App source pull target changed while the download was in progress: ${targetDir}`);
+        }
+        throw error;
+      }
+    }
+    const activeTargetIdentity = capturePullTargetIdentity(targetName);
+    if (
+      initialTargetIdentity.exists
+      && (
+        activeTargetIdentity.dev !== initialTargetIdentity.dev
+        || activeTargetIdentity.ino !== initialTargetIdentity.ino
+      )
+    ) {
+      throw usageError(`App source pull target changed while the download was in progress: ${targetDir}`);
+    }
+    assertLockOwnership();
+    process.chdir(targetName);
+    assertPullTargetIdentity('.', activeTargetIdentity);
+    const targetRoot = '.';
+    assertLinkedStatePathSafe(targetRoot);
+    const preservedPaths = collectPullPreservedPaths(targetRoot);
+
+    const transactionName = basename(mkdtempSync(join('.', '.notis-app-pull-')));
+    transactionDir = transactionName;
+    transactionDisplayPath = join(targetDir, transactionName);
+    const stageDir = join(transactionDir, 'stage');
+    const backupDir = join(transactionDir, 'backup');
+    const preservedDir = join(transactionDir, 'preserved');
+    mkdirSync(stageDir, { recursive: true });
+    mkdirSync(backupDir, { recursive: true });
+    mkdirSync(preservedDir, { recursive: true });
+
+    extractTarGz(archiveBuffer, stageDir);
+    const stagedEntries = readdirSync(stageDir);
+    if (stagedEntries.length === 0) {
+      throw usageError('The app source archive did not contain any editable source files.');
+    }
+
+    const previousStatePath = join(targetRoot, STATE_FILE);
+    const backupStatePath = join(backupDir, STATE_FILE);
+    const hadPreviousState = existsSync(previousStatePath);
+    if (hadPreviousState) {
+      mkdirSync(dirname(backupStatePath), { recursive: true });
+      cpSync(previousStatePath, backupStatePath);
+    }
+
+    const movedPreserved = [];
+    const movedOriginal = [];
+    const movedStaged = [];
+    const restoredPreserved = [];
+    try {
+      for (const relPath of preservedPaths) {
+        const preservedPath = join(preservedDir, relPath);
+        mkdirSync(dirname(preservedPath), { recursive: true });
+        renameSync(join(targetRoot, relPath), preservedPath);
+        movedPreserved.push(relPath);
+      }
+      assertPullTargetIdentity(targetDir, activeTargetIdentity);
+      assertLockOwnership();
+      const managedTargetEntries = readdirSync(targetRoot)
+        .filter((name) => name !== transactionName);
+      for (const name of managedTargetEntries) {
+        renameSync(join(targetRoot, name), join(backupDir, name));
+        movedOriginal.push(name);
+      }
+      assertPullTargetIdentity(targetDir, activeTargetIdentity);
+      assertLockOwnership();
+      for (const name of stagedEntries) {
+        renameSync(join(stageDir, name), join(targetRoot, name));
+        movedStaged.push(name);
+      }
+      assertPullTargetIdentity(targetDir, activeTargetIdentity);
+      assertLockOwnership();
+      for (const relPath of movedPreserved) {
+        const targetPath = join(targetRoot, relPath);
+        try {
+          lstatSync(targetPath);
+          throw usageError(
+            `Local-only path conflicts with pulled source: ${relPath}. Move it aside and retry.`,
+          );
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+        mkdirSync(dirname(targetPath), { recursive: true });
+        renameSync(join(preservedDir, relPath), targetPath);
+        restoredPreserved.push(relPath);
+      }
+      assertPullTargetIdentity(targetDir, activeTargetIdentity);
+      assertLockOwnership();
+      writeLinkedState(targetRoot, {
+        app_id: appId,
+        ...(Number.isFinite(linkedVersion) ? { version: linkedVersion } : {}),
+        linked_at: new Date().toISOString(),
+      }, profileKey);
+      assertPullTargetIdentity(targetDir, activeTargetIdentity);
+      assertLockOwnership();
+    } catch (error) {
+      try {
+        for (const relPath of restoredPreserved.reverse()) {
+          const preservedPath = join(preservedDir, relPath);
+          mkdirSync(dirname(preservedPath), { recursive: true });
+          renameSync(join(targetRoot, relPath), preservedPath);
+        }
+        for (const name of movedStaged.reverse()) {
+          renameSync(join(targetRoot, name), join(stageDir, name));
+        }
+        for (const name of movedOriginal.reverse()) {
+          renameSync(join(backupDir, name), join(targetRoot, name));
+        }
+        for (const relPath of movedPreserved.reverse()) {
+          const targetPath = join(targetRoot, relPath);
+          mkdirSync(dirname(targetPath), { recursive: true });
+          renameSync(join(preservedDir, relPath), targetPath);
+        }
+        if (hadPreviousState) {
+          cpSync(backupStatePath, previousStatePath);
+        } else {
+          rmSync(previousStatePath, { force: true });
+        }
+      } catch (rollbackError) {
+        cleanupTransaction = false;
+        throw usageError(
+          `${error instanceof Error ? error.message : String(error)} `
+          + `Rollback failed; recovery files were retained at ${transactionDisplayPath}: `
+          + `${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+      throw error;
+    }
+  } catch (error) {
+    operationError = error;
+    throw error;
+  } finally {
+    let cleanupError = null;
+    try {
+      if (cleanupTransaction && transactionDir) {
+        rmSync(transactionDir, { recursive: true, force: true });
+      }
+    } catch (error) {
+      cleanupError = error;
+    } finally {
+      if (cwdPinned) {
+        const cwdMatchesTarget = (
+          previousCwdIdentity.exists
+          && pullTargetIdentitiesMatch(previousCwdIdentity, capturePullTargetIdentity('.'))
+        );
+        if (!cwdMatchesTarget) {
+          try {
+            process.chdir(previousCwd);
+          } catch {
+            // The command is about to return; never trade recovered source for a cwd error.
+          }
+        }
+      }
+    }
+    if (cleanupError) {
+      const cleanupMessage = cleanupError instanceof Error
+        ? cleanupError.message
+        : String(cleanupError);
+      if (operationError) {
+        throw usageError(
+          `${operationError instanceof Error ? operationError.message : String(operationError)} `
+          + `Transaction cleanup also failed; recovery files were retained at `
+          + `${transactionDisplayPath}: ${cleanupMessage}`,
+        );
+      }
+      throw usageError(
+        `App source was updated, but transaction cleanup failed; recovery files were retained at `
+        + `${transactionDisplayPath}: ${cleanupMessage}`,
+      );
+    }
+  }
 
   return { projectDir: targetDir, version: pulledVersion || version };
 }

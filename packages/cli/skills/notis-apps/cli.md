@@ -79,26 +79,30 @@ Examples:
 
 Scaffold a new Notis app project.
 
-When to use: Start a new Notis app. Use --from with a bundled scaffold when one is close to the desired app; otherwise creates the bare Vite + React project.
+When to use: Start a new Notis app. Use --from with a published Store app when one is close to the desired app; otherwise creates the bare Vite + React project.
 
 Options:
-- `--from <slug>` — Start from a bundled scaffold listed by `notis apps scaffolds list`.
+- `--from <slug>` — Start from a published Store app listed by `notis apps scaffolds list`. Downloads its source from the public app registry.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps scaffolds list`
 - `npx --package @notis_ai/cli@latest -- notis apps init "Mind the Flo"`
-- `npx --package @notis_ai/cli@latest -- notis apps init "My CRM" --from notis-database`
-- `npx --package @notis_ai/cli@latest -- notis apps init "My App" ./my-app`
+- `npx --package @notis_ai/cli@latest -- notis apps init "My CRM" --from databases`
+- `npx --package @notis_ai/cli@latest -- notis apps init "My App" ~/code/my-app`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps scaffolds list`
 
-List bundled Notis app scaffolds.
+List published Store apps available as scaffolds.
 
-When to use: Discover the fixed scaffold catalog shipped with the CLI before starting a new app.
+When to use: Discover published Store apps to start from before creating a new app. Every app published to the public Store is automatically a scaffold; use --search to narrow the catalog.
+
+Options:
+- `--search <term>` — Filter scaffolds by name, tagline, description, or category.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps scaffolds list`
-- `npx --package @notis_ai/cli@latest -- notis apps init "My App" --from notis-database`
+- `npx --package @notis_ai/cli@latest -- notis apps scaffolds list --search journal`
+- `npx --package @notis_ai/cli@latest -- notis apps init "My App" --from databases`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps create <name> [dir]`
 
@@ -112,21 +116,39 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis apps dev [dir]`
 
-Develop Notis apps inside the Electron desktop Portal with automatic local bundle reloads.
+Register a development root and connect its apps to the shared local development host.
 
-When to use: Run this inside a single app or a monorepo root with apps/<name>/notis.config.ts. It discovers every app, starts the local bundle server, registers desktop-local dev sessions, and opens the Electron Portal to the local development app.
+When to use: Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance.
 
 Options:
 - `--port <number>` — Local bundle server port (default: 5173).
-- `--no-open` — Do not auto-open the desktop Portal local development app.
-- `--live-data` — Read and write the installed app's real databases instead of empty dev copies. Applies to this session only; warns and falls back when the app is not installed yet.
+- `--scratch` — Use isolated empty databases, bundled skills, and bundled automations for this session instead of the installed app's resources. For fixture work and destructive experiments.
+- `--live-data` — Deprecated: using the installed app's real resources is now the default. Accepted as a no-op; use `--scratch` for the old isolated behavior.
 - `--grant-cloud-shell` — Approve a cloudComputer: 'shell' declaration without the interactive prompt. The grant persists for this dev app; authorship alone never grants it.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps dev`
 - `npx --package @notis_ai/cli@latest -- notis apps dev ./my-app`
 - `npx --package @notis_ai/cli@latest -- notis apps dev ./workspace --port 5200`
-- `npx --package @notis_ai/cli@latest -- notis apps dev --live-data  # iterate on a view over the installed app's real rows`
+- `npx --package @notis_ai/cli@latest -- notis apps dev --scratch  # isolated resources for fixture or schema experiments`
+
+### `npx --package @notis_ai/cli@latest -- notis apps roots list`
+
+List persistent machine-local Notis app development roots.
+
+When to use: See which folders every local Notis Desktop instance watches for development apps.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis apps roots list`
+
+### `npx --package @notis_ai/cli@latest -- notis apps roots remove <folder>`
+
+Stop watching a registered Notis app development root.
+
+When to use: Remove a persistent development root. The built-in ~/.notis/apps root cannot be removed.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis apps roots remove ./old-apps`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps build [dir]`
 
@@ -200,22 +222,22 @@ When to use: Edit an installed app locally. Pulls the persisted source, links th
 
 Options:
 - `--force` — Overwrite a non-empty target directory.
-- `--version <n>` — Pull a specific app source version (default: latest).
+- `--source-version <n>` — Pull a specific app source version (default: latest).
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps pull abc123`
-- `npx --package @notis_ai/cli@latest -- notis apps pull abc123 ./my-app --force`
+- `npx --package @notis_ai/cli@latest -- notis apps pull abc123 ./my-app --force --source-version 3`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps deploy [dir]`
 
 Build and upload the app to the linked Notis app.
 
-When to use: Ship the installed app to production for the linked user/team app. Requires a linked app (notis apps link). This command does not publish to the app store.
+When to use: Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. This command does not publish to the app store.
 
 Options:
 - `--app-id <id>` — Override linked app ID.
 - `--skip-build` — Skip the build step (use existing .notis/output/).
-- `--direct` — Upload directly to Supabase storage, bypassing the backend server. Auto-fallback on network errors.
+- `--direct` — Explicitly upload to Supabase storage, bypassing the backend server.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps deploy`
@@ -261,4 +283,3 @@ When to use: Diagnose issues with a Notis app project.
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps doctor`
 - `npx --package @notis_ai/cli@latest -- notis apps doctor ./my-app`
-

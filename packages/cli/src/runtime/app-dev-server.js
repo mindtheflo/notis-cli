@@ -28,7 +28,10 @@ import {
   readLinkedState,
   writeLinkedState,
 } from './app-platform.js';
-import { linkAppDevSessionTarget } from './app-dev-sessions.js';
+import {
+  linkAppDevSessionTarget,
+  readAppDevSessions,
+} from './app-dev-sessions.js';
 
 const CONTENT_TYPES = {
   '.js': 'application/javascript; charset=utf-8',
@@ -297,7 +300,7 @@ function renderHarnessHtml({ state, manifest, appConfig, route, harnessOptions, 
 /**
  * Start the dev server for one or more apps.
  *
- * @param {{apps: Array<{slug: string, projectDir: string, appId?: string, targetAppId?: string, userId?: string}>, port: number, watch?: boolean, sessionsFilePath?: string, harness?: { mode?: string, apiBase?: string, jwt?: string }, log?: (m: string) => void, logError?: (m: string) => void}} options
+ * @param {{apps: Array<{slug: string, projectDir: string, appId?: string, targetAppId?: string, userId?: string, profileKey?: string, sessionId?: string, mountNonce?: string}>, port: number, watch?: boolean, sessionsFilePath?: string, harness?: { mode?: string, apiBase?: string, jwt?: string }, log?: (m: string) => void, logError?: (m: string) => void}} options
  */
 export async function startAppDevServer({
   apps,
@@ -313,22 +316,43 @@ export async function startAppDevServer({
   }
 
   const appState = new Map();
-  for (const app of apps) {
-    appState.set(app.slug, {
+  // Sidebar reconciliation needs one stream for the shared host, not one
+  // long-lived HTTP/1.1 connection per discovered app. Keeping a stream per
+  // app exhausts Chromium's per-origin connection pool and can indefinitely
+  // queue the active view's bundle fetch during hot reload.
+  const hostSseClients = new Set();
+  const createAppState = (app) => {
+    let resolveBundleReady;
+    const bundleReadyPromise = new Promise((resolvePromise) => {
+      resolveBundleReady = resolvePromise;
+    });
+    return {
       slug: app.slug,
       projectDir: app.projectDir,
       appId: app.appId || null,
       targetAppId: app.targetAppId || null,
       userId: app.userId || null,
+      profileKey: app.profileKey || null,
+      sessionId: app.sessionId || null,
+      mountNonce: app.mountNonce || null,
       canonicalBundleDir: getBundleDir(app.projectDir),
       bundleDir: null,
       jsPath: null,
       sseClients: new Set(),
       watcher: null,
+      sourceWatchers: [],
+      prepareTimer: null,
+      reloadTimer: null,
       buildProcess: null,
       lastMtimeMs: 0,
       watchPollTimer: null,
-    });
+      bundleReady: false,
+      bundleReadyPromise,
+      resolveBundleReady,
+    };
+  };
+  for (const app of apps) {
+    appState.set(app.slug, createAppState(app));
   }
 
   function broadcastReload(slug) {
@@ -340,6 +364,14 @@ export async function startAppDevServer({
         res.write(payload);
       } catch {
         state.sseClients.delete(res);
+      }
+    }
+    const hostPayload = `event: reload\ndata: ${JSON.stringify({ slug, at: Date.now() })}\n\n`;
+    for (const res of hostSseClients) {
+      try {
+        res.write(hostPayload);
+      } catch {
+        hostSseClients.delete(res);
       }
     }
   }
@@ -374,6 +406,10 @@ export async function startAppDevServer({
     state.jsPath = join(bundleDir, 'app.js');
     try {
       state.lastMtimeMs = statSync(state.jsPath).mtimeMs;
+      if (!state.bundleReady) {
+        state.bundleReady = true;
+        state.resolveBundleReady();
+      }
     } catch {
       state.lastMtimeMs = 0;
     }
@@ -451,6 +487,9 @@ export async function startAppDevServer({
             try {
               const body = await readRequestJson(req);
               const appId = typeof body.app_id === 'string' ? body.app_id.trim() : '';
+              const version = Number.isInteger(body.version) && body.version > 0
+                ? body.version
+                : null;
               if (!appId) {
                 res.writeHead(400, {
                   ...headers,
@@ -459,20 +498,69 @@ export async function startAppDevServer({
                 res.end(JSON.stringify({ error: 'app_id is required' }));
                 return;
               }
+              if (version === null) {
+                res.writeHead(400, {
+                  ...headers,
+                  'Content-Type': 'application/json; charset=utf-8',
+                });
+                res.end(JSON.stringify({ error: 'version must be a positive integer' }));
+                return;
+              }
+              const proofSession = readAppDevSessions(sessionsFilePath).sessions.find((session) => (
+                typeof body.session_id === 'string'
+                && typeof body.mount_nonce === 'string'
+                && session.sessionId === body.session_id
+                && session.mountNonce === body.mount_nonce
+                && session.devSlug === state.slug
+                && session.projectDir === state.projectDir
+              ));
+              if (!proofSession) {
+                res.writeHead(403, {
+                  ...headers,
+                  'Content-Type': 'application/json; charset=utf-8',
+                });
+                res.end(JSON.stringify({ error: 'invalid app development session proof' }));
+                return;
+              }
+              const expectedAppId = proofSession.targetAppId || proofSession.appId;
+              if (!expectedAppId || appId !== expectedAppId) {
+                res.writeHead(409, {
+                  ...headers,
+                  'Content-Type': 'application/json; charset=utf-8',
+                });
+                res.end(JSON.stringify({ error: 'app_id does not match this development session' }));
+                return;
+              }
 
-              const currentState = readLinkedState(state.projectDir) || {};
+              const currentState = readLinkedState(
+                state.projectDir,
+                proofSession.profileKey || state.profileKey,
+              ) || {};
               const now = new Date().toISOString();
-              writeLinkedState(state.projectDir, {
+              const promotedInPlace = proofSession.appId === appId;
+              const nextState = {
                 ...currentState,
                 app_id: appId,
-                dev_app_id: state.appId || currentState.dev_app_id,
                 linked_at: currentState.linked_at || now,
-                dev_linked_at: currentState.dev_linked_at || now,
+                version,
+                deployed_at: now,
                 updated_at: now,
-              });
-              state.targetAppId = appId;
+              };
+              if (promotedInPlace) {
+                delete nextState.dev_app_id;
+                delete nextState.dev_linked_at;
+              } else {
+                nextState.dev_app_id = proofSession.appId || currentState.dev_app_id;
+                nextState.dev_linked_at = currentState.dev_linked_at || now;
+              }
+              writeLinkedState(
+                state.projectDir,
+                nextState,
+                proofSession.profileKey || state.profileKey,
+              );
               linkAppDevSessionTarget({
-                appId: state.appId,
+                sessionId: proofSession.sessionId,
+                appId: proofSession.appId,
                 devSlug: state.slug,
                 targetAppId: appId,
                 lastHeartbeatAt: now,
@@ -480,8 +568,9 @@ export async function startAppDevServer({
               const response = {
                 ok: true,
                 app_id: appId,
-                dev_app_id: state.appId || null,
+                dev_app_id: promotedInPlace ? null : proofSession.appId || null,
                 target_app_id: appId,
+                version,
               };
               res.writeHead(200, {
                 ...headers,
@@ -522,6 +611,18 @@ export async function startAppDevServer({
         'Content-Type': 'application/json; charset=utf-8',
       });
       res.end(JSON.stringify({ ok: true, apps: Array.from(appState.keys()), sessions }));
+      return;
+    }
+
+    if (url.pathname === '/events') {
+      res.writeHead(200, {
+        ...headers,
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        Connection: 'keep-alive',
+      });
+      res.write(': connected\n\n');
+      hostSseClients.add(res);
+      req.on('close', () => hostSseClients.delete(res));
       return;
     }
 
@@ -644,15 +745,23 @@ export async function startAppDevServer({
     try {
       state.watcher = fsWatch(state.bundleDir, { persistent: false }, (_event, filename) => {
         if (!filename || filename !== 'app.js') return;
-        try {
-          const stat = statSync(state.jsPath);
-          if (stat.mtimeMs === state.lastMtimeMs) return;
-          state.lastMtimeMs = stat.mtimeMs;
-          log(`[notis apps dev] ${state.slug}: bundle updated — reloading portal`);
-          broadcastReload(state.slug);
-        } catch {
-          // Bundle file may be missing mid-write; ignore.
-        }
+        // Vite may emit the filesystem notification while its output file is
+        // still being replaced. Debounce the notification so consumers never
+        // fetch the previous or partially-written bundle under the new build
+        // revision.
+        if (state.reloadTimer) clearTimeout(state.reloadTimer);
+        state.reloadTimer = setTimeout(() => {
+          state.reloadTimer = null;
+          try {
+            const stat = statSync(state.jsPath);
+            if (stat.mtimeMs === state.lastMtimeMs) return;
+            state.lastMtimeMs = stat.mtimeMs;
+            log(`[notis apps dev] ${state.slug}: bundle updated — reloading portal`);
+            broadcastReload(state.slug);
+          } catch {
+            // Bundle file may be missing mid-write; the next change retries.
+          }
+        }, 100);
       });
     } catch (error) {
       logError(`[notis apps dev] ${state.slug}: watch failed: ${error.message}`);
@@ -669,9 +778,53 @@ export async function startAppDevServer({
     state.watchPollTimer = setTimeout(() => pollForBundleAndWatch(state), 300);
   }
 
+  function watchManifestInputs(state) {
+    const schedulePrepare = () => {
+      if (state.prepareTimer) clearTimeout(state.prepareTimer);
+      state.prepareTimer = setTimeout(() => {
+        state.prepareTimer = null;
+        void prepareArtifactBuild(state.projectDir).then(() => {
+          // Name, icon, and route metadata can change without changing the
+          // compiled JS bytes. Notify consumers immediately; a generated-entry
+          // change will produce the normal second reload after Vite rebuilds.
+          broadcastReload(state.slug);
+        }).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logError(`[notis apps dev] ${state.slug}: ${message}`);
+        });
+      }, 75);
+    };
+    try {
+      state.sourceWatchers.push(fsWatch(
+        state.projectDir,
+        { persistent: false },
+        (_event, filename) => {
+          if (filename && /^notis\.config\.(?:ts|js|mjs)$/.test(String(filename))) {
+            schedulePrepare();
+          }
+        },
+      ));
+    } catch (error) {
+      logError(`[notis apps dev] ${state.slug}: config watch failed: ${error.message}`);
+    }
+    const appDir = join(state.projectDir, 'app');
+    if (existsSync(appDir)) {
+      try {
+        state.sourceWatchers.push(fsWatch(
+          appDir,
+          { persistent: false, recursive: process.platform === 'darwin' || process.platform === 'win32' },
+          schedulePrepare,
+        ));
+      } catch (error) {
+        logError(`[notis apps dev] ${state.slug}: route watch failed: ${error.message}`);
+      }
+    }
+  }
+
   for (const state of appState.values()) {
     if (watch) {
       await prepareArtifactBuild(state.projectDir);
+      watchManifestInputs(state);
       pollForBundleAndWatch(state);
 
       state.buildProcess = spawn('npm', ['run', 'build', '--', '--watch'], {
@@ -694,8 +847,37 @@ export async function startAppDevServer({
 
   return {
     port,
+    updateApp(slug, updates = {}) {
+      const state = appState.get(slug);
+      if (!state) throw new Error(`unknown app: ${slug}`);
+      for (const key of ['appId', 'targetAppId', 'userId', 'profileKey', 'sessionId', 'mountNonce']) {
+        if (Object.prototype.hasOwnProperty.call(updates, key)) {
+          state[key] = updates[key] || null;
+        }
+      }
+    },
+    isBundleReady(slug) {
+      const state = appState.get(slug);
+      if (!state) throw new Error(`unknown app: ${slug}`);
+      return state.bundleReady;
+    },
+    waitForBundle(slug) {
+      const state = appState.get(slug);
+      if (!state) return Promise.reject(new Error(`unknown app: ${slug}`));
+      return state.bundleReadyPromise;
+    },
     async close() {
       for (const state of appState.values()) {
+        if (state.prepareTimer) clearTimeout(state.prepareTimer);
+        if (state.reloadTimer) clearTimeout(state.reloadTimer);
+        for (const watcher of state.sourceWatchers) {
+          try {
+            watcher.close();
+          } catch {
+            // ignore
+          }
+        }
+        state.sourceWatchers = [];
         if (state.watchPollTimer) clearTimeout(state.watchPollTimer);
         if (state.watcher) {
           try {
@@ -716,6 +898,14 @@ export async function startAppDevServer({
           state.buildProcess.kill('SIGTERM');
         }
       }
+      for (const res of hostSseClients) {
+        try {
+          res.end();
+        } catch {
+          // ignore
+        }
+      }
+      hostSseClients.clear();
       await new Promise((resolvePromise) => server.close(() => resolvePromise()));
     },
   };

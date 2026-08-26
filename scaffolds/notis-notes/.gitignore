@@ -1,7 +1,0 @@
-node_modules/
-.next/
-out/
-.notis/*
-!.notis/
-!.notis/_entry.tsx
-.notis/output/

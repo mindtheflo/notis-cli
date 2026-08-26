@@ -8,25 +8,25 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { CliError, EXIT_CODES, usageError } from '../runtime/errors.js';
 import { formatTable } from '../runtime/output.js';
 import {
+  defaultAppProjectDir,
   resolveProjectDir,
   loadAppConfig,
   detectProjectProblems,
   detectProjectWarnings,
   buildArtifact,
+  appLinkedStateProfileKey,
   readManifest,
   readLinkedState,
   writeLinkedState,
   requireLinkedAppId,
   scaffoldProject,
-  loadScaffoldCatalog,
   findUnknownScreenshotScenarios,
   inspectListingReadiness,
   resolveListingScreenshots,
@@ -34,11 +34,23 @@ import {
   collectSourceFiles,
   resolveConfiguredAppSkills,
   normalizeAppCapabilities,
+  normalizeAppToolBindings,
   normalizeAppSkillManifestPath,
   directDeploy,
   pullAppSource,
 } from '../runtime/app-platform.js';
+import {
+  filterScaffoldCatalog,
+  loadScaffoldCatalog,
+  scaffoldRegistryLabel,
+} from '../runtime/app-registry-scaffolds.js';
 import { startAppDevServer } from '../runtime/app-dev-server.js';
+import {
+  discoverRegisteredAppProjects,
+  readAppDevRoots,
+  registerAppDevRoot,
+  removeAppDevRoot,
+} from '../runtime/app-dev-roots.js';
 import {
   captureHarnessScreenshot,
   closeAgentBrowserSession,
@@ -48,12 +60,22 @@ import {
 import {
   getAppDevSessionsFile,
   heartbeatAppDevSession,
+  linkAppDevSessionTarget,
+  readAppDevSessions,
   removeAppDevSession,
   upsertAppDevSessions,
-  waitForAppDevSessionMountAcknowledgements,
-  waitForAppDevSessionRenderAcknowledgements,
 } from '../runtime/app-dev-sessions.js';
-import { getAvailablePort } from '../runtime/ports.js';
+import {
+  releaseAppDevHostLock,
+  tryAcquireAppDevHostLock,
+} from '../runtime/app-dev-host-lock.js';
+import {
+  heartbeatAppDevConsumer,
+  hasAppDevConsumer,
+  readAppDevConsumers,
+  removeAppDevConsumer,
+} from '../runtime/app-dev-consumers.js';
+import { getAvailablePort, getAvailablePortPreferring } from '../runtime/ports.js';
 import { getCliMode } from '../runtime/cli-mode.js';
 import { composeStoreScreenshot } from '../runtime/store-screenshot.js';
 import { httpRequest } from '../runtime/transport.js';
@@ -67,14 +89,142 @@ import {
 
 const DEFAULT_DEV_PORT = 5173;
 const DEV_HEARTBEAT_INTERVAL_MS = 10_000;
-const CONFIG_FILENAMES = ['notis.config.ts', 'notis.config.js', 'notis.config.mjs'];
+const DEV_CONSUMER_HEARTBEAT_INTERVAL_MS = 3_000;
+const DEV_CONSUMER_POLL_INTERVAL_MS = 5_000;
+const SHARED_APP_DEV_HOST_KEY = '__registered_roots__';
+
+function projectIsWithinRoot(projectDir, rootDir) {
+  const nested = relative(rootDir, projectDir);
+  return nested === '' || (nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested));
+}
+
+/**
+ * A CLI launch may add one root, but the shared host always serves the complete
+ * machine registry. Desktop sets skipRootRegistration because it is reconciling
+ * an already-registered snapshot; this must never narrow discovery to the one
+ * project path used to start the host.
+ */
+export function discoverAppDevLaunchProjects(rootDir, {
+  skipRootRegistration = false,
+  registerRoot = registerAppDevRoot,
+  discoverProjects = discoverRegisteredAppProjects,
+} = {}) {
+  if (!skipRootRegistration) registerRoot(rootDir);
+  return discoverProjects();
+}
+
+/**
+ * Collapse duplicate local sources before they reach the shared loopback host.
+ * An explicitly registered root is more intentional than the implicit
+ * ~/.notis/apps root. If two equally intentional roots claim the same dev
+ * slug, omit that slug and keep serving every unrelated app.
+ */
+export function selectCanonicalDevApps(candidates, rootsRegistry) {
+  const roots = Array.isArray(rootsRegistry?.roots) ? rootsRegistry.roots : [];
+  const groups = new Map();
+  for (const candidate of candidates) {
+    groups.set(candidate.devSlug, [...(groups.get(candidate.devSlug) || []), candidate]);
+  }
+
+  const selected = [];
+  const warnings = [];
+  for (const [devSlug, group] of groups) {
+    if (group.length === 1) {
+      selected.push(group[0]);
+      continue;
+    }
+    const ranked = group.map((candidate) => {
+      const explicitRoots = roots.filter((root) => (
+        root?.implicit !== true
+        && typeof root?.path === 'string'
+        && projectIsWithinRoot(candidate.projectDir, root.path)
+      ));
+      const newestRegistration = explicitRoots.reduce((latest, root) => {
+        const timestamp = Date.parse(root.registeredAt || '');
+        return Number.isFinite(timestamp) ? Math.max(latest, timestamp) : latest;
+      }, 0);
+      return {
+        candidate,
+        rank: explicitRoots.length > 0 ? 1 : 0,
+        newestRegistration,
+      };
+    }).sort((left, right) => (
+      right.rank - left.rank
+      || right.newestRegistration - left.newestRegistration
+    ));
+    const winner = ranked[0];
+    const runnerUp = ranked[1];
+    const unambiguous = winner.rank > runnerUp.rank
+      || winner.newestRegistration > runnerUp.newestRegistration;
+    if (unambiguous) {
+      selected.push(winner.candidate);
+      warnings.push(
+        `Using ${winner.candidate.projectDir} for development slug "${devSlug}"; ignored duplicate source(s): ${ranked.slice(1).map(({ candidate }) => candidate.projectDir).join(', ')}.`,
+      );
+      continue;
+    }
+    warnings.push(
+      `Skipped ambiguous development slug "${devSlug}" because multiple equally ranked sources are registered: ${ranked.map(({ candidate }) => candidate.projectDir).join(', ')}. Remove a root or set a unique devSlug.`,
+    );
+  }
+  return { selected, warnings };
+}
+
+export function findSharedSourceBundleUrls(projectDirs, sessionsFilePath) {
+  const now = Date.now();
+  const sourceSessions = readAppDevSessions(sessionsFilePath).sessions
+    .filter((session) => {
+      if (session.sourceHost !== true) return false;
+      const heartbeatAt = Date.parse(session.lastHeartbeatAt || '');
+      if (!Number.isFinite(heartbeatAt) || now - heartbeatAt > 45_000) return false;
+      if (!Number.isInteger(session.hostPid) || session.hostPid <= 0) return false;
+      try {
+        process.kill(session.hostPid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const groups = new Map();
+  for (const session of sourceSessions) {
+    const key = `${session.hostPid || 0}:${session.sessionId}`;
+    groups.set(key, [...(groups.get(key) || []), session]);
+  }
+  for (const sessions of groups.values()) {
+    const byProject = new Map(sessions.map((session) => [session.projectDir, session]));
+    const canonicalProjects = sessions.find((session) => (
+      Array.isArray(session.canonicalProjects)
+    ))?.canonicalProjects;
+    const discoveredProjects = sessions.find((session) => (
+      Array.isArray(session.discoveredProjects)
+    ))?.discoveredProjects;
+    const discoveryMatches = discoveredProjects
+      && JSON.stringify([...discoveredProjects].sort()) === JSON.stringify([...projectDirs].sort());
+    if (
+      discoveryMatches
+      && canonicalProjects
+      && canonicalProjects.every((projectDir) => byProject.has(projectDir))
+    ) {
+      return new Map(canonicalProjects.map((projectDir) => [
+        projectDir,
+        byProject.get(projectDir).bundleBaseUrl,
+      ]));
+    }
+    if (!projectDirs.every((projectDir) => byProject.has(projectDir))) continue;
+    return new Map(projectDirs.map((projectDir) => [
+      projectDir,
+      byProject.get(projectDir).bundleBaseUrl,
+    ]));
+  }
+  return null;
+}
 const ENSURE_DEV_APP_INSTALLATION_TOOL = 'LOCAL_NOTIS_ENSURE_DEV_APP_INSTALLATION';
 const GET_APP_TOOL = 'LOCAL_NOTIS_GET_APP';
 const LIST_APPS_TOOL = 'LOCAL_NOTIS_LIST_APPS';
 const CREATE_APP_TOOL = 'LOCAL_NOTIS_CREATE_APP';
 const DUPLICATE_APP_TOOL = 'LOCAL_NOTIS_DUPLICATE_APP';
 const SAVE_APP_FILES_TOOL = 'LOCAL_NOTIS_SAVE_APP_FILES';
-const APP_DEPLOY_TIMEOUT_MS = 120_000;
+export const APP_DEPLOY_TIMEOUT_MS = 600_000;
 
 // ---------------------------------------------------------------------------
 // Formatters
@@ -98,40 +248,12 @@ function scaffoldsTable(scaffolds) {
   ]);
 }
 
-function hasNotisConfig(dir) {
-  return CONFIG_FILENAMES.some((name) => existsSync(join(dir, name)));
-}
-
-function discoverAppDirs(projectDir) {
-  if (hasNotisConfig(projectDir)) {
-    return [projectDir];
-  }
-
-  const appsDir = join(projectDir, 'apps');
-  if (!existsSync(appsDir)) {
-    throw usageError(
-      `No notis.config.ts in ${projectDir}. Run from a Notis app project or a monorepo root with apps/<name>/notis.config.ts.`,
-    );
-  }
-
-  const entries = readdirSync(appsDir, { withFileTypes: true });
-  const candidates = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('.') || entry.name.startsWith('_')) continue;
-    const dir = join(appsDir, entry.name);
-    if (hasNotisConfig(dir)) {
-      candidates.push(dir);
-    }
-  }
-
-  if (candidates.length === 0) {
-    throw usageError(
-      `Found apps/ in ${projectDir} but no apps/<name>/notis.config.ts inside it.`,
-    );
-  }
-
-  return candidates;
+function appDevRootsTable(roots) {
+  return formatTable(roots, [
+    { label: 'Folder', value: (root) => root.path },
+    { label: 'Source', value: (root) => root.implicit ? 'default' : 'registered' },
+    { label: 'Registered', value: (root) => root.registeredAt || '' },
+  ]);
 }
 
 function decodeJwtSub(jwt) {
@@ -146,42 +268,11 @@ function decodeJwtSub(jwt) {
   }
 }
 
-export function developmentDesktopOpenCommand(
-  url,
-  {
-    platform = process.platform,
-    appName = null,
-    bundleId = null,
-    scheme = 'notis',
-  } = {},
-) {
-  let command;
-  let args;
-  if (platform === 'darwin') {
-    command = 'open';
-    args = bundleId && scheme === 'notis'
-      ? ['-b', bundleId, url]
-      : appName && scheme === 'notis'
-        ? ['-a', appName, url]
-        : [url];
-  } else if (platform === 'win32') {
-    command = 'cmd';
-    args = ['/c', 'start', '', url];
-  } else {
-    command = 'xdg-open';
-    args = [url];
-  }
-  return { command, args };
-}
-
-function openInBrowser(url, options = {}) {
-  const { command, args } = developmentDesktopOpenCommand(url, options);
-  try {
-    const child = spawn(command, args, { stdio: 'ignore' });
-    child.on('error', () => {});
-  } catch {
-    // Non-fatal. The URL is printed in the CLI output.
-  }
+function linkedStateProfileKey(runtime) {
+  return appLinkedStateProfileKey({
+    apiBase: runtime?.apiBase,
+    userId: decodeJwtSub(runtime?.jwt),
+  });
 }
 
 function slugify(value) {
@@ -192,8 +283,8 @@ function slugify(value) {
     .replace(/(^-|-$)+/g, '');
 }
 
-function buildDevInstallSlug(appName) {
-  const base = slugify(appName);
+function buildDevInstallSlug(appConfig) {
+  const base = slugify(appConfig?.devSlug || appConfig?.name);
   if (!base) {
     return '';
   }
@@ -224,61 +315,6 @@ function pickDefaultRouteSlug(manifest) {
   if (explicit) return explicit.slug;
   const firstWithSlug = routes.find((route) => route && typeof route.slug === 'string' && route.slug);
   return firstWithSlug ? firstWithSlug.slug : null;
-}
-
-const DESKTOP_DEEP_LINK_SCHEME_PATTERN = /^[a-z][a-z0-9-]*$/;
-
-export function resolveDevelopmentDesktopScheme(env = process.env, worktreeRuntime = null) {
-  // Mirror the desktop app's own scheme resolution (electron main + forge config):
-  // local dev launches register `notis-dev`, while installed prod/beta builds claim
-  // `notis`. Hardcoding `notis` here is what made `apps dev` open the installed
-  // prod/beta app instead of the local dev app.
-  const scheme = (
-    worktreeRuntime?.desktop_deep_link_scheme
-    || env.NOTIS_DESKTOP_DEEP_LINK_SCHEME
-    || ''
-  ).trim();
-  return DESKTOP_DEEP_LINK_SCHEME_PATTERN.test(scheme) ? scheme : 'notis';
-}
-
-export function resolveDevelopmentDesktopAppName(runtime = {}) {
-  const explicit = String(runtime.worktreeRuntime?.desktop_app_name || '').trim();
-  if (explicit) {
-    return explicit;
-  }
-  try {
-    return new URL(runtime.apiBase).hostname === 'api-beta.notis.ai'
-      ? 'Notis Beta'
-      : 'Notis';
-  } catch {
-    return 'Notis';
-  }
-}
-
-export function resolveDevelopmentDesktopBundleId(runtime = {}) {
-  return resolveDevelopmentDesktopAppName(runtime) === 'Notis Beta'
-    ? 'ai.notis.desktop.beta'
-    : 'ai.notis.desktop';
-}
-
-export function buildDevelopmentDesktopUrl(appHref = null, scheme = 'notis') {
-  const route = String(appHref || '/store').replace(/^\/+/, '');
-  const normalizedScheme = DESKTOP_DEEP_LINK_SCHEME_PATTERN.test(scheme) ? scheme : 'notis';
-  return `${normalizedScheme}://${route || 'store'}`;
-}
-
-export function buildMountedDevelopmentDesktopUrl(appHref, scheme, sessionId) {
-  const url = new URL(buildDevelopmentDesktopUrl(appHref, scheme));
-  url.searchParams.set('notis_dev_session', sessionId);
-  return url.toString();
-}
-
-export function shouldOpenDevelopmentTab(options = {}) {
-  // Commander stores the negatable `--no-open` flag as `options.open === false`;
-  // it never sets `options.noOpen`. Reading the non-existent `noOpen` key meant
-  // `--no-open` was silently ignored and `apps dev` always ran `open notis://…`,
-  // which macOS routes to the installed prod/beta desktop app.
-  return options.open !== false;
 }
 
 export function buildDevelopmentAppHref({
@@ -561,6 +597,7 @@ function buildManifestForDev(appConfig) {
     databases: appConfig.databases || [],
     capabilities: normalizeAppCapabilities(appConfig.capabilities),
     tools: appConfig.tools || [],
+    tool_bindings: normalizeAppToolBindings(appConfig.toolBindings),
     skills: (appConfig.skills || []).map((skill) => ({
       key: skill.key,
       path: normalizeAppSkillManifestPath(skill.path),
@@ -579,7 +616,7 @@ export function buildEnsureDevInstallArguments({
   useInstalledDatabases = false,
   approvedCapabilities = null,
 }) {
-  const devSlug = buildDevInstallSlug(appConfig.name);
+  const devSlug = buildDevInstallSlug(appConfig);
   const arguments_ = {
     dev_slug: devSlug,
     name: appConfig.name,
@@ -589,8 +626,12 @@ export function buildEnsureDevInstallArguments({
   if (linkedState?.dev_app_id) {
     arguments_.app_id = linkedState.dev_app_id;
   }
-  // Sent on every ensure call, including as `false`, so dropping `--live-data`
-  // puts the next session back on its own dev copies.
+  if (useInstalledDatabases && linkedState?.app_id) {
+    arguments_.installed_app_id = linkedState.app_id;
+  }
+  // Sent on every ensure call, including as `false`, so a `--scratch` session
+  // puts the app on its own dev copies and the next plain session puts it back
+  // on the installed app's databases.
   arguments_.use_installed_databases = Boolean(useInstalledDatabases);
   if (Array.isArray(approvedCapabilities) && approvedCapabilities.length > 0) {
     arguments_.approved_capabilities = approvedCapabilities;
@@ -614,15 +655,20 @@ export async function resolveCloudShellConsent({
   projectDir,
   grantCloudShell = false,
   logger = console,
+  profileKey = null,
 }) {
   const capabilities = normalizeAppCapabilities(appConfig.capabilities);
   if (capabilities.cloudComputer !== 'shell') {
     return null;
   }
   const approved = ['cloud_computer_read', 'cloud_computer_shell'];
-  const linkedState = readLinkedState(projectDir) || {};
+  const linkedState = readLinkedState(projectDir, profileKey) || {};
   const recordDecision = (decision) => {
-    writeLinkedState(projectDir, { ...linkedState, [CLOUD_SHELL_CONSENT_KEY]: decision });
+    writeLinkedState(
+      projectDir,
+      { ...linkedState, [CLOUD_SHELL_CONSENT_KEY]: decision },
+      profileKey,
+    );
   };
 
   if (grantCloudShell) {
@@ -675,21 +721,22 @@ export async function ensureDevInstall({
   if (!appConfig.name) {
     throw usageError(`notis.config.ts in ${projectDir} must define a non-empty name.`);
   }
-  const devSlug = buildDevInstallSlug(appConfig.name);
+  const devSlug = buildDevInstallSlug(appConfig);
   if (!devSlug) {
-    throw usageError(`notis.config.ts name in ${projectDir} must slugify to a non-empty value.`);
+    throw usageError(`notis.config.ts devSlug or name in ${projectDir} must slugify to a non-empty value.`);
   }
 
   const manifest = buildManifestForDev(appConfig);
   const skills = resolveConfiguredAppSkills(appConfig, projectDir);
-  let linkedState = readLinkedState(projectDir);
+  const profileKey = linkedStateProfileKey(ctx.runtime);
+  let linkedState = readLinkedState(projectDir, profileKey);
   let linkedApp = null;
   if (linkedState?.dev_app_id) {
     const devApp = await getAccessibleApp(ctx.runtime, linkedState.dev_app_id, runTool);
     if (!devApp || devApp.manifest?.is_dev !== true) {
       const { dev_app_id: _devAppId, dev_linked_at: _devLinkedAt, ...rest } = linkedState;
       linkedState = rest;
-      writeLinkedState(projectDir, linkedState);
+      writeLinkedState(projectDir, linkedState, profileKey);
     }
   }
   if (linkedState?.app_id) {
@@ -704,25 +751,98 @@ export async function ensureDevInstall({
           dev_linked_at: linkedState.dev_linked_at || linkedState.linked_at || new Date().toISOString(),
         } : {}),
       };
-      writeLinkedState(projectDir, linkedState);
+      writeLinkedState(projectDir, linkedState, profileKey);
       linkedApp = null;
     }
   }
+  // A checkout can be shared by Beta and a source-workspace desktop. Its
+  // installed app link is valid for the Beta account but intentionally
+  // inaccessible to the worktree's test user. Preserve that durable link for
+  // Beta, while omitting it from this run so the local dev app uses its own
+  // resources instead of sending an unauthorized installed_app_id to ensure.
+  if (!linkedState?.app_id) {
+    const installedResolution = await findInstalledLinkCandidatesForLegacyDevState(
+      ctx.runtime,
+      devSlug,
+      linkedState?.dev_app_id,
+      projectDir,
+      profileKey,
+      runTool,
+    );
+    const installedCandidates = installedResolution.candidates;
+    if (installedCandidates.length > 1) {
+      if (installedResolution.source === 'persisted-project-link') {
+        throw usageError(
+          `Multiple accessible installed apps are persisted for ${projectDir}. `
+          + `Run \`notis apps link <app-id> ${projectDir}\` to choose one for this environment.`,
+        );
+      }
+      throw usageError(
+        `Multiple accessible installed apps use the exact slug "${devSlug.slice(0, -4)}". `
+        + `Run \`notis apps link <app-id> ${projectDir}\` to choose one.`,
+      );
+    }
+    if (installedCandidates.length === 1) {
+      const now = new Date().toISOString();
+      linkedApp = installedCandidates[0];
+      linkedState = {
+        ...(linkedState || {}),
+        app_id: linkedApp.app_id || linkedApp.id,
+        linked_at: now,
+        auto_linked_at: now,
+      };
+      writeLinkedState(projectDir, linkedState, profileKey);
+    }
+  }
+  const runtimeLinkedState = linkedState?.app_id && !linkedApp
+    ? Object.fromEntries(
+        Object.entries(linkedState).filter(([key]) => ![
+          'app_id', 'linked_at', 'deployed_at', 'version',
+        ].includes(key)),
+      )
+    : linkedState;
   const ensureArguments = buildEnsureDevInstallArguments({
     appConfig,
     manifest,
-    linkedState,
+    linkedState: runtimeLinkedState,
     skills,
     useInstalledDatabases,
     approvedCapabilities,
   });
-  const ensureResult = await runTool({
-    runtime: ctx.runtime,
-    toolName: ENSURE_DEV_APP_INSTALLATION_TOOL,
-    arguments_: ensureArguments,
-    mutating: true,
-    idempotencyKey,
-  });
+  let ensureResult;
+  try {
+    ensureResult = await runTool({
+      runtime: ctx.runtime,
+      toolName: ENSURE_DEV_APP_INSTALLATION_TOOL,
+      arguments_: ensureArguments,
+      mutating: true,
+      idempotencyKey,
+    });
+  } catch (error) {
+    const backendCode = error?.details?.error?.code;
+    if (linkedState?.dev_app_id && backendCode === 'dev_app_slug_conflict') {
+      // The authenticated environment can outlive an older local API profile.
+      // If that profile remembered a different dev row while this user already
+      // owns the exact canonical dev slug, the backend refuses a duplicate.
+      // Retry without the stale row id so the backend deterministically adopts
+      // the unique slug owner; preserve the installed target and every grant.
+      const staleDevAppId = linkedState.dev_app_id;
+      const { dev_app_id: _devAppId, dev_linked_at: _devLinkedAt, ...rest } = linkedState;
+      linkedState = rest;
+      writeLinkedState(projectDir, linkedState, profileKey);
+      const retryArguments = { ...ensureArguments };
+      delete retryArguments.app_id;
+      ensureResult = await runTool({
+        runtime: ctx.runtime,
+        toolName: ENSURE_DEV_APP_INSTALLATION_TOOL,
+        arguments_: retryArguments,
+        mutating: true,
+        idempotencyKey: `${idempotencyKey}:adopt-slug-owner:${staleDevAppId}`,
+      });
+    } else {
+      throw error;
+    }
+  }
   const appId = ensureResult.payload.app_id;
   if (!appId) {
     throw usageError('Dev installation tool did not return an app_id.');
@@ -733,7 +853,7 @@ export async function ensureDevInstall({
       ...(linkedState || {}),
       dev_app_id: appId,
       dev_linked_at: linkedState?.dev_linked_at || now,
-    });
+    }, profileKey);
   }
   return {
     slug: ensureResult.payload.slug || devSlug,
@@ -743,8 +863,8 @@ export async function ensureDevInstall({
     projectDir,
     manifest,
     created: ensureResult.payload.created || false,
-    linkedAppId: linkedState?.app_id || null,
-    targetAppId: linkedState?.app_id || null,
+    linkedAppId: runtimeLinkedState?.app_id || null,
+    targetAppId: runtimeLinkedState?.app_id || null,
     targetAppSlug: linkedApp?.slug || null,
     databaseMaterialization: ensureResult.payload.database_materialization || { created: [], unresolved: [] },
     liveData: ensureResult.payload.live_data || null,
@@ -795,6 +915,63 @@ async function getAccessibleApp(runtime, appId, runTool = runToolCommand) {
   throw usageError(`Could not verify access to app ${appId}${message ? `: ${message}` : '.'}`);
 }
 
+async function findInstalledLinkCandidatesForLegacyDevState(
+  runtime,
+  devSlug,
+  devAppId,
+  projectDir,
+  profileKey,
+  runTool = runToolCommand,
+) {
+  const installedSlug = devSlug.endsWith('-dev') ? devSlug.slice(0, -4) : '';
+  if (!installedSlug) return { candidates: [], source: null };
+
+  const result = await runTool({
+    runtime,
+    toolName: LIST_APPS_TOOL,
+  });
+  const accessibleInstalledApps = (result.payload?.apps || []).filter((app) => (
+    (app?.app_id || app?.id)
+    && (app.app_id || app.id) !== devAppId
+    && app?.manifest?.is_dev !== true
+  ));
+
+  // A project-local app id is stronger evidence than a slug. Older CLI runs
+  // could persist that explicit link under another API/user profile before
+  // the machine-local discovery host mounted the same source here. Migrate it
+  // only when exactly one such id is accessible in the current environment;
+  // multiple accessible ids remain ambiguous and fail closed below.
+  const rawState = readLinkedState(projectDir) || {};
+  const persistedAppIds = new Set();
+  if (rawState.app_id) persistedAppIds.add(rawState.app_id);
+  const profiles = rawState.profiles && typeof rawState.profiles === 'object'
+    ? rawState.profiles
+    : {};
+  for (const [storedProfileKey, state] of Object.entries(profiles)) {
+    if (storedProfileKey === profileKey || !state || typeof state !== 'object') continue;
+    if (state.app_id) persistedAppIds.add(state.app_id);
+  }
+  const persistedCandidates = accessibleInstalledApps.filter((app) => (
+    persistedAppIds.has(app.app_id || app.id)
+  ));
+  if (persistedCandidates.length) {
+    return { candidates: persistedCandidates, source: 'persisted-project-link' };
+  }
+
+  // The database row slug can change when a Store app is installed or an old
+  // development app is promoted. The shipped source manifest keeps the
+  // canonical app slug, so accept either exact field. Display names are never
+  // considered.
+  const exactSlugCandidates = accessibleInstalledApps.filter((app) => {
+    const canonicalSlugs = new Set([
+      app?.slug,
+      app?.manifest?.app?.slug,
+    ].map(slugify).filter(Boolean));
+    return canonicalSlugs.has(installedSlug);
+  });
+  return { candidates: exactSlugCandidates, source: 'exact-slug' };
+}
+
 export async function assertDirectDeployAccess(runtime, appId, runTool = runToolCommand) {
   const app = await getAccessibleApp(runtime, appId, runTool);
   if (!app) {
@@ -802,6 +979,14 @@ export async function assertDirectDeployAccess(runtime, appId, runTool = runTool
   }
   if (app.apps_access?.has_access !== true) {
     throw usageError('Notis Apps require a PRO+ or ULTRA plan after your trial.');
+  }
+  if (app.can_edit !== true) {
+    throw usageError(`Direct deploy requires edit access to app ${appId}.`);
+  }
+  if (app.manifest?.is_dev === true) {
+    throw usageError(
+      'A development app cannot be deployed directly. Retry without --direct so first deploy can promote it safely.',
+    );
   }
   return app;
 }
@@ -839,10 +1024,12 @@ async function appsListHandler(ctx) {
 }
 
 async function appsInitHandler(ctx) {
-  const projectDir = resolveProjectDir(ctx.args.dir || ctx.args.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+  const projectDir = ctx.args.dir
+    ? resolveProjectDir(ctx.args.dir)
+    : defaultAppProjectDir(slugify(ctx.args.name));
   const fromSlug = ctx.options.from || null;
 
-  scaffoldProject({ projectDir, appName: ctx.args.name, fromSlug });
+  await scaffoldProject({ projectDir, appName: ctx.args.name, fromSlug });
 
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
@@ -858,14 +1045,20 @@ async function appsInitHandler(ctx) {
 }
 
 async function appsScaffoldsListHandler(ctx) {
-  const scaffolds = loadScaffoldCatalog();
+  const searchTerm = ctx.options.search || null;
+  const catalog = await loadScaffoldCatalog();
+  const scaffolds = filterScaffoldCatalog(catalog, searchTerm);
+  const registry = scaffoldRegistryLabel();
+  const emptyMessage = searchTerm
+    ? `No published scaffolds match "${searchTerm}" (${catalog.length} available; run without --search to see all).`
+    : `No published scaffolds found in ${registry}.`;
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
-    data: { scaffolds },
+    data: { scaffolds, registry, search: searchTerm },
     humanSummary: scaffolds.length
-      ? `Found ${scaffolds.length} bundled scaffolds`
-      : 'No bundled scaffolds found. Run the CLI build step to generate the scaffold catalog.',
-    renderHuman: () => (scaffolds.length ? scaffoldsTable(scaffolds) : 'No bundled scaffolds found.'),
+      ? `Found ${scaffolds.length} published scaffolds in ${registry}`
+      : emptyMessage,
+    renderHuman: () => (scaffolds.length ? scaffoldsTable(scaffolds) : emptyMessage),
   });
 }
 
@@ -895,7 +1088,7 @@ async function appsCreateHandler(ctx) {
     writeLinkedState(projectDir, {
       app_id: app.id,
       linked_at: new Date().toISOString(),
-    });
+    }, linkedStateProfileKey(ctx.runtime));
   }
 
   return ctx.output.emitSuccess({
@@ -918,7 +1111,94 @@ async function appsCreateHandler(ctx) {
 
 async function appsDevHandler(ctx) {
   const rootDir = resolveProjectDir(ctx.args.dir || '.');
-  const appDirs = discoverAppDirs(rootDir);
+  const skipRootRegistration = process.env.NOTIS_APPS_DEV_ALL_REGISTERED_ROOTS === '1';
+  let appDirs = discoverAppDevLaunchProjects(rootDir, { skipRootRegistration });
+  const discoveredAppDirs = [...appDirs];
+  const sessionsFilePath = getAppDevSessionsFile();
+  let sharedBundleBaseUrls = null;
+  const sharedBundlesRaw = process.env.NOTIS_APPS_DEV_SHARED_BUNDLE_URLS;
+  if (sharedBundlesRaw) {
+    let parsed;
+    try {
+      parsed = JSON.parse(sharedBundlesRaw);
+    } catch {
+      throw usageError('The shared app development bundle map is invalid.');
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw usageError('The shared app development bundle map must be an object.');
+    }
+    const sharedProjectDirs = Object.keys(parsed);
+    const discoveredProjects = new Set(appDirs);
+    for (const projectDir of sharedProjectDirs) {
+      if (!discoveredProjects.has(projectDir)) {
+        throw usageError(`The shared bundle map references an unregistered app: ${projectDir}.`);
+      }
+    }
+    appDirs = sharedProjectDirs;
+    sharedBundleBaseUrls = new Map();
+    for (const projectDir of appDirs) {
+      const value = parsed[projectDir];
+      let url;
+      try {
+        url = new URL(String(value || ''));
+      } catch {
+        throw usageError(`The shared bundle URL is missing or invalid for ${projectDir}.`);
+      }
+      if (
+        url.protocol !== 'http:'
+        || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname)
+      ) {
+        throw usageError(`The shared bundle URL must use loopback HTTP for ${projectDir}.`);
+      }
+      sharedBundleBaseUrls.set(projectDir, url.toString().replace(/\/$/, ''));
+    }
+  }
+
+  if (appDirs.length === 0) {
+    return ctx.output.emitSuccess({
+      command: ctx.spec.command_path.join(' '),
+      data: {
+        registered_root: skipRootRegistration ? null : rootDir,
+        apps: [],
+        watching_on_desktop_launch: true,
+      },
+      humanSummary: [
+        skipRootRegistration
+          ? 'No registered Notis apps are present yet.'
+          : `Registered app development root: ${rootDir}`,
+        'No Notis apps are present yet. A running Notis Desktop will discover and mount apps created here automatically.',
+      ].join('\n'),
+      hints: [
+        { command: 'notis apps roots list', reason: 'Show every persistent development root' },
+      ],
+      meta: { mutating: true },
+    });
+  }
+
+  if (!sharedBundleBaseUrls) {
+    sharedBundleBaseUrls = findSharedSourceBundleUrls(appDirs, sessionsFilePath);
+  }
+  let sourceHostLock = null;
+  if (
+    !sharedBundleBaseUrls
+    && process.env.NOTIS_APPS_DEV_HOST_LOCK_HELD !== '1'
+  ) {
+    sourceHostLock = tryAcquireAppDevHostLock({
+      identity: '__mac_user__',
+      apiBase: 'loopback-source',
+      projectDir: SHARED_APP_DEV_HOST_KEY,
+    });
+    if (!sourceHostLock) {
+      const startedAt = Date.now();
+      while (!sharedBundleBaseUrls && Date.now() - startedAt < 45_000) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+        sharedBundleBaseUrls = findSharedSourceBundleUrls(appDirs, sessionsFilePath);
+      }
+      if (!sharedBundleBaseUrls) {
+        throw usageError('The shared app development host is busy but did not become ready. Retry after checking ~/.notis/app-dev-host.log.');
+      }
+    }
+  }
 
   for (const projectDir of appDirs) {
     const problems = detectProjectProblems(projectDir);
@@ -927,9 +1207,19 @@ async function appsDevHandler(ctx) {
     }
   }
 
-  const port = ctx.options.port ? Number.parseInt(ctx.options.port, 10) : DEFAULT_DEV_PORT;
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw usageError('Port must be between 1 and 65535.');
+  let port = null;
+  if (sharedBundleBaseUrls) {
+    // The source host owns the only loopback listener and build watchers.
+  } else if (ctx.options.port) {
+    port = Number.parseInt(ctx.options.port, 10);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw usageError('Port must be between 1 and 65535.');
+    }
+  } else {
+    // Concurrent sessions must not fight over the default port: the desktop
+    // auto-starts every known project at launch, so only the first one can
+    // have 5173 and the rest fall back to an ephemeral port.
+    port = await getAvailablePortPreferring(DEFAULT_DEV_PORT);
   }
 
   const mode = getCliMode();
@@ -938,17 +1228,39 @@ async function appsDevHandler(ctx) {
     throw usageError('Could not determine the current user from the CLI credential. Run notis login and retry.');
   }
   const apiBase = String(ctx.runtime.apiBase || '').replace(/\/$/, '');
-  const sessionsFilePath = getAppDevSessionsFile(
-    ctx.runtime.worktreeRuntime?.app_dev_sessions_file,
-  );
-  const desktopScheme = resolveDevelopmentDesktopScheme(
-    process.env,
-    ctx.runtime.worktreeRuntime,
-  );
-  const desktopAppName = resolveDevelopmentDesktopAppName(ctx.runtime);
-  const desktopBundleId = resolveDevelopmentDesktopBundleId(ctx.runtime);
   const sessionId = randomUUID();
-  const useInstalledDatabases = Boolean(ctx.options?.liveData);
+  const profileKey = linkedStateProfileKey(ctx.runtime);
+  const consumerMode = process.env.NOTIS_APPS_DEV_CONSUMER_MODE;
+  const manualConsumerInstanceId = sharedBundleBaseUrls && !consumerMode
+    ? `cli.${process.pid}.${sessionId}`
+    : null;
+  let manualConsumerTimer = null;
+  if (manualConsumerInstanceId) {
+    const heartbeatManualConsumer = () => heartbeatAppDevConsumer({
+      instanceId: manualConsumerInstanceId,
+      userId: identity,
+      apiBase,
+      pid: process.pid,
+    });
+    heartbeatManualConsumer();
+    manualConsumerTimer = setInterval(() => {
+      try {
+        heartbeatManualConsumer();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[notis apps dev] consumer heartbeat failed: ${message}\n`);
+      }
+    }, DEV_CONSUMER_HEARTBEAT_INTERVAL_MS);
+  }
+  // One app, one dataset: a dev session runs the app from local source against
+  // the same databases the installed app uses, the way `npm run dev` serves the
+  // same database as the deployed site. `--scratch` is the marked case; the
+  // old `--live-data` flag now names the default and is kept as a no-op so
+  // muscle memory and scripts keep working.
+  if (ctx.options?.scratch && ctx.options?.liveData) {
+    throw usageError('--scratch and --live-data contradict each other; pass at most one.');
+  }
+  const useInstalledDatabases = !ctx.options?.scratch;
 
   const candidates = [];
   for (const projectDir of appDirs) {
@@ -956,120 +1268,58 @@ async function appsDevHandler(ctx) {
     if (!appConfig.name) {
       throw usageError(`notis.config.ts in ${projectDir} must define a non-empty name.`);
     }
-    const devSlug = buildDevInstallSlug(appConfig.name);
+    const devSlug = buildDevInstallSlug(appConfig);
     if (!devSlug) {
-      throw usageError(`notis.config.ts name in ${projectDir} must slugify to a non-empty value.`);
+      throw usageError(`notis.config.ts devSlug or name in ${projectDir} must slugify to a non-empty value.`);
     }
+    candidates.push({ appConfig, devSlug, projectDir });
+  }
+
+  const canonicalSelection = selectCanonicalDevApps(candidates, readAppDevRoots());
+  const canonicalCandidates = [];
+  for (const { appConfig, devSlug, projectDir } of canonicalSelection.selected) {
     // Sequential on purpose: the shell-consent prompt must never interleave
     // with another app's, and the ensure fan-out below runs in parallel.
     const approvedCapabilities = await resolveCloudShellConsent({
       appConfig,
       projectDir,
       grantCloudShell: Boolean(ctx.options?.grantCloudShell),
+      profileKey,
     });
-    candidates.push({ appConfig, devSlug, projectDir, approvedCapabilities });
-  }
-
-  const seenSlugs = new Map();
-  for (const app of candidates) {
-    if (seenSlugs.has(app.devSlug)) {
-      throw usageError(
-        `Multiple apps slugify to "${app.devSlug}" (${seenSlugs.get(app.devSlug).projectDir} and ${app.projectDir}). Rename one in notis.config.ts.`,
-      );
-    }
-    seenSlugs.set(app.devSlug, app);
-  }
-
-  const registrationStartedAt = process.hrtime.bigint();
-  const registered = await Promise.all(
-    candidates.map(async ({ appConfig, devSlug, projectDir, approvedCapabilities }) => {
-      const appStartedAt = process.hrtime.bigint();
-      try {
-        return await ensureDevInstall({
-          ctx,
-          appConfig,
-          projectDir,
-          idempotencyKey: nextDevInstallIdempotencyKey(ctx.globalOptions, devSlug),
-          useInstalledDatabases,
-          approvedCapabilities,
-        });
-      } finally {
-        logAppsTiming('ensure-dev-install', {
-          slug: devSlug,
-          ms: timingMs(appStartedAt).toFixed(1),
-        });
-      }
-    }),
-  );
-  logAppsTiming('ensure-dev-install:all', {
-    apps: registered.length,
-    ms: timingMs(registrationStartedAt).toFixed(1),
-  });
-
-  const apps = registered.map((app) => {
-    const bundleBaseUrl = `http://127.0.0.1:${port}/a/${app.devSlug}`;
-    return {
-      ...app,
-      bundleBaseUrl,
+    canonicalCandidates.push({
+      appConfig,
+      devSlug,
+      projectDir,
+      approvedCapabilities,
       mountNonce: randomUUID(),
-      appHref: buildDevelopmentAppHref({
-        appSlug: app.slug,
-        appId: app.appId,
-        devSlug: app.devSlug,
-        targetAppId: app.targetAppId,
-        targetAppSlug: app.targetAppSlug,
-        manifest: app.manifest,
-      }),
-    };
-  });
-  const developmentTabUrl = buildDevelopmentDesktopUrl(
-    apps[0]?.appHref,
-    desktopScheme,
-  );
-  const desktopWakeUrl = buildDevelopmentDesktopUrl('/manage', desktopScheme);
-  const mountedDevelopmentTabUrl = buildMountedDevelopmentDesktopUrl(
-    apps[0]?.appHref,
-    desktopScheme,
-    sessionId,
-  );
-  const warnings = [...databaseMaterializationWarnings(apps), ...liveDataWarnings(apps)];
-
-  const devServer = await startAppDevServer({
-    apps: apps.map((app) => ({
-      slug: app.devSlug,
-      projectDir: app.projectDir,
-      appId: app.appId,
-      targetAppId: app.targetAppId || null,
-      userId: identity,
-    })),
-    port,
-    sessionsFilePath,
-  });
-
-  try {
-    const now = new Date().toISOString();
-    upsertAppDevSessions(apps.map((app) => ({
-      sessionId,
-      userId: identity,
-      apiBase,
-      appId: app.appId,
-      targetAppId: app.targetAppId || undefined,
-      mountNonce: app.mountNonce,
-      devSlug: app.devSlug,
-      bundleBaseUrl: app.bundleBaseUrl,
-      projectDir: app.projectDir,
-      startedAt: now,
-      lastHeartbeatAt: now,
-      desktopAppName,
-    })), sessionsFilePath);
-  } catch (error) {
-    try {
-      await devServer.close();
-    } catch {
-      // ignore cleanup failure on registry errors
-    }
-    throw error;
+    });
   }
+
+  // Start every build watcher before the backend registrations finish. A
+  // machine with several apps must not show an empty sidebar for minutes while
+  // unrelated registrations run sequentially. Each successful registration is
+  // published below as soon as its own last-known bundle is ready.
+  const devServer = sharedBundleBaseUrls
+    ? {
+        close: async () => {},
+        isBundleReady: () => true,
+        updateApp: () => {},
+        waitForBundle: async () => {},
+      }
+    : await startAppDevServer({
+        apps: canonicalCandidates.map((app) => ({
+          slug: app.devSlug,
+          projectDir: app.projectDir,
+          appId: null,
+          targetAppId: null,
+          userId: identity,
+          profileKey,
+          sessionId,
+          mountNonce: app.mountNonce,
+        })),
+        port,
+        sessionsFilePath,
+      });
 
   let heartbeatTimer = setInterval(() => {
     try {
@@ -1080,23 +1330,144 @@ async function appsDevHandler(ctx) {
     }
   }, DEV_HEARTBEAT_INTERVAL_MS);
 
-  const expectedMountAcknowledgements = apps.map((app) => ({
-    sessionId,
-    appId: app.appId,
-    devSlug: app.devSlug,
-    mountNonce: app.mountNonce,
-  }));
+  const registrationStartedAt = process.hrtime.bigint();
+  const apps = [];
+  const registrationWarnings = [];
+  let firstRegistrationError = null;
+  // The local development backend is deliberately a single worker. Register
+  // apps sequentially so a large root cannot queue many long mutations behind
+  // one another. Unlike the old all-or-nothing startup, publish each healthy
+  // app immediately while later registrations continue in the background.
+  for (const {
+    appConfig,
+    devSlug,
+    projectDir,
+    approvedCapabilities,
+    mountNonce,
+  } of canonicalCandidates) {
+    const appStartedAt = process.hrtime.bigint();
+    try {
+      const registeredApp = await ensureDevInstall({
+        ctx,
+        appConfig,
+        projectDir,
+        idempotencyKey: nextDevInstallIdempotencyKey(ctx.globalOptions, devSlug),
+        useInstalledDatabases,
+        approvedCapabilities,
+      });
+      const bundleBaseUrl = sharedBundleBaseUrls?.get(registeredApp.projectDir)
+        || `http://127.0.0.1:${port}/a/${registeredApp.devSlug}`;
+      const app = {
+        ...registeredApp,
+        bundleBaseUrl,
+        mountNonce,
+        appHref: buildDevelopmentAppHref({
+          appSlug: registeredApp.slug,
+          appId: registeredApp.appId,
+          devSlug: registeredApp.devSlug,
+          targetAppId: registeredApp.targetAppId,
+          targetAppSlug: registeredApp.targetAppSlug,
+          manifest: registeredApp.manifest,
+        }),
+      };
+      devServer.updateApp(app.devSlug, {
+        appId: app.appId,
+        targetAppId: app.targetAppId || null,
+      });
+      const now = new Date().toISOString();
+      const sessionRecord = {
+        sessionId,
+        hostPid: process.pid,
+        sourceHost: !sharedBundleBaseUrls,
+        bundleReady: devServer.isBundleReady(app.devSlug),
+        ...(!sharedBundleBaseUrls ? {
+          discoveredProjects: discoveredAppDirs,
+          canonicalProjects: canonicalCandidates.map((candidate) => candidate.projectDir),
+        } : {}),
+        userId: identity,
+        apiBase,
+        profileKey,
+        appId: app.appId,
+        targetAppId: app.targetAppId || undefined,
+        mountNonce: app.mountNonce,
+        devSlug: app.devSlug,
+        bundleBaseUrl: app.bundleBaseUrl,
+        projectDir: app.projectDir,
+        startedAt: now,
+        lastHeartbeatAt: now,
+      };
+      upsertAppDevSessions(sessionRecord, sessionsFilePath);
+      apps.push(app);
+      if (!sessionRecord.bundleReady) {
+        void devServer.waitForBundle(app.devSlug).then(() => {
+          upsertAppDevSessions({
+            ...sessionRecord,
+            bundleReady: true,
+            lastHeartbeatAt: new Date().toISOString(),
+          }, sessionsFilePath);
+        }).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`[notis apps dev] ${app.devSlug}: initial bundle failed: ${message}\n`);
+        });
+      }
+    } catch (error) {
+      firstRegistrationError ||= error;
+      const message = error instanceof Error ? error.message : String(error);
+      registrationWarnings.push(
+        `${projectDir} could not be mounted: ${message}. It will be retried when the shared host reconciles again.`,
+      );
+      process.stderr.write(`[notis apps dev] ${devSlug}: registration failed: ${message}\n`);
+    } finally {
+      logAppsTiming('ensure-dev-install', {
+        slug: devSlug,
+        ms: timingMs(appStartedAt).toFixed(1),
+      });
+    }
+  }
+  if (apps.length === 0) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+    try {
+      await devServer.close();
+    } catch {
+      // preserve the original registration error
+    }
+    if (sourceHostLock) {
+      releaseAppDevHostLock(sourceHostLock);
+      sourceHostLock = null;
+    }
+    if (manualConsumerTimer) clearInterval(manualConsumerTimer);
+    if (manualConsumerInstanceId) {
+      try {
+        removeAppDevConsumer(manualConsumerInstanceId);
+      } catch {
+        // Preserve the registration error; a failed lease cleanup expires.
+      }
+    }
+    throw firstRegistrationError || usageError('No unambiguous development apps could be mounted.');
+  }
+  logAppsTiming('ensure-dev-install:all', {
+    apps: apps.length,
+    ms: timingMs(registrationStartedAt).toFixed(1),
+  });
+
+  const warnings = [
+    ...canonicalSelection.warnings,
+    ...registrationWarnings,
+    ...databaseMaterializationWarnings(apps),
+    ...liveDataWarnings(apps),
+  ];
+
+  let consumerTimer = null;
 
   ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
     data: {
       mode,
       api_base: apiBase,
-      development_url: developmentTabUrl,
       session_id: sessionId,
       mount_status: 'serving',
-      render_status: 'waiting_for_route',
-      desktop_target: desktopAppName,
+      source_host: !sharedBundleBaseUrls,
       identity,
       apps: apps.map((app) => ({
         slug: app.devSlug,
@@ -1115,74 +1486,20 @@ async function appsDevHandler(ctx) {
     warnings,
     humanSummary: [
       `Running apps dev against ${apiBase} as ${identity} (mode: ${mode})`,
-      `Target desktop: ${desktopAppName}`,
+      ...(!skipRootRegistration ? [`Registered development root: ${rootDir}`] : []),
+      `Watching ${readAppDevRoots().roots.length} persistent development root(s).`,
       ...(useInstalledDatabases
         ? [`Databases: ${apps.filter((app) => app.liveData?.enabled).length}/${apps.length} app(s) reading the installed app's live rows`]
         : []),
       '',
-      `Open in desktop: ${developmentTabUrl}`,
-      '',
       ...apps.map((app) => `  ${app.name.padEnd(24)} ${app.bundleBaseUrl} -> ${app.appHref}`),
       '',
-      `Serving locally; waiting for ${desktopAppName} to mount ${apps.length === 1 ? 'the app' : `${apps.length} apps`}.`,
+      sharedBundleBaseUrls
+        ? `Mounted ${apps.length} shared source app${apps.length === 1 ? '' : 's'} for this authenticated environment.`
+        : `Serving one shared loopback host for ${apps.length} app${apps.length === 1 ? '' : 's'}.`,
       '',
       'Press Ctrl-C to stop.',
     ].join('\n'),
-  });
-
-  if (shouldOpenDevelopmentTab(ctx.options)) {
-    openInBrowser(desktopWakeUrl, {
-      appName: desktopAppName,
-      bundleId: desktopBundleId,
-      scheme: desktopScheme,
-    });
-  }
-
-  void (async () => {
-    let result = await waitForAppDevSessionMountAcknowledgements(expectedMountAcknowledgements, {
-      sessionsFilePath,
-    });
-    if (!result.mounted) {
-      process.stderr.write(
-        `[notis apps dev] Serving locally, but ${desktopAppName} has not acknowledged ${result.missing.length === 1 ? 'the app' : `${result.missing.length} apps`} in its Local development sidebar yet. Keep this command running and open ${desktopAppName}.\n`,
-      );
-    }
-    while (!result.mounted) {
-      result = await waitForAppDevSessionMountAcknowledgements(expectedMountAcknowledgements, {
-        sessionsFilePath,
-        timeoutMs: 60_000,
-        pollIntervalMs: 250,
-      });
-    }
-    process.stderr.write(
-      `[notis apps dev] Mounted in ${desktopAppName}: ${apps.map((app) => app.name).join(', ')}.\n`,
-    );
-    if (shouldOpenDevelopmentTab(ctx.options)) {
-      openInBrowser(mountedDevelopmentTabUrl, {
-        appName: desktopAppName,
-        bundleId: desktopBundleId,
-        scheme: desktopScheme,
-      });
-    }
-
-    const firstAppRender = expectedMountAcknowledgements.slice(0, 1);
-    let renderResult = await waitForAppDevSessionRenderAcknowledgements(firstAppRender, {
-      sessionsFilePath,
-      timeoutMs: 0,
-    });
-    while (!renderResult.mounted) {
-      renderResult = await waitForAppDevSessionRenderAcknowledgements(firstAppRender, {
-        sessionsFilePath,
-        timeoutMs: 60_000,
-        pollIntervalMs: 250,
-      });
-    }
-    process.stderr.write(
-      `[notis apps dev] Rendered in ${desktopAppName}: ${apps[0].name}.\n`,
-    );
-  })().catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`[notis apps dev] mount acknowledgement check failed: ${message}\n`);
   });
 
   let shuttingDown = false;
@@ -1194,6 +1511,21 @@ async function appsDevHandler(ctx) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
+    if (consumerTimer) {
+      clearInterval(consumerTimer);
+      consumerTimer = null;
+    }
+    if (manualConsumerTimer) {
+      clearInterval(manualConsumerTimer);
+      manualConsumerTimer = null;
+    }
+    if (manualConsumerInstanceId) {
+      try {
+        removeAppDevConsumer(manualConsumerInstanceId);
+      } catch {
+        // A crashed CLI lease expires automatically after the heartbeat window.
+      }
+    }
     try {
       removeAppDevSession(sessionId, sessionsFilePath);
     } catch {
@@ -1203,6 +1535,10 @@ async function appsDevHandler(ctx) {
       await devServer.close();
     } catch {
       // ignore cleanup failures during shutdown
+    }
+    if (sourceHostLock) {
+      releaseAppDevHostLock(sourceHostLock);
+      sourceHostLock = null;
     }
     process.exit(EXIT_CODES.ok);
   };
@@ -1214,9 +1550,51 @@ async function appsDevHandler(ctx) {
     void shutdown('SIGTERM');
   });
 
+  if (consumerMode === 'machine' || consumerMode === 'environment') {
+    consumerTimer = setInterval(() => {
+      if (!hasAppDevConsumer(readAppDevConsumers(), {
+        mode: consumerMode,
+        userId: identity,
+        apiBase,
+      })) {
+        void shutdown('last consumer detached');
+      }
+    }, DEV_CONSUMER_POLL_INTERVAL_MS);
+  }
+
   await new Promise(() => {});
 
   return EXIT_CODES.ok;
+}
+
+async function appsRootsListHandler(ctx) {
+  const registry = readAppDevRoots();
+  return ctx.output.emitSuccess({
+    command: ctx.spec.command_path.join(' '),
+    data: { roots: registry.roots },
+    humanSummary: appDevRootsTable(registry.roots),
+    meta: { mutating: false },
+  });
+}
+
+async function appsRootsRemoveHandler(ctx) {
+  const rootDir = resolve(ctx.args.dir);
+  const result = removeAppDevRoot(rootDir);
+  return ctx.output.emitSuccess({
+    command: ctx.spec.command_path.join(' '),
+    data: {
+      removed: result.removed,
+      root: result.path,
+      roots: result.registry.roots,
+    },
+    humanSummary: result.removed
+      ? `Removed app development root: ${result.path}`
+      : `App development root was not registered: ${result.path}`,
+    hints: result.removed
+      ? []
+      : [{ command: 'notis apps roots list', reason: 'Show registered roots' }],
+    meta: { mutating: result.removed },
+  });
 }
 
 async function appsBuildHandler(ctx) {
@@ -1260,7 +1638,7 @@ async function appsVerifyHandler(ctx) {
     if (!ctx.runtime.jwt) {
       throw usageError('Live verify mode requires CLI auth. Run notis login and retry.');
     }
-    linkedState = readLinkedState(projectDir);
+    linkedState = readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime));
     if (!linkedState?.app_id) {
       throw usageError('Live verify mode requires a linked app. Run `notis apps link <app-id> .` first.');
     }
@@ -1493,7 +1871,7 @@ async function appsScreenshotHandler(ctx) {
     if (!ctx.runtime.jwt) {
       throw usageError('Live mode requires CLI auth. Run notis login and retry.');
     }
-    linkedState = readLinkedState(projectDir);
+    linkedState = readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime));
     if (!linkedState?.app_id) {
       throw usageError('Live mode requires a linked app. Run `notis apps link <app-id> .` first.');
     }
@@ -1692,10 +2070,15 @@ async function appsScreenshotHandler(ctx) {
   }
 }
 
-export function buildLinkedAppState(existingState, appId, linkedAt = new Date().toISOString()) {
+export function buildLinkedAppState(
+  existingState,
+  appId,
+  linkedAt = new Date().toISOString(),
+) {
+  const sameIdPromotion = existingState?.dev_app_id === appId;
   return {
-    ...(existingState?.dev_app_id ? { dev_app_id: existingState.dev_app_id } : {}),
-    ...(existingState?.dev_linked_at ? { dev_linked_at: existingState.dev_linked_at } : {}),
+    ...(!sameIdPromotion && existingState?.dev_app_id ? { dev_app_id: existingState.dev_app_id } : {}),
+    ...(!sameIdPromotion && existingState?.dev_linked_at ? { dev_linked_at: existingState.dev_linked_at } : {}),
     app_id: appId,
     linked_at: linkedAt,
   };
@@ -1709,7 +2092,12 @@ async function appsLinkHandler(ctx) {
 
   writeLinkedState(
     projectDir,
-    buildLinkedAppState(readLinkedState(projectDir), appId),
+    buildLinkedAppState(
+      readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime)),
+      appId,
+      new Date().toISOString(),
+    ),
+    linkedStateProfileKey(ctx.runtime),
   );
 
   return ctx.output.emitSuccess({
@@ -1736,9 +2124,11 @@ async function appsPullHandler(ctx) {
     throw usageError('Pulling app source requires a current OAuth grant. Run `notis login` and retry.');
   }
   const app = result.payload?.app || {};
-  const defaultDir = app.slug || slugify(app.name) || appId;
-  const targetDir = resolveProjectDir(ctx.args.dir || defaultDir);
-  const version = ctx.options.version || 'latest';
+  const defaultDir = slugify(app.slug) || slugify(app.name) || slugify(appId);
+  const targetDir = ctx.args.dir
+    ? resolveProjectDir(ctx.args.dir)
+    : defaultAppProjectDir(defaultDir);
+  const version = ctx.options.sourceVersion || 'latest';
 
   const pulled = await pullAppSource({
     apiBase: ctx.runtime.apiBase,
@@ -1747,6 +2137,7 @@ async function appsPullHandler(ctx) {
     targetDir,
     version,
     force: Boolean(ctx.options.force),
+    profileKey: linkedStateProfileKey(ctx.runtime),
   });
 
   const versionLabel = pulled.version === 'latest' ? 'latest version' : `v${pulled.version}`;
@@ -1761,7 +2152,7 @@ async function appsPullHandler(ctx) {
   });
 }
 
-function updateLinkedDeployState(projectDir, linkedState, appId, version) {
+function updateLinkedDeployState(projectDir, linkedState, appId, version, profileKey = null) {
   if (!linkedState || linkedState.app_id !== appId || !Number.isFinite(version)) {
     return;
   }
@@ -1771,14 +2162,29 @@ function updateLinkedDeployState(projectDir, linkedState, appId, version) {
     version,
     linked_at: linkedState.linked_at || new Date().toISOString(),
     deployed_at: new Date().toISOString(),
-  });
+  }, profileKey);
+}
+
+// Resolve first deploy without mutating. Promotion is part of the final
+// SAVE_APP_FILES update, after build and uploads succeed, so a failed deploy
+// cannot leave an empty installed app behind.
+function resolveDeployTarget(ctx, projectDir) {
+  if (ctx.options.appId) return { appId: ctx.options.appId, needsPromotion: false };
+  const profileKey = linkedStateProfileKey(ctx.runtime);
+  const state = readLinkedState(projectDir, profileKey);
+  if (state?.app_id) return { appId: state.app_id, needsPromotion: false };
+  if (!state?.dev_app_id) {
+    return { appId: requireLinkedAppId(projectDir, ctx.options.appId, profileKey), needsPromotion: false };
+  }
+  return { appId: state.dev_app_id, needsPromotion: true };
 }
 
 async function appsDeployHandler(ctx) {
   const projectDir = resolveProjectDir(ctx.args.dir || '.');
-  const appId = requireLinkedAppId(projectDir, ctx.options.appId);
+  const profileKey = linkedStateProfileKey(ctx.runtime);
+  const { appId, needsPromotion } = resolveDeployTarget(ctx, projectDir);
   const idempotencyKey = nextIdempotencyKey(ctx.globalOptions);
-  const linkedState = readLinkedState(projectDir);
+  const linkedState = readLinkedState(projectDir, profileKey);
   const baseVersion = linkedState?.app_id === appId && Number.isFinite(linkedState?.version)
     ? linkedState.version
     : undefined;
@@ -1792,9 +2198,12 @@ async function appsDeployHandler(ctx) {
 
   // Direct deploy mode: upload to Supabase storage directly
   if (ctx.options.direct) {
+    if (needsPromotion) {
+      throw usageError('The first deploy must use the backend so promotion and save are atomic. Retry without --direct.');
+    }
     await assertDirectDeployAccess(ctx.runtime, appId);
     const { version } = await directDeploy(projectDir, appId);
-    updateLinkedDeployState(projectDir, linkedState, appId, version);
+    updateLinkedDeployState(projectDir, linkedState, appId, version, profileKey);
     return ctx.output.emitSuccess({
       command: ctx.spec.command_path.join(' '),
       data: { app_id: appId, version, mode: 'direct' },
@@ -1827,6 +2236,7 @@ async function appsDeployHandler(ctx) {
         manifest,
         ...appRowFieldsFromManifest(manifest),
         ...(baseVersion !== undefined ? { base_version: baseVersion } : {}),
+        ...(needsPromotion ? { promote_dev_app: true } : {}),
       },
       mutating: true,
       idempotencyKey,
@@ -1868,7 +2278,35 @@ async function appsDeployHandler(ctx) {
     });
   }
 
-  updateLinkedDeployState(projectDir, linkedState, appId, deployedVersion);
+  if (needsPromotion) {
+    const now = new Date().toISOString();
+    writeLinkedState(projectDir, {
+      ...linkedState,
+      app_id: appId,
+      linked_at: linkedState?.linked_at || now,
+      version: deployedVersion,
+      deployed_at: now,
+      dev_app_id: undefined,
+      dev_linked_at: undefined,
+    }, profileKey);
+    try {
+      linkAppDevSessionTarget(
+        { appId, targetAppId: appId },
+        getAppDevSessionsFile(),
+      );
+    } catch (error) {
+      ctx.output.emitProgress({
+        phase: 'warning',
+        message: `Deploy succeeded, but the local development session could not be retargeted: ${error.message}`,
+      });
+    }
+    ctx.output.emitProgress({
+      phase: 'promote',
+      message: `Promoted development app to installed app ${appId}`,
+    });
+  } else {
+    updateLinkedDeployState(projectDir, linkedState, appId, deployedVersion, profileKey);
+  }
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
     data: {
@@ -1891,7 +2329,7 @@ async function appsDuplicateHandler(ctx) {
   const projectDir = resolveProjectDir(ctx.args.dir || '.');
   // Either target an app explicitly, or duplicate whatever this project is
   // linked to, so `notis apps duplicate` works from inside a project.
-  const appId = requireLinkedAppId(projectDir, ctx.options.appId);
+  const appId = requireLinkedAppId(projectDir, ctx.options.appId, linkedStateProfileKey(ctx.runtime));
   const idempotencyKey = nextIdempotencyKey(ctx.globalOptions);
 
   const copyDocuments = ctx.options.copyDocuments || 'declared';
@@ -1957,8 +2395,8 @@ async function appsPublishHandler(ctx) {
   }
 
   const projectDir = resolveProjectDir(ctx.args.dir || '.');
-  const appId = requireLinkedAppId(projectDir, ctx.options.appId);
-  const linkedState = readLinkedState(projectDir);
+  const appId = requireLinkedAppId(projectDir, ctx.options.appId, linkedStateProfileKey(ctx.runtime));
+  const linkedState = readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime));
   const appConfig = await loadAppConfig(projectDir);
   const readiness = inspectListingReadiness(projectDir, appConfig);
   if (!readiness.ready) {
@@ -2051,7 +2489,7 @@ async function appsDoctorHandler(ctx) {
     }
   }
 
-  const linkedState = readLinkedState(projectDir);
+  const linkedState = readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime));
   const status = problems.length ? 'unhealthy' : warnings.length ? 'warnings' : 'healthy';
 
   return ctx.output.emitSuccess({
@@ -2094,21 +2532,21 @@ export const appsCommandSpecs = [
   {
     command_path: ['apps', 'init'],
     summary: 'Scaffold a new Notis app project.',
-    when_to_use: 'Start a new Notis app. Use --from with a bundled scaffold when one is close to the desired app; otherwise creates the bare Vite + React project.',
+    when_to_use: 'Start a new Notis app. Use --from with a published Store app when one is close to the desired app; otherwise creates the bare Vite + React project.',
     args_schema: {
       arguments: [
         { token: '<name>', description: 'Display name for the app.' },
-        { token: '[dir]', key: 'dir', description: 'Target directory (defaults to kebab-case of name).' },
+        { token: '[dir]', key: 'dir', description: 'Target directory, resolved from the current directory. Defaults to ~/.notis/apps/<slug>; pass a path to place the project elsewhere, such as a tracked git repo or an existing monorepo.' },
       ],
       options: [
-        { flags: '--from <slug>', description: 'Start from a bundled scaffold listed by `notis apps scaffolds list`.' },
+        { flags: '--from <slug>', description: 'Start from a published Store app listed by `notis apps scaffolds list`. Downloads its source from the public app registry.' },
       ],
     },
     examples: [
       'notis apps scaffolds list',
       'notis apps init "Mind the Flo"',
-      'notis apps init "My CRM" --from notis-database',
-      'notis apps init "My App" ./my-app',
+      'notis apps init "My CRM" --from databases',
+      'notis apps init "My App" ~/code/my-app',
     ],
     mutates: true,
     idempotent: false,
@@ -2118,10 +2556,19 @@ export const appsCommandSpecs = [
   },
   {
     command_path: ['apps', 'scaffolds', 'list'],
-    summary: 'List bundled Notis app scaffolds.',
-    when_to_use: 'Discover the fixed scaffold catalog shipped with the CLI before starting a new app.',
-    args_schema: { arguments: [], options: [] },
-    examples: ['notis apps scaffolds list', 'notis apps init "My App" --from notis-database'],
+    summary: 'List published Store apps available as scaffolds.',
+    when_to_use: 'Discover published Store apps to start from before creating a new app. Every app published to the public Store is automatically a scaffold; use --search to narrow the catalog.',
+    args_schema: {
+      arguments: [],
+      options: [
+        { flags: '--search <term>', description: 'Filter scaffolds by name, tagline, description, or category.' },
+      ],
+    },
+    examples: [
+      'notis apps scaffolds list',
+      'notis apps scaffolds list --search journal',
+      'notis apps init "My App" --from databases',
+    ],
     mutates: false,
     idempotent: true,
     require_auth: false,
@@ -2150,21 +2597,26 @@ export const appsCommandSpecs = [
   },
   {
     command_path: ['apps', 'dev'],
-    summary: 'Develop Notis apps inside the Electron desktop Portal with automatic local bundle reloads.',
+    summary: 'Register a development root and connect its apps to the shared local development host.',
     when_to_use:
-      'Run this inside a single app or a monorepo root with apps/<name>/notis.config.ts. It discovers every app, starts the local bundle server, registers desktop-local dev sessions, and opens the Electron Portal to the local development app.',
+      'Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance.',
     args_schema: {
       arguments: [
         { token: '[dir]', key: 'dir', description: 'Project directory or monorepo root (default: current dir).' },
       ],
       options: [
         { flags: '--port <number>', description: `Local bundle server port (default: ${DEFAULT_DEV_PORT}).` },
-        { flags: '--no-open', description: 'Do not auto-open the desktop Portal local development app.' },
+        {
+          flags: '--scratch',
+          description:
+            'Use isolated empty databases, bundled skills, and bundled automations for this session '
+            + "instead of the installed app's resources. For fixture work and destructive experiments.",
+        },
         {
           flags: '--live-data',
           description:
-            "Read and write the installed app's real databases instead of empty dev copies. "
-            + 'Applies to this session only; warns and falls back when the app is not installed yet.',
+            'Deprecated: using the installed app\'s real resources is now the default. '
+            + 'Accepted as a no-op; use `--scratch` for the old isolated behavior.',
         },
         {
           flags: '--grant-cloud-shell',
@@ -2178,13 +2630,42 @@ export const appsCommandSpecs = [
       'notis apps dev',
       'notis apps dev ./my-app',
       'notis apps dev ./workspace --port 5200',
-      'notis apps dev --live-data  # iterate on a view over the installed app\'s real rows',
+      'notis apps dev --scratch  # isolated resources for fixture or schema experiments',
     ],
     mutates: true,
     idempotent: true,
     require_auth: true,
     backend_call: { type: 'tool', name: ENSURE_DEV_APP_INSTALLATION_TOOL },
     handler: appsDevHandler,
+  },
+  {
+    command_path: ['apps', 'roots', 'list'],
+    summary: 'List persistent machine-local Notis app development roots.',
+    when_to_use: 'See which folders every local Notis Desktop instance watches for development apps.',
+    args_schema: { arguments: [], options: [] },
+    examples: ['notis apps roots list'],
+    mutates: false,
+    idempotent: true,
+    require_auth: false,
+    backend_call: { type: 'local', name: 'list_app_development_roots' },
+    handler: appsRootsListHandler,
+  },
+  {
+    command_path: ['apps', 'roots', 'remove'],
+    summary: 'Stop watching a registered Notis app development root.',
+    when_to_use: 'Remove a persistent development root. The built-in ~/.notis/apps root cannot be removed.',
+    args_schema: {
+      arguments: [
+        { token: '<folder>', key: 'dir', description: 'Previously registered development root.' },
+      ],
+      options: [],
+    },
+    examples: ['notis apps roots remove ./old-apps'],
+    mutates: true,
+    idempotent: true,
+    require_auth: false,
+    backend_call: { type: 'local', name: 'remove_app_development_root' },
+    handler: appsRootsRemoveHandler,
   },
   {
     command_path: ['apps', 'build'],
@@ -2298,14 +2779,17 @@ export const appsCommandSpecs = [
     args_schema: {
       arguments: [
         { token: '<app-id>', description: 'Remote app ID to pull.' },
-        { token: '[dir]', key: 'dir', description: 'Target directory (defaults to the app slug).' },
+        { token: '[dir]', key: 'dir', description: 'Target directory (defaults to ~/.notis/apps/<app-slug>).' },
       ],
       options: [
         { flags: '--force', description: 'Overwrite a non-empty target directory.' },
-        { flags: '--version <n>', description: 'Pull a specific app source version (default: latest).' },
+        { flags: '--source-version <n>', description: 'Pull a specific app source version (default: latest).' },
       ],
     },
-    examples: ['notis apps pull abc123', 'notis apps pull abc123 ./my-app --force'],
+    examples: [
+      'notis apps pull abc123',
+      'notis apps pull abc123 ./my-app --force --source-version 3',
+    ],
     mutates: true,
     idempotent: true,
     require_auth: true,
@@ -2316,7 +2800,7 @@ export const appsCommandSpecs = [
     command_path: ['apps', 'deploy'],
     summary: 'Build and upload the app to the linked Notis app.',
     when_to_use:
-      'Ship the installed app to production for the linked user/team app. Requires a linked app (notis apps link). This command does not publish to the app store.',
+      'Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. This command does not publish to the app store.',
     args_schema: {
       arguments: [
         { token: '[dir]', key: 'dir', description: 'Project directory (default: current dir).' },
@@ -2324,7 +2808,7 @@ export const appsCommandSpecs = [
       options: [
         { flags: '--app-id <id>', description: 'Override linked app ID.' },
         { flags: '--skip-build', description: 'Skip the build step (use existing .notis/output/).' },
-        { flags: '--direct', description: 'Upload directly to Supabase storage, bypassing the backend server. Auto-fallback on network errors.' },
+        { flags: '--direct', description: 'Explicitly upload to Supabase storage, bypassing the backend server.' },
       ],
     },
     examples: ['notis apps deploy', 'notis apps deploy --skip-build', 'notis apps deploy --app-id abc123', 'notis apps deploy --direct'],

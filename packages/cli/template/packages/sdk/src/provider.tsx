@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, type Context, type ReactNode } from 'react';
 import type { NotisRuntime } from './runtime';
+import { ShortcutProvider } from './interactions/shortcuts';
 
 const NOTIS_CONTEXT_SYMBOL = Symbol.for('notis.sdk.runtime_context');
 
@@ -29,7 +30,7 @@ export function NotisProvider({ children, runtime }: { children: ReactNode; runt
   }
   return (
     <NotisContext.Provider value={runtime}>
-      {children}
+      <ShortcutProvider>{children}</ShortcutProvider>
     </NotisContext.Provider>
   );
 }

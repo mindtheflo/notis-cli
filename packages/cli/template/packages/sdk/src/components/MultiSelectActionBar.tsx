@@ -1,25 +1,16 @@
 'use client';
 
-import {
-  useEffect,
+import React, {
   useMemo,
-  useRef,
   useState,
   type CSSProperties,
   type ReactElement,
-  type ReactNode,
 } from 'react';
+import type { ResolvedCollectionAction } from '../interactions/actions';
+import { shortcutDisplay, useShortcuts, type ShortcutDefinition } from '../interactions/shortcuts';
+import type { ShortcutScope } from '../interactions/shortcuts';
 
-export interface MultiSelectAction {
-  id: string;
-  label: string;
-  icon: ReactNode;
-  /** Single-key (e.g. "E", "#") or "Mod+K" shortcut. Bound while the bar is mounted with count > 0. */
-  shortcut?: string;
-  onRun: () => void | Promise<void>;
-  /** Hint for future destructive styling. Currently unused visually. */
-  destructive?: boolean;
-}
+export type MultiSelectAction = ResolvedCollectionAction;
 
 export interface MultiSelectActionBarProps {
   selectedCount: number;
@@ -30,73 +21,10 @@ export interface MultiSelectActionBarProps {
   className?: string;
   /** Optional override for the bar's positioning style. Defaults to bottom-center floating. */
   style?: CSSProperties;
-}
-
-interface ParsedShortcut {
-  key: string;
-  needsMod: boolean;
-  needsShift: boolean;
-}
-
-function parseShortcut(raw: string): ParsedShortcut | null {
-  const parts = raw.split('+').map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 0) return null;
-  let needsMod = false;
-  let needsShift = false;
-  let key = '';
-  for (const part of parts) {
-    const lower = part.toLowerCase();
-    if (lower === 'mod' || lower === 'cmd' || lower === 'ctrl' || lower === 'meta') {
-      needsMod = true;
-    } else if (lower === 'shift') {
-      needsShift = true;
-    } else {
-      key = lower;
-    }
-  }
-  if (!key) return null;
-  return { key, needsMod, needsShift };
-}
-
-function shortcutMatches(shortcut: ParsedShortcut, event: KeyboardEvent): boolean {
-  const eventKey = event.key.toLowerCase();
-  // Special-case "#" so Shift+3 matches without the consumer specifying Shift.
-  if (shortcut.key === '#') {
-    if (eventKey === '#') return true;
-    if (event.shiftKey && eventKey === '3') return true;
-    return false;
-  }
-  if (eventKey !== shortcut.key) return false;
-  if (shortcut.needsMod !== Boolean(event.metaKey || event.ctrlKey)) return false;
-  if (shortcut.needsShift !== event.shiftKey) return false;
-  if (event.altKey) return false;
-  return true;
-}
-
-function isEditableEvent(event: Event): boolean {
-  // Notis apps mount inside a Shadow DOM, so a document-level listener sees
-  // `event.target` retargeted to the shadow host. `composedPath()[0]` pierces
-  // the shadow boundary to the real focused element, so action-bar shortcuts
-  // don't fire while the user is typing in an app input.
-  const target = event.composedPath?.()[0] ?? event.target;
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-}
-
-function shortcutDisplay(raw: string): string {
-  const parts = raw.split('+').map((p) => p.trim()).filter(Boolean);
-  return parts
-    .map((part) => {
-      const lower = part.toLowerCase();
-      if (lower === 'mod' || lower === 'cmd' || lower === 'meta') return '⌘';
-      if (lower === 'ctrl') return '⌃';
-      if (lower === 'shift') return '⇧';
-      if (lower === 'alt' || lower === 'option') return '⌥';
-      return part.length === 1 ? part.toUpperCase() : part;
-    })
-    .join('');
+  /** Disable action key bindings while leaving the visible toolbar mounted. */
+  shortcutsEnabled?: boolean;
+  /** Override the default collection shortcut scope. */
+  shortcutScope?: ShortcutScope;
 }
 
 const containerBaseStyle: CSSProperties = {
@@ -180,43 +108,25 @@ export function MultiSelectActionBar({
   itemLabel,
   className,
   style,
+  shortcutsEnabled = true,
+  shortcutScope = 'collection',
 }: MultiSelectActionBarProps): ReactElement | null {
-  const actionsRef = useRef(actions);
-  actionsRef.current = actions;
-
-  const parsedShortcuts = useMemo(() => {
-    return actions
-      .map((action) => {
-        if (!action.shortcut) return null;
-        const parsed = parseShortcut(action.shortcut);
-        return parsed ? { action, parsed } : null;
-      })
-      .filter((entry): entry is { action: MultiSelectAction; parsed: ParsedShortcut } => entry !== null);
+  const actionShortcuts = useMemo<ShortcutDefinition[]>(() => {
+    return actions.flatMap((action): ShortcutDefinition[] => {
+        if (!action.shortcut || action.disabled || action.pending) return [];
+        return [{
+          id: `collection.action.${action.id}`,
+          keys: action.shortcut,
+          label: action.label,
+          onTrigger: () => action.onRun(),
+        }];
+      });
   }, [actions]);
-
-  useEffect(() => {
-    if (selectedCount === 0 || parsedShortcuts.length === 0) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isEditableEvent(event)) return;
-      for (const { action, parsed } of parsedShortcuts) {
-        if (shortcutMatches(parsed, event)) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (typeof event.stopImmediatePropagation === 'function') {
-            event.stopImmediatePropagation();
-          }
-          void action.onRun();
-          return;
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [parsedShortcuts, selectedCount]);
+  useShortcuts(actionShortcuts, {
+    enabled: shortcutsEnabled && selectedCount > 0,
+    scope: shortcutScope,
+    priority: 25,
+  });
 
   if (selectedCount === 0) return null;
 
@@ -258,21 +168,29 @@ function ActionButton({ action }: { action: MultiSelectAction }) {
     color: hover
       ? 'hsl(var(--background))'
       : baseButtonStyle.color,
+    opacity: action.disabled ? 0.45 : 1,
+    cursor: action.disabled || action.pending ? 'not-allowed' : 'pointer',
   };
 
   return (
     <button
       type="button"
-      onClick={() => void action.onRun()}
+      onClick={() => {
+        if (!action.disabled && !action.pending) void action.onRun();
+      }}
+      disabled={action.disabled || action.pending}
+      aria-busy={action.pending || undefined}
+      aria-keyshortcuts={action.shortcut || undefined}
+      data-destructive={action.destructive ? 'true' : 'false'}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setHover(true)}
       onBlur={() => setHover(false)}
       style={buttonStyle}
     >
-      <span aria-hidden style={iconSlotStyle}>{action.icon}</span>
+      {action.icon ? <span aria-hidden style={iconSlotStyle}>{action.icon}</span> : null}
       {display ? <kbd aria-hidden style={keycapStyle}>{display}</kbd> : null}
-      <span>{action.label}</span>
+      <span>{action.pending ? `${action.label}…` : action.label}</span>
     </button>
   );
 }

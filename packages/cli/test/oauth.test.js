@@ -887,13 +887,18 @@ test('interactive loopback login closes its listener after timeout', async () =>
 
   await assert.rejects(
     withConfigFileAsync(configFile, () => loginWithOAuth({
-        agentMode: false,
-        outputMode: 'table',
-        apiBase: 'https://api.notis.ai',
-        profileName: 'default',
-        config: normalizeConfig({}),
-        config_file: configFile,
-      }, {
+      agentMode: false,
+      outputMode: 'table',
+      apiBase: 'https://api.notis.ai',
+      profileName: 'default',
+      config: normalizeConfig({}),
+      config_file: configFile,
+      // This case verifies the local loopback receiver. GitHub Actions sets
+      // CI/GITHUB_ACTIONS, which intentionally selects the remote code handoff
+      // unless the test supplies an explicit local host environment.
+      hostEnvironment: {},
+      hostPlatform: 'darwin',
+    }, {
         browser: false,
         printUrl: true,
         timeoutMs: 20,

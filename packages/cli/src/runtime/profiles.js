@@ -267,10 +267,6 @@ export function resolveWorktreeRuntime(startDir = process.cwd()) {
   const profile = typeof runtime?.profile === 'string' ? runtime.profile.trim() : '';
   const devAccessToken =
     typeof runtime?.dev_access_token === 'string' ? runtime.dev_access_token.trim() : '';
-  const appDevSessionsFile =
-    typeof runtime?.app_dev_sessions_file === 'string' && runtime.app_dev_sessions_file.trim()
-      ? runtime.app_dev_sessions_file.trim()
-      : join(dirname(runtimePath), 'app-dev-sessions.json');
   const desktopDeepLinkScheme =
     typeof runtime?.desktop_deep_link_scheme === 'string'
       ? runtime.desktop_deep_link_scheme.trim()
@@ -306,7 +302,6 @@ export function resolveWorktreeRuntime(startDir = process.cwd()) {
     api_base: apiBase,
     profile,
     dev_access_token: devAccessToken,
-    app_dev_sessions_file: resolve(dirname(runtimePath), appDevSessionsFile),
     desktop_deep_link_scheme: desktopDeepLinkScheme || undefined,
     runtime_path: runtimePath,
     routing_path: routingPath,

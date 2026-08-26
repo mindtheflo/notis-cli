@@ -81,8 +81,8 @@ Important: `deploy` only updates the installed app artifact for the current user
 
 ### App development workflow
 
-1. Scaffold a new app:
-   - `npx --package @notis_ai/cli@latest -- notis apps init`
+1. Scaffold a new app (every published Store app is a scaffold; `notis apps scaffolds list [--search <term>]` lists them from the public registry, and `--from <slug>` downloads that app's source):
+   - `npx --package @notis_ai/cli@latest -- notis apps init ["My App"] [--from <slug>]`
 2. Or pull an existing app's source to edit it locally (the project is linked automatically):
    - `npx --package @notis_ai/cli@latest -- notis apps pull <app-id>`
    - then run `npm install`, `npx --package @notis_ai/cli@latest -- notis apps dev`, edit, build, and deploy
@@ -92,9 +92,9 @@ Important: `deploy` only updates the installed app artifact for the current user
    - `npx --package @notis_ai/cli@latest -- notis apps build`
 5. Verify the built artifact headlessly:
    - `npx --package @notis_ai/cli@latest -- notis apps verify`
-6. For a brand-new app, create the remote app and link the project in one step:
-   - `npx --package @notis_ai/cli@latest -- notis apps create "My App" .`
-7. Or link the project to an existing remote app (skip if you used `pull` or `create`):
+6. For a brand-new app already run with `apps dev`, deploy to promote that development app in place:
+   - `npx --package @notis_ai/cli@latest -- notis apps deploy`
+7. Or link the project to an existing remote app (skip if you used `pull`):
    - `npx --package @notis_ai/cli@latest -- notis apps link`
 8. Deploy the artifact to Notis:
    - `npx --package @notis_ai/cli@latest -- notis apps deploy`
@@ -106,7 +106,7 @@ Important: `deploy` only updates the installed app artifact for the current user
 ### App development rules
 
 - Always `build` before `deploy`; run `verify` before deploy when validating an app change.
-- Prefer `npx --package @notis_ai/cli@latest -- notis apps create "Name" .` for the first deploy of a new app.
+- Prefer `npx --package @notis_ai/cli@latest -- notis apps deploy` for the first deploy of a project already run with `apps dev`; it promotes the development app in place.
 - Link before `deploy`, or pass `--app-id <id>` when intentionally deploying without writing local link state.
 - Use `npx --package @notis_ai/cli@latest -- notis apps doctor` to diagnose configuration or dependency issues.
 - Use `npx --package @notis_ai/cli@latest -- notis apps list` to discover existing app IDs before linking.
@@ -117,8 +117,8 @@ Important: `deploy` only updates the installed app artifact for the current user
 
 - `npx --package @notis_ai/cli@latest -- notis apps list` -- list accessible apps
 - `npx --package @notis_ai/cli@latest -- notis apps init` -- scaffold a new Vite + React + `@notis/sdk` project
-- `npx --package @notis_ai/cli@latest -- notis apps pull <app-id> [dir] [--force] [--version <n>]` -- download the persisted source snapshot for an installed app and link the local directory to that app/version; legacy apps must be redeployed once with the current CLI before they can be pulled
-- `npx --package @notis_ai/cli@latest -- notis apps dev` -- discover local apps, register desktop-local dev sessions, and load them in the Electron Portal Local development sidebar group
+- `npx --package @notis_ai/cli@latest -- notis apps pull <app-id> [dir] [--force] [--source-version <n>]` -- download the persisted source snapshot for an installed app and link the local directory to that app/version; legacy apps must be redeployed once with the current CLI before they can be pulled
+- `npx --package @notis_ai/cli@latest -- notis apps dev` -- discover local apps, register desktop-local dev sessions, and load them as DEV-badged Workspace rows in the Electron Portal
 - `npx --package @notis_ai/cli@latest -- notis apps build` -- compile the production artifact
 - `npx --package @notis_ai/cli@latest -- notis apps verify` -- headless render-smoke packaged routes before deploy
 - `npx --package @notis_ai/cli@latest -- notis apps create` -- create a fresh remote app and optionally link the local project

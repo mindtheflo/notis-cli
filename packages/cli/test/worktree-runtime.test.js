@@ -175,7 +175,6 @@ test('CLI selects the active local-only runtime and ignores inherited remote cre
     jwt: makeJwt(expectedUserId),
     credentialSource: 'worktree',
     bridge: 'bridge-a',
-    appDevSessionsFile: join(realpathSync(context), 'app-dev-sessions.json'),
     desktopDeepLinkScheme: 'notis-dev-bridge-a',
   });
 });

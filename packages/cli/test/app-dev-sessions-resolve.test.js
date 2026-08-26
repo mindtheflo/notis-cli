@@ -19,41 +19,26 @@ function makeWorkspace() {
   return { workspace, appDir };
 }
 
-test('getAppDevSessionsFile precedence: explicit > env > global default', (t) => {
+test('getAppDevSessionsFile uses only explicit test paths or the global registry', (t) => {
   const { appDir } = makeWorkspace();
   const cwd = process.cwd();
-  const prevEnv = process.env.NOTIS_APP_DEV_SESSIONS_FILE;
   t.after(() => {
     process.chdir(cwd);
-    if (prevEnv === undefined) delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
-    else process.env.NOTIS_APP_DEV_SESSIONS_FILE = prevEnv;
   });
 
   process.chdir(appDir);
 
   // Explicit path always wins.
-  delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
   assert.equal(getAppDevSessionsFile('/explicit/path.json'), '/explicit/path.json');
-
-  // The desktop or an explicitly resolved worktree runtime can supply a registry.
-  process.env.NOTIS_APP_DEV_SESSIONS_FILE = '/env/path.json';
-  assert.equal(getAppDevSessionsFile(), '/env/path.json');
-
-  // A generic .context directory is not enough to redirect a published CLI run.
-  delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
   assert.equal(getAppDevSessionsFile(), DEFAULT_APP_DEV_SESSIONS_FILE);
 });
 
 test('getAppDevSessionsFile falls back to the global default outside any workspace', (t) => {
   const bare = realpathSync(mkdtempSync(join(tmpdir(), 'notis-nows-')));
   const cwd = process.cwd();
-  const prevEnv = process.env.NOTIS_APP_DEV_SESSIONS_FILE;
   t.after(() => {
     process.chdir(cwd);
-    if (prevEnv === undefined) delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
-    else process.env.NOTIS_APP_DEV_SESSIONS_FILE = prevEnv;
   });
-  delete process.env.NOTIS_APP_DEV_SESSIONS_FILE;
   process.chdir(bare);
   assert.equal(getAppDevSessionsFile(), DEFAULT_APP_DEV_SESSIONS_FILE);
 });

@@ -102,6 +102,14 @@ export interface ToolDescriptor {
   inputSchema?: ToolInputSchema;
 }
 
+export interface ToolCallOptions {
+  /**
+   * Coalesce an identical in-flight call. Only opt in for idempotent reads;
+   * mutations must execute once per invocation.
+   */
+  dedupe?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Route types
 // ---------------------------------------------------------------------------
@@ -170,6 +178,37 @@ export interface NotisRuntimeContext {
 }
 
 // ---------------------------------------------------------------------------
+// App context shared with Notis
+// ---------------------------------------------------------------------------
+
+export type ContextAttributeValue = string | number | boolean | null;
+
+/**
+ * The specific thing currently in focus inside an app view. The host stamps
+ * app/view provenance onto this value before it reaches chat, so apps only
+ * describe their own resource rather than impersonating another surface.
+ */
+export interface ContextResource {
+  id: string;
+  kind: string;
+  label: string;
+  url?: string | null;
+  revision?: string | null;
+  attributes?: Record<string, ContextAttributeValue>;
+  snapshot?: {
+    format: 'text' | 'markdown';
+    content: string;
+  } | null;
+}
+
+/** A quote copied from an app, kept separate from the user's prompt. */
+export interface ContextSelection {
+  id: string;
+  text: string;
+  resource?: ContextResource | null;
+}
+
+// ---------------------------------------------------------------------------
 // Host-provided UI
 // ---------------------------------------------------------------------------
 
@@ -189,6 +228,38 @@ export interface NotisDocumentEditorProps {
   onSavingChange?: (saving: boolean) => void;
 }
 
+export interface NotisMarkdownEditorSavePayload {
+  markdown: string;
+  expectedRevision?: string | null;
+}
+
+export interface NotisMarkdownEditorSaveResult {
+  revision?: string | null;
+}
+
+/**
+ * Storage-neutral host markdown editor. The app owns persistence through
+ * `onSave`; the host only supplies Notis' editing experience.
+ */
+export interface NotisMarkdownEditorProps {
+  /** Stable identity of the edited resource. Changing it starts a fresh editor. */
+  resourceKey?: string;
+  value: string;
+  revision?: string | null;
+  readOnly?: boolean;
+  autosaveMs?: number;
+  placeholder?: string;
+  className?: string;
+  onChange?: (markdown: string) => void;
+  /** Persist an uploaded media/file block and return its durable URL. */
+  onUploadFile?: (file: File) => Promise<string>;
+  onSave?: (
+    payload: NotisMarkdownEditorSavePayload,
+  ) => Promise<NotisMarkdownEditorSaveResult | void>;
+  onDirtyChange?: (dirty: boolean) => void;
+  onSavingChange?: (saving: boolean) => void;
+}
+
 /**
  * Components the host (portal) injects through the runtime. Apps consume them
  * via the SDK wrappers (e.g. `DocumentEditor`), which fall back gracefully
@@ -196,6 +267,7 @@ export interface NotisDocumentEditorProps {
  */
 export interface NotisRuntimeUI {
   DocumentEditor?: ComponentType<NotisDocumentEditorProps>;
+  MarkdownEditor?: ComponentType<NotisMarkdownEditorProps>;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,8 +290,8 @@ export interface SubscribeDatabaseOptions {
  * Work an app hands to the Notis manager chat through `NotisRuntime.handover`.
  */
 export interface HandoverPayload {
-  /** The message the manager should act on. */
-  prompt: string;
+  /** Optional starter message. Omit it to open a context-only composer. */
+  prompt?: string;
   /**
    * Key of a skill declared in `notis.config.ts` -> `skills[].key`. The host
    * rejects a key this app does not declare. Omit to hand over plain work.
@@ -287,6 +359,12 @@ export interface NotisRuntime {
   context: NotisRuntimeContext;
   ui?: NotisRuntimeUI;
 
+  /** Publish or clear the focused resource inside the current app view. */
+  publishActiveResource?(resource: ContextResource | null): void;
+
+  /** Remember a copied quote so the host can recover it across iframe paste. */
+  captureContextSelection?(selection: ContextSelection): void;
+
   /**
    * Subscribe to changes on an app-owned database. Returns an unsubscribe.
    *
@@ -341,7 +419,11 @@ export interface NotisRuntime {
   setTopBarSearchLoading?: (loading: boolean) => void;
 
   listTools(): Promise<ToolDescriptor[]>;
-  callTool<TResult = unknown>(name: string, args?: Record<string, unknown>): Promise<TResult>;
+  callTool<TResult = unknown>(
+    name: string,
+    args?: Record<string, unknown>,
+    options?: ToolCallOptions,
+  ): Promise<TResult>;
 
   request(path: string, options?: {
     method?: string;

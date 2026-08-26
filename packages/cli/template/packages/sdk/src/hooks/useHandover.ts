@@ -39,6 +39,9 @@ export interface UseHandoverResult {
  * );
  * ```
  *
+ * Omit `prompt` to open a context-only composer, for example when a visible
+ * feedback button should let the user write in their own words.
+ *
  * Pass `skill` to bind the work to a skill declared in `notis.config.ts`; the
  * host rejects a key the app does not declare. `autoSend` is accepted for
  * forward compatibility; today's hosts always return `drafted` and let the

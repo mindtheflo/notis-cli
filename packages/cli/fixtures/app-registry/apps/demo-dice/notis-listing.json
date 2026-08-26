@@ -1,0 +1,10 @@
+{
+  "name": "Demo Dice",
+  "tagline": "Roll dice from a published Store app.",
+  "description": "Fixture app standing in for a published Store app in the public registry.",
+  "category": "Personal",
+  "categories": ["Personal"],
+  "author": { "name": "Notis" },
+  "source_app_id": "00000000-0000-0000-0000-000000000000",
+  "source_version": 3
+}

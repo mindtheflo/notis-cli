@@ -238,7 +238,7 @@ npx --package @notis_ai/cli@latest -- notis apps deploy
 
 ## Commands
 
-${[doctorSpec, ...appSpecs].map(renderCommandBlock).join('\n')}
+${[doctorSpec, ...appSpecs].map(renderCommandBlock).join('\n').trimEnd()}
 `;
 }
 

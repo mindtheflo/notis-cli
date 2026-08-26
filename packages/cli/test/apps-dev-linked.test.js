@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,9 +8,11 @@ import {
   assertDirectDeployAccess,
   assertLinkTarget,
   buildLinkedAppState,
+  discoverAppDevLaunchProjects,
   ensureDevInstall,
+  selectCanonicalDevApps,
 } from '../src/command-specs/apps.js';
-import { readLinkedState } from '../src/runtime/app-platform.js';
+import { appLinkedStateProfileKey, readLinkedState } from '../src/runtime/app-platform.js';
 
 function createProject(state = null) {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-dev-linked-'));
@@ -40,6 +42,109 @@ function fakeCtx() {
   };
 }
 
+function jwtFor(sub) {
+  return [
+    Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url'),
+    Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+    'signature',
+  ].join('.');
+}
+
+test('an explicitly registered source replaces a duplicate from the implicit default root', () => {
+  const implicitRoot = '/Users/test/.notis/apps';
+  const explicitRoot = '/Users/test/projects/notes';
+  const result = selectCanonicalDevApps([
+    { devSlug: 'notes-dev', projectDir: `${implicitRoot}/notes` },
+    { devSlug: 'notes-dev', projectDir: explicitRoot },
+    { devSlug: 'calendar-dev', projectDir: `${implicitRoot}/calendar` },
+  ], {
+    roots: [
+      { path: implicitRoot, implicit: true, registeredAt: null },
+      { path: explicitRoot, implicit: false, registeredAt: '2026-08-25T00:00:00.000Z' },
+    ],
+  });
+
+  assert.deepEqual(
+    result.selected.map(({ projectDir }) => projectDir),
+    [explicitRoot, `${implicitRoot}/calendar`],
+  );
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /ignored duplicate source/);
+});
+
+test('apps dev registers the requested root and always discovers the complete registry', () => {
+  const calls = [];
+  const discovered = discoverAppDevLaunchProjects('/projects/new-root', {
+    registerRoot: (root) => calls.push(['register', root]),
+    discoverProjects: () => {
+      calls.push(['discover']);
+      return ['/default/app', '/projects/older-root/app', '/projects/new-root/app'];
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ['register', '/projects/new-root'],
+    ['discover'],
+  ]);
+  assert.deepEqual(discovered, [
+    '/default/app',
+    '/projects/older-root/app',
+    '/projects/new-root/app',
+  ]);
+});
+
+test('Desktop reconciliation skips registration but still discovers the complete registry', () => {
+  const calls = [];
+  const discovered = discoverAppDevLaunchProjects('/already/discovered/app', {
+    skipRootRegistration: true,
+    registerRoot: (root) => calls.push(['register', root]),
+    discoverProjects: () => {
+      calls.push(['discover']);
+      return ['/default/app', '/registered/app'];
+    },
+  });
+
+  assert.deepEqual(calls, [['discover']]);
+  assert.deepEqual(discovered, ['/default/app', '/registered/app']);
+});
+
+test('equally ranked duplicate local sources fail closed without hiding unrelated apps', () => {
+  const result = selectCanonicalDevApps([
+    { devSlug: 'notes-dev', projectDir: '/Users/test/projects/one' },
+    { devSlug: 'notes-dev', projectDir: '/Users/test/projects/two' },
+    { devSlug: 'calendar-dev', projectDir: '/Users/test/projects/calendar' },
+  ], {
+    roots: [
+      { path: '/Users/test/projects', implicit: false, registeredAt: '2026-08-25T00:00:00.000Z' },
+    ],
+  });
+
+  assert.deepEqual(
+    result.selected.map(({ projectDir }) => projectDir),
+    ['/Users/test/projects/calendar'],
+  );
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /Skipped ambiguous development slug/);
+});
+
+test('apps dev publishes each ready mount before later registrations finish', () => {
+  const source = readFileSync(new URL('../src/command-specs/apps.js', import.meta.url), 'utf8');
+  const handler = source.slice(
+    source.indexOf('async function appsDevHandler'),
+    source.indexOf('async function appsRootsListHandler'),
+  );
+  const registrationLoop = handler.indexOf('for (const {\n    appConfig,');
+  const publishSession = handler.indexOf('upsertAppDevSessions(sessionRecord');
+  const allRegistrationsFinished = handler.indexOf("logAppsTiming('ensure-dev-install:all'");
+
+  assert.ok(registrationLoop >= 0, 'registration loop must remain explicit');
+  assert.ok(publishSession > registrationLoop, 'a completed app must publish inside the registration loop');
+  assert.ok(
+    publishSession < allRegistrationsFinished,
+    'the first mount must publish before unrelated registrations finish',
+  );
+});
+
 test('linking an installed app preserves the separate development runtime link', () => {
   assert.deepEqual(
     buildLinkedAppState(
@@ -62,6 +167,44 @@ test('linking an installed app preserves the separate development runtime link',
   );
 });
 
+test('link does not treat a remote version as deployment provenance', () => {
+  assert.deepEqual(
+    buildLinkedAppState(
+      {
+        dev_app_id: 'dev-app-1',
+        dev_linked_at: '2026-07-01T00:00:00.000Z',
+      },
+      'installed-app-1',
+      '2026-07-03T00:00:00.000Z',
+      9,
+    ),
+    {
+      dev_app_id: 'dev-app-1',
+      dev_linked_at: '2026-07-01T00:00:00.000Z',
+      app_id: 'installed-app-1',
+      linked_at: '2026-07-03T00:00:00.000Z',
+    },
+  );
+});
+
+test('same-id link clears dev identity without claiming deployment provenance', () => {
+  assert.deepEqual(
+    buildLinkedAppState(
+      {
+        dev_app_id: 'app-1',
+        dev_linked_at: '2026-07-01T00:00:00.000Z',
+      },
+      'app-1',
+      '2026-07-03T00:00:00.000Z',
+      4,
+    ),
+    {
+      app_id: 'app-1',
+      linked_at: '2026-07-03T00:00:00.000Z',
+    },
+  );
+});
+
 test('ensureDevInstall does not pass installed app_id as development app id', async () => {
   const projectDir = createProject({ app_id: 'installed-app-1' });
   let captured = null;
@@ -71,6 +214,7 @@ test('ensureDevInstall does not pass installed app_id as development app id', as
     appConfig: appConfig(),
     projectDir,
     idempotencyKey: 'idem-1',
+    useInstalledDatabases: true,
     runTool: async (call) => {
       if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
         return {
@@ -97,6 +241,7 @@ test('ensureDevInstall does not pass installed app_id as development app id', as
 
   assert.equal(captured.toolName, 'LOCAL_NOTIS_ENSURE_DEV_APP_INSTALLATION');
   assert.equal(captured.arguments_.app_id, undefined);
+  assert.equal(captured.arguments_.installed_app_id, 'installed-app-1');
   assert.equal(captured.arguments_.dev_slug, 'notes-dev');
   assert.deepEqual(captured.arguments_.manifest.databases, ['notes']);
   assert.equal(result.appId, 'dev-app-1');
@@ -104,6 +249,35 @@ test('ensureDevInstall does not pass installed app_id as development app id', as
   assert.equal(result.targetAppId, 'installed-app-1');
   assert.equal(result.targetAppSlug, 'installed-notes');
   assert.deepEqual(result.databaseMaterialization, { created: ['notes'], unresolved: [] });
+});
+
+test('ensureDevInstall keeps an explicit devSlug after the display name changes', async () => {
+  const projectDir = createProject();
+  let captured = null;
+
+  await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: {
+      ...appConfig(),
+      name: 'Renamed Notes',
+      devSlug: 'notes',
+    },
+    projectDir,
+    idempotencyKey: 'idem-stable-dev-slug',
+    runTool: async (call) => {
+      captured = call;
+      return {
+        payload: {
+          app_id: 'dev-app-1',
+          slug: 'notes-dev',
+          created: false,
+        },
+      };
+    },
+  });
+
+  assert.equal(captured.arguments_.dev_slug, 'notes-dev');
+  assert.equal(captured.arguments_.name, 'Renamed Notes');
 });
 
 test('ensureDevInstall sends source-owned skill content and onboarding metadata', async () => {
@@ -208,6 +382,7 @@ test('ensureDevInstall passes explicit dev_app_id when state has one', async () 
     appConfig: appConfig(),
     projectDir,
     idempotencyKey: 'idem-dev',
+    useInstalledDatabases: true,
     runTool: async (call) => {
       if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
         return call.arguments_.app_id === 'dev-app-1'
@@ -227,9 +402,219 @@ test('ensureDevInstall passes explicit dev_app_id when state has one', async () 
   });
 
   assert.equal(captured.arguments_.app_id, 'dev-app-1');
+  assert.equal(captured.arguments_.installed_app_id, 'installed-app-1');
   assert.equal(result.appId, 'dev-app-1');
   assert.equal(result.linkedAppId, 'installed-app-1');
   assert.equal(result.targetAppId, 'installed-app-1');
+});
+
+test('ensureDevInstall persistently auto-links one accessible exact-slug installed app', async () => {
+  const projectDir = createProject({ dev_app_id: 'dev-app-1' });
+  let ensureCall = null;
+
+  const result = await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir,
+    idempotencyKey: 'idem-legacy-live-data',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return { payload: { app: { id: 'dev-app-1', slug: 'notes-dev', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return {
+          payload: {
+            apps: [
+              { app_id: 'dev-app-1', slug: 'notes-dev', manifest: { is_dev: true } },
+              { app_id: 'installed-app-1', slug: 'notes', manifest: { is_dev: false } },
+            ],
+          },
+        };
+      }
+      ensureCall = call;
+      return { payload: { app_id: 'dev-app-1', slug: 'notes-dev', created: false } };
+    },
+  });
+
+  assert.equal(ensureCall.arguments_.installed_app_id, 'installed-app-1');
+  assert.equal(result.targetAppId, 'installed-app-1');
+  assert.equal(readLinkedState(projectDir).app_id, 'installed-app-1');
+});
+
+test('ensureDevInstall matches the canonical source slug when the installed row slug changed', async () => {
+  const projectDir = createProject({ dev_app_id: 'dev-app-1' });
+  let ensureCall = null;
+
+  const result = await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir,
+    idempotencyKey: 'idem-source-slug',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return { payload: { app: { id: 'dev-app-1', slug: 'notes-dev', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return {
+          payload: {
+            apps: [{
+              app_id: 'installed-app-1',
+              slug: 'five-minute-notes',
+              manifest: { app: { slug: 'notes' }, is_dev: false },
+            }],
+          },
+        };
+      }
+      ensureCall = call;
+      return { payload: { app_id: 'dev-app-1', slug: 'notes-dev', created: false } };
+    },
+  });
+
+  assert.equal(ensureCall.arguments_.installed_app_id, 'installed-app-1');
+  assert.equal(result.targetAppId, 'installed-app-1');
+  assert.equal(readLinkedState(projectDir).app_id, 'installed-app-1');
+});
+
+test('ensureDevInstall migrates one accessible explicit project link into the current profile', async () => {
+  const apiBase = 'http://localhost:50371';
+  const userId = 'current-user';
+  const currentProfile = appLinkedStateProfileKey({ apiBase, userId });
+  const priorProfile = appLinkedStateProfileKey({
+    apiBase: 'http://localhost:55011',
+    userId: 'prior-user',
+  });
+  const projectDir = createProject({
+    profiles: {
+      [currentProfile]: { dev_app_id: 'dev-app-1' },
+      [priorProfile]: { app_id: 'installed-app-1', dev_app_id: 'prior-dev-app' },
+    },
+  });
+  let ensureCall = null;
+
+  const result = await ensureDevInstall({
+    ctx: {
+      runtime: { apiBase, jwt: jwtFor(userId) },
+      globalOptions: {},
+    },
+    appConfig: { ...appConfig(), devSlug: 'notes-local' },
+    projectDir,
+    idempotencyKey: 'idem-profile-link-migration',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return { payload: { app: { id: 'dev-app-1', slug: 'notes-local-dev', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return {
+          payload: {
+            apps: [{
+              app_id: 'installed-app-1',
+              slug: 'completely-different',
+              manifest: { app: { slug: 'also-different' }, is_dev: false },
+            }],
+          },
+        };
+      }
+      ensureCall = call;
+      return { payload: { app_id: 'dev-app-1', slug: 'notes-local-dev', created: false } };
+    },
+  });
+
+  assert.equal(ensureCall.arguments_.installed_app_id, 'installed-app-1');
+  assert.equal(result.targetAppId, 'installed-app-1');
+  assert.equal(readLinkedState(projectDir, currentProfile).app_id, 'installed-app-1');
+  assert.equal(readLinkedState(projectDir, priorProfile).app_id, 'installed-app-1');
+});
+
+test('ensureDevInstall fails closed when older profiles persist multiple accessible installed apps', async () => {
+  const apiBase = 'http://localhost:50371';
+  const userId = 'current-user';
+  const currentProfile = appLinkedStateProfileKey({ apiBase, userId });
+  const projectDir = createProject({
+    profiles: {
+      [currentProfile]: { dev_app_id: 'dev-app-1' },
+      [appLinkedStateProfileKey({ apiBase: 'http://localhost:55011', userId: 'prior-a' })]: {
+        app_id: 'installed-app-1',
+      },
+      [appLinkedStateProfileKey({ apiBase: 'http://localhost:55012', userId: 'prior-b' })]: {
+        app_id: 'installed-app-2',
+      },
+    },
+  });
+
+  await assert.rejects(ensureDevInstall({
+    ctx: {
+      runtime: { apiBase, jwt: jwtFor(userId) },
+      globalOptions: {},
+    },
+    appConfig: { ...appConfig(), devSlug: 'notes-local' },
+    projectDir,
+    idempotencyKey: 'idem-ambiguous-profile-links',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return { payload: { app: { id: 'dev-app-1', slug: 'notes-local-dev', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return { payload: { apps: [
+          { app_id: 'installed-app-1', slug: 'one', manifest: { is_dev: false } },
+          { app_id: 'installed-app-2', slug: 'two', manifest: { is_dev: false } },
+        ] } };
+      }
+      assert.fail('ensure must not run for ambiguous persisted links');
+    },
+  }), /Multiple accessible installed apps are persisted/);
+
+  assert.equal(readLinkedState(projectDir, currentProfile).app_id, undefined);
+});
+
+test('ensureDevInstall fails closed when exact-slug installed matches are ambiguous', async () => {
+  const projectDir = createProject();
+  await assert.rejects(ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir,
+    idempotencyKey: 'idem-ambiguous-slug',
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return { payload: { apps: [
+          { app_id: 'notes-1', slug: 'notes' },
+          { app_id: 'notes-2', slug: 'notes' },
+        ] } };
+      }
+      assert.fail('ensure must not run for an ambiguous exact slug');
+    },
+  }), /Multiple accessible installed apps use the exact slug/);
+  assert.equal(readLinkedState(projectDir), null);
+});
+
+test('ensureDevInstall permits a legacy pre-deploy state when no installed target exists', async () => {
+  const projectDir = createProject({ dev_app_id: 'dev-app-1' });
+  let ensureCall = null;
+
+  const result = await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir,
+    idempotencyKey: 'idem-legacy-predeploy',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        return { payload: { app: { id: 'dev-app-1', slug: 'notes-dev', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return { payload: { apps: [{ app_id: 'another-app', slug: 'tasks' }] } };
+      }
+      ensureCall = call;
+      return { payload: { app_id: 'dev-app-1', slug: 'notes-dev', created: false } };
+    },
+  });
+
+  assert.equal(ensureCall.arguments_.installed_app_id, undefined);
+  assert.equal(result.targetAppId, null);
+  assert.equal(readLinkedState(projectDir).app_id, undefined);
 });
 
 test('ensureDevInstall repairs a development id from another runtime before mounting', async () => {
@@ -266,6 +651,90 @@ test('ensureDevInstall repairs a development id from another runtime before moun
   assert.ok(Date.parse(repairedState.dev_linked_at) > 0);
 });
 
+test('ensureDevInstall adopts the canonical dev slug owner when the profile dev id is stale', async () => {
+  const projectDir = createProject({
+    app_id: 'installed-app-1',
+    dev_app_id: 'stale-dev-app',
+    dev_linked_at: new Date(0).toISOString(),
+  });
+  const ensureCalls = [];
+
+  const result = await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir,
+    idempotencyKey: 'idem-adopt-slug-owner',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        const appId = call.arguments_.app_id;
+        if (appId === 'stale-dev-app') {
+          return { payload: { app: { id: appId, slug: 'old-notes-dev', manifest: { is_dev: true } } } };
+        }
+        return { payload: { app: { id: appId, slug: 'notes', manifest: { is_dev: false } } } };
+      }
+      ensureCalls.push(call);
+      if (ensureCalls.length === 1) {
+        const conflict = new Error("Dev slug 'notes-dev' is already used by another development app.");
+        conflict.details = { error: { code: 'dev_app_slug_conflict' } };
+        throw conflict;
+      }
+      return { payload: { app_id: 'canonical-dev-app', slug: 'notes-dev', created: false } };
+    },
+  });
+
+  assert.equal(ensureCalls[0].arguments_.app_id, 'stale-dev-app');
+  assert.equal(ensureCalls[0].arguments_.installed_app_id, 'installed-app-1');
+  assert.equal(ensureCalls[1].arguments_.app_id, undefined);
+  assert.equal(ensureCalls[1].arguments_.installed_app_id, 'installed-app-1');
+  assert.equal(
+    ensureCalls[1].idempotencyKey,
+    'idem-adopt-slug-owner:adopt-slug-owner:stale-dev-app',
+  );
+  assert.equal(result.appId, 'canonical-dev-app');
+  assert.equal(result.targetAppId, 'installed-app-1');
+  assert.equal(readLinkedState(projectDir).app_id, 'installed-app-1');
+  assert.equal(readLinkedState(projectDir).dev_app_id, 'canonical-dev-app');
+});
+
+test('ensureDevInstall preserves an installed link from another runtime without using it locally', async () => {
+  const projectDir = createProject({ app_id: 'beta-installed-app' });
+  let ensureCall = null;
+
+  const result = await ensureDevInstall({
+    ctx: fakeCtx(),
+    appConfig: appConfig(),
+    projectDir,
+    idempotencyKey: 'idem-cross-runtime-installed',
+    useInstalledDatabases: true,
+    runTool: async (call) => {
+      if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+        assert.equal(call.arguments_.app_id, 'beta-installed-app');
+        return { payload: { status: 'error', message: 'App not found' } };
+      }
+      ensureCall = call;
+      return {
+        payload: {
+          app_id: 'worktree-dev-app',
+          slug: 'notes-dev',
+          created: true,
+        },
+      };
+    },
+  });
+
+  assert.equal(ensureCall.arguments_.installed_app_id, undefined);
+  assert.equal(result.linkedAppId, null);
+  assert.equal(result.targetAppId, null);
+  assert.deepEqual(readLinkedState(projectDir), {
+    linked_at: new Date(0).toISOString(),
+    app_id: 'beta-installed-app',
+    dev_app_id: 'worktree-dev-app',
+    dev_linked_at: readLinkedState(projectDir).dev_linked_at,
+  });
+  assert.ok(Date.parse(readLinkedState(projectDir).dev_linked_at) > 0);
+});
+
 test('ensureDevInstall clears a hidden runtime target while preserving the current dev app id', async () => {
   const projectDir = createProject({ app_id: 'stale-dev-app', dev_app_id: 'current-dev-app' });
 
@@ -277,6 +746,9 @@ test('ensureDevInstall clears a hidden runtime target while preserving the curre
     runTool: async (call) => {
       if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
         return { payload: { app: { id: 'stale-dev-app', manifest: { is_dev: true } } } };
+      }
+      if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+        return { payload: { apps: [] } };
       }
       assert.equal(call.arguments_.app_id, 'current-dev-app');
       return {
@@ -418,6 +890,9 @@ test('ensureDevInstall keeps unlinked dev installs separate and reports unresolv
 test('ensureDevInstall sends the live-data choice on every call', async () => {
   const calls = [];
   const runTool = async (call) => {
+    if (call.toolName === 'LOCAL_NOTIS_LIST_APPS') {
+      return { payload: { apps: [] } };
+    }
     calls.push(call);
     return {
       payload: {
