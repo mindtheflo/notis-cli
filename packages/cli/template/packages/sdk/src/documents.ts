@@ -107,7 +107,7 @@ export function normalizePropertyValue(value: unknown): unknown {
 }
 
 function normalizeContentType(value: unknown): DocumentContentType | null {
-  return value === 'markdown' || value === 'file' ? value : null;
+  return value === 'markdown' || value === 'file' || value === 'view' ? value : null;
 }
 
 /**
@@ -140,6 +140,12 @@ export function normalizeDocumentRecord(value: unknown): DocumentRecord {
         : null,
     contentMarkdown: optionalString(record.contentMarkdown) ?? optionalString(record.content_markdown),
     plainText: optionalString(record.plainText) ?? optionalString(record.plain_text),
+    viewType: optionalString(record.viewType) ?? optionalString(record.view_type),
+    viewState: asRecord(record.viewState) ?? asRecord(record.view_state),
+    viewRevision:
+      typeof (record.viewRevision ?? record.view_revision) === 'number'
+        ? Number(record.viewRevision ?? record.view_revision)
+        : null,
     createdAt:
       optionalString(record.createdAt)
       ?? optionalString(record.created_at)

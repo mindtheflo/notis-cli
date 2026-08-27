@@ -51,7 +51,7 @@ function DocumentEditorFallback({ documentId, variant = 'full', className }: Not
     );
   }
 
-  const isMarkdown = document.contentType !== 'file';
+  const isMarkdown = document.contentType === 'markdown' || !document.contentType;
   return (
     <div className={className}>
       {variant === 'full' ? <h1 style={fallbackTitleStyle}>{document.title}</h1> : null}
@@ -62,6 +62,15 @@ function DocumentEditorFallback({ documentId, variant = 'full', className }: Not
             <p style={fallbackNoticeStyle}>Read-only preview — editing is available inside the Notis portal.</p>
           )}
         </>
+      ) : document.contentType === 'view' ? (
+        <div style={fallbackFrameStyle}>
+          {document.viewType === 'report'
+            ? 'Interactive report'
+            : document.viewType === 'html'
+              ? 'Interactive HTML document'
+              : 'View document'} — open it in Notis Documents for
+          the full native experience.
+        </div>
       ) : (
         <div style={fallbackFrameStyle}>
           {document.fileType ? `${document.fileType.toUpperCase()} document` : 'File document'} — open it in
@@ -76,8 +85,9 @@ function DocumentEditorFallback({ documentId, variant = 'full', className }: Not
  * Embeds the document editor for a document anywhere in an app view. The host
  * (portal) provides the implementation through `runtime.ui.DocumentEditor` and
  * dispatches on the document's content type (markdown -> rich text editor,
- * files -> matching viewer). Outside the portal this falls back to a read-only
- * preview.
+ * files -> matching viewer, views -> their trusted native Documents surface).
+ * Outside the portal this falls back to a read-only preview or an explicit
+ * open-in-Documents notice for native views.
  *
  * ```tsx
  * <DocumentEditor documentId={entry.id} variant="body" className="min-h-[320px]" />

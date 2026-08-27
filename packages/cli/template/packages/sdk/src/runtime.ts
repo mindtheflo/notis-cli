@@ -71,7 +71,7 @@ export interface DatabaseDescriptor {
  * (pdf, xlsx, pptx, ...). Future content types (canvas, ...) extend this
  * union without changing the component contracts.
  */
-export type DocumentContentType = 'markdown' | 'file';
+export type DocumentContentType = 'markdown' | 'file' | 'view';
 
 export interface DocumentRecord {
   id: string;
@@ -86,6 +86,9 @@ export interface DocumentRecord {
   contentBlocknote?: Array<Record<string, unknown>> | null;
   contentMarkdown?: string | null;
   plainText?: string | null;
+  viewType?: string | null;
+  viewState?: Record<string, unknown> | null;
+  viewRevision?: number | null;
   createdAt?: string | null;
   lastEditedTime?: string | null;
 }
