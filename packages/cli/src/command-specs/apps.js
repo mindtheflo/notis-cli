@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
@@ -99,6 +99,72 @@ const SHARED_APP_DEV_HOST_KEY = '__registered_roots__';
 function projectIsWithinRoot(projectDir, rootDir) {
   const nested = relative(rootDir, projectDir);
   return nested === '' || (nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested));
+}
+
+function parseNotisAppVersion(value) {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+    String(value || '').trim(),
+  );
+  if (!match) return null;
+  const prerelease = match[4] ? match[4].split('.') : [];
+  if (prerelease.some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith('0'))) {
+    return null;
+  }
+  return {
+    major: match[1],
+    minor: match[2],
+    patch: match[3],
+    prerelease,
+  };
+}
+
+function compareNumericSemverIdentifiers(left, right) {
+  if (left.length !== right.length) return left.length > right.length ? 1 : -1;
+  return left === right ? 0 : left > right ? 1 : -1;
+}
+
+function compareNotisPrerelease(left, right) {
+  if (left.length === 0 || right.length === 0) {
+    return left.length === right.length ? 0 : left.length === 0 ? 1 : -1;
+  }
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftIdentifier = left[index];
+    const rightIdentifier = right[index];
+    if (leftIdentifier === undefined || rightIdentifier === undefined) {
+      return leftIdentifier === rightIdentifier ? 0 : leftIdentifier === undefined ? -1 : 1;
+    }
+    if (leftIdentifier === rightIdentifier) continue;
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) {
+      return compareNumericSemverIdentifiers(leftIdentifier, rightIdentifier);
+    }
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftIdentifier > rightIdentifier ? 1 : -1;
+  }
+  return 0;
+}
+
+export function compareNotisAppVersions(leftValue, rightValue) {
+  const left = parseNotisAppVersion(leftValue);
+  const right = parseNotisAppVersion(rightValue);
+  if (!left || !right) return null;
+  for (const key of ['major', 'minor', 'patch']) {
+    const comparison = compareNumericSemverIdentifiers(left[key], right[key]);
+    if (comparison !== 0) return comparison;
+  }
+  return compareNotisPrerelease(left.prerelease, right.prerelease);
+}
+
+function readLocalNotisAppVersion(projectDir) {
+  try {
+    const packageJson = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8'));
+    const version = String(packageJson.notisAppVersion || '').trim();
+    return parseNotisAppVersion(version) ? version : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -566,7 +632,7 @@ function renderVerifyReport({ summary, results, noBrowser }) {
   return lines.join('\n');
 }
 
-function buildManifestForDev(appConfig) {
+function buildManifestForDev(appConfig, projectDir) {
   const routes = Array.isArray(appConfig.routes) ? appConfig.routes : [];
   return {
     version: 1,
@@ -575,6 +641,7 @@ function buildManifestForDev(appConfig) {
       name: appConfig.name,
       description: appConfig.description || null,
       icon: appConfig.icon || null,
+      release_version: readLocalNotisAppVersion(projectDir),
     },
     routes: routes.map((route) => ({
       path: route.path,
@@ -723,7 +790,7 @@ export async function ensureDevInstall({
     throw usageError(`notis.config.ts devSlug or name in ${projectDir} must slugify to a non-empty value.`);
   }
 
-  const manifest = buildManifestForDev(appConfig);
+  const manifest = buildManifestForDev(appConfig, projectDir);
   const skills = resolveConfiguredAppSkills(appConfig, projectDir);
   const profileKey = linkedStateProfileKey(ctx.runtime);
   let linkedState = readLinkedState(projectDir, profileKey);
@@ -798,6 +865,10 @@ export async function ensureDevInstall({
         ].includes(key)),
       )
     : linkedState;
+  const localReleaseVersion = manifest.app.release_version || null;
+  const installedReleaseVersion = linkedApp?.manifest?.app?.release_version || '0.0.0';
+  const mountEligible = !linkedApp
+    || compareNotisAppVersions(localReleaseVersion, installedReleaseVersion) === 1;
   const ensureArguments = buildEnsureDevInstallArguments({
     appConfig,
     manifest,
@@ -863,6 +934,9 @@ export async function ensureDevInstall({
     linkedAppId: runtimeLinkedState?.app_id || null,
     targetAppId: runtimeLinkedState?.app_id || null,
     targetAppSlug: linkedApp?.slug || null,
+    localReleaseVersion,
+    installedReleaseVersion: linkedApp ? installedReleaseVersion : null,
+    mountEligible,
     databaseMaterialization: ensureResult.payload.database_materialization || { created: [], unresolved: [] },
     liveData: ensureResult.payload.live_data || null,
   };
@@ -887,6 +961,16 @@ function liveDataWarnings(apps) {
   return apps
     .filter((app) => app.liveData?.warning)
     .map((app) => `${app.name}: ${app.liveData.warning}`);
+}
+
+function versionPrecedenceWarnings(apps) {
+  return apps
+    .filter((app) => app.targetAppId && app.mountEligible === false)
+    .map((app) => {
+      const localVersion = app.localReleaseVersion || 'missing or invalid';
+      const pullCommand = `npx --package @notis_ai/cli@latest -- notis apps pull ${app.targetAppId} ${JSON.stringify(app.projectDir)} --force`;
+      return `${app.name}: local version ${localVersion} is not strictly newer than installed version ${app.installedReleaseVersion}; Workspace keeps serving the online bundle. Preserve any local edits, pull latest with \`${pullCommand}\`, then bump package.json notisAppVersion before development.`;
+    });
 }
 
 async function getAccessibleApp(runtime, appId, runTool = runToolCommand) {
@@ -1453,6 +1537,7 @@ async function appsDevHandler(ctx) {
     ...registrationWarnings,
     ...databaseMaterializationWarnings(apps),
     ...liveDataWarnings(apps),
+    ...versionPrecedenceWarnings(apps),
   ];
 
   let consumerTimer = null;
@@ -1478,6 +1563,9 @@ async function appsDevHandler(ctx) {
         linked_app_id: app.linkedAppId,
         database_materialization: app.databaseMaterialization,
         live_data: app.liveData,
+        local_release_version: app.localReleaseVersion,
+        installed_release_version: app.installedReleaseVersion,
+        mount_eligible: app.mountEligible,
       })),
     },
     warnings,
@@ -1489,11 +1577,15 @@ async function appsDevHandler(ctx) {
         ? [`Databases: ${apps.filter((app) => app.liveData?.enabled).length}/${apps.length} app(s) reading the installed app's live rows`]
         : []),
       '',
-      ...apps.map((app) => `  ${app.name.padEnd(24)} ${app.bundleBaseUrl} -> ${app.appHref}`),
+      ...apps.map((app) => (
+        app.mountEligible
+          ? `  ${app.name.padEnd(24)} ${app.bundleBaseUrl} -> ${app.appHref}`
+          : `  ${app.name.padEnd(24)} online v${app.installedReleaseVersion} (local ${app.localReleaseVersion || 'version missing'})`
+      )),
       '',
       sharedBundleBaseUrls
-        ? `Mounted ${apps.length} shared source app${apps.length === 1 ? '' : 's'} for this authenticated environment.`
-        : `Serving one shared loopback host for ${apps.length} app${apps.length === 1 ? '' : 's'}.`,
+        ? `Attached to the shared source host: ${apps.filter((app) => app.mountEligible).length}/${apps.length} app${apps.length === 1 ? '' : 's'} eligible to substitute.`
+        : `Serving one shared loopback host for ${apps.length} app${apps.length === 1 ? '' : 's'}; ${apps.filter((app) => app.mountEligible).length} eligible to substitute.`,
       '',
       'Press Ctrl-C to stop.',
     ].join('\n'),
@@ -2145,7 +2237,7 @@ async function appsPullHandler(ctx) {
       project_dir: pulled.projectDir,
       version: pulled.version,
     },
-    humanSummary: `Pulled ${versionLabel} to ${pulled.projectDir}. Run \`cd ${pulled.projectDir} && npm install && notis apps dev\` to start editing.`,
+    humanSummary: `Pulled ${versionLabel} to ${pulled.projectDir}. Increment package.json notisAppVersion above the pulled release, then run \`cd ${pulled.projectDir} && npm install && notis apps dev\` to substitute the online bundle.`,
   });
 }
 
@@ -2596,7 +2688,7 @@ export const appsCommandSpecs = [
     command_path: ['apps', 'dev'],
     summary: 'Register a development root and connect its apps to the shared local development host.',
     when_to_use:
-      'Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance.',
+      'Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance. A linked app substitutes its online bundle only when local notisAppVersion is strictly greater than the installed release.',
     args_schema: {
       arguments: [
         { token: '[dir]', key: 'dir', description: 'Project directory or monorepo root (default: current dir).' },
@@ -2772,7 +2864,7 @@ export const appsCommandSpecs = [
     command_path: ['apps', 'pull'],
     summary: 'Download a Notis app source snapshot into a local project folder.',
     when_to_use:
-      'Edit an installed app locally. Pulls the persisted source, links the directory to the app/version, then continue with npm install, notis apps dev, notis apps build, and notis apps deploy.',
+      'Edit an installed app locally. Preserve any local edits, pull and link the latest persisted source, then increment package.json notisAppVersion above that release before notis apps dev; continue with build and deploy.',
     args_schema: {
       arguments: [
         { token: '<app-id>', description: 'Remote app ID to pull.' },

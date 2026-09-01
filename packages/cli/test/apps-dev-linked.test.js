@@ -8,6 +8,7 @@ import {
   assertDirectDeployAccess,
   assertLinkTarget,
   buildLinkedAppState,
+  compareNotisAppVersions,
   discoverAppDevLaunchProjects,
   ensureDevInstall,
   selectCanonicalDevApps,
@@ -24,6 +25,13 @@ function createProject(state = null) {
     );
   }
   return projectDir;
+}
+
+function writeNotisAppVersion(projectDir, version) {
+  writeFileSync(
+    join(projectDir, 'package.json'),
+    JSON.stringify(version ? { name: 'notes', notisAppVersion: version } : { name: 'notes' }, null, 2),
+  );
 }
 
 function appConfig() {
@@ -249,6 +257,84 @@ test('ensureDevInstall does not pass installed app_id as development app id', as
   assert.equal(result.targetAppId, 'installed-app-1');
   assert.equal(result.targetAppSlug, 'installed-notes');
   assert.deepEqual(result.databaseMaterialization, { created: ['notes'], unresolved: [] });
+});
+
+test('apps dev reports mount eligibility only when local semver is strictly newer', async (t) => {
+  const cases = [
+    { name: 'greater', local: '1.2.4', installed: '1.2.3', eligible: true },
+    { name: 'equal', local: '1.2.3', installed: '1.2.3', eligible: false },
+    { name: 'lower', local: '1.2.2', installed: '1.2.3', eligible: false },
+    { name: 'missing', local: null, installed: '1.2.3', eligible: false },
+    { name: 'invalid', local: '1.2.3-01', expectedLocal: null, installed: '1.2.3', eligible: false },
+  ];
+
+  for (const example of cases) {
+    await t.test(example.name, async () => {
+      const projectDir = createProject({ app_id: 'installed-app-1' });
+      writeNotisAppVersion(projectDir, example.local);
+      const result = await ensureDevInstall({
+        ctx: fakeCtx(),
+        appConfig: appConfig(),
+        projectDir,
+        idempotencyKey: `idem-version-${example.name}`,
+        runTool: async (call) => {
+          if (call.toolName === 'LOCAL_NOTIS_GET_APP') {
+            return {
+              payload: {
+                app: {
+                  id: 'installed-app-1',
+                  slug: 'notes',
+                  manifest: {
+                    is_dev: false,
+                    app: { name: 'Notes', release_version: example.installed },
+                  },
+                },
+              },
+            };
+          }
+          return { payload: { app_id: 'dev-app-1', slug: 'notes-dev', created: false } };
+        },
+      });
+
+      assert.equal(
+        result.localReleaseVersion,
+        Object.hasOwn(example, 'expectedLocal') ? example.expectedLocal : example.local,
+      );
+      assert.equal(result.installedReleaseVersion, example.installed);
+      assert.equal(result.mountEligible, example.eligible);
+    });
+  }
+});
+
+test('CLI Notis app comparison follows semver prerelease rules', () => {
+  assert.equal(compareNotisAppVersions('2.0.0', '1.99.99'), 1);
+  assert.equal(compareNotisAppVersions('1.0.0+local', '1.0.0+online'), 0);
+  assert.equal(compareNotisAppVersions('1.0.0-beta.2', '1.0.0-beta.10'), -1);
+  assert.equal(compareNotisAppVersions('1.0.0', '1.0.0-rc.1'), 1);
+  assert.equal(compareNotisAppVersions(null, '1.0.0'), null);
+  assert.equal(compareNotisAppVersions('1.0.0-01', '1.0.0'), null);
+  assert.equal(
+    compareNotisAppVersions('999999999999999999999.0.0', '999999999999999999998.0.0'),
+    1,
+  );
+});
+
+test('apps dev reports release eligibility and a preserve-pull-bump recovery path', () => {
+  const source = readFileSync(new URL('../src/command-specs/apps.js', import.meta.url), 'utf8');
+  const handler = source.slice(
+    source.indexOf('async function appsDevHandler'),
+    source.indexOf('async function appsRootsListHandler'),
+  );
+  assert.match(handler, /local_release_version: app\.localReleaseVersion/);
+  assert.match(handler, /installed_release_version: app\.installedReleaseVersion/);
+  assert.match(handler, /mount_eligible: app\.mountEligible/);
+
+  const warning = source.slice(
+    source.indexOf('function versionPrecedenceWarnings'),
+    source.indexOf('async function getAccessibleApp'),
+  );
+  assert.match(warning, /Preserve any local edits, pull latest with .* then bump package\.json notisAppVersion/);
+  assert.match(warning, /notis apps pull .* --force/);
 });
 
 test('ensureDevInstall keeps an explicit devSlug after the display name changes', async () => {

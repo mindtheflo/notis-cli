@@ -118,7 +118,7 @@ Examples:
 
 Register a development root and connect its apps to the shared local development host.
 
-When to use: Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance.
+When to use: Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance. A linked app substitutes its online bundle only when local notisAppVersion is strictly greater than the installed release.
 
 Options:
 - `--port <number>` — Local bundle server port (default: 5173).
@@ -218,7 +218,7 @@ Examples:
 
 Download a Notis app source snapshot into a local project folder.
 
-When to use: Edit an installed app locally. Pulls the persisted source, links the directory to the app/version, then continue with npm install, notis apps dev, notis apps build, and notis apps deploy.
+When to use: Edit an installed app locally. Preserve any local edits, pull and link the latest persisted source, then increment package.json notisAppVersion above that release before notis apps dev; continue with build and deploy.
 
 Options:
 - `--force` — Overwrite a non-empty target directory.
