@@ -12,9 +12,20 @@
  */
 
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync, watch as fsWatch } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  watch as fsWatch,
+} from 'node:fs';
+import { freemem, loadavg, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -44,6 +55,115 @@ const CLI_ROOT = resolve(RUNTIME_DIR, '../..');
 const REPO_ROOT = resolve(RUNTIME_DIR, '../../../..');
 const HARNESS_TEMPLATE_PATH = join(CLI_ROOT, 'template', '.harness', 'index.html.tmpl');
 const FALLBACK_REACT_VERSION = '19.0.0';
+const BUILD_PROCESS_STOP_GRACE_MS = 1_000;
+const DEV_DIAGNOSTIC_INTERVAL_MS = 30_000;
+const DEV_DIAGNOSTIC_MAX_BYTES = 20 * 1024 * 1024;
+
+function processGroupIsRunning(pid, signalProcess = process.kill) {
+  try {
+    signalProcess(-pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+function readProcessGroupRssBytes(groupPids) {
+  if (process.platform === 'win32' || groupPids.size === 0) return new Map();
+  try {
+    const output = execFileSync('ps', ['-axo', 'pgid=,rss='], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const rssByGroup = new Map();
+    for (const line of output.split('\n')) {
+      const [rawGroupPid, rawRssKiB] = line.trim().split(/\s+/, 2);
+      const groupPid = Number.parseInt(rawGroupPid, 10);
+      if (!groupPids.has(groupPid)) continue;
+      const rssKiB = Number.parseInt(rawRssKiB, 10);
+      if (!Number.isFinite(rssKiB)) continue;
+      rssByGroup.set(groupPid, (rssByGroup.get(groupPid) || 0) + (rssKiB * 1024));
+    }
+    return rssByGroup;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Stop the npm wrapper and every Vite/esbuild descendant it launched.
+ *
+ * Killing only the npm PID leaves its watch process alive after a Desktop host
+ * restart. Each watcher therefore owns a separate POSIX process group. Windows
+ * uses taskkill's tree mode for the equivalent cleanup.
+ */
+export async function terminateBuildProcessTree(child, {
+  platform = process.platform,
+  signalProcess = process.kill,
+  spawnProcess = spawn,
+  graceMs = BUILD_PROCESS_STOP_GRACE_MS,
+} = {}) {
+  const pid = child?.pid;
+  if (!Number.isSafeInteger(pid) || pid <= 0) return;
+
+  if (platform === 'win32') {
+    await new Promise((resolvePromise) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolvePromise();
+      };
+      try {
+        const killer = spawnProcess('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        killer.once('error', () => {
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            // The wrapper already exited.
+          }
+          finish();
+        });
+        killer.once('exit', finish);
+        setTimeout(finish, graceMs).unref?.();
+      } catch {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // The wrapper already exited.
+        }
+        finish();
+      }
+    });
+    return;
+  }
+
+  try {
+    signalProcess(-pid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code === 'ESRCH') return;
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      return;
+    }
+  }
+
+  const deadline = Date.now() + graceMs;
+  while (processGroupIsRunning(pid, signalProcess) && Date.now() < deadline) {
+    await delay(25);
+  }
+  if (!processGroupIsRunning(pid, signalProcess)) return;
+  try {
+    signalProcess(-pid, 'SIGKILL');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+}
 
 function extFor(pathname) {
   const idx = pathname.lastIndexOf('.');
@@ -300,7 +420,7 @@ function renderHarnessHtml({ state, manifest, appConfig, route, harnessOptions, 
 /**
  * Start the dev server for one or more apps.
  *
- * @param {{apps: Array<{slug: string, projectDir: string, appId?: string, targetAppId?: string, userId?: string, profileKey?: string, sessionId?: string, mountNonce?: string}>, port: number, watch?: boolean, sessionsFilePath?: string, harness?: { mode?: string, apiBase?: string, jwt?: string }, log?: (m: string) => void, logError?: (m: string) => void}} options
+ * @param {{apps: Array<{slug: string, projectDir: string, appId?: string, targetAppId?: string, userId?: string, profileKey?: string, sessionId?: string, mountNonce?: string}>, port: number, watch?: boolean, sessionsFilePath?: string, harness?: { mode?: string, apiBase?: string, jwt?: string }, diagnosticsFile?: string | null, terminateBuildProcess?: typeof terminateBuildProcessTree, log?: (m: string) => void, logError?: (m: string) => void}} options
  */
 export async function startAppDevServer({
   apps,
@@ -308,6 +428,8 @@ export async function startAppDevServer({
   watch = true,
   sessionsFilePath,
   harness = {},
+  diagnosticsFile = process.env.NOTIS_DEV_DIAGNOSTICS_FILE || null,
+  terminateBuildProcess = terminateBuildProcessTree,
   log = (msg) => process.stdout.write(`${msg}\n`),
   logError = (msg) => process.stderr.write(`${msg}\n`),
 }) {
@@ -316,6 +438,9 @@ export async function startAppDevServer({
   }
 
   const appState = new Map();
+  let diagnosticsTimer = null;
+  let diagnosticWriteFailed = false;
+  let serverClosing = false;
   // Sidebar reconciliation needs one stream for the shared host, not one
   // long-lived HTTP/1.1 connection per discovered app. Keeping a stream per
   // app exhausts Chromium's per-origin connection pool and can indefinitely
@@ -349,10 +474,60 @@ export async function startAppDevServer({
       bundleReady: false,
       bundleReadyPromise,
       resolveBundleReady,
+      buildProcessStopPromise: null,
     };
   };
   for (const app of apps) {
     appState.set(app.slug, createAppState(app));
+  }
+
+  function writeDevDiagnostic(event) {
+    if (!diagnosticsFile) return;
+    const memory = process.memoryUsage();
+    const watcherPids = new Set(
+      [...appState.values()]
+        .map((state) => state.buildProcess?.pid)
+        .filter((pid) => Number.isSafeInteger(pid) && pid > 0),
+    );
+    const watcherGroupRss = readProcessGroupRssBytes(watcherPids);
+    const record = {
+      at: new Date().toISOString(),
+      event,
+      host_pid: process.pid,
+      parent_pid: process.ppid,
+      rss_bytes: memory.rss,
+      heap_used_bytes: memory.heapUsed,
+      heap_total_bytes: memory.heapTotal,
+      external_bytes: memory.external,
+      system_free_bytes: freemem(),
+      system_total_bytes: totalmem(),
+      load_average_1m: loadavg()[0],
+      watcher_groups_rss_bytes: [...watcherGroupRss.values()].reduce((total, rss) => total + rss, 0),
+      apps: [...appState.values()].map((state) => ({
+        slug: state.slug,
+        project_dir: state.projectDir,
+        watcher_pid: state.buildProcess?.pid || null,
+        watcher_exit_code: state.buildProcess?.exitCode ?? null,
+        watcher_signal: state.buildProcess?.signalCode ?? null,
+        watcher_group_rss_bytes: watcherGroupRss.get(state.buildProcess?.pid) ?? null,
+        bundle_ready: state.bundleReady,
+      })),
+    };
+    try {
+      mkdirSync(dirname(diagnosticsFile), { recursive: true, mode: 0o700 });
+      if (existsSync(diagnosticsFile) && statSync(diagnosticsFile).size >= DEV_DIAGNOSTIC_MAX_BYTES) {
+        const previous = `${diagnosticsFile}.previous`;
+        rmSync(previous, { force: true });
+        renameSync(diagnosticsFile, previous);
+      }
+      appendFileSync(diagnosticsFile, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+      diagnosticWriteFailed = false;
+    } catch (error) {
+      if (!diagnosticWriteFailed) {
+        diagnosticWriteFailed = true;
+        logError(`[notis apps dev] persistent diagnostics failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   function broadcastReload(slug) {
@@ -827,15 +1002,29 @@ export async function startAppDevServer({
       watchManifestInputs(state);
       pollForBundleAndWatch(state);
 
-      state.buildProcess = spawn('npm', ['run', 'build', '--', '--watch'], {
+      const buildProcess = spawn('npm', ['run', 'build', '--', '--watch'], {
         cwd: state.projectDir,
+        detached: process.platform !== 'win32',
         stdio: 'inherit',
         env: { ...process.env, NOTIS_DEV: '1' },
       });
+      state.buildProcess = buildProcess;
 
-      state.buildProcess.on('exit', (code) => {
+      buildProcess.on('exit', (code) => {
         if (code !== 0 && code !== null) {
           logError(`[notis apps dev] ${state.slug}: vite build --watch exited with code ${code}`);
+        }
+        if (!serverClosing) {
+          if (state.buildProcess === buildProcess) state.buildProcess = null;
+          const stopPromise = terminateBuildProcess(buildProcess).catch((error) => {
+            logError(`[notis apps dev] ${state.slug}: watcher cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          state.buildProcessStopPromise = stopPromise;
+          void stopPromise.finally(() => {
+            if (state.buildProcessStopPromise === stopPromise) {
+              state.buildProcessStopPromise = null;
+            }
+          });
         }
       });
     } else {
@@ -843,6 +1032,12 @@ export async function startAppDevServer({
     }
 
     log(`[notis apps dev] ${state.slug}: serving bundle at http://127.0.0.1:${port}/a/${state.slug}/bundle/app.js`);
+  }
+
+  writeDevDiagnostic('started');
+  if (diagnosticsFile) {
+    diagnosticsTimer = setInterval(() => writeDevDiagnostic('sample'), DEV_DIAGNOSTIC_INTERVAL_MS);
+    diagnosticsTimer.unref?.();
   }
 
   return {
@@ -867,6 +1062,13 @@ export async function startAppDevServer({
       return state.bundleReadyPromise;
     },
     async close() {
+      serverClosing = true;
+      if (diagnosticsTimer) {
+        clearInterval(diagnosticsTimer);
+        diagnosticsTimer = null;
+      }
+      writeDevDiagnostic('stopping');
+      const buildProcessStops = [];
       for (const state of appState.values()) {
         if (state.prepareTimer) clearTimeout(state.prepareTimer);
         if (state.reloadTimer) clearTimeout(state.reloadTimer);
@@ -894,10 +1096,16 @@ export async function startAppDevServer({
           }
         }
         state.sseClients.clear();
-        if (state.buildProcess && state.buildProcess.exitCode === null) {
-          state.buildProcess.kill('SIGTERM');
+        if (state.buildProcessStopPromise) {
+          buildProcessStops.push(state.buildProcessStopPromise);
+        }
+        if (state.buildProcess) {
+          const buildProcess = state.buildProcess;
+          state.buildProcess = null;
+          buildProcessStops.push(terminateBuildProcess(buildProcess));
         }
       }
+      await Promise.allSettled(buildProcessStops);
       for (const res of hostSseClients) {
         try {
           res.end();
@@ -907,6 +1115,7 @@ export async function startAppDevServer({
       }
       hostSseClients.clear();
       await new Promise((resolvePromise) => server.close(() => resolvePromise()));
+      writeDevDiagnostic('stopped');
     },
   };
 }

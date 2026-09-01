@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { startAppDevServer } from '../src/runtime/app-dev-server.js';
+import {
+  startAppDevServer,
+  terminateBuildProcessTree,
+} from '../src/runtime/app-dev-server.js';
 import { findSharedSourceBundleUrls } from '../src/command-specs/apps.js';
 import { readAppDevSessions, upsertAppDevSessions } from '../src/runtime/app-dev-sessions.js';
 import {
@@ -25,6 +29,118 @@ async function availablePort() {
   await new Promise((resolve) => server.close(resolve));
   return port;
 }
+
+async function waitFor(predicate, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for condition.');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+test('watcher cleanup terminates the npm wrapper and its descendants', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'notis-app-watch-tree-'));
+  const grandchildPidFile = join(tempDir, 'grandchild.pid');
+  const parentScript = `
+    const { spawn } = require('node:child_process');
+    const { writeFileSync } = require('node:fs');
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    writeFileSync(process.argv[1], String(child.pid));
+    setInterval(() => {}, 1000);
+  `;
+  const parent = spawn(process.execPath, ['-e', parentScript, grandchildPidFile], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  t.after(() => {
+    try {
+      process.kill(-parent.pid, 'SIGKILL');
+    } catch {
+      // The process group was already cleaned up.
+    }
+  });
+  await waitFor(() => existsSync(grandchildPidFile));
+  const grandchildPid = Number.parseInt(readFileSync(grandchildPidFile, 'utf8'), 10);
+  assert.equal(processIsRunning(parent.pid), true);
+  assert.equal(processIsRunning(grandchildPid), true);
+
+  await terminateBuildProcessTree(parent, { graceMs: 500 });
+  await waitFor(() => !processIsRunning(parent.pid) && !processIsRunning(grandchildPid));
+});
+
+test('an exited watcher is not signalled again during later server shutdown', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-exited-watch-'));
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Exited Watch App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+});
+`);
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'exited-watch-app',
+    private: true,
+    scripts: { build: 'node -e "process.exit(0)" --' },
+  }));
+
+  const stoppedPids = [];
+  const port = await availablePort();
+  const server = await startAppDevServer({
+    apps: [{ slug: 'exited-watch-dev', projectDir }],
+    port,
+    watch: true,
+    terminateBuildProcess: async (child) => {
+      stoppedPids.push(child.pid);
+    },
+    log: () => {},
+    logError: () => {},
+  });
+  await waitFor(() => stoppedPids.length === 1, 10_000);
+  await server.close();
+
+  assert.equal(stoppedPids.length, 1);
+});
+
+test('dev diagnostics persist host and watcher state as JSONL', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-diagnostics-'));
+  const bundleDir = join(projectDir, '.notis', 'output', 'bundle');
+  const diagnosticsFile = join(projectDir, '.context', 'app-dev-diagnostics.jsonl');
+  mkdirSync(bundleDir, { recursive: true });
+  writeFileSync(join(bundleDir, 'app.js'), 'export default function App() {}\n');
+  writeFileSync(join(bundleDir, 'app.css'), ':host {}\n');
+  const port = await availablePort();
+  const server = await startAppDevServer({
+    apps: [{ slug: 'diagnostic-dev', projectDir }],
+    port,
+    watch: false,
+    diagnosticsFile,
+    log: () => {},
+  });
+  await server.close();
+
+  const records = readFileSync(diagnosticsFile, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(records.map((record) => record.event), ['started', 'stopping', 'stopped']);
+  assert.equal(records[0].host_pid, process.pid);
+  assert.equal(records[0].apps[0].slug, 'diagnostic-dev');
+  assert.equal(records[0].apps[0].watcher_group_rss_bytes, null);
+  assert.equal(records[0].watcher_groups_rss_bytes, 0);
+  assert.equal(typeof records[0].system_free_bytes, 'number');
+});
 
 test('one source host links independent authenticated environment mounts', async (t) => {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-shared-source-'));
