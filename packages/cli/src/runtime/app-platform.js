@@ -906,6 +906,24 @@ export function generateManifest(appConfig, projectDir) {
   };
 }
 
+/**
+ * Keep the persisted app row's presentation metadata aligned with the bundle
+ * manifest. The app slug remains the stable identity; title/name is only the
+ * user-facing label.
+ */
+export function appRowFieldsFromManifest(manifest) {
+  const app = manifest?.app && typeof manifest.app === 'object' ? manifest.app : {};
+  const displayName = typeof app.title === 'string' && app.title.trim()
+    ? app.title.trim()
+    : typeof app.name === 'string' && app.name.trim()
+      ? app.name.trim()
+      : null;
+  return {
+    ...(displayName ? { name: displayName } : {}),
+    accent: app.accent ?? null,
+  };
+}
+
 export function normalizeAppToolBindings(bindings) {
   return (Array.isArray(bindings) ? bindings : [])
     .map((binding) => {
@@ -2822,7 +2840,7 @@ async function updateAppVersion(supabaseUrl, supabaseKey, appId, newVersion, man
     },
     body: JSON.stringify({
       manifest: { ...manifest, version: newVersion },
-      accent: manifest?.app?.accent ?? null,
+      ...appRowFieldsFromManifest(manifest),
       updated_at: new Date().toISOString(),
     }),
   });

@@ -36,6 +36,7 @@ import {
   normalizeAppCapabilities,
   normalizeAppToolBindings,
   normalizeAppSkillManifestPath,
+  appRowFieldsFromManifest,
   directDeploy,
   pullAppSource,
 } from '../runtime/app-platform.js';
@@ -86,6 +87,8 @@ import {
   runToolCommand,
   toolConflictToError,
 } from './helpers.js';
+
+export { appRowFieldsFromManifest } from '../runtime/app-platform.js';
 
 const DEFAULT_DEV_PORT = 5173;
 const DEV_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -408,13 +411,6 @@ export function shouldPruneStaleScreenshotFiles(selectedRouteSlugs, failedCount)
 export function screenshotIndexByRouteSlug(manifest) {
   const routes = Array.isArray(manifest?.routes) ? manifest.routes : [];
   return new Map(routes.map((route, index) => [route.slug, index + 1]));
-}
-
-export function appRowFieldsFromManifest(manifest) {
-  const app = manifest?.app && typeof manifest.app === 'object' ? manifest.app : {};
-  return {
-    accent: app.accent ?? null,
-  };
 }
 
 export function screenshotExitCode(failedCount) {

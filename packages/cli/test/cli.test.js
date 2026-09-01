@@ -1717,7 +1717,7 @@ test('apps deploy sends pulled base version and updates linked state after deplo
   writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '[data-notis-app-root] {}\n');
   writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({
     version: 7,
-    app: { name: 'Linked App' },
+    app: { name: 'Linked App', title: 'Linked App', accent: 'violet' },
     routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
     databases: [],
     tools: [],
@@ -1744,6 +1744,8 @@ test('apps deploy sends pulled base version and updates linked state after deplo
     assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_SAVE_APP_FILES');
     assert.equal(requestBody.arguments.app_id, 'app-1');
     assert.equal(requestBody.arguments.base_version, 7);
+    assert.equal(requestBody.arguments.name, 'Linked App');
+    assert.equal(requestBody.arguments.accent, 'violet');
     const state = readLinkedState(projectDir, appLinkedStateProfileKey({
       apiBase: `http://127.0.0.1:${port}`,
       userId: 'auth-user-123',
@@ -1770,7 +1772,7 @@ test('apps deploy promotes a dev-only project instead of failing', async () => {
   writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '[data-notis-app-root] {}\n');
   writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({
     version: 1,
-    app: { name: 'Dev Only App' },
+    app: { name: 'Dev Only App', title: 'Dev Only App' },
     routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
     databases: [],
     tools: [],
@@ -1798,6 +1800,7 @@ test('apps deploy promotes a dev-only project instead of failing', async () => {
     assert.equal(toolCalls.length, 1);
     assert.equal(toolCalls[0].tool_name, 'LOCAL_NOTIS_SAVE_APP_FILES');
     assert.equal(toolCalls[0].arguments.promote_dev_app, true);
+    assert.equal(toolCalls[0].arguments.name, 'Dev Only App');
     // Promotion keeps the id: the deploy targets the same row dev was using.
     assert.equal(toolCalls[0].arguments.app_id, 'dev-app-1');
     const state = readLinkedState(projectDir, appLinkedStateProfileKey({
@@ -3034,10 +3037,14 @@ test('selected route screenshots keep their full-manifest slot numbers', () => {
   assert.equal(slots.get('settings'), 3);
 });
 
-test('manifest app accent is forwarded to app row fields', () => {
+test('manifest display title and accent are forwarded to app row fields', () => {
   assert.deepEqual(
-    appRowFieldsFromManifest({ app: { accent: 'mint' } }),
-    { accent: 'mint' },
+    appRowFieldsFromManifest({ app: { name: 'internal-slug', title: 'Display Title', accent: 'mint' } }),
+    { name: 'Display Title', accent: 'mint' },
+  );
+  assert.deepEqual(
+    appRowFieldsFromManifest({ app: { name: 'Legacy Display Name' } }),
+    { name: 'Legacy Display Name', accent: null },
   );
   assert.deepEqual(
     appRowFieldsFromManifest({ app: {} }),
