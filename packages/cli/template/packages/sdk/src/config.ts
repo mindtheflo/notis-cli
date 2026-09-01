@@ -40,6 +40,12 @@ export interface NotisRouteConfig {
   icon?: string;
   parentSlug?: string | null;
   default?: boolean;
+  /**
+   * Allow the host to address an app-owned resource on this route through the
+   * canonical `?resource=<id>` deep link. Read the incoming id with
+   * `useNotis().resourceId`.
+   */
+  resourceDeepLinks?: boolean;
   exportName?: string;
   collection?: {
     database: string;

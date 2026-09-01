@@ -13,6 +13,7 @@ import {
   buildArtifact,
   collectSourceFiles,
   detectProjectWarnings,
+  generateManifest,
   inspectListingReadiness,
   normalizeAppCapabilities,
   normalizeAppToolBindings,
@@ -1978,7 +1979,7 @@ import { defineNotisApp } from '@notis/sdk/config';
 
 export default defineNotisApp({
   name: 'Test App',
-  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true, resourceDeepLinks: true }],
   databases: ['tasks'],
   tools: [],
 });
@@ -1991,9 +1992,27 @@ export default defineNotisApp({
   assert.equal(manifest.app.release_version, '1.2.3');
   assert.equal(manifest.spec_version, 4);
   assert.equal(manifest.routes[0].path, '/');
+  assert.equal(manifest.routes[0].resourceDeepLinks, true);
   assert.ok(manifest.routes[0].export_name);
   assert.ok(manifest.bundle);
   assert.deepEqual(manifest.databases, ['tasks']);
+});
+
+test('generateManifest rejects non-boolean resourceDeepLinks route config', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-resource-links-'));
+  assert.throws(
+    () => generateManifest({
+      name: 'Bad resource links',
+      routes: [{
+        path: '/',
+        slug: 'home',
+        name: 'Home',
+        default: true,
+        resourceDeepLinks: 'yes',
+      }],
+    }, projectDir),
+    /resourceDeepLinks must be a boolean/,
+  );
 });
 
 test('apps build keeps machine output parseable when the project build writes logs', () => {

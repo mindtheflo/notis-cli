@@ -680,6 +680,9 @@ function validateConfiguredRoutes(routes) {
     if (route.default) {
       defaultCount += 1;
     }
+    if (route.resourceDeepLinks !== undefined && typeof route.resourceDeepLinks !== 'boolean') {
+      throw usageError(`Route "${route.slug}" resourceDeepLinks must be a boolean.`);
+    }
   }
 
   if (defaultCount !== 1) {
@@ -799,6 +802,7 @@ export function generateManifest(appConfig, projectDir) {
       icon: route.icon || null,
       parentSlug: route.parentSlug || null,
       default: route.default || false,
+      resourceDeepLinks: route.resourceDeepLinks === true,
       export_name: route.exportName || route.export_name || exportNameFromPath(route.path),
       collection: route.collection || null,
     };

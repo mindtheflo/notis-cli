@@ -366,10 +366,11 @@ function buildHarnessDescriptor({ state, manifest, appConfig, route, scenario = 
       icon: route.icon || null,
       parentSlug: route.parentSlug || null,
       default: Boolean(route.default),
+      resourceDeepLinks: route.resourceDeepLinks === true,
       collection: route.collection || null,
     },
     databases,
-    context: { collectionItem: null, screenshotScenario: scenario },
+    context: { collectionItem: null, resourceId: null, screenshotScenario: scenario },
     tools,
   };
 }

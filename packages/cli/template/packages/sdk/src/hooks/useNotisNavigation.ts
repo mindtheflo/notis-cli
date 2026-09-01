@@ -5,7 +5,7 @@ import { useNotisRuntime } from '../provider';
 
 interface NavigationActions {
   /** Navigate to a route within the app by its path. */
-  toRoute: (path: string) => void;
+  toRoute: (path: string, options?: { resourceId?: string | null }) => void;
   /** Navigate to a document detail view. */
   toDocument: (documentId: string, title?: string | null) => void;
   /** Navigate to the app's default route. */
@@ -25,11 +25,14 @@ interface NavigationActions {
 export function useNotisNavigation(): NavigationActions {
   const runtime = useNotisRuntime();
 
-  const toRoute = useCallback((path: string) => {
+  const toRoute = useCallback((path: string, options?: { resourceId?: string | null }) => {
     if (runtime?.navigate) {
-      runtime.navigate({ kind: 'route', path });
+      runtime.navigate({ kind: 'route', path, resourceId: options?.resourceId ?? null });
     } else if (typeof window !== 'undefined') {
-      window.location.href = path;
+      const url = new URL(path, window.location.href);
+      if (options?.resourceId) url.searchParams.set('resource', options.resourceId);
+      else url.searchParams.delete('resource');
+      window.location.href = url.toString();
     }
   }, [runtime]);
 

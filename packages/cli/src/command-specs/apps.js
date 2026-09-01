@@ -587,6 +587,7 @@ function buildManifestForDev(appConfig) {
       icon: route.icon || null,
       parentSlug: route.parentSlug || null,
       default: route.default || false,
+      resourceDeepLinks: route.resourceDeepLinks === true,
       export_name: route.exportName || route.export_name,
       collection: route.collection || null,
     })),

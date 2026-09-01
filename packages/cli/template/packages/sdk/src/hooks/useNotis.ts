@@ -12,6 +12,8 @@ interface NotisContext {
   databases: DatabaseDescriptor[];
   /** Selected collection item for the current route, when applicable. */
   collectionItem: CollectionItemDetail | null;
+  /** Resource requested through this route's canonical deep link. */
+  resourceId: string | null;
   /** Whether the runtime is loaded and available. */
   ready: boolean;
 }
@@ -29,6 +31,7 @@ export function useNotis(): NotisContext {
     route: runtime?.route ?? null,
     databases: runtime?.databases ?? [],
     collectionItem: runtime?.context?.collectionItem ?? null,
+    resourceId: runtime?.context?.resourceId ?? null,
     ready: runtime !== null,
   };
 }

@@ -124,6 +124,7 @@ export interface RouteDescriptor {
   icon?: string | null;
   parentSlug?: string | null;
   default?: boolean;
+  resourceDeepLinks?: boolean;
   collection?: {
     database: string;
     titleProperty: string;
@@ -172,6 +173,8 @@ export interface QueryFilter {
 
 export interface NotisRuntimeContext {
   collectionItem?: CollectionItemDetail | null;
+  /** App-owned resource requested through the route's `?resource=<id>` link. */
+  resourceId?: string | null;
   /**
    * Set when the app is being rendered by the screenshot harness (`notis apps
    * screenshot`) for the named listing scenario. Lets apps and SDK components
