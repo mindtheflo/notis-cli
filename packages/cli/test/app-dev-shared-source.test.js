@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -114,6 +114,50 @@ export default defineNotisApp({
   await server.close();
 
   assert.equal(stoppedPids.length, 1);
+});
+
+test('only an explicitly Desktop-owned server exposes watcher ownership metadata', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-desktop-owner-'));
+  mkdirSync(join(projectDir, 'app'), { recursive: true });
+  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(projectDir, 'notis.config.ts'), `
+import { defineNotisApp } from '@notis/sdk/config';
+
+export default defineNotisApp({
+  name: 'Desktop Owner App',
+  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
+});
+`);
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
+    name: 'desktop-owner-app',
+    private: true,
+    scripts: { build: 'node -e "setInterval(() => {}, 1000)" --' },
+  }));
+
+  const port = await availablePort();
+  const server = await startAppDevServer({
+    apps: [{ slug: 'desktop-owner-dev', projectDir }],
+    port,
+    watch: true,
+    desktopOwnerId: 'desktop-instance',
+    desktopOwnerScope: '/desktop/scope',
+    log: () => {},
+    logError: () => {},
+  });
+  try {
+    const ownership = server.getWatcherOwnership('desktop-owner-dev');
+    assert.equal(ownership?.desktopOwnerId, 'desktop-instance');
+    assert.equal(ownership?.desktopOwnerScope, '/desktop/scope');
+    assert.equal(ownership?.watcherProjectDir, realpathSync(projectDir));
+    assert.equal(ownership?.watcherProcessGroupPid > 0, true);
+    assert.equal(typeof ownership?.watcherStartIdentity, 'string');
+    assert.equal(ownership?.watcherCommandFingerprint, 'npm:run-build:watch:v1');
+  } finally {
+    await server.close();
+  }
 });
 
 test('dev diagnostics persist host and watcher state as JSONL', async () => {

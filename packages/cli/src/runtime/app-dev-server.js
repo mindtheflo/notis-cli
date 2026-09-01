@@ -43,6 +43,7 @@ import {
   linkAppDevSessionTarget,
   readAppDevSessions,
 } from './app-dev-sessions.js';
+import { captureDesktopWatcherOwnership } from './app-dev-process-identity.js';
 
 const CONTENT_TYPES = {
   '.js': 'application/javascript; charset=utf-8',
@@ -421,7 +422,7 @@ function renderHarnessHtml({ state, manifest, appConfig, route, harnessOptions, 
 /**
  * Start the dev server for one or more apps.
  *
- * @param {{apps: Array<{slug: string, projectDir: string, appId?: string, targetAppId?: string, userId?: string, profileKey?: string, sessionId?: string, mountNonce?: string}>, port: number, watch?: boolean, sessionsFilePath?: string, harness?: { mode?: string, apiBase?: string, jwt?: string }, diagnosticsFile?: string | null, terminateBuildProcess?: typeof terminateBuildProcessTree, log?: (m: string) => void, logError?: (m: string) => void}} options
+ * @param {{apps: Array<{slug: string, projectDir: string, appId?: string, targetAppId?: string, userId?: string, profileKey?: string, sessionId?: string, mountNonce?: string}>, port: number, watch?: boolean, sessionsFilePath?: string, harness?: { mode?: string, apiBase?: string, jwt?: string }, diagnosticsFile?: string | null, desktopOwnerId?: string | null, desktopOwnerScope?: string | null, terminateBuildProcess?: typeof terminateBuildProcessTree, log?: (m: string) => void, logError?: (m: string) => void}} options
  */
 export async function startAppDevServer({
   apps,
@@ -430,6 +431,8 @@ export async function startAppDevServer({
   sessionsFilePath,
   harness = {},
   diagnosticsFile = process.env.NOTIS_DEV_DIAGNOSTICS_FILE || null,
+  desktopOwnerId = process.env.NOTIS_APPS_DEV_DESKTOP_OWNER_ID || null,
+  desktopOwnerScope = process.env.NOTIS_APPS_DEV_DESKTOP_OWNER_SCOPE || null,
   terminateBuildProcess = terminateBuildProcessTree,
   log = (msg) => process.stdout.write(`${msg}\n`),
   logError = (msg) => process.stderr.write(`${msg}\n`),
@@ -470,6 +473,7 @@ export async function startAppDevServer({
       prepareTimer: null,
       reloadTimer: null,
       buildProcess: null,
+      watcherOwnership: null,
       lastMtimeMs: 0,
       watchPollTimer: null,
       bundleReady: false,
@@ -1010,6 +1014,15 @@ export async function startAppDevServer({
         env: { ...process.env, NOTIS_DEV: '1' },
       });
       state.buildProcess = buildProcess;
+      for (let attempt = 0; attempt < 5 && !state.watcherOwnership; attempt += 1) {
+        state.watcherOwnership = captureDesktopWatcherOwnership({
+          pid: buildProcess.pid,
+          projectDir: state.projectDir,
+          desktopOwnerId,
+          desktopOwnerScope,
+        });
+        if (!state.watcherOwnership && attempt < 4) await delay(10);
+      }
 
       buildProcess.on('exit', (code) => {
         if (code !== 0 && code !== null) {
@@ -1061,6 +1074,11 @@ export async function startAppDevServer({
       const state = appState.get(slug);
       if (!state) return Promise.reject(new Error(`unknown app: ${slug}`));
       return state.bundleReadyPromise;
+    },
+    getWatcherOwnership(slug) {
+      const state = appState.get(slug);
+      if (!state) throw new Error(`unknown app: ${slug}`);
+      return state.watcherOwnership ? { ...state.watcherOwnership } : null;
     },
     async close() {
       serverClosing = true;

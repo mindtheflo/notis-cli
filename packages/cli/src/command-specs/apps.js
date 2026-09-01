@@ -46,6 +46,7 @@ import {
   scaffoldRegistryLabel,
 } from '../runtime/app-registry-scaffolds.js';
 import { startAppDevServer } from '../runtime/app-dev-server.js';
+import { captureDesktopHostOwnership } from '../runtime/app-dev-process-identity.js';
 import {
   discoverRegisteredAppProjects,
   readAppDevRoots,
@@ -1386,6 +1387,7 @@ async function appsDevHandler(ctx) {
         isBundleReady: () => true,
         updateApp: () => {},
         waitForBundle: async () => {},
+        getWatcherOwnership: () => null,
       }
     : await startAppDevServer({
         apps: canonicalCandidates.map((app) => ({
@@ -1401,6 +1403,10 @@ async function appsDevHandler(ctx) {
         port,
         sessionsFilePath,
       });
+  const desktopHostOwnership = captureDesktopHostOwnership({
+    desktopOwnerId: process.env.NOTIS_APPS_DEV_DESKTOP_OWNER_ID,
+    desktopOwnerScope: process.env.NOTIS_APPS_DEV_DESKTOP_OWNER_SCOPE,
+  });
 
   let heartbeatTimer = setInterval(() => {
     try {
@@ -1460,6 +1466,8 @@ async function appsDevHandler(ctx) {
         sessionId,
         hostPid: process.pid,
         sourceHost: !sharedBundleBaseUrls,
+        ...(desktopHostOwnership || {}),
+        ...(devServer.getWatcherOwnership(app.devSlug) || {}),
         bundleReady: devServer.isBundleReady(app.devSlug),
         ...(!sharedBundleBaseUrls ? {
           discoveredProjects: discoveredAppDirs,
@@ -1616,12 +1624,15 @@ async function appsDevHandler(ctx) {
       }
     }
     try {
-      removeAppDevSession(sessionId, sessionsFilePath);
+      await devServer.close();
     } catch {
       // ignore cleanup failures during shutdown
     }
+    // Keep ownership records until every watcher group has stopped. If the
+    // Desktop must force this host down, the next launch can still recover a
+    // verified orphan instead of losing its only ownership proof.
     try {
-      await devServer.close();
+      removeAppDevSession(sessionId, sessionsFilePath);
     } catch {
       // ignore cleanup failures during shutdown
     }
