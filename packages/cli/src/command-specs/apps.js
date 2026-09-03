@@ -1408,7 +1408,65 @@ async function appsDevHandler(ctx) {
     desktopOwnerScope: process.env.NOTIS_APPS_DEV_DESKTOP_OWNER_SCOPE,
   });
 
-  let heartbeatTimer = setInterval(() => {
+  let heartbeatTimer = null;
+  let consumerTimer = null;
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stdout.write(`\n[notis apps dev] stopping (${signal})...\n`);
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (consumerTimer) {
+      clearInterval(consumerTimer);
+      consumerTimer = null;
+    }
+    if (manualConsumerTimer) {
+      clearInterval(manualConsumerTimer);
+      manualConsumerTimer = null;
+    }
+    if (manualConsumerInstanceId) {
+      try {
+        removeAppDevConsumer(manualConsumerInstanceId);
+      } catch {
+        // A crashed CLI lease expires automatically after the heartbeat window.
+      }
+    }
+    try {
+      await devServer.close();
+    } catch {
+      // ignore cleanup failures during shutdown
+    }
+    // Keep ownership records until every watcher group has stopped. If the
+    // Desktop must force this host down, the next launch can still recover a
+    // verified orphan instead of losing its only ownership proof.
+    try {
+      removeAppDevSession(sessionId, sessionsFilePath);
+    } catch {
+      // ignore cleanup failures during shutdown
+    }
+    if (sourceHostLock) {
+      releaseAppDevHostLock(sourceHostLock);
+      sourceHostLock = null;
+    }
+    process.exit(EXIT_CODES.ok);
+  };
+  const handleSigint = () => {
+    void shutdown('SIGINT');
+  };
+  const handleSigterm = () => {
+    void shutdown('SIGTERM');
+  };
+
+  // Electron can stop a partially registered host. Install cleanup before the
+  // first remote registration so every watcher group is still terminated when
+  // registration is slow or stuck.
+  process.on('SIGINT', handleSigint);
+  process.on('SIGTERM', handleSigterm);
+
+  heartbeatTimer = setInterval(() => {
     try {
       heartbeatAppDevSession(sessionId, new Date().toISOString(), sessionsFilePath);
     } catch (error) {
@@ -1514,6 +1572,8 @@ async function appsDevHandler(ctx) {
     }
   }
   if (apps.length === 0) {
+    process.off('SIGINT', handleSigint);
+    process.off('SIGTERM', handleSigterm);
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
     try {
@@ -1547,8 +1607,6 @@ async function appsDevHandler(ctx) {
     ...liveDataWarnings(apps),
     ...versionPrecedenceWarnings(apps),
   ];
-
-  let consumerTimer = null;
 
   ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
@@ -1597,57 +1655,6 @@ async function appsDevHandler(ctx) {
       '',
       'Press Ctrl-C to stop.',
     ].join('\n'),
-  });
-
-  let shuttingDown = false;
-  const shutdown = async (signal) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    process.stdout.write(`\n[notis apps dev] stopping (${signal})...\n`);
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
-    if (consumerTimer) {
-      clearInterval(consumerTimer);
-      consumerTimer = null;
-    }
-    if (manualConsumerTimer) {
-      clearInterval(manualConsumerTimer);
-      manualConsumerTimer = null;
-    }
-    if (manualConsumerInstanceId) {
-      try {
-        removeAppDevConsumer(manualConsumerInstanceId);
-      } catch {
-        // A crashed CLI lease expires automatically after the heartbeat window.
-      }
-    }
-    try {
-      await devServer.close();
-    } catch {
-      // ignore cleanup failures during shutdown
-    }
-    // Keep ownership records until every watcher group has stopped. If the
-    // Desktop must force this host down, the next launch can still recover a
-    // verified orphan instead of losing its only ownership proof.
-    try {
-      removeAppDevSession(sessionId, sessionsFilePath);
-    } catch {
-      // ignore cleanup failures during shutdown
-    }
-    if (sourceHostLock) {
-      releaseAppDevHostLock(sourceHostLock);
-      sourceHostLock = null;
-    }
-    process.exit(EXIT_CODES.ok);
-  };
-
-  process.on('SIGINT', () => {
-    void shutdown('SIGINT');
-  });
-  process.on('SIGTERM', () => {
-    void shutdown('SIGTERM');
   });
 
   if (consumerMode === 'machine' || consumerMode === 'environment') {

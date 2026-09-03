@@ -153,6 +153,24 @@ test('apps dev publishes each ready mount before later registrations finish', ()
   );
 });
 
+test('apps dev installs watcher cleanup before remote registration begins', () => {
+  const source = readFileSync(new URL('../src/command-specs/apps.js', import.meta.url), 'utf8');
+  const handler = source.slice(
+    source.indexOf('async function appsDevHandler'),
+    source.indexOf('async function appsRootsListHandler'),
+  );
+  const devServerStarted = handler.indexOf('await startAppDevServer({');
+  const sigtermHandler = handler.indexOf("process.on('SIGTERM', handleSigterm)");
+  const registrationLoop = handler.indexOf('for (const {\n    appConfig,');
+
+  assert.ok(devServerStarted >= 0, 'source host must start its watcher groups');
+  assert.ok(sigtermHandler > devServerStarted, 'cleanup requires the started dev server');
+  assert.ok(
+    sigtermHandler < registrationLoop,
+    'SIGTERM cleanup must be active before the first remote registration can block',
+  );
+});
+
 test('linking an installed app preserves the separate development runtime link', () => {
   assert.deepEqual(
     buildLinkedAppState(
