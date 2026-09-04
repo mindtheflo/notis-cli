@@ -64,8 +64,8 @@ export interface CollectionKeyboardShortcuts {
   clear: string | false;
   selectAll: string | false;
   toggle: string | false;
-  extendNext: string | false;
-  extendPrevious: string | false;
+  extendNext: string | string[] | false;
+  extendPrevious: string | string[] | false;
   next: string | string[] | false;
   previous: string | string[] | false;
   up: string | false;
@@ -158,8 +158,8 @@ const DEFAULT_SHORTCUTS: CollectionKeyboardShortcuts = {
   clear: 'Escape',
   selectAll: 'Mod+A',
   toggle: 'X',
-  extendNext: 'Shift+ArrowDown',
-  extendPrevious: 'Shift+ArrowUp',
+  extendNext: ['Shift+ArrowDown', 'Shift+ArrowRight'],
+  extendPrevious: ['Shift+ArrowUp', 'Shift+ArrowLeft'],
   next: 'J',
   previous: 'K',
   up: 'ArrowUp',
@@ -168,6 +168,16 @@ const DEFAULT_SHORTCUTS: CollectionKeyboardShortcuts = {
   right: false,
   activate: 'Enter',
 };
+
+function filterShortcutKeys(
+  keys: string | string[] | false,
+  predicate: (key: string) => boolean,
+): string | string[] | false {
+  if (!keys) return false;
+  const filtered = (Array.isArray(keys) ? keys : [keys]).filter(predicate);
+  if (filtered.length === 0) return false;
+  return filtered.length === 1 ? filtered[0] : filtered;
+}
 
 function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;
@@ -442,14 +452,20 @@ export function useCollectionInteractions<T>(
       if (!keys) return;
       definitions.push({ id, label, keys, onTrigger });
     };
+    const extendRight = filterShortcutKeys(keyboard.extendNext, (key) => key.toLowerCase().endsWith('arrowright'));
+    const extendDown = filterShortcutKeys(keyboard.extendNext, (key) => !key.toLowerCase().endsWith('arrowright'));
+    const extendLeft = filterShortcutKeys(keyboard.extendPrevious, (key) => key.toLowerCase().endsWith('arrowleft'));
+    const extendUp = filterShortcutKeys(keyboard.extendPrevious, (key) => !key.toLowerCase().endsWith('arrowleft'));
     add('collection.clear', 'Clear selection', keyboard.clear, clear);
     add('collection.select-all', 'Select all visible items', selectionMode === 'none' ? false : keyboard.selectAll, selectAll);
     add('collection.toggle', 'Toggle active item', selectionMode === 'none' ? false : keyboard.toggle, () => {
       const id = activeIdRef.current ?? anchorIdRef.current;
       if (id) toggle(id);
     });
-    add('collection.extend-next', 'Extend selection down', selectionMode !== 'multiple' ? false : keyboard.extendNext, () => moveActive('down', true));
-    add('collection.extend-previous', 'Extend selection up', selectionMode !== 'multiple' ? false : keyboard.extendPrevious, () => moveActive('up', true));
+    add('collection.extend-down', 'Extend selection down', selectionMode !== 'multiple' ? false : extendDown, () => moveActive('down', true));
+    add('collection.extend-right', 'Extend selection right', selectionMode !== 'multiple' ? false : extendRight, () => moveActive('right', true));
+    add('collection.extend-up', 'Extend selection up', selectionMode !== 'multiple' ? false : extendUp, () => moveActive('up', true));
+    add('collection.extend-left', 'Extend selection left', selectionMode !== 'multiple' ? false : extendLeft, () => moveActive('left', true));
     add('collection.next', 'Next item', keyboard.next, () => moveActive('next'));
     add('collection.previous', 'Previous item', keyboard.previous, () => moveActive('previous'));
     add('collection.up', 'Move up', keyboard.up, () => moveActive('up'));
@@ -634,6 +650,7 @@ export function useCollectionInteractions<T>(
     },
     onKeyDown: (event: ReactKeyboardEvent) => {
       if (event.key !== ' ' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target !== event.currentTarget) return;
       event.preventDefault();
       if (selectionMode === 'none') activate(id);
       else toggle(id);

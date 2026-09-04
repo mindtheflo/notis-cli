@@ -49,10 +49,12 @@ const containerBaseStyle: CSSProperties = {
 };
 
 const countStyle: CSSProperties = {
+  flexShrink: 0,
   padding: '0 0.5rem',
   fontSize: '12px',
   fontWeight: 500,
   fontVariantNumeric: 'tabular-nums',
+  whiteSpace: 'nowrap',
   color: 'color-mix(in srgb, hsl(var(--background)) 70%, transparent)',
 };
 
@@ -64,6 +66,7 @@ const dividerStyle: CSSProperties = {
 };
 
 const baseButtonStyle: CSSProperties = {
+  flexShrink: 0,
   display: 'inline-flex',
   alignItems: 'center',
   gap: '0.375rem',
@@ -75,6 +78,7 @@ const baseButtonStyle: CSSProperties = {
   cursor: 'pointer',
   fontSize: '13px',
   fontFamily: 'inherit',
+  whiteSpace: 'nowrap',
   transition: 'background-color 120ms ease, color 120ms ease',
 };
 
@@ -188,7 +192,9 @@ function ActionButton({ action }: { action: MultiSelectAction }) {
       onBlur={() => setHover(false)}
       style={buttonStyle}
     >
-      {action.icon ? <span aria-hidden style={iconSlotStyle}>{action.icon}</span> : null}
+      {!action.shortcut && action.icon ? (
+        <span aria-hidden style={iconSlotStyle}>{action.icon}</span>
+      ) : null}
       {display ? <kbd aria-hidden style={keycapStyle}>{display}</kbd> : null}
       <span>{action.pending ? `${action.label}…` : action.label}</span>
     </button>

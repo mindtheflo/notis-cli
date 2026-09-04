@@ -182,7 +182,13 @@ export function isEditableShortcutEvent(event: Event): boolean {
     if (!(target instanceof HTMLElement)) return false;
     if (target.isContentEditable || target.getAttribute('contenteditable') === 'true') return true;
     const tag = target.tagName;
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'SUMMARY') {
+      return true;
+    }
+    if (tag === 'A' && target.hasAttribute('href')) return true;
+    return ['button', 'link', 'menuitem', 'option', 'switch', 'tab'].includes(
+      target.getAttribute('role') || '',
+    );
   });
 }
 
