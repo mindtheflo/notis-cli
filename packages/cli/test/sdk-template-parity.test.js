@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,10 @@ const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(cliRoot, '../..');
 const canonicalSdkRoot = join(repoRoot, 'packages', 'sdk');
 const templateSdkRoot = join(cliRoot, 'template', 'packages', 'sdk');
+const canonicalSdkAvailable = existsSync(canonicalSdkRoot);
+const monorepoOnly = canonicalSdkAvailable
+  ? false
+  : 'canonical SDK is not included in the standalone notis-cli mirror';
 
 function listFiles(root, current = root) {
   return readdirSync(current, { withFileTypes: true })
@@ -18,7 +22,7 @@ function listFiles(root, current = root) {
     .sort();
 }
 
-test('the app scaffold ships the complete canonical SDK source', () => {
+test('the app scaffold ships the complete canonical SDK source', { skip: monorepoOnly }, () => {
   const canonicalFiles = listFiles(join(canonicalSdkRoot, 'src'));
   const templateFiles = listFiles(join(templateSdkRoot, 'src'));
   assert.deepEqual(
@@ -36,7 +40,7 @@ test('the app scaffold ships the complete canonical SDK source', () => {
   }
 });
 
-test('the app scaffold SDK package metadata matches the canonical package', () => {
+test('the app scaffold SDK package metadata matches the canonical package', { skip: monorepoOnly }, () => {
   assert.equal(
     readFileSync(join(templateSdkRoot, 'package.json'), 'utf8'),
     readFileSync(join(canonicalSdkRoot, 'package.json'), 'utf8'),
