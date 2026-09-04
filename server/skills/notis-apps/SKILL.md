@@ -23,10 +23,33 @@ All Notis apps are built using the Notis CLI, either locally in a repo workspace
 ## App Workspace Tool Rules
 
 - Apps are the top-level packaging unit in Notis.
-- Use `apps dev [folder]` to register a new local app for development. After the
-  user tests it and explicitly asks to deploy, `apps deploy` promotes that DEV
-  app in place. Use `LOCAL_NOTIS_CREATE_APP` only for non-CLI administrative
-  flows that explicitly require a server-side app row.
+- Choose the execution path before changing an app. A prompt that says the
+  shell is a hosted/Vercel sandbox, or a shell rooted at `/vercel/sandbox`, is
+  the **hosted sandbox** path. A shell on the user's computer with Notis
+  Desktop available is the **local Desktop** path.
+- In a hosted sandbox, do not run `apps dev`: the user's Desktop cannot mount
+  that sandbox filesystem. Unless the user explicitly requests preview-only,
+  read-only, or no deployment, a request to create or edit an app authorizes
+  deploying that app to the user's Workspace after `apps build` and automated
+  `apps verify` pass. An opt-out stops after those tests with no remote app
+  create/link, database mutation, deploy, or post-deploy checks. Pulling an existing app provides its exact link. For a new
+  app, test first, then reconcile profile state and `apps list --json` against
+  the canonical `notis.config.ts` `name` and intended personal/team scope: link
+  one exact editable non-development match after a metadata-only
+  (`include_documents: false`) detail read proves scope, fail on ambiguity or
+  scope mismatch, or create only when none exists. New CLI-created apps default
+  to personal scope. Before creation, prove that canonicalizing the config
+  `title` yields the config `name`. For personal scope, run `apps create
+  "<canonical-config-title>" . --json` exactly once. For explicitly requested
+  team scope, discover and inspect `LOCAL_NOTIS_CREATE_APP`, dry-run it, execute
+  it exactly once with team visibility and the verified current team scope,
+  verify the returned id/slug/team scope/edit permission, then `apps link` that
+  exact id. Stop for read-only
+  reconciliation if creation is ambiguous or outcome-unknown. In the local
+  Desktop path, use `apps dev [folder]`, let the user test the DEV app, and deploy
+  that development identity directly only after an explicit request. Use
+  `LOCAL_NOTIS_CREATE_APP` only for a hosted team-scoped creation or another
+  non-CLI administrative flow that explicitly requires a server-side app row.
 - Use `LOCAL_NOTIS_UPDATE_APP` to update app metadata.
 - Use `LOCAL_NOTIS_LIST_APPS` to discover the user's apps.
 - The full app lifecycle uses the CLI in the shell. Always run it through the registry-resolved package, for example `npx --package @notis_ai/cli@latest -- notis apps init`; use the same prefix for `build` and `deploy`. In hosted shells, the CLI is pre-authenticated through `NOTIS_JWT`.
@@ -97,8 +120,8 @@ App code never accesses the runtime directly -- it uses SDK hooks (`useTool`, `u
 12. **Portal-owned sidebars stay portal-owned** -- If a route uses `collection.sidebar`, treat that sidebar as platform chrome. Do not remove it, recreate it inside app JSX, or replace it with a custom in-app folder rail.
 13. **Portal globals are off-limits** -- Never use `window.__NOTIS_RUNTIME__`, query portal-owned DOM hooks, or create global DOM portals.
 14. **Prefer inline optimistic edits** -- Rename-like edits for collections, app-owned rows, and sidebar-backed entities should use inline editing with an optimistic UI update, then roll back on backend failure. Use modals only when the edit requires multiple fields or destructive confirmation.
-15. **Local development first; deploy is user-gated** -- Run `apps dev [folder]` once to register the root, then let the **user** test the automatically mounted app in its Workspace entry (compact `DEV` badge). The registration and host survive the command; no terminal must remain open. Do NOT run `apps create` or `apps deploy` on your own initiative, even after a clean build and verify. Building through local testing without deploying is the expected, complete outcome.
-16. **Installed app identity is exact and profile-scoped** -- Identity precedence is: explicit persisted link for this API/user profile; one accessible non-development app with the exact canonical slug; isolated development runtime. Persist one unique exact-slug match, fail closed on ambiguity, and never infer from display name. After first install, keep the profile-scoped link so Portal and CLI update the same app instead of creating duplicates.
+15. **The execution environment determines the deploy gate** -- In the local Desktop path, run `apps dev [folder]`, let the **user** test the automatically mounted DEV app, and do not deploy until the user asks; first deploy promotes that `dev_app_id` directly, so never create a second app first. In a hosted sandbox, `apps dev` cannot reach the user's Desktop; bootstrap `agent-browser`, build and verify first, then resolve exact identity/resources and deploy to the user's Workspace, verify the remote version and live runtime, and return the exact Portal URL. Automatic deployment is the default for create/edit requests only; an explicit preview-only, read-only, or no-deploy request wins. This standing sandbox authorization does not authorize Store submission.
+16. **Installed app identity is exact, editable, and scope-proven** -- Validate an explicit persisted link for this API/user profile before using it. Otherwise inspect every accessible exact-canonical-slug row, including development rows; link only one editable non-development candidate whose exact detail proves the intended personal/team scope. Fail closed on a development collision, multiple matches, missing scope proof, or scope mismatch, and never infer identity from display name. After first install, keep the validated profile-scoped link so Portal and CLI update the same app instead of creating duplicates.
 17. **Development identities stay separate** -- `.notis/state.json` uses `dev_app_id` for the hidden development-runtime row and `app_id` only for an accessible installed workspace app, scoped under the authenticated environment. Never pass a runtime app whose manifest has `is_dev: true` to `notis apps link`.
 18. **Automatic mounts are multi-instance and least-authority** -- Prod, Beta, and source-development Desktop instances may mount the same source simultaneously with independent authenticated runtimes. Automatic mounting never grants capabilities: reuse existing grants and leave restricted capabilities denied until approved. Consumer leases expire after crashes so the shared host exits after the last live instance. There are no offline rows or manual start/stop controls.
 19. **Store submission is user-gated** -- Run `apps publish --confirm-ready` only after the user explicitly confirms the current App Details page and Store listing are ready. Deploy the exact approved local state first. The command must reject missing confirmation, incomplete listing media, a local/deployed version mismatch, private visibility, or an existing pending review.
@@ -107,6 +130,7 @@ App code never accesses the runtime directly -- it uses SDK hooks (`useTool`, `u
 22. **Database rows are private unless explicitly seeded** -- A string declaration such as `databases: ['notes']` publishes schema only and never includes the developer's rows. Use `{ slug: 'templates', seedDocuments: true }` only for small, intentional starter content that every installer should receive. Never enable it for user-created notes, history, leads, or other personal data.
 23. **Public submissions are complete, reviewable packages** -- The registry PR must contain the full editable source tree, Store assets, exact source-declared database schemas, and only explicitly seeded starter rows. Registry CI validates those boundaries before merge; do not hand-edit `notis-listing.json` or strip source files to make a check pass. Fix the app locally, redeploy, and resubmit.
 24. **New projects default to `~/.notis/apps/<slug>`, and `[dir]` overrides it** -- `apps init` and `apps pull` use this stable, predictable home unless the app belongs in a specific repository, monorepo, or user-chosen location. In those cases, pass `[dir]` and report the resulting path. Do not nest an app inside a directory whose local workspace metadata selects an unrelated Notis runtime or profile: later CLI calls inherit that routing and may target the wrong environment.
+25. **Machine names and display titles use different casing** -- In `notis.config.ts`, `name` is the stable machine identity and must be lowercase kebab-case (`name: 'link-building'`). `title` is the human-facing app name and must use deliberate display casing (`title: 'Link Building'`), preserving product spelling and acronyms such as `Notis` and `SEO`. Never put a title-cased phrase in `name`, never show a raw slug as the title, and never change an existing canonical `name` or remote slug merely to repair display casing. The persisted `apps.name`, Workspace sidebar, App Details, and Store listing must use `title`.
 
 ## Anti-patterns -- NEVER do these
 
@@ -115,7 +139,7 @@ These are the most common mistakes agents make. Each one wastes time and produce
 - **NEVER assume app deploys create databases for you** -- Create or update databases through native Notis database tools or the assistant first, then reference them by slug in `notis.config.ts`. Database creation requires the owning app to exist: pass its slug or id in the `app` argument of `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` (create the app first with `LOCAL_NOTIS_CREATE_APP` if needed). A database can only be referenced by the app that owns it.
 - **NEVER bypass the supported workflow by manually stitching together low-level save or lint calls from a local workspace** -- Local agents should go through the NPX Notis CLI for `apps pull`, `apps dev`, `apps build`, `apps verify`, `apps create`, `apps link`, and `apps deploy`.
 - **NEVER use `apps pull` to clone a Store listing** -- `npx --package @notis_ai/cli@latest -- notis apps pull` only pulls source for an app the user can already access as an installed app. To fork a published Store app, run `npx --package @notis_ai/cli@latest -- notis apps init "My App" --from <slug>` instead: it downloads that app's source from the public registry, and installing the app first is not required.
-- **NEVER deploy on your own initiative** -- A clean `apps build` + `apps verify` is NOT a signal to deploy. `apps create` / `apps deploy` install the app onto the user's account; run them only after the user has tested the local (`apps dev`) build and explicitly asked you to deploy. When you finish building, hand off for local testing and stop — do not create or deploy unprompted.
+- **NEVER apply the local deploy gate to a hosted sandbox** -- On the user's local computer, a clean `apps build` + `apps verify` is not deploy consent: hand off the DEV app and wait. In a hosted sandbox, the user's create or edit request is deploy consent for that app because `apps dev` cannot reach their Desktop; deploy only after both commands pass, then verify the remote version. Neither path authorizes Store submission.
 - **NEVER submit without explicit approval** -- A deploy request alone does not authorize Store submission. Run `npx --package @notis_ai/cli@latest -- notis apps publish --confirm-ready` only when the user confirms App Details is ready for Store review.
 - **NEVER write raw `views/<slug>/index.js` files** -- Write standard React pages in `app/`.
 - **NEVER invent `npx --package @notis_ai/cli@latest -- notis apps push` or bypass the review flow** -- Source moves through `apps pull` and `apps deploy`; `apps publish --confirm-ready` submits the deployed snapshot through the same authenticated review endpoint as App Details.
@@ -131,22 +155,24 @@ These are the most common mistakes agents make. Each one wastes time and produce
 
 1. **Find a starting point.** Run `npx --package @notis_ai/cli@latest -- notis apps scaffolds list` (add `--search <term>` to filter) to list the published Store apps. If something close matches, run `npx --package @notis_ai/cli@latest -- notis apps init "My App" --from <slug>` to download that app's source from the registry. Only run plain `notis apps init "My App"` when no published app fits. Either way the project lands in `~/.notis/apps/<slug>`; add a `[dir]` argument when the user wants it somewhere else (a tracked git repo, an existing monorepo), and report the path you used.
 2. **Pull your own apps; fork Store apps with `--from`.** `apps pull` is for apps the user already has installed or deployed: run `npx --package @notis_ai/cli@latest -- notis apps list`, preserve any local edits in the target directory, then run `npx --package @notis_ai/cli@latest -- notis apps pull <app-id>` (lands in `~/.notis/apps/<app-slug>`; pass a `[dir]` argument to place it elsewhere). A pull reproduces the installed release, so increment `package.json` `notisAppVersion` above that release before `apps dev`; until then the online bundle remains active. To fork a published Store app, use `apps init --from <slug>` instead -- it downloads the source from the registry and does not require installing the app first.
-3. **Edit the listing source.** Update `name` (slug), `title`, description, icon, accent, author, categories, tagline, databases, routes, and tools in `notis.config.ts`. Declare a database as a string for schema-only Store packaging; use `{ slug: 'templates', seedDocuments: true }` only when its rows are deliberate starter content for every installer. Keep the complete Store release history in the root `CHANGELOG.md`, newest entry first, using `## [Release title] - YYYY-MM-DD` (or `{PR_MERGE_DATE}` before publication). The first entry powers **What’s New** and the same file powers **Version History**. `icon` is a `phosphor:<name>` value or `metadata/icon.png`; when unset the app shows its **two-letter initials** everywhere (store, sidebar, app details). `accent` optionally pins the avatar color to one of `blue|violet|emerald|amber|rose|sky|fuchsia|teal` (default derived from the app id). Icon/accent flow through deploy onto the app row + listing and can also be set later via the `update_app` tool.
+3. **Edit the listing source.** In `notis.config.ts`, set `name` to the stable lowercase kebab-case identity and set `title` to the correctly cased human-facing name; for example, `name: 'link-building'` with `title: 'Link Building'`. Treat acronym and brand casing as editorial input, not something to derive mechanically from the slug. Then update description, icon, accent, author, categories, tagline, databases, routes, and tools. Declare a database as a string for schema-only Store packaging; use `{ slug: 'templates', seedDocuments: true }` only when its rows are deliberate starter content for every installer. Keep the complete Store release history in the root `CHANGELOG.md`, newest entry first, using `## [Release title] - YYYY-MM-DD` (or `{PR_MERGE_DATE}` before publication). The first entry powers **What’s New** and the same file powers **Version History**. `icon` is a `phosphor:<name>` value or `metadata/icon.png`; when unset the app shows its **two-letter initials** everywhere (store, sidebar, app details). `accent` optionally pins the avatar color to one of `blue|violet|emerald|amber|rose|sky|fuchsia|teal` (default derived from the app id). Icon/accent flow through deploy onto the app row + listing and can also be set later via the `update_app` tool.
 4. **Build pages in `app/`.** Reuse scaffold code wherever it fits.
-5. **Iterate live.** Before developing a linked installed app, increment `package.json` `notisAppVersion` above the installed release. Then run `npx --package @notis_ai/cli@latest -- notis apps dev [folder]` once. It permanently registers the root; `~/.notis/apps` is already implicit. Running Desktop instances discover the root itself, direct app children, and `apps/*`, then mount each successful build automatically in Workspace. A linked build substitutes the online bundle only while its version is strictly greater; equal or stale builds remain served online. Source edits hot-reload only that app in every instance. Add `--scratch` for isolated empty resources when the work needs fixtures or destructive experiments.
-6. **Capture listing screenshots.** Declare 3–6 screenshots in `notis.config.ts`, each with a stable `path`, descriptive `alt`, and optional `route`/`scenario`/`focus`/`theme`, then run `npx --package @notis_ai/cli@latest -- notis apps screenshot`. Use `focus` to frame a real app root without empty browser canvas; use `theme: 'light'` or `theme: 'dark'` to match both the Portal render and Store backdrop, and pair both modes when that best represents the app. It renders the configured states in a headless harness and writes exact 2000x1250 PNGs under `metadata/`, using the deterministic Store presentation by default (`--raw` is diagnostic only). Apps are icon-led like Raycast — the icon set in `notis.config.ts` represents the app, so there is no cover image, only these screenshots. Never hand-author the PNGs; regenerate them when routes or UI change. A `scenario` names an entry in `metadata/screenshot-fixtures.json`; besides `actions` it may carry its own `tools` and `requests`, shallow-merged per key over the file-level ones for that capture, which is how the same route is shown both populated and in its first-run empty state.
-7. **Verify locally.** Run `npm install`, then `npx --package @notis_ai/cli@latest -- notis apps build` and `npx --package @notis_ai/cli@latest -- notis apps verify`. Surface the verify report and fix failures. Incomplete listing media is only a `Store readiness:` warning there; run `notis apps verify --listing` before publish to make it a failure.
-8. **Local-development-first handoff — STOP HERE.** Hand off after the user can see and test the app in its DEV-badged Workspace row. Building a new app to this point, without deploying, is a **complete and expected** result. Do NOT proceed to `apps create` / `apps deploy` yet. **Before handing off, complete all three acceptance checks:**
+5. **Test the source before remote mutation.** Before changing a linked installed app, increment `package.json` `notisAppVersion` above the installed release. In a fresh hosted sandbox, bootstrap Agent Browser with `npm exec --yes --package agent-browser@latest -- agent-browser install`. Generate configured screenshots; use `theme: 'dark'` or `theme: 'light'` where appropriate and reserve screenshot `--raw` for diagnostics. Run `npm install`, run `npx --package @notis_ai/cli@latest -- notis apps build`, then run `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify` in the sandbox (or the normal NPX verification command locally). Fix every failure. Do not create an app, mutate a database, or deploy before both checks pass. `--no-browser` is manual triage, not a passing automated gate.
+6. **Finish the local Desktop path at the DEV handoff.** Run `npx --package @notis_ai/cli@latest -- notis apps dev [folder]`; it creates the development identity and materializes available scaffold database snapshots without requiring a hosted app id. Hand off after the user can see and test the app in its DEV-badged Workspace row. Do not deploy until the user asks, and then run `apps deploy` directly so the existing `dev_app_id` is promoted in place; never run `apps create` after `apps dev`. **Before handing off, complete all three acceptance checks:**
    1. Root: `apps roots list` contains the intended folder (or the app is under the implicit default root).
    2. Bundle: the loopback `/snapshot` responds successfully and contains the expected manifest/routes.
    3. Mount and render: the app appears exactly once with a compact `DEV` badge and its default route renders. For multi-instance work, verify each requested Desktop independently.
    See Troubleshooting → *App is missing from the sidebar* if any check fails.
-9. **Deploy only when the user asks.** Once the user has tested locally and explicitly requests a deploy, run `npx --package @notis_ai/cli@latest -- notis apps deploy`. A first deploy promotes the development app in place; do not create a second app or use `--direct`. For an existing remote app, link first with `npx --package @notis_ai/cli@latest -- notis apps link <id> .` and then deploy. After first install, `.notis/state.json` must point at that same promoted app id so future local-dev actions become **Update**, not another **Install**.
+7. **Gate and resolve one hosted identity after tests pass.** If the request is preview-only, read-only, or no-deploy, stop after step 5: do not create or link an app, mutate a database, deploy, or run post-deploy checks. Otherwise, existing edits keep the exact profile-scoped id linked by `apps pull`, after a metadata-only (`include_documents: false`) app-detail read validates its edit permission and scope without materializing databases. For a new hosted app, default the intended scope to personal unless the user explicitly requests team scope, inspect `.notis/state.json`, and run `apps list --json`. Consider every accessible exact canonical-slug row, including development rows. Link only one editable, non-development candidate whose metadata-only exact app-detail read proves the intended scope; fail on multiple matches, development-row collisions, missing scope proof, or scope mismatch. Create only when there are zero exact-slug rows. First prove that lowercasing the config `title`, replacing non-alphanumeric runs with `-`, and trimming hyphens yields the config `name`. For personal scope, run `npx --package @notis_ai/cli@latest -- notis apps create "<canonical-config-title>" . --json` exactly once and verify the returned id, remote slug, edit permission, and personal scope. For explicitly requested team scope, use `notis tools search` to discover the team-capable app-creation tool, inspect its schema, dry-run it, then execute `LOCAL_NOTIS_CREATE_APP` exactly once with the canonical display title, `visibility: "team"`, and the exact current `team_id` when resolved. Verify the result's id, canonical slug, `team_id`, team visibility, and edit permission, then run `notis apps link <returned-id> .` before database reconciliation. Never retry an outcome-unknown create; reconcile read-only and stop on ambiguity or any returned identity/scope mismatch.
+8. **Reconcile hosted database schemas safely.** Read the exact app detail and current schemas first; mutate only missing or changed declarations. For creation, pass the exact app id in the database tool's `app` argument. For an update, resolve the exact `database_id`, verify its `owner_app_id` equals the linked app id, update by that `database_id`, then read back slug, owner, and schema. Apply only backward-compatible schema expansion before deployment. Stage breaking or destructive changes through an expand-contract sequence and obtain the required destructive approval; never make the currently deployed bundle incompatible before its replacement is live.
+9. **Deploy and prove the hosted sandbox result.** Use only the exact id established in step 7. Run `npx --package @notis_ai/cli@latest -- notis apps deploy`, read the matching row back with `npx --package @notis_ai/cli@latest -- notis apps list --json`, confirm its id and deployed version, then run `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify --mode live`. Return that row's exact profile-appropriate `portal_url` only after every proof passes. Report state precisely: a definite pre-commit rejection is **tested but not deployed**; a timeout/network/incomplete mutation response is **tested, deployment outcome unknown**; a confirmed deploy followed by failed readback is **deployed but not remotely verified**; a failed live check is **deployed but live verification failed**. Never retry an outcome-unknown mutation.
 10. **Submit only after confirmation.** When the user explicitly confirms the current App Details page is ready, ensure the approved state is deployed, then run `npx --package @notis_ai/cli@latest -- notis apps publish --confirm-ready`. The command submits Team apps immediately or opens the Public Store registry review PR. Without that confirmation, stop after deploy.
 
 ### Quick start
 
-Steps 1–3 are the agent's job on a build request. Step 4 is **user-gated** — do not run it until the user has tested the local build and asked you to deploy.
+Choose the local or hosted finish after verification. Local deployment is
+user-gated; hosted-sandbox deployment is the default for app create or edit
+tasks unless the user explicitly requests preview-only, read-only, or no deploy.
 
 ```bash
 # 1. Pick a published Store app as the scaffold (catalog comes from the public registry)
@@ -157,22 +183,39 @@ npx --package @notis_ai/cli@latest -- notis apps init "My App" --from <slug>
 cd ~/.notis/apps/my-app
 npm install
 
-# 2. Develop against the Electron Portal, then HAND OFF for the user to test.
-#    Keep this running — it is what substitutes the local build into the app's
-#    sidebar group. This is the finish line for a build request.
+# 2. LOCAL COMPUTER: register with Desktop and iterate. After the user approves
+#    deployment, run deploy directly to promote the existing dev_app_id.
 npx --package @notis_ai/cli@latest -- notis apps dev
-# ... iterate until the app looks right in its Workspace entry (DEV badge) ...
-
-# 3. Build, capture listing screenshots, and verify (still local — no deploy)
+# ... user tests the DEV-badged app ...
 npx --package @notis_ai/cli@latest -- notis apps build
 npx --package @notis_ai/cli@latest -- notis apps screenshot
 npx --package @notis_ai/cli@latest -- notis apps verify
-
-# 4. ONLY after the user tested locally and asked to deploy. First deploy
-#    promotes the dev app in place and writes the installed link.
 npx --package @notis_ai/cli@latest -- notis apps deploy
+```
 
-# 5. ONLY after the user explicitly confirms App Details is ready for Store review
+Hosted sandbox finish — never run `apps dev`. Test first, then reconcile the
+exact app identity and changed databases before deployment:
+
+```bash
+npm exec --yes --package agent-browser@latest -- agent-browser install
+npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps screenshot
+npx --package @notis_ai/cli@latest -- notis apps build
+npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify
+# New unlinked app only: reconcile exact canonical slug with apps list. If no
+# match exists, create once with the config title and verify the returned slug.
+npx --package @notis_ai/cli@latest -- notis apps list --json
+# Before create, prove canonicalize(config.title) == config.name.
+npx --package @notis_ai/cli@latest -- notis apps create "<canonical-config-title>" . --json
+# Compare schemas, then create only missing databases or update changed ones by
+# verified database_id and read back owner/schema before continuing.
+npx --package @notis_ai/cli@latest -- notis apps deploy
+npx --package @notis_ai/cli@latest -- notis apps list --json
+npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify --mode live
+```
+
+Store submission on either path remains a separate approval-gated action:
+
+```bash
 npx --package @notis_ai/cli@latest -- notis apps publish --confirm-ready
 ```
 
@@ -184,7 +227,7 @@ npx --package @notis_ai/cli@latest -- notis apps link <app-id> .
 npx --package @notis_ai/cli@latest -- notis apps deploy
 ```
 
-Or if editing an installed app:
+Or if editing an installed app locally:
 
 ```bash
 npx --package @notis_ai/cli@latest -- notis apps list
@@ -200,12 +243,20 @@ npx --package @notis_ai/cli@latest -- notis apps link <installed-app-id> .
 npx --package @notis_ai/cli@latest -- notis apps deploy
 ```
 
+In a hosted sandbox, use the same pull/build/verify sequence but omit `apps
+dev`; bootstrap `agent-browser`, materialize any new or changed database schemas
+against the exact linked id, deploy automatically after verification, read back
+the exact app id/version and `portal_url` with `apps list --json`, run live verification, and return that
+exact Portal URL. Never run `apps publish --confirm-ready` without separate
+Store approval.
+
 ## Building an App
 
 ### Step 1: Define the config
 
 Create `notis.config.ts` with:
-- **name** -- Display name
+- **name** -- Stable machine identity in lowercase kebab-case, such as `link-building`; do not use display casing here
+- **title** -- Human-facing app name with deliberate casing, such as `Link Building`; preserve brands and acronyms exactly
 - **databases** -- Slug references to existing Notis databases
 - **routes** -- Route-first sidebar entries with explicit `slug`, optional `parentSlug`, and optional `collection.sidebar` tree config
 - **tools** -- Final tool names the app can call at runtime. Use the shared discovery flow (`COMPOSIO_SEARCH_TOOLS`, then `COMPOSIO_GET_TOOL_SCHEMAS`) while building the app, and copy the returned final names into this list. Examples include `LOCAL_NOTIS_DATABASE_QUERY`, `LOCAL_NOTIS_MONID_RUN`, `GMAIL_SEND_EMAIL`, `LOCAL_POSTFORME_CREATE_POST`, and `LOCAL_MCP_<SERVER>_<TOOL>`. App code calls each declared name directly through `useTool`; it does not wrap provider or MCP calls in `COMPOSIO_MULTI_EXECUTE_TOOL`. Access stays scoped to the signed-in user's own connections, native database tools stay scoped to the app's databases unless `capabilities.workspaceDatabases: 'read'` is granted, and metered tools use the CLI-equivalent credit-cap and fail-closed usage-billing path.
@@ -344,7 +395,7 @@ Generated by `npx --package @notis_ai/cli@latest -- notis apps build` at `.notis
 {
   "version": 1,
   "spec_version": 4,
-  "app": { "name": "My App", "description": "...", "icon": "phosphor:..." },
+  "app": { "name": "My App", "slug": "my-app", "title": "My App", "description": "...", "icon": "phosphor:..." },
   "routes": [
     {
       "path": "/",
@@ -506,6 +557,16 @@ const result = await queryTasks.call({ database_id: 'tasks-db-id', query: { page
 
 ## Development Modes
 
+### Hosted sandbox development
+
+Do not run `apps dev` in a hosted sandbox. The sandbox filesystem is not on the
+user's computer, so Desktop cannot mount it. Bootstrap sandbox `agent-browser`,
+then build and verify before any remote mutation. For a create or edit request,
+unless the user explicitly says preview-only, read-only, or no-deploy, resolve
+one exact identity, safely materialize only missing or changed database schemas,
+deploy, read back the exact app id/version, run live verification, and return
+the exact Portal URL. Inspection, review, and diagnosis remain read-only.
+
 ### Canonical local development
 
 ```bash
@@ -517,13 +578,13 @@ Runs the real desktop-local development workflow. The CLI should discover all ap
 ## Testing
 
 1. **Build validation**: `npx --package @notis_ai/cli@latest -- notis apps build` must succeed without errors. Vite surfaces TypeScript and bundling errors during this step.
-2. **Headless render verification** (recommended after every build): run `npx --package @notis_ai/cli@latest -- notis apps verify`. It builds unless `--skip-build` is passed, spins up a loopback harness, drives `agent-browser` against every route, and reports per-route pass/fail with captured render errors and runtime calls.
+2. **Headless render verification** (recommended after every build): run `npx --package @notis_ai/cli@latest -- notis apps verify` locally. In a hosted sandbox, first run `npm exec --yes --package agent-browser@latest -- agent-browser install`, then run `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify`. It builds unless `--skip-build` is passed, spins up a loopback harness, drives `agent-browser` against every route, and reports per-route pass/fail with captured render errors and runtime calls.
 3. **Local development acceptance**: Run `notis apps dev [folder]` once to register the root, then verify each signed-in Desktop instance independently. For an unpublished app, expect one DEV-badged Workspace row. For a linked app, first confirm local `notisAppVersion` is strictly greater than installed `release_version`, then expect one substituted DEV-badged row; equal or lower must keep the online row and bundle. Verify the default route renders and live edits appear without restarting the CLI or Desktop. Use `notis apps roots list` as the persistence proof. Loopback bundle health alone does not prove that an authenticated instance mounted or rendered the app.
-4. **Post-deploy**: Verify the deployed bundle via `/portal_views/get` -> `runtime_descriptor.bundle.js_url`, then verify the app renders in the portal. The portal renders app bundles directly as React components, so the fastest verification is navigating to the app page in the portal.
+4. **Post-deploy**: Read back the exact app id, version, and `portal_url` with `apps list --json`, run `apps verify --mode live`, verify the deployed bundle via `/portal_views/get` -> `runtime_descriptor.bundle.js_url`, and return that profile-appropriate exact Portal URL. A confirmed deploy followed by failed readback is deployed but not remotely verified; a failed live check is deployed but live verification failed. The portal renders app bundles directly as React components, so navigate to the app page when an authenticated browser is available.
 
 ### Headless harness verification
 
-Run `npx --package @notis_ai/cli@latest -- notis apps verify` after `npx --package @notis_ai/cli@latest -- notis apps build`. Use `--mode live` after deploy to exercise the real `/portal_views/runtime_query` with the CLI JWT instead of stub data; live mode also fails a route whose runtime calls all errored, which a well-behaved error state would otherwise hide. If `agent-browser` is unavailable, pass `--no-browser` to print URLs and use `--keep-open` for interactive triage with `notis-browser-control`.
+Run `npx --package @notis_ai/cli@latest -- notis apps verify` after `npx --package @notis_ai/cli@latest -- notis apps build`. Use `--mode live` after deploy to exercise the real `/portal_views/runtime_query` with the CLI JWT instead of stub data; live mode also fails a route whose runtime calls all errored, which a well-behaved error state would otherwise hide. In a hosted sandbox, put `agent-browser` on the verification process's `PATH` with the combined-package command above. `--no-browser` only prints URLs for manual triage and does not satisfy the automated deployment gate.
 
 #### What the harness catches that `npx --package @notis_ai/cli@latest -- notis apps build` does not
 

@@ -991,10 +991,14 @@ test('describe apps pull --json renders the spec', () => {
 test('apps pull pins an explicitly requested source version', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-pinned-version-'));
   const tarball = makeTarGz({ 'package.json': '{"name":"pinned"}\n' });
+  let lookupToolName = null;
   const server = createHttpServer(async (req, res) => {
     if (req.url === '/cli_tools' && req.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      lookupToolName = JSON.parse(Buffer.concat(chunks).toString('utf-8')).tool_name;
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ app: { id: 'app-1', slug: 'pinned-app' } }));
+      res.end(JSON.stringify({ apps: [{ app_id: 'app-1', slug: 'pinned-app' }] }));
       return;
     }
     assert.equal(req.url, '/portal_apps/source?app_id=app-1&version=2');
@@ -1025,6 +1029,7 @@ test('apps pull pins an explicitly requested source version', async () => {
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.data.version, 2);
+    assert.equal(lookupToolName, 'LOCAL_NOTIS_LIST_APPS');
     const state = readLinkedState(payload.data.project_dir, appLinkedStateProfileKey({
       apiBase: `http://127.0.0.1:${port}`,
       userId: 'auth-user-123',
@@ -1120,7 +1125,7 @@ test('apps pull uses the OAuth credential refreshed during app lookup for source
     if (req.url === '/cli_tools') {
       assert.equal(req.headers.authorization, `Bearer ${makeJwt('oauth-user')}`);
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ app: { id: 'app-1', slug: 'refreshed-app' } }));
+      res.end(JSON.stringify({ apps: [{ app_id: 'app-1', slug: 'refreshed-app' }] }));
       return;
     }
     if (req.url === '/portal_apps/source?app_id=app-1&version=latest') {

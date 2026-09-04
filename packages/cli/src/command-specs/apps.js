@@ -2221,8 +2221,10 @@ async function appsPullHandler(ctx) {
   const appId = ctx.args.appId;
   const result = await runToolCommand({
     runtime: ctx.runtime,
-    toolName: GET_APP_TOOL,
-    arguments_: { app_id: appId },
+    // Pull is source retrieval plus local link state. LIST_APPS is deliberately
+    // non-materializing; GET_APP hydrates missing declared databases and would
+    // turn a read-only pull into a remote mutation before build/verification.
+    toolName: LIST_APPS_TOOL,
   });
   if (
     ctx.runtime.credentialKind === 'oauth'
@@ -2230,7 +2232,11 @@ async function appsPullHandler(ctx) {
   ) {
     throw usageError('Pulling app source requires a current OAuth grant. Run `notis login` and retry.');
   }
-  const app = result.payload?.app || {};
+  const apps = Array.isArray(result.payload?.apps) ? result.payload.apps : [];
+  const app = apps.find((candidate) => (candidate?.app_id || candidate?.id) === appId);
+  if (!app) {
+    throw usageError(`App ${appId} is not accessible to the active profile.`);
+  }
   const defaultDir = slugify(app.slug) || slugify(app.name) || slugify(appId);
   const targetDir = ctx.args.dir
     ? resolveProjectDir(ctx.args.dir)
