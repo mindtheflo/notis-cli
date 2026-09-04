@@ -84,6 +84,25 @@ async function writeLockOwnerAtomically(lockDirectory, owner) {
   await rename(temporaryOwnerPath, ownerPath);
 }
 
+async function releaseOwnedLock(lockDirectory, ownerId) {
+  const owner = await lockSnapshot(lockDirectory);
+  if (owner?.id !== ownerId) return;
+
+  const quarantineRoot = join(dirname(lockDirectory), '.stale-operation-locks');
+  const releasedDirectory = join(quarantineRoot, `released.${ownerId}`);
+  await mkdir(quarantineRoot, { recursive: true, mode: 0o700 });
+  try {
+    // Moving the owned directory releases the shared pathname atomically.
+    // Delete only the private destination so a waiter can safely acquire a new
+    // lock without racing this owner's recursive cleanup.
+    await rename(lockDirectory, releasedDirectory);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  await rm(releasedDirectory, { recursive: true, force: true });
+}
+
 /** Serialize Desktop and terminal skill sync across processes on one Mac. */
 export async function withSkillSyncLock(callback, {
   home = homedir(),
@@ -174,10 +193,7 @@ export async function withSkillSyncLock(callback, {
     heartbeatStopped = true;
     clearInterval(heartbeat);
     await heartbeatInFlight;
-    const owner = await lockSnapshot(lockDirectory);
-    if (owner?.id === ownerId) {
-      await rm(lockDirectory, { recursive: true, force: true });
-    }
+    await releaseOwnedLock(lockDirectory, ownerId);
   }
 }
 
