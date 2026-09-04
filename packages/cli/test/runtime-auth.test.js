@@ -167,7 +167,7 @@ test('legacy profile names remain usable and survive later config writes', async
   assert.equal(raw.profiles[legacyName].oauth_access_token, 'legacy-oauth-token');
 });
 
-test('worktree cleanup preserves raw legacy Desktop auth until packaged migration', async () => {
+test('worktree cleanup removes owned and stale generated local profiles without normalizing shared config', async () => {
   const home = mkdtempSync(join(tmpdir(), 'notis-cli-archive-preserves-legacy-'));
   const configFile = join(home, '.notis', 'config.json');
   mkdirSync(join(home, '.notis'), { recursive: true });
@@ -187,9 +187,22 @@ test('worktree cleanup preserves raw legacy Desktop auth until packaged migratio
           dev_access_token: 'dev-token',
           dev_workspace_root: '/worktree/owned',
         },
+        'dev-owned-alias': {
+          dev_access_token: 'alias-token',
+          dev_workspace_root: '/worktree/owned',
+        },
+        'dev-owned-stale': {
+          api_base: 'http://localhost:43111',
+        },
+        'dev-owned-live': {
+          api_base: 'https://api.notis.ai',
+        },
         'dev-other': {
           dev_access_token: 'other-token',
           dev_workspace_root: '/worktree/other',
+        },
+        'dev-other-stale': {
+          api_base: 'http://localhost:43121',
         },
       },
     }),
@@ -198,19 +211,23 @@ test('worktree cleanup preserves raw legacy Desktop auth until packaged migratio
 
   const profiles = await loadProfilesWithHome(home, 'archive-preserves-legacy');
   const removed = profiles.removeOwnedDevProfiles(
-    ['dev-owned', 'dev-other'],
+    ['dev-owned', 'dev-owned-stale', 'dev-owned-live'],
     '/worktree/owned',
   );
   const raw = JSON.parse(readFileSync(configFile, 'utf-8'));
 
-  assert.deepEqual(removed, ['dev-owned']);
+  assert.deepEqual(removed, ['dev-owned', 'dev-owned-alias', 'dev-owned-stale']);
   assert.equal(raw.current_profile, 'default');
   assert.equal(raw.future_top_level, 'preserve-me');
   assert.equal(raw.profiles.default.jwt, 'legacy-desktop-token');
   assert.equal(raw.profiles.default.desktop_app_name, 'Notis');
   assert.equal(raw.profiles.default.future_profile_field, 'preserve-me-too');
+  assert.equal(raw.profiles['dev-owned-live'].api_base, 'https://api.notis.ai');
   assert.equal(raw.profiles['dev-other'].dev_access_token, 'other-token');
+  assert.equal(raw.profiles['dev-other-stale'].api_base, 'http://localhost:43121');
   assert.equal(Object.hasOwn(raw.profiles, 'dev-owned'), false);
+  assert.equal(Object.hasOwn(raw.profiles, 'dev-owned-alias'), false);
+  assert.equal(Object.hasOwn(raw.profiles, 'dev-owned-stale'), false);
 });
 
 test('config writes recover an aged ownerless lock from an interrupted acquisition', async () => {

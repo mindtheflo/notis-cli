@@ -485,10 +485,15 @@ export function updateConfig(updater) {
 }
 
 /**
- * Remove only worktree-owned profiles without normalizing the rest of the
- * shared file. Archive cleanup can run before a packaged Desktop upgrade has
- * migrated its legacy `jwt`; preserving unknown/raw fields here keeps that
- * migrate-then-strip handoff intact.
+ * Remove every profile owned by one worktree, plus stale localhost stubs that
+ * use one of that worktree's generated profile names. Older builds sometimes
+ * lost `dev_workspace_root`, so requiring the ownership marker alone leaves a
+ * dead local profile behind after archive.
+ *
+ * Do this without normalizing the rest of the shared file. Archive cleanup can
+ * run before a packaged Desktop upgrade has migrated its legacy `jwt`;
+ * preserving unknown/raw fields here keeps that migrate-then-strip handoff
+ * intact.
  */
 export function removeOwnedDevProfiles(profileNames, workspaceRoot) {
   return withConfigWriteLock((configFile) => {
@@ -502,16 +507,19 @@ export function removeOwnedDevProfiles(profileNames, workspaceRoot) {
       return [];
     }
 
+    const generatedNames = new Set(profileNames);
     const removed = [];
-    for (const name of profileNames) {
-      const profile = Object.hasOwn(raw.profiles, name) ? raw.profiles[name] : null;
-      if (
-        !profile
-        || typeof profile !== 'object'
-        || profile.dev_workspace_root !== workspaceRoot
-      ) {
+    for (const [name, profile] of Object.entries(raw.profiles)) {
+      if (!profile || typeof profile !== 'object') {
         continue;
       }
+
+      const ownedByWorkspace = profile.dev_workspace_root === workspaceRoot;
+      const staleGeneratedLocalProfile = generatedNames.has(name)
+        && !profile.dev_workspace_root
+        && isLocalApiBase(profile.api_base);
+      if (!ownedByWorkspace && !staleGeneratedLocalProfile) continue;
+
       delete raw.profiles[name];
       removed.push(name);
       if (raw.current_profile === name) raw.current_profile = DEFAULT_PROFILE;
