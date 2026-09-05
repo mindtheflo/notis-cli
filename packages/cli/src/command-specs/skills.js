@@ -16,13 +16,14 @@ async function syncSkillsHandler(ctx) {
     runAccountSync: runSkillSync,
   });
 
+  const failures = [...(result.failedPushes || []), ...(result.failedLinks || [])];
   return ctx.output.emitSuccess({
     command: 'skills sync',
     data: result,
-    humanSummary: result.syncEnabled
+    humanSummary: failures.length ? `Skill sync completed with ${failures.length} reported failures; inspect failedPushes and failedLinks.` : result.syncEnabled
       ? `Synced account skills and kept ${result.baseSkills.length} base skills current.`
       : `Automatic Desktop sync is off; kept ${result.baseSkills.length} base skills current.`,
-    renderHuman: () => result.syncEnabled
+    renderHuman: () => failures.length ? `Skill sync needs attention: ${failures.map((failure) => `${failure.name}: ${failure.error}`).join("; ")}` : result.syncEnabled
       ? `Skills synced. Base skills current: ${result.baseSkills.join(', ')}.`
       : `Automatic Desktop sync is off. Base skills remain current: ${result.baseSkills.join(', ')}.`,
   });

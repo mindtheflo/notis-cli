@@ -8,7 +8,7 @@ import {
   NOTIS_SKILL_SYNC_ROOT,
   safeName,
 } from './local-scanner';
-import { normalizeAgentTargets, type CloudSkill, type NotisSyncState } from './types';
+import { normalizeAgentTargets, type AgentTargets, type SkillSyncFailure, type CloudSkill, type NotisSyncState } from './types';
 
 const HOME_DIR = os.homedir();
 
@@ -21,6 +21,22 @@ const EXTERNAL_AGENT_SKILL_DIRS = {
 type ExternalAgent = keyof typeof EXTERNAL_AGENT_SKILL_DIRS;
 
 const EXTERNAL_AGENTS = Object.keys(EXTERNAL_AGENT_SKILL_DIRS) as ExternalAgent[];
+
+const AGENT_FAILURE_LABELS: Record<string, string> = {
+  claude_code: 'Claude Code',
+  cursor: 'Cursor',
+  codex: 'Codex',
+  legacy: 'legacy ~/.agents/skills',
+};
+
+/** Failures are shown next to skill names in the Portal and CLI; never leak raw agent ids. */
+function agentFailureLabel(agent: string): string {
+  return AGENT_FAILURE_LABELS[agent] ?? agent;
+}
+
+function agentFolderFailureName(agent: string): string {
+  return `${agentFailureLabel(agent)} skills folder`;
+}
 
 export interface DeletedAgentSymlink {
   skillId: string;
@@ -46,6 +62,8 @@ export interface SymlinkSyncResult {
   linked: number;
   removed: number;
   skipped: number;
+  verifiedAgentLinks?: Record<string, Partial<AgentTargets>>;
+  failures?: SkillSyncFailure[];
 }
 
 /** Remove only links into another account's managed mirror. This is safe even
@@ -128,8 +146,9 @@ async function isManagedSymlink(linkPath: string, managedRoots: string[]): Promi
     return managedRoots.some((root) => (
       resolvedTarget === root || resolvedTarget.startsWith(`${root}${path.sep}`)
     ));
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -146,8 +165,8 @@ async function ensureCorrectSymlink(linkPath: string, targetPath: string): Promi
     } else {
       return 'blocked';
     }
-  } catch {
-    // Missing path is expected.
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
   }
 
   const relativePath = path.relative(path.dirname(linkPath), targetPath);
@@ -166,6 +185,8 @@ async function removeUndesiredManagedSymlinks(
   agentDir: string,
   desiredSkills: Set<string>,
   managedRoots: string[],
+  failures: SkillSyncFailure[],
+  agent: string,
 ): Promise<number> {
   let removed = 0;
   try {
@@ -173,13 +194,19 @@ async function removeUndesiredManagedSymlinks(
     const existingEntries = await fs.readdir(agentDir, { withFileTypes: true });
     for (const entry of existingEntries) {
       const entryPath = path.join(agentDir, entry.name);
-      if (!desiredSkills.has(entry.name) && await isManagedSymlink(entryPath, managedRoots)) {
-        await fs.unlink(entryPath);
-        removed += 1;
+      try {
+        if (!desiredSkills.has(entry.name) && await isManagedSymlink(entryPath, managedRoots)) {
+          await fs.unlink(entryPath);
+          removed += 1;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          failures.push({ name: entry.name, error: `${agentFailureLabel(agent)}: could not remove skill link (${(error as Error).message})` });
+        }
       }
     }
-  } catch {
-    // Missing or unreadable agent directories should not block skill sync.
+  } catch (error) {
+    failures.push({ name: agentFolderFailureName(agent), error: `Could not read agent skills directory (${(error as Error).message})` });
   }
   return removed;
 }
@@ -255,7 +282,9 @@ export async function detectDeletedAgentSymlinks(
         continue;
       }
       const previous = previousState.skills[skill.name];
-      if (!previous) {
+      if (!previous || previous.cloudId !== skill.id
+        || previous.verifiedAgentLinks?.[agent] !== true
+        || !skill.updated_at || previous.cloudUpdatedAt !== skill.updated_at) {
         continue;
       }
 
@@ -293,10 +322,12 @@ export async function syncSymlinks(
 ): Promise<SymlinkSyncResult> {
   await fs.mkdir(skillsDir, { recursive: true });
 
-  const result: SymlinkSyncResult = {
+  const result: Required<SymlinkSyncResult> = {
     linked: 0,
     removed: 0,
     skipped: 0,
+    verifiedAgentLinks: {},
+    failures: [],
   };
   const agentSkillDirs = { ...defaultAgentSkillDirs(skillsDir), ...options.agentSkillDirs };
   const legacyGlobalSkillsDir = options.legacyGlobalSkillsDir || LEGACY_AGENTS_SKILLS_DIR;
@@ -336,23 +367,36 @@ export async function syncSymlinks(
       continue;
     }
 
-    await fs.mkdir(agentDir, { recursive: true });
+    try {
+      await fs.mkdir(agentDir, { recursive: true });
+    } catch (error) {
+      result.failures.push({ name: agentFolderFailureName(agent), error: `Could not create agent skills directory (${(error as Error).message})` });
+      continue;
+    }
 
     const desiredSkills = desiredByAgent[agent];
     if (options.removeUndesired !== false) {
-      result.removed += await removeUndesiredManagedSymlinks(agentDir, desiredSkills, managedRoots);
+      result.removed += await removeUndesiredManagedSymlinks(agentDir, desiredSkills, managedRoots, result.failures, agent);
     }
 
     for (const skillName of desiredSkills) {
       const targetPath = path.join(skillsDir, skillName);
       const linkPath = path.join(agentDir, safeName(skillName, agentDir));
       try {
-        await fs.access(targetPath);
+        if (!(await fs.stat(path.join(targetPath, "SKILL.md"))).isFile()) throw new Error("Missing SKILL.md");
       } catch {
         result.skipped += 1;
+        result.failures.push({ name: skillName, error: `${agentFailureLabel(agent)}: SKILL.md is missing or unreadable` });
         continue;
       }
-      const syncOutcome = await ensureCorrectSymlink(linkPath, targetPath);
+      let syncOutcome;
+      try {
+        syncOutcome = await ensureCorrectSymlink(linkPath, targetPath);
+      } catch (error) {
+        result.skipped += 1;
+        result.failures.push({ name: skillName, error: `${agentFailureLabel(agent)}: could not create skill link (${(error as Error).message})` });
+        continue;
+      }
       if (syncOutcome === 'linked') {
         result.linked += 1;
       } else if (syncOutcome === 'blocked') {
@@ -360,8 +404,12 @@ export async function syncSymlinks(
           `[skill-sync] Could not link "${skillName}" for ${agent}: non-symlink entry blocks ${linkPath}`,
         );
         result.skipped += 1;
+        result.failures.push({ name: skillName, error: `${agentFailureLabel(agent)}: an existing file or folder blocks the skill link` });
       } else {
         result.skipped += 1;
+      }
+      if (syncOutcome !== "blocked") {
+        result.verifiedAgentLinks[skillName] = { ...result.verifiedAgentLinks[skillName], [agent]: true };
       }
     }
   }
@@ -376,6 +424,8 @@ export async function syncSymlinks(
       legacyGlobalSkillsDir,
       new Set(),
       managedRoots,
+      result.failures,
+      'legacy',
     );
   }
 

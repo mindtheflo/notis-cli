@@ -72,13 +72,15 @@ export async function updateAgentTargets(
   serverUrl: string,
   jwt: string,
   skillId: string,
-  targets: AgentTargets,
-): Promise<{ success: boolean; agent_targets: AgentTargets }> {
-  return requestJson<{ success: boolean; agent_targets: AgentTargets }>(`${serverUrl}/portal_skills/agent-targets`, jwt, {
+  targets: Partial<AgentTargets>,
+  expectedUpdatedAt?: string,
+): Promise<{ success: boolean; agent_targets: AgentTargets; updated_at?: string }> {
+  return requestJson<{ success: boolean; agent_targets: AgentTargets; updated_at?: string }>(`${serverUrl}/portal_skills/agent-targets`, jwt, {
     method: 'PATCH',
     body: {
       skill_id: skillId,
       agent_targets: targets,
+      ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
     },
   });
 }

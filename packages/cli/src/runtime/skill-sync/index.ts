@@ -1,4 +1,5 @@
 import type {
+  AgentTargets,
   LocalSkill,
   NotisSyncState,
   SkillSyncFailure,
@@ -49,6 +50,7 @@ export interface RunSkillSyncResult {
   /** Skills the server rejected (e.g. an invalid SKILL.md description). The rest of
    * the batch still syncs; these are surfaced so the user knows what to fix. */
   failedPushes: SkillSyncFailure[];
+  failedLinks?: SkillSyncFailure[];
 }
 
 export interface RunSkillSyncOptions {
@@ -81,6 +83,7 @@ export interface MaterializeCloudSkillsResult {
   deleted: number;
   removed: number;
   lastSyncedAt: string | null;
+  failedLinks?: SkillSyncFailure[];
 }
 
 export interface MaterializeCloudSkillsOptions {
@@ -174,6 +177,7 @@ function buildSyncState(
   pullResponse: SyncPullResponse,
   localSkills: LocalSkill[],
   lastSyncedAt: string | null,
+  verifiedAgentLinks: Record<string, Partial<AgentTargets>> = {},
 ): NotisSyncState {
   const localSkillMap = toSkillMap(localSkills);
   const skills = Object.fromEntries(
@@ -185,6 +189,8 @@ function buildSyncState(
           cloudId: skill.id,
           folderHash: localSkill?.folderHash || skill.skill_folder_hash || "",
           agentTargets: normalizeAgentTargets(skill.agent_targets),
+          verifiedAgentLinks: skill.status === "active" ? verifiedAgentLinks[skill.name] ?? {} : {},
+          cloudUpdatedAt: skill.updated_at,
           syncedAt: lastSyncedAt || new Date().toISOString(),
         },
       ];
@@ -268,6 +274,7 @@ async function writePulledSkillsToScopedMirror(
     RunSkillSyncDependencies,
     "downloadSkillBundle" | "writeCloudSkillToDisk"
   >,
+  failures: SkillSyncFailure[] = [],
 ): Promise<number> {
   const localSkillMap = toSkillMap(localSkills);
   const warnSkillSync = (message: string, error: unknown): void => {
@@ -289,6 +296,8 @@ async function writePulledSkillsToScopedMirror(
       })
     ) {
       downloaded += 1;
+    } else {
+      failures.push({ name: cloudSkill.name, error: "Skill content could not be downloaded or written; sync will retry" });
     }
   }
 
@@ -346,27 +355,44 @@ export async function materializeCloudSkillsForLocalShell(
   const previousState = await deps.readSyncState(syncPaths);
 
   const localSkills = await deps.scanLocalSkills(syncPaths);
+  const failedDownloads: SkillSyncFailure[] = [];
   const downloaded = await writePulledSkillsToScopedMirror(
     pullResponse,
     localSkills,
     previousState,
     syncPaths,
     deps,
+    failedDownloads,
   );
   const finalLocalSkills = await deps.scanLocalSkills(syncPaths);
   const lastSyncedAt = pullResponse.last_synced_at || new Date().toISOString();
 
   const relinkSkillNames = new Set(options.relinkSkillNames || []);
+  const failures = [...failedDownloads];
+  const verifiedLinks: Record<string, Partial<AgentTargets>> = {};
+  for (const skill of pullResponse.skills) {
+    const previous = previousState.skills[skill.name];
+    if (skill.updated_at && previous?.cloudId === skill.id && previous.cloudUpdatedAt === skill.updated_at) {
+      verifiedLinks[skill.name] = { ...previous.verifiedAgentLinks };
+    }
+  }
   if (relinkSkillNames.size > 0) {
-    await deps.syncSymlinks(
+    const relinked = await deps.syncSymlinks(
       pullResponse.skills.filter((skill) => relinkSkillNames.has(skill.name)),
       syncPaths.skillsDir,
       { removeUndesired: false },
     );
+    failures.push(...(relinked.failures ?? []).filter(
+      (failure) => !failedDownloads.some((download) => download.name === failure.name),
+    ));
+    for (const name of relinkSkillNames) {
+      verifiedLinks[name] = relinked.verifiedAgentLinks?.[name] ?? {};
+    }
   }
+  for (const failure of failedDownloads) delete verifiedLinks[failure.name];
 
   await deps.writeSyncState(
-    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt),
+    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks),
     syncPaths,
   );
 
@@ -376,6 +402,7 @@ export async function materializeCloudSkillsForLocalShell(
     deleted: 0,
     removed: 0,
     lastSyncedAt,
+    ...(failures.length ? { failedLinks: failures } : {}),
   };
 }
 
@@ -397,6 +424,7 @@ async function deactivateDeletedAgentSkills(
     RunSkillSyncDependencies,
     "detectDeletedAgentSymlinks" | "updateAgentTargets" | "pullSkills"
   >,
+  failures: SkillSyncFailure[],
 ): Promise<number> {
   // First sync (incl. legacy migration) has no reliable "we created this link" signal, so we
   // cannot tell a user deletion apart from a never-created link — skip detection entirely.
@@ -413,34 +441,6 @@ async function deactivateDeletedAgentSkills(
     return 0;
   }
 
-  // The agent-targets endpoint replaces the whole agent_targets column, so re-read the freshest
-  // values right before writing and merge onto them, only flipping the deleted agent. This avoids
-  // clobbering a concurrent portal/other-desktop change to a DIFFERENT agent with the stale
-  // snapshot from the top-of-sync pull. (A narrow read-modify-write window remains; the endpoint
-  // has no partial update.)
-  const latestSkillsById = new Map(pullResponse.skills.map((skill) => [skill.id, skill]));
-  let fresh: SyncPullResponse | null = null;
-  try {
-    fresh = await deps.pullSkills(serverUrl, jwt);
-  } catch (error) {
-    console.warn(
-      "[skill-sync] Could not re-pull latest agent targets before deactivation; " +
-        "using the top-of-sync snapshot.",
-      error,
-    );
-  }
-  if (fresh) {
-    // A transport failure may fall back to the already-authorized snapshot, but
-    // an explicit legacy denial must abort before any server or local mutation.
-    assertSkillsPullAuthorized(fresh);
-    for (const skill of fresh.skills) {
-      latestSkillsById.set(skill.id, skill);
-    }
-  }
-
-  // Group deletions by skill so multiple deleted agents for the SAME skill are flipped in one
-  // PATCH. Otherwise each PATCH, rebuilt from the same snapshot, would overwrite the previous one
-  // (deleting both claude_code and cursor for one skill would otherwise leave only the last off).
   const agentsBySkill = new Map<string, { skillName: string; agents: Set<DeletedAgentSymlink["agent"]> }>();
   for (const deletion of deletions) {
     const entry = agentsBySkill.get(deletion.skillId) ?? {
@@ -451,32 +451,38 @@ async function deactivateDeletedAgentSkills(
     agentsBySkill.set(deletion.skillId, entry);
   }
 
-  const inMemoryById = new Map(pullResponse.skills.map((skill) => [skill.id, skill]));
+  const fresh = withoutBaseSkills(await deps.pullSkills(serverUrl, jwt));
+  assertSkillsPullAuthorized(fresh);
+  Object.assign(pullResponse, fresh);
+  let needsRefresh = false;
   let deactivated = 0;
   for (const [skillId, { skillName, agents }] of agentsBySkill) {
-    const latest = latestSkillsById.get(skillId);
-    if (!latest) {
-      continue;
-    }
-    const nextTargets = { ...normalizeAgentTargets(latest.agent_targets) };
-    for (const agent of agents) {
-      nextTargets[agent] = false;
-    }
+    const skill = pullResponse.skills.find((item) => item.id === skillId);
+    const previous = previousState.skills[skillName];
+    if (!skill?.updated_at || previous?.cloudUpdatedAt !== skill.updated_at) continue;
+    const patch = Object.fromEntries([...agents].map((agent) => [agent, false]));
     try {
-      await deps.updateAgentTargets(serverUrl, jwt, skillId, nextTargets);
-      // Mutate the in-memory pull response so the symlink passes below see the link as undesired.
-      const inMemory = inMemoryById.get(skillId);
-      if (inMemory) {
-        inMemory.agent_targets = nextTargets;
+      const saved = await deps.updateAgentTargets(serverUrl, jwt, skillId, patch, skill.updated_at);
+      if (saved.success !== true || !saved.updated_at?.trim()
+        || saved.updated_at === skill.updated_at
+        || !['notis', 'claude_code', 'cursor', 'codex'].every((agent) =>
+          typeof saved.agent_targets?.[agent as keyof AgentTargets] === 'boolean')
+        || ![...agents].every((agent) => saved.agent_targets[agent] === false)) {
+        throw new Error('Assignment update did not return a verified saved revision');
       }
+      skill.agent_targets = saved.agent_targets;
+      skill.updated_at = saved.updated_at;
       deactivated += agents.size;
     } catch (error) {
-      console.warn(
-        `[skill-sync] Failed to deactivate "${skillName}" for ${[...agents].join(", ")} ` +
-          `after local symlink deletion:`,
-        error,
-      );
+      needsRefresh = true;
+      failures.push({ name: skillName, error: 'Could not save the local agent removal; refreshed saved assignments' });
+      console.warn(`[skill-sync] Assignment changed or could not be saved for "${skillName}"; refreshing before reconciliation.`, error);
     }
+  }
+  if (needsRefresh) {
+    const refreshed = withoutBaseSkills(await deps.pullSkills(serverUrl, jwt));
+    assertSkillsPullAuthorized(refreshed);
+    Object.assign(pullResponse, refreshed);
   }
   return deactivated;
 }
@@ -535,6 +541,13 @@ export async function runSkillSync(
       .map((skill) => skill.name),
   );
   const protectedSkillNames = new Set([...cloudCuratedSkillNames, ...BASE_SKILL_NAMES]);
+  const scopedState = withoutBaseSkillState(await deps.readSyncState(syncPaths));
+  const assignmentFailures: SkillSyncFailure[] = [];
+  const deactivated = syncSettings.agent_targets_conditional_updates === true
+    ? await deactivateDeletedAgentSkills(
+        serverUrl, jwt, pullResponse, scopedState, scopedState, syncPaths.skillsDir, deps, assignmentFailures,
+      )
+    : 0;
   const authUserId = decodeJwtSubject(jwt);
   let previousAuthState: NotisSyncState | null = null;
   if (authUserId && authUserId !== syncUserId) {
@@ -550,7 +563,6 @@ export async function runSkillSync(
   });
   const localSkills = (await deps.scanLocalSkills(syncPaths))
     .filter((skill) => !BASE_SKILL_NAMES.has(skill.name));
-  const scopedState = withoutBaseSkillState(await deps.readSyncState(syncPaths));
   const previousState = withoutBaseSkillState(applyLegacyFirstRunState(
     localSkills,
     scopedState,
@@ -560,18 +572,7 @@ export async function runSkillSync(
           : previousAuthState)
       : null,
   ));
-  // Honor locally-deleted per-agent symlinks as deactivations before reconciling, otherwise the
-  // first syncSymlinks pass would recreate the link the user just deleted.
-  const deactivated = await deactivateDeletedAgentSkills(
-    serverUrl,
-    jwt,
-    pullResponse,
-    previousState,
-    scopedState,
-    syncPaths.skillsDir,
-    deps,
-  );
-  await deps.syncSymlinks(
+  const gatheredSymlinkResult = await deps.syncSymlinks(
     buildLocalSymlinkCandidates(pullResponse, localSkills, previousState),
     syncPaths.skillsDir,
   );
@@ -607,12 +608,14 @@ export async function runSkillSync(
     }
   }
 
+  const failedDownloads: SkillSyncFailure[] = [];
   const downloaded = await writePulledSkillsToScopedMirror(
     pullResponse,
     localSkills,
     previousState,
     syncPaths,
     deps,
+    failedDownloads,
   );
 
   const finalLocalSkills = (await deps.scanLocalSkills(syncPaths))
@@ -621,10 +624,12 @@ export async function runSkillSync(
     buildLocalSymlinkCandidates(pullResponse, finalLocalSkills, previousState),
     syncPaths.skillsDir,
   );
+  const verifiedLinks = { ...(symlinkResult.verifiedAgentLinks ?? {}) };
+  for (const failure of failedDownloads) delete verifiedLinks[failure.name];
   const lastSyncedAt = pullResponse.last_synced_at || new Date().toISOString();
 
   await deps.writeSyncState(
-    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt),
+    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks),
     syncPaths,
   );
 
@@ -635,9 +640,12 @@ export async function runSkillSync(
     downloaded,
     deleted,
     deactivated,
-    linked: symlinkResult.linked,
-    removed: foreignLinksRemoved + symlinkResult.removed,
+    linked: gatheredSymlinkResult.linked + symlinkResult.linked,
+    removed: foreignLinksRemoved + gatheredSymlinkResult.removed + symlinkResult.removed,
     skipped: symlinkResult.skipped,
+    failedLinks: [...assignmentFailures, ...failedDownloads, ...(symlinkResult.failures ?? []).filter(
+      (failure) => !failedDownloads.some((download) => download.name === failure.name),
+    )],
     lastSyncedAt,
     failedPushes,
   };

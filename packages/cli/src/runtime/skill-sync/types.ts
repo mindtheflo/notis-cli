@@ -9,6 +9,9 @@ export interface SyncedSkill {
   cloudId: string;
   folderHash: string;
   agentTargets: AgentTargets;
+  /** Actual readable managed links, never inferred from desired targets. */
+  verifiedAgentLinks?: Partial<AgentTargets>;
+  cloudUpdatedAt?: string;
   syncedAt: string;
 }
 
@@ -34,6 +37,7 @@ export interface BundleFile {
 }
 
 export interface CloudSkill {
+  updated_at?: string;
   id: string;
   name: string;
   description: string | null;
@@ -48,6 +52,7 @@ export interface CloudSkill {
 }
 
 export interface SyncSettings {
+  agent_targets_conditional_updates?: boolean;
   /** Server-verified canonical Notis account id used to scope local mirrors. */
   user_id?: string;
   sync_enabled: boolean;
