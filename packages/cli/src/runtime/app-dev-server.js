@@ -44,6 +44,7 @@ import {
   readAppDevSessions,
 } from './app-dev-sessions.js';
 import { captureDesktopWatcherOwnership } from './app-dev-process-identity.js';
+import { startAppDevBuild } from './app-dev-build.js';
 
 const CONTENT_TYPES = {
   '.js': 'application/javascript; charset=utf-8',
@@ -1007,12 +1008,7 @@ export async function startAppDevServer({
       watchManifestInputs(state);
       pollForBundleAndWatch(state);
 
-      const buildProcess = spawn('npm', ['run', 'build', '--', '--watch'], {
-        cwd: state.projectDir,
-        detached: process.platform !== 'win32',
-        stdio: 'inherit',
-        env: { ...process.env, NOTIS_DEV: '1' },
-      });
+      const buildProcess = await startAppDevBuild(state.projectDir);
       state.buildProcess = buildProcess;
       for (let attempt = 0; attempt < 5 && !state.watcherOwnership; attempt += 1) {
         state.watcherOwnership = captureDesktopWatcherOwnership({
