@@ -3314,6 +3314,11 @@ test('debug and smoke first-class commands are registered', () => {
 });
 
 test('tool mutation metadata distinguishes reads, writes, and unknown tools', () => {
+  assert.equal(classifyToolMutation('LOCAL_NOTIS_SANDBOX_PREVIEW', { action: 'status' }), false);
+  for (const action of ['register', 'open', 'heartbeat', 'stop']) {
+    assert.equal(classifyToolMutation('LOCAL_NOTIS_SANDBOX_PREVIEW', { action }), true);
+  }
+  assert.equal(classifyToolMutation('LOCAL_NOTIS_SANDBOX_PREVIEW'), null);
   assert.equal(classifyToolMutation('LOCAL_NOTIS_DATABASE_QUERY'), false);
   assert.equal(classifyToolMutation('DROPBOX_GET_METADATA'), false);
   assert.equal(classifyToolMutation('DROPBOX_UPLOAD_FILE'), true);

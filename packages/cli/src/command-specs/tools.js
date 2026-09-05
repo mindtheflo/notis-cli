@@ -174,6 +174,11 @@ function classifySqlMutation(query) {
 
 export function classifyToolMutation(toolName, args = {}) {
   const normalized = localNotisToolSlug(toolName).toUpperCase();
+  if (normalized === 'LOCAL_NOTIS_SANDBOX_PREVIEW') {
+    if (args.action === 'status') return false;
+    if (['register', 'open', 'heartbeat', 'stop'].includes(args.action)) return true;
+    return null;
+  }
   if (normalized.includes('EXECUTE_SQL') && typeof args.query === 'string') {
     const query = args.query
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
