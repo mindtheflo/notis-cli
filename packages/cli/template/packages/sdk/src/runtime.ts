@@ -8,6 +8,7 @@
  */
 
 import type { ComponentType } from 'react';
+import type { NotisQueryClient } from './queryCache';
 
 // ---------------------------------------------------------------------------
 // Database types
@@ -106,6 +107,8 @@ export interface ToolDescriptor {
 }
 
 export interface ToolCallOptions {
+  /** Explicitly identifies an idempotent read; never set on a mutation. */
+  readOnly?: boolean;
   /**
    * Coalesce an identical in-flight call. Only opt in for idempotent reads;
    * mutations must execute once per invocation.
@@ -359,6 +362,8 @@ export interface CloudComputerFacts {
 }
 
 export interface NotisRuntime {
+  /** Optional host-scoped in-memory read cache. Older hosts remain supported. */
+  queryClient?: NotisQueryClient;
   app: AppDescriptor;
   route: RouteDescriptor;
   databases: DatabaseDescriptor[];

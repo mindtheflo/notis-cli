@@ -1,6 +1,6 @@
 'use client';
 
-import { getDocumentPreview, useDocuments, useNotis } from '@notis/sdk';
+import { getDocumentPreview, useDocuments, useNotis, Skeleton, ViewSkeleton } from '@notis/sdk';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -8,7 +8,7 @@ export default function HomePage() {
   const { app, ready } = useNotis();
   // Documents come back normalized: plain property values, camelCase fields,
   // and typed content (contentMarkdown / contentBlocknote / plainText).
-  const { documents, loading } = useDocuments('items', { pageSize: 25 });
+  const { documents, loading, hasData, error, refetch } = useDocuments('items', { pageSize: 25 });
 
   return (
     <main className="notis-app-shell space-y-6">
@@ -16,9 +16,9 @@ export default function HomePage() {
         <CardHeader className="space-y-3">
           <Badge variant="secondary" className="w-fit">Installed app</Badge>
           <div className="space-y-2">
-            <CardTitle>{ready ? app?.name : 'Loading...'}</CardTitle>
+            <CardTitle>{ready ? app?.name : <Skeleton style={{ width: 160 }} />}</CardTitle>
             <CardDescription>
-              {ready ? app?.description : 'Loading app metadata...'}
+              {ready ? app?.description : <Skeleton style={{ width: 240 }} />}
             </CardDescription>
           </div>
         </CardHeader>
@@ -30,11 +30,12 @@ export default function HomePage() {
           <CardDescription>Use shadcn surfaces and portal tokens so the app feels native inside Notis.</CardDescription>
         </CardHeader>
         <CardContent>
+          {error && <p role="alert" className="mb-3 text-sm text-destructive">{error.message} <button onClick={refetch}>Retry</button></p>}
           {loading ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : documents.length === 0 ? (
+            <ViewSkeleton variant="table" rows={4} />
+          ) : !hasData ? null : documents.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-              No items yet. Deploy the app and create some.
+              No items yet. Create your first item.
             </div>
           ) : (
             <div className="space-y-3">

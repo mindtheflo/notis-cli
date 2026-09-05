@@ -22,7 +22,7 @@ const binPath = join(cliRoot, 'bin', 'notis.js');
 // Verify only needs a buildable app with routes. Listing metadata (tagline,
 // categories, screenshots, changelog) is a publish concern, so it is opt-in
 // here and exercised by the --listing tests.
-function createAppProject({ listing = false } = {}) {
+function createAppProject({ listing = false, workspaceDatabases = false } = {}) {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-verify-'));
   mkdirSync(join(projectDir, 'app'), { recursive: true });
   writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
@@ -32,7 +32,7 @@ import { defineNotisApp } from '@notis/sdk/config';
 
 export default defineNotisApp({
   name: 'Verify App',
-  description: 'A fixture app for verifying the generated harness.',
+${workspaceDatabases ? "  capabilities: { workspaceDatabases: 'read' },\n" : ''}  description: 'A fixture app for verifying the generated harness.',
 ${listing ? `  tagline: 'Verify a production-ready app.',
   categories: ['Productivity'],
   screenshots: [
@@ -325,6 +325,35 @@ test('apps verify rejects runtime database queries missing from the app declarat
   assert.deepEqual(
     payload.data.results[0].assertions.map((assertion) => assertion.code),
     ['undeclared_database_query'],
+  );
+});
+
+test('apps verify permits read-only cross-app queries when workspace database access is declared', async () => {
+  const projectDir = await buildAppProject({ workspaceDatabases: true });
+  const mockBin = writeMockAgentBrowser({
+    mounted: true,
+    renderStarted: true,
+    errors: [],
+    runtimeCalls: [
+      {
+        op: 'callTool',
+        args: {
+          name: 'LOCAL_NOTIS_DATABASE_QUERY',
+          arguments: { database_slug: 'undeclared-items' },
+        },
+      },
+    ],
+  });
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(
+    payload.data.results[0].assertions.map((assertion) => assertion.code),
+    [],
   );
 });
 

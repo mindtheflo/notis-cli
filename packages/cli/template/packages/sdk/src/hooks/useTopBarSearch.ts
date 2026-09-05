@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useNotisRuntime } from '../provider';
 
 interface TopBarSearchOptions {
@@ -24,8 +24,9 @@ interface TopBarSearchActions {
  * While the component is mounted, typing in the top bar calls `onChange`,
  * pressing Enter calls `onSubmit`, and the `value` prop drives the input.
  *
- * Call `setLoading(true)` to show the standard spinner in the top bar while a
- * query is running; `setLoading(false)` restores the search icon.
+ * Use `setLoading(true)` only for an explicitly submitted search action, then
+ * restore the icon with `setLoading(false)`. Automatic reads use content
+ * skeletons initially and refresh populated content silently.
  *
  * Without a portal runtime, this hook is a safe no-op.
  *
@@ -42,21 +43,28 @@ interface TopBarSearchActions {
  * });
  * ```
  *
- * Stabilize `onChange` and `onSubmit` with `useCallback` to avoid re-registering
- * on every render.
+ * Callback refs retain the latest committed handlers without re-registering
+ * search on every app render. Inline callbacks are safe.
  */
 export function useTopBarSearch(opts: TopBarSearchOptions): TopBarSearchActions {
   const runtime = useNotisRuntime();
   const { value, onChange, placeholder, onSubmit } = opts;
+  const callbacks = useRef({ onChange, onSubmit });
+  useLayoutEffect(() => { callbacks.current = { onChange, onSubmit }; });
+  const hasSubmit = Boolean(onSubmit);
 
   useEffect(() => {
     const register = runtime?.registerTopBarSearch;
     if (!register) return;
-    register({ onChange, placeholder, onSubmit });
+    register({
+      onChange: (next) => callbacks.current.onChange(next),
+      placeholder,
+      onSubmit: hasSubmit ? () => callbacks.current.onSubmit?.() : undefined,
+    });
     return () => {
       register(null);
     };
-  }, [runtime, onChange, placeholder, onSubmit]);
+  }, [runtime, placeholder, hasSubmit]);
 
   useEffect(() => {
     runtime?.setTopBarSearchValue?.(value);

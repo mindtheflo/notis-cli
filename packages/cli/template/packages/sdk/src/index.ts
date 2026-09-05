@@ -10,6 +10,10 @@
 export { NotisProvider, useNotisRuntime } from './provider';
 
 // Hooks
+export { useQuery, useQueryClient } from './hooks/useQuery';
+export type { UseQueryOptions, UseQueryResult } from './hooks/useQuery';
+export { createQueryClient, createPrefetchQueue, queryKey } from './queryCache';
+export type { NotisQueryClient, QuerySnapshot, QueryFetchOptions } from './queryCache';
 export { useNotis } from './hooks/useNotis';
 export { useDocuments } from './hooks/useDocuments';
 export type { UseDocumentsOptions, UseDocumentsResult } from './hooks/useDocuments';
@@ -143,3 +147,7 @@ export type {
   ToolCallOptions,
   ToolInputSchema,
 } from './runtime';
+
+export { useToolQuery } from './hooks/useToolQuery';
+
+export { Skeleton, ViewSkeleton } from './components/Skeleton';

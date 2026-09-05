@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from './useQuery';
 import { useNotisRuntime } from '../provider';
 import { normalizeDocumentRecord } from '../documents';
 import type { DocumentRecord, QueryFilter } from '../runtime';
@@ -25,6 +25,8 @@ export interface UseDocumentsOptions {
 export interface UseDocumentsResult {
   documents: DocumentRecord[];
   loading: boolean;
+  isFetching: boolean;
+  hasData: boolean;
   error: Error | null;
   refetch: () => void;
 }
@@ -44,78 +46,36 @@ export function useDocuments(
   options: UseDocumentsOptions = {},
 ): UseDocumentsResult {
   const runtime = useNotisRuntime();
-  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [fetchKey, setFetchKey] = useState(0);
-
-  const enabled = options.enabled !== false;
-  const filterKey = JSON.stringify(options.filter ?? null);
-
-  const refetch = useCallback(() => {
-    setFetchKey((key) => key + 1);
-  }, []);
-
-  useEffect(() => {
-    if (!runtime || !enabled) {
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    const filter = filterKey === 'null' ? null : (JSON.parse(filterKey) as QueryFilter);
-
-    const fetchDocuments = async (): Promise<unknown[]> => {
+  const query = useQuery<DocumentRecord[]>(
+    ['documents', databaseSlug, options.filter ?? null, options.pageSize ?? null, options.offset ?? 0, Boolean(options.fetchAll)],
+    async () => {
+      if (!runtime) throw new Error('Notis runtime not available');
       const allDocuments: unknown[] = [];
       let offset = options.offset ?? 0;
-
       while (true) {
         const result = await runtime.callTool<QueryDatabaseResult>('LOCAL_NOTIS_DATABASE_QUERY', {
           database_slug: databaseSlug,
           query: {
-            ...(filter ?? {}),
+            ...(options.filter ?? {}),
             ...(options.pageSize !== undefined ? { page_size: options.pageSize } : {}),
           },
           ...(offset > 0 ? { offset } : {}),
-        });
+        }, { dedupe: true, readOnly: true });
         const message = result.error ?? result.message;
-        if (!result.documents && message) {
-          throw new Error(message);
-        }
+        if (!result.documents && message) throw new Error(message);
         allDocuments.push(...(result.documents ?? []));
-        if (!options.fetchAll || !result.has_more) return allDocuments;
-
+        if (!options.fetchAll || !result.has_more) break;
         const nextOffset = result.next_offset;
         if (typeof nextOffset !== 'number' || nextOffset <= offset) {
           throw new Error('Database query returned an invalid pagination offset');
         }
         offset = nextOffset;
       }
-    };
-
-    fetchDocuments()
-      .then((result) => {
-        if (cancelled) return;
-        setDocuments(
-          result
-            .map(normalizeDocumentRecord)
-            .filter((document) => document.id),
-        );
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err : new Error(String(err)));
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [runtime, databaseSlug, enabled, fetchKey, filterKey, options.fetchAll, options.offset, options.pageSize]);
-
-  return { documents, loading, error, refetch };
+      return allDocuments.map(normalizeDocumentRecord).filter((document) => document.id);
+    },
+    { readOnly: true, enabled: options.enabled },
+  );
+  return { documents: query.data ?? EMPTY_DOCUMENTS, loading: query.loading, isFetching: query.isFetching, hasData: query.hasData, error: query.error, refetch: query.refetch };
 }
+
+const EMPTY_DOCUMENTS: DocumentRecord[] = [];

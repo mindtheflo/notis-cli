@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
+import { useQuery } from './useQuery';
 import { useNotisRuntime } from '../provider';
 import type { CloudComputerFacts } from '../runtime';
 
@@ -11,6 +12,7 @@ export interface UseCloudComputerResult {
    */
   facts: CloudComputerFacts | null;
   loading: boolean;
+  isFetching: boolean;
   error: Error | null;
   /** Re-read the facts. The platform caches them for a few minutes. */
   refresh: () => Promise<void>;
@@ -47,51 +49,16 @@ const UNAVAILABLE: CloudComputerFacts = {
  */
 export function useCloudComputer(): UseCloudComputerResult {
   const runtime = useNotisRuntime();
-  const [facts, setFacts] = useState<CloudComputerFacts | null>(null);
-  // True from the first committed render: the initial read is already queued
-  // in an effect, and `{ loading: false, facts: null }` would flash a
-  // consumer's fallback branch before the answer arrives.
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const read = useCallback(async (options?: { refresh?: boolean }) => {
-    if (!runtime?.cloudComputerFacts) {
-      setFacts(UNAVAILABLE);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await runtime.cloudComputerFacts(options);
-      if (mounted.current) setFacts(next);
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      if (mounted.current) {
-        setError(e);
-        // A refused or failed read is the same product state as a host that
-        // cannot answer: the app shows its fallback instead of an error.
-        setFacts(UNAVAILABLE);
-      }
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }, [runtime]);
-
-  useEffect(() => {
-    void read();
-  }, [read]);
-
-  const refresh = useCallback(() => read({ refresh: true }), [read]);
-
-  return { facts, loading, error, refresh };
+  const explicitRefresh = useRef(false);
+  const query = useQuery<CloudComputerFacts>(['cloud-computer-facts'], async () => {
+    const refresh = explicitRefresh.current;
+    explicitRefresh.current = false;
+    return runtime?.cloudComputerFacts ? runtime.cloudComputerFacts(refresh ? { refresh: true } : undefined) : UNAVAILABLE;
+  }, { readOnly: true });
+  const refresh = useCallback(async () => {
+    explicitRefresh.current = true;
+    await query.refetch();
+  }, [query.refetch]);
+  return { facts: query.data ?? (query.error ? UNAVAILABLE : null), loading: query.loading,
+    isFetching: query.isFetching, error: query.error, refresh };
 }

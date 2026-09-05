@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from './useQuery';
 import { useNotisRuntime } from '../provider';
 import { normalizeDocumentRecord } from '../documents';
 import type { DocumentRecord } from '../runtime';
@@ -19,6 +19,8 @@ export interface UseDocumentOptions {
 export interface UseDocumentResult {
   document: DocumentRecord | null;
   loading: boolean;
+  isFetching: boolean;
+  hasData: boolean;
   error: Error | null;
   refetch: () => void;
 }
@@ -29,50 +31,13 @@ export function useDocument(
   options: UseDocumentOptions = {},
 ): UseDocumentResult {
   const runtime = useNotisRuntime();
-  const [document, setDocument] = useState<DocumentRecord | null>(null);
-  const [loading, setLoading] = useState(Boolean(documentId));
-  const [error, setError] = useState<Error | null>(null);
-  const [fetchKey, setFetchKey] = useState(0);
-
-  const enabled = options.enabled !== false && Boolean(documentId);
-
-  const refetch = useCallback(() => {
-    setFetchKey((key) => key + 1);
-  }, []);
-
-  useEffect(() => {
-    if (!runtime || !enabled || !documentId) {
-      setDocument(null);
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    runtime
-      .callTool<GetDocumentResult>('LOCAL_NOTIS_DATABASE_GET_DOCUMENT', {
-        document_id: documentId,
-      })
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.document) {
-          throw new Error(result.error ?? result.message ?? 'Document not found');
-        }
-        setDocument(normalizeDocumentRecord(result.document));
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err : new Error(String(err)));
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [runtime, documentId, enabled, fetchKey]);
-
-  return { document, loading, error, refetch };
+  const query = useQuery<DocumentRecord>(['document', documentId ?? null], async () => {
+    if (!runtime || !documentId) throw new Error('Document not found');
+    const result = await runtime.callTool<GetDocumentResult>('LOCAL_NOTIS_DATABASE_GET_DOCUMENT', {
+      document_id: documentId,
+    }, { dedupe: true, readOnly: true });
+    if (!result.document) throw new Error(result.error ?? result.message ?? 'Document not found');
+    return normalizeDocumentRecord(result.document);
+  }, { readOnly: true, enabled: options.enabled !== false && Boolean(documentId) });
+  return { document: query.data ?? null, loading: query.loading, isFetching: query.isFetching, hasData: query.hasData, error: query.error, refetch: query.refetch };
 }

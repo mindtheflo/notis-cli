@@ -36,7 +36,7 @@ export function useDatabaseSubscription(
 ): UseDatabaseSubscriptionResult {
   const runtime = useNotisRuntime();
   const { subscribe = true, ...documentOptions } = options;
-  const { documents, loading, error, refetch } = useDocuments(databaseSlug, documentOptions);
+  const { documents, loading, isFetching, hasData, error, refetch } = useDocuments(databaseSlug, documentOptions);
   const [live, setLive] = useState(false);
 
   const refetchRef = useRef(refetch);
@@ -72,5 +72,5 @@ export function useDatabaseSubscription(
     };
   }, [runtime, databaseSlug, enabled]);
 
-  return { documents, rows: documents, loading, error, refetch, live };
+  return { documents, rows: documents, loading, isFetching, hasData, error, refetch, live };
 }

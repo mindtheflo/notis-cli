@@ -104,7 +104,7 @@ App code never accesses the runtime directly -- it uses SDK hooks (`useTool`, `u
 
 1. **React + Vite only** -- No Next.js, no custom server
 2. **ES module bundle** -- Vite builds a library-mode bundle with React externalized
-3. **Component rendering** -- Apps render as React components directly in the portal. No iframes.
+3. **Component rendering** -- Apps render as React components directly in the portal. Do not create your own iframe; the host chooses the trusted shadow-root or isolated Store rendering path.
    The portal owns the `ShadowRoot`, theme tokens, and runtime provider.
 4. **HTTP bridge** -- Runtime calls use fetch to `/portal_views/runtime_query`
 5. **Declarative tools** -- Tool access is declared in `notis.config.ts` by the final names returned by tool discovery and enforced server-side. Views can call native Notis, connected integrations, PostForMe, and MCP tools directly; metered calls use the same credit-cap and usage-billing path as the CLI.
@@ -293,39 +293,42 @@ For arbitrary app-owned resources that are not Notis collection rows, set `resou
 Standard React pages in `app/`. Use generic SDK tool hooks for data and build on top of the scaffolded shadcn components and portal shell classes (`notis-app-shell`, `notis-app-surface`):
 
 ```tsx
-'use client';
-import { useEffect, useState } from 'react';
-import { useTool } from '@notis/sdk';
+import { useDocuments, ViewSkeleton } from '@notis/sdk';
 import { Card } from '@/components/ui/card';
 
-type QueryTasksArgs = { database_id?: string; database_slug?: string; query: { page_size?: number } };
-type TaskDoc = { document_id?: string; id?: string; title?: string; properties?: Record<string, unknown> };
-type QueryTasksResult = { documents?: TaskDoc[] };
-
 export default function TasksPage() {
-  const queryTasks = useTool<QueryTasksArgs, QueryTasksResult>('LOCAL_NOTIS_DATABASE_QUERY');
-  const [documents, setDocuments] = useState<TaskDoc[]>([]);
-
-  useEffect(() => {
-    void queryTasks
-      .call({ database_id: 'tasks-db-id', query: { page_size: 25 } })
-      .then((result) => setDocuments(result.documents || []));
-  }, [queryTasks.call]);
-
-  if (queryTasks.loading) return <div>Loading...</div>;
-
-  return (
-    <div className="p-6 space-y-4">
-      {documents.map((doc) => (
-        <Card key={doc.id || doc.document_id} className="p-4">
-          <h3>{doc.title || 'Untitled'}</h3>
-          <p className="text-muted-foreground">{String(doc.properties?.status || '')}</p>
-        </Card>
-      ))}
-    </div>
-  );
+  const tasks = useDocuments('tasks', { pageSize: 25 });
+  return <section className="space-y-4 p-6">
+    <h1 className="text-xl font-semibold">Tasks</h1>
+    {tasks.error && <p role="alert">{tasks.error.message} <button onClick={tasks.refetch}>Retry</button></p>}
+    {tasks.loading ? <ViewSkeleton variant="table" rows={5} /> : tasks.hasData ? (
+      tasks.documents.length ? tasks.documents.map((task) => (
+        <Card key={task.id} className="p-4"><h2>{task.title || 'Untitled'}</h2></Card>
+      )) : <p>No tasks yet.</p>
+    ) : null}
+  </section>;
 }
 ```
+
+### Instant-view loading contract (required)
+
+Build a client-side, multi-route app with one persistent `app/layout.tsx` shell. Navigate with `useNotisNavigation`; never use a document reload for an internal route. “SPA” means preserving that shell and reusing reads, **not** mounting every page or fetching every database at startup.
+
+| State | Required UI |
+| --- | --- |
+| First read, no successful data | Keep headings/navigation/layout visible; use content-shaped skeletons only in missing regions. No page spinner or whole-page `Loading...`. |
+| Cached view / successful empty result | Render synchronously from the shared SDK cache. Empty results are real cached results. |
+| Background refresh | Keep current content and selection. Never replace populated content with a skeleton; do not drive the top-bar spinner from mount/refetch state. |
+| Explicit Save / Upload / submitted search | Progress belongs in that button or affected section. Disable only the conflicting action. |
+| Failed read | Show a scoped error and Retry; keep usable cached content. Never show an empty-state message before `hasData` is true. |
+
+Use `useDocuments`, `useDocument`, `useDatabaseSchema`, and `useDatabaseSubscription` for native reads. `loading` means no first successful response; `isFetching` includes silent refresh. Do not copy their data into mount-only state, clear rows on error, or gate the entire app on `isFetching`.
+
+For another **explicitly identified idempotent read**, use `useToolQuery<Result>(toolName, exactArguments, { readOnly: true })`, or `useQuery(keyArray, readCallback, { readOnly: true })`. Include every filter, selected resource, pagination option, and other input in the key. Call tools within a custom read with `{ readOnly: true, dedupe: true }`; the same SQL/shell tool can also perform writes, so never mark a whole toolkit read-only. Leave mutations as ordinary `useTool` actions.
+
+`useQueryClient().prefetch(keyArray, readCallback, { readOnly: true })` prepares small known reads after the current view has rendered or on hover/focus. It shares the host's two-request speculative budget. Match the exact foreground query key. Never prefetch a mutation, login/polling action, provider sweep, `fetchAll` query, or an aggregate that fans out into more requests. Do not invent tool names to prepare a view. Older hosts safely fall back to uncached hook-local reads and skip prefetch.
+
+Caches belong to the host's in-memory account/environment/app/version/effective-permission scope. Do not add module-global or `localStorage` caches of user data. Writes and realtime events invalidate reads; logout, access loss, and updates retire scopes. Preserve the last successful snapshot on an ordinary network failure.
 
 ### Discovering database schema
 
@@ -367,7 +370,7 @@ Do NOT pass Notion-style wrappers (`{select: {name: "Todo"}}`) when upserting.
 - If a screen looks like a standalone microsite instead of a portal tool, it is too custom.
 - For Notes-style apps, the folder tree belongs to the portal sidebar when configured via `collection.sidebar`. The page content should complement that chrome, not duplicate or replace it.
 - Never indicate selected items with a heavy left-border bar (e.g. `border-l-2 border-l-foreground` paired with a muted background). It looks dated and clashes with the portal chrome. Use a single subtle background change (`bg-muted` for selected, `hover:bg-muted/50` for hover) and let typography or an icon carry the rest of the state.
-- Do not render any search input inside the app (in-page search rails, "Ask Notis…" pills, command-palette-style bars, etc.). The portal already owns the top-bar search field. Wire your view to it with `useTopBarSearch({ value, onChange, placeholder, onSubmit })` from `@notis/sdk` and let the page filter or refetch on the values it receives. The hook also exposes `setLoading` so the standard top-bar spinner reflects in-flight queries.
+- Do not render any search input inside the app (in-page search rails, "Ask Notis…" pills, command-palette-style bars, etc.). The portal already owns the top-bar search field. Wire your view to it with `useTopBarSearch({ value, onChange, placeholder, onSubmit })` from `@notis/sdk` and let the page filter or refetch on the values it receives. Use its `setLoading` only for an explicit submitted search, never initial view loading or background refresh.
 
 ### Sidebar invariants
 

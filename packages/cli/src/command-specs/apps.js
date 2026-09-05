@@ -516,7 +516,7 @@ function runtimeCallLabel(call) {
   return call?.op || 'runtime call';
 }
 
-function assertHarnessResult(result, route, databaseSlugs, mode = 'stub') {
+function assertHarnessResult(result, route, databaseSlugs, mode = 'stub', capabilities = {}) {
   const assertions = [];
   if (result.tool_error) {
     assertions.push({
@@ -557,7 +557,7 @@ function assertHarnessResult(result, route, databaseSlugs, mode = 'stub') {
   );
   for (const call of databaseQueries) {
     const databaseSlug = call?.args?.arguments?.database_slug;
-    if (databaseSlug && !declaredDatabaseSet.has(databaseSlug)) {
+    if (databaseSlug && !declaredDatabaseSet.has(databaseSlug) && capabilities.workspaceDatabases !== 'read') {
       assertions.push({
         ok: false,
         code: 'undeclared_database_query',
@@ -1842,6 +1842,7 @@ async function appsVerifyHandler(ctx) {
           route,
           declaredDatabaseSlugs(appConfig, manifest, route),
           mode,
+          manifest.capabilities || appConfig.capabilities || {},
         );
         return {
           ...result,
@@ -1867,6 +1868,7 @@ async function appsVerifyHandler(ctx) {
           route,
           declaredDatabaseSlugs(appConfig, manifest, route),
           mode,
+          manifest.capabilities || appConfig.capabilities || {},
         );
         results.push({
           route: route.slug,
