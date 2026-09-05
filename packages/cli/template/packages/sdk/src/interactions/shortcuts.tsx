@@ -186,7 +186,7 @@ export function isEditableShortcutEvent(event: Event): boolean {
       return true;
     }
     if (tag === 'A' && target.hasAttribute('href')) return true;
-    return ['button', 'link', 'menuitem', 'option', 'switch', 'tab'].includes(
+    return ['button', 'link', 'menuitem', 'switch', 'tab'].includes(
       target.getAttribute('role') || '',
     );
   });
