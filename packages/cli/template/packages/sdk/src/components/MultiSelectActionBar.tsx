@@ -1,7 +1,9 @@
 'use client';
 
 import React, {
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactElement,
@@ -29,7 +31,7 @@ export interface MultiSelectActionBarProps {
 
 const containerBaseStyle: CSSProperties = {
   position: 'fixed',
-  bottom: '1rem',
+  bottom: 'calc(var(--notis-viewport-bottom, 0px) + max(1rem, var(--notis-safe-area-bottom, env(safe-area-inset-bottom, 0px))))',
   left: '50%',
   transform: 'translateX(-50%)',
   zIndex: 60,
@@ -46,6 +48,8 @@ const containerBaseStyle: CSSProperties = {
   pointerEvents: 'auto',
   fontSize: '13px',
   lineHeight: 1.2,
+  width: 'max-content',
+  maxWidth: 'calc(100% - 2rem)',
 };
 
 const countStyle: CSSProperties = {
@@ -115,6 +119,26 @@ export function MultiSelectActionBar({
   shortcutsEnabled = true,
   shortcutScope = 'collection',
 }: MultiSelectActionBarProps): ReactElement | null {
+  const barRef = useRef<HTMLDivElement>(null);
+  const visible = selectedCount > 0;
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!visible || !bar) return;
+    // Also reaches a Portal launcher when an app renders inside a shadow root.
+    const root = document.documentElement;
+    const property = '--notis-bulk-actions-height';
+    const previous = root.style.getPropertyValue(property);
+    const update = () => root.style.setProperty(property, `${bar.getBoundingClientRect().height + 12}px`);
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(bar);
+    return () => {
+      observer?.disconnect();
+      if (previous) root.style.setProperty(property, previous);
+      else root.style.removeProperty(property);
+    };
+  }, [visible]);
+
   const actionShortcuts = useMemo<ShortcutDefinition[]>(() => {
     return actions.flatMap((action): ShortcutDefinition[] => {
         if (!action.shortcut || action.disabled || action.pending) return [];
@@ -147,16 +171,33 @@ export function MultiSelectActionBar({
 
   return (
     <div
+      ref={barRef}
+      data-notis-bulk-actions
       role="toolbar"
       aria-label={`Bulk actions for ${selectedCount} selected ${countWord}`}
       className={className}
       style={composedStyle}
     >
-      <span style={countStyle}>{countLabel}</span>
-      {actions.length > 0 ? <span aria-hidden style={dividerStyle} /> : null}
-      {actions.map((action) => (
-        <ActionButton key={action.id} action={action} />
-      ))}
+      <style>{`
+        [data-notis-bulk-action-icon][data-has-shortcut] { display: none !important; }
+        @media (max-width: 639px) {
+          [data-notis-bulk-actions] { flex-wrap: wrap; width: calc(100% - 2rem) !important; }
+          [data-notis-bulk-count] { flex-basis: 100%; padding: 0.375rem 0.5rem !important; font-size: 14px !important; }
+          [data-notis-bulk-divider] { display: none; }
+          [data-notis-bulk-action-list] { width: 100%; }
+          [data-notis-bulk-actions] button { min-height: 48px; font-size: 16px !important; }
+          [data-notis-bulk-actions] kbd { display: none !important; }
+          [data-notis-bulk-action-icon][data-has-shortcut] { display: inline-flex !important; }
+        }
+        @media (hover: none) { [data-notis-bulk-actions] kbd { display: none !important; } }
+      `}</style>
+      <span data-notis-bulk-count style={countStyle}>{countLabel}</span>
+      {actions.length > 0 ? <span data-notis-bulk-divider aria-hidden style={dividerStyle} /> : null}
+      <div data-notis-bulk-action-list style={{ display: 'flex', minWidth: 0, overflowX: 'auto', overscrollBehaviorX: 'contain', gap: '0.25rem' }}>
+        {actions.map((action) => (
+          <ActionButton key={action.id} action={action} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -192,8 +233,8 @@ function ActionButton({ action }: { action: MultiSelectAction }) {
       onBlur={() => setHover(false)}
       style={buttonStyle}
     >
-      {!action.shortcut && action.icon ? (
-        <span aria-hidden style={iconSlotStyle}>{action.icon}</span>
+      {action.icon ? (
+        <span data-notis-bulk-action-icon data-has-shortcut={action.shortcut ? '' : undefined} aria-hidden style={iconSlotStyle}>{action.icon}</span>
       ) : null}
       {display ? <kbd aria-hidden style={keycapStyle}>{display}</kbd> : null}
       <span>{action.pending ? `${action.label}…` : action.label}</span>
