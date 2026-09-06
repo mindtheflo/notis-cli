@@ -240,6 +240,8 @@ export function useCollectionInteractions<T>(
   const selectedIdsRef = useRef(selectedIds);
   const activeIdRef = useRef(activeId);
   const anchorIdRef = useRef(anchorId);
+  // Keep manually selected rows outside the current keyboard range on reversal.
+  const keyboardRangeBaseRef = useRef<Set<string> | null>(null);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onActiveIdChangeRef = useRef(onActiveIdChange);
   const onAnchorIdChangeRef = useRef(onAnchorIdChange);
@@ -254,6 +256,9 @@ export function useCollectionInteractions<T>(
 
   itemsRef.current = items;
   getIdRef.current = getId;
+  if (!setsEqual(selectedIdsRef.current, selectedIds) || anchorIdRef.current !== anchorId) {
+    keyboardRangeBaseRef.current = null;
+  }
   selectedIdsRef.current = selectedIds;
   activeIdRef.current = activeId;
   anchorIdRef.current = anchorId;
@@ -316,6 +321,7 @@ export function useCollectionInteractions<T>(
   const activate = useCallback((id: string) => {
     const item = itemsRef.current.find((candidate) => getIdRef.current(candidate) === id);
     if (!item || !selectableIdsRef.current.includes(id)) return;
+    keyboardRangeBaseRef.current = null;
     setActive(id, 'activate');
     setAnchor(id, 'activate');
     onActivateRef.current?.(item, id);
@@ -323,6 +329,7 @@ export function useCollectionInteractions<T>(
 
   const toggle = useCallback((id: string) => {
     if (selectionMode === 'none' || !selectableIdsRef.current.includes(id)) return;
+    keyboardRangeBaseRef.current = null;
     const next = new Set(selectedIdsRef.current);
     if (next.has(id)) next.delete(id);
     else {
@@ -334,6 +341,7 @@ export function useCollectionInteractions<T>(
   }, [commitSelection, selectionMode, setAnchor]);
 
   const select = useCallback((ids: string[]) => {
+    keyboardRangeBaseRef.current = null;
     const next = new Set(ids);
     const last = ids[ids.length - 1] ?? null;
     setAnchor(last, 'toggle');
@@ -341,12 +349,14 @@ export function useCollectionInteractions<T>(
   }, [commitSelection, setAnchor]);
 
   const clear = useCallback(() => {
+    keyboardRangeBaseRef.current = null;
     setAnchor(null, 'clear');
     commitSelection(new Set(), 'clear');
   }, [commitSelection, setAnchor]);
 
   const selectAll = useCallback(() => {
     if (selectionMode === 'none') return;
+    keyboardRangeBaseRef.current = null;
     const ids = selectionMode === 'single' ? selectableIdsRef.current.slice(0, 1) : selectableIdsRef.current;
     const last = ids[ids.length - 1] ?? null;
     setAnchor(last, 'select-all');
@@ -361,12 +371,16 @@ export function useCollectionInteractions<T>(
       commitSelection(new Set([toId]), reason);
       return;
     }
-    commitSelection(new Set(ids.slice(Math.min(from, to), Math.max(from, to) + 1)), reason);
+    commitSelection(new Set([
+      ...(keyboardRangeBaseRef.current ?? []),
+      ...ids.slice(Math.min(from, to), Math.max(from, to) + 1),
+    ]), reason);
   }, [commitSelection]);
 
   const selectRange = useCallback((fromId: string, toId: string) => {
     const ids = selectableIdsRef.current;
     if (selectionMode === 'none' || !ids.includes(toId)) return;
+    keyboardRangeBaseRef.current = null;
     const resolvedFromId = ids.includes(fromId)
       ? fromId
       : activeIdRef.current && ids.includes(activeIdRef.current)
@@ -390,6 +404,9 @@ export function useCollectionInteractions<T>(
 
   useEffect(() => {
     const allowed = new Set(selectableIds);
+    if (keyboardRangeBaseRef.current) {
+      keyboardRangeBaseRef.current = new Set(Array.from(keyboardRangeBaseRef.current).filter((id) => allowed.has(id)));
+    }
     const pruned = new Set(Array.from(selectedIdsRef.current).filter((id) => allowed.has(id)));
     if (!setsEqual(pruned, selectedIdsRef.current)) commitSelection(pruned, 'items-changed');
     if (activeIdRef.current && !allowed.has(activeIdRef.current)) setActive(null, 'items-changed');
@@ -397,6 +414,32 @@ export function useCollectionInteractions<T>(
       setAnchor(null, 'items-changed');
     }
   }, [commitSelection, selectableIds, setActive, setAnchor]);
+
+  const focusItem = useCallback((id: string) => {
+    const nodes = containerRef.current?.querySelectorAll<HTMLElement>(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
+    const node = nodes ? Array.from(nodes).find(
+      (candidate) => candidate.getAttribute(COLLECTION_ITEM_ATTRIBUTE) === id,
+    ) : null;
+    node?.focus({ preventScroll: true });
+  }, []);
+
+  const focusPointerItem = useCallback((id: string) => {
+    setActive(id, 'activate');
+    focusItem(id);
+  }, [focusItem, setActive]);
+
+  const selectPointerRange = useCallback((id: string) => {
+    const rangeAnchor = anchorIdRef.current ?? activeIdRef.current ?? id;
+    const ids = selectableIdsRef.current;
+    const from = ids.indexOf(rangeAnchor);
+    const to = ids.indexOf(id);
+    const range = new Set(ids.slice(Math.min(from, to), Math.max(from, to) + 1));
+    const base = new Set(Array.from(selectedIdsRef.current).filter((selected) => !range.has(selected)));
+    selectRange(rangeAnchor, id);
+    setAnchor(rangeAnchor, 'range');
+    keyboardRangeBaseRef.current = base;
+    focusPointerItem(id);
+  }, [focusPointerItem, selectRange, setAnchor]);
 
   const moveActive = useCallback((direction: CollectionNavigationDirection, extend = false) => {
     const ids = selectableIdsRef.current;
@@ -419,23 +462,21 @@ export function useCollectionInteractions<T>(
     if (!next || next === current) return;
     const stableAnchor = anchorIdRef.current ?? current ?? next;
     if (extend) {
+      keyboardRangeBaseRef.current ??= new Set(
+        Array.from(selectedIdsRef.current).filter((id) => id !== stableAnchor),
+      );
       if (!anchorIdRef.current) {
         setAnchor(stableAnchor, 'range');
       }
       replaceRange(stableAnchor, next, 'range');
     } else {
+      keyboardRangeBaseRef.current = new Set();
       setAnchor(next, 'navigate');
     }
     setActive(next, extend ? 'range' : 'navigate');
     const nextId = next;
-    requestAnimationFrame(() => {
-      const nodes = containerRef.current?.querySelectorAll<HTMLElement>(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
-      const node = nodes ? Array.from(nodes).find(
-        (candidate) => candidate.getAttribute(COLLECTION_ITEM_ATTRIBUTE) === nextId,
-      ) : null;
-      node?.focus({ preventScroll: true });
-    });
-  }, [replaceRange, setActive, setAnchor]);
+    requestAnimationFrame(() => focusItem(nextId));
+  }, [focusItem, replaceRange, setActive, setAnchor]);
 
   const keyboard = useMemo<CollectionKeyboardShortcuts>(
     () => ({ ...DEFAULT_SHORTCUTS, ...(shortcutOverrides || {}) }),
@@ -604,16 +645,19 @@ export function useCollectionInteractions<T>(
     event.preventDefault();
     event.stopPropagation();
     toggle(id);
+    focusPointerItem(id);
     armSuppressNextClick();
-  }, [armSuppressNextClick, enabled, toggle]);
+  }, [armSuppressNextClick, enabled, focusPointerItem, toggle]);
 
   const onCheckboxClick = useCallback((id: string) => (event: ReactMouseEvent) => {
     event.stopPropagation();
     if (event.shiftKey && selectionMode === 'multiple') {
-      const rangeAnchor = anchorIdRef.current ?? activeIdRef.current ?? id;
-      selectRange(rangeAnchor, id);
-    } else toggle(id);
-  }, [selectRange, selectionMode, toggle]);
+      selectPointerRange(id);
+    } else {
+      toggle(id);
+      focusPointerItem(id);
+    }
+  }, [focusPointerItem, selectPointerRange, selectionMode, toggle]);
 
   const getRowProps = useCallback((id: string) => ({
     [COLLECTION_ITEM_ATTRIBUTE]: id,
@@ -640,8 +684,7 @@ export function useCollectionInteractions<T>(
       if (interactiveTarget && interactiveTarget !== event.currentTarget) return;
       if (event.shiftKey && selectionMode === 'multiple') {
         event.preventDefault();
-        const rangeAnchor = anchorIdRef.current ?? activeIdRef.current ?? id;
-        selectRange(rangeAnchor, id);
+        selectPointerRange(id);
         return;
       }
       if (event.metaKey || event.ctrlKey) return;
@@ -655,7 +698,7 @@ export function useCollectionInteractions<T>(
       if (selectionMode === 'none') activate(id);
       else toggle(id);
     },
-  }), [activate, activateCollectionShortcuts, clear, clearSelectionOnPlainClick, onRowMouseDown, selectRange, selectionMode, setActive, toggle]);
+  }), [activate, activateCollectionShortcuts, clear, clearSelectionOnPlainClick, onRowMouseDown, selectPointerRange, selectionMode, setActive, toggle]);
 
   const getCheckboxProps = useCallback((id: string) => ({
     isSelected: selectedIdsRef.current.has(id),
