@@ -170,12 +170,14 @@ export function MultiSelectActionBar({
 
   const actionShortcuts = useMemo<ShortcutDefinition[]>(() => {
     return actions.flatMap((action): ShortcutDefinition[] => {
-        if (!action.shortcut || action.disabled || action.pending) return [];
+        if (!action.shortcut) return [];
         return [{
           id: `collection.action.${action.id}`,
           keys: action.shortcut,
           label: action.label,
-          onTrigger: () => action.onRun(),
+          allowRepeat: Boolean(action.disabled || action.pending),
+          // Keep advertised keys owned while disabled/pending; never fall through to another action.
+          onTrigger: () => { if (!action.disabled && !action.pending) action.onRun(); },
         }];
       });
   }, [actions]);

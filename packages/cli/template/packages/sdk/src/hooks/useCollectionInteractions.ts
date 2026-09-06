@@ -772,13 +772,28 @@ export function useCollectionInteractions<T>(
     };
   }), [actionContext, actionDefinitions, enabled]);
 
+  // Optimistic filtering can remove the last selected row before a request settles.
+  // Keep pending keys on the visible controller, independently of toolbar mounting.
+  useShortcuts(resolvedActions.flatMap((action): ShortcutDefinition[] => (
+    action.shortcut && (action.pending || action.disabled)
+      ? [{ id: `collection.pending.${action.id}`, keys: action.shortcut, allowRepeat: true, onTrigger: () => undefined }]
+      : []
+  )), {
+    enabled: bindKeyboardShortcuts && resolvedActions.some((action) => action.pending),
+    scope: shortcutScope,
+    priority: shortcutPriority + 25,
+    collectionOwnerId: shortcutCollectionOwnerRef.current!,
+    isAvailable,
+  });
+
   const getActionBarProps = useCallback(() => ({
     selectedCount: selectedIds.size,
     actions: resolvedActions,
     collectionOwnerId: shortcutCollectionOwnerRef.current!,
     isAvailable,
-    shortcutsEnabled: enabled && bindKeyboardShortcuts,
-    onClearSelection: clear,
+    // Pending work may disable collection gestures but must retain its action keys.
+    shortcutsEnabled: bindKeyboardShortcuts && (enabled || resolvedActions.some((action) => action.pending)),
+    onClearSelection: enabled ? clear : undefined,
   }), [selectedIds.size, resolvedActions, isAvailable, enabled, bindKeyboardShortcuts, clear]);
 
   const getContainerProps = useCallback(() => ({
