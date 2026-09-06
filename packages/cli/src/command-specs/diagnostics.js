@@ -47,6 +47,8 @@ async function discoverSupabaseSqlTool(runtime) {
   const match = names.find((name) => (
     name.toUpperCase().includes('SUPABASE')
     && name.toUpperCase().includes('EXECUTE_SQL')
+    && name.toUpperCase().includes('NOTIS_APP')
+    && !name.toUpperCase().includes('WEBSITE')
   ));
   if (!match) {
     throw usageError('No connected Supabase execute-SQL capability was discovered. Run `notis tools link mcp_supabase_notis_app`.');
@@ -606,7 +608,42 @@ async function debugWorkerIdentityHandler(ctx) {
   });
 }
 
+export function buildProcessDiagnosticsSql(reference) {
+  if (typeof reference !== 'string' || !reference.trim() || reference.length > 256) {
+    throw usageError('An interaction id of 1–256 characters is required.');
+  }
+  return `BEGIN READ ONLY; SET LOCAL request.jwt.claim.role='service_role'; SELECT public.notis_process_diagnostics_v1(${sqlLiteral(reference)}) AS diagnostic; COMMIT;`;
+}
+
+async function debugProcessHandler(ctx) {
+  const execution = await executeReadOnlySql(ctx, buildProcessDiagnosticsSql(ctx.args.interactionId), 'process');
+  const raw = execution.rows[0]?.diagnostic;
+  const diagnostic = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  if (!diagnostic || diagnostic.definition_version !== 1 || diagnostic.status) {
+    throw usageError(`Process diagnostics unavailable: ${diagnostic?.status || 'invalid response'}.`);
+  }
+  if (diagnostic.interaction_id !== ctx.args.interactionId) throw usageError('Crossed diagnostic identity.');
+  return ctx.output.emitSuccess({
+    command: ctx.spec.command_path.join(' '), data: diagnostic, requestId: execution.requestId,
+    humanSummary: `${diagnostic.user_outcome}; ${diagnostic.handling}; ${diagnostic.reason_code || 'no incident'}.`,
+    meta: { mutating: false, sql_tool: execution.toolName },
+    renderHuman: () => JSON.stringify(diagnostic, null, 2),
+  });
+}
+
 export const diagnosticCommandSpecs = [
+  {
+    command_path: ['debug', 'process'],
+    summary: 'Read receipt-backed process diagnostics for one interaction.',
+    when_to_use: 'Correlate an interaction with Temporal runs, private failure references, delivery and settlement.',
+    args_schema: { arguments: [{ token: '<interaction-id>', key: 'interactionId', description: 'Exact interaction id.' }], options: [] },
+    examples: ['notis debug process interaction_123 --json'],
+    output_schema: 'Versioned, content-free logical outcome, handling, workflow/run and evidence references.',
+    mutates: false, idempotent: true,
+    related_commands: ['notis debug worker-identity', 'notis debug trace-cost <trace-or-interaction>'],
+    backend_call: { type: 'tool-discovery', name: 'Supabase execute SQL capability' },
+    handler: debugProcessHandler,
+  },
   {
     command_path: ['debug', 'user-context'],
     summary: 'Resolve a user’s effective redacted runtime and billing context.',

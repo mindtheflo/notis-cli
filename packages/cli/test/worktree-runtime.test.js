@@ -107,6 +107,40 @@ function runRuntimeProbe(cwd, env = {}, globalOptions = {}) {
   });
 }
 
+function runRuntimeProbeWithKillError(cwd, pid, code) {
+  const source = `
+    const originalKill = process.kill;
+    process.kill = (candidatePid, signal) => {
+      if (candidatePid === ${JSON.stringify(pid)} && signal === 0) {
+        const error = new Error(${JSON.stringify(`synthetic ${code}`)});
+        error.code = ${JSON.stringify(code)};
+        throw error;
+      }
+      return originalKill(candidatePid, signal);
+    };
+    const { resolveRuntimeProfile } = await import(${JSON.stringify(profilesUrl)});
+    try {
+      const runtime = resolveRuntimeProfile({}, { requireAuth: true });
+      console.log(JSON.stringify({
+        apiBase: runtime.apiBase,
+        profileName: runtime.profileName,
+        profileSource: runtime.profileSource,
+      }));
+    } catch (error) {
+      console.log(JSON.stringify({ code: error.code, message: error.message }));
+      process.exitCode = error.exitCode || 1;
+    }
+  `;
+  return spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+    cwd,
+    env: {
+      PATH: process.env.PATH,
+      HOME: mkdtempSync(join(tmpdir(), 'notis-cli-runtime-home-')),
+    },
+    encoding: 'utf8',
+  });
+}
+
 function runRefreshProbe(
   cwd,
   home,
@@ -177,6 +211,40 @@ test('CLI selects the active local-only runtime and ignores inherited remote cre
     bridge: 'bridge-a',
     desktopDeepLinkScheme: 'notis-dev-bridge-a',
   });
+});
+
+test('CLI accepts an active worktree supervisor hidden by a sandbox EPERM probe', () => {
+  const expectedUserId = 'approved-test-user';
+  const inaccessiblePid = 424_242;
+  const { root } = makeWorktree('notis-worktree-sandboxed-pid-', {
+    expectedUserId,
+    devJwt: makeJwt(expectedUserId),
+    devPid: inaccessiblePid,
+  });
+
+  const result = runRuntimeProbeWithKillError(root, inaccessiblePid, 'EPERM');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    apiBase: 'http://localhost:4311',
+    profileName: DEV_PROFILE,
+    profileSource: 'worktree',
+  });
+});
+
+test('CLI still rejects a worktree supervisor missing with ESRCH', () => {
+  const expectedUserId = 'approved-test-user';
+  const missingPid = 424_243;
+  const { root } = makeWorktree('notis-worktree-missing-pid-', {
+    expectedUserId,
+    devJwt: makeJwt(expectedUserId),
+    devPid: missingPid,
+  });
+
+  const result = runRuntimeProbeWithKillError(root, missingPid, 'ESRCH');
+
+  assert.equal(result.status, 4, result.stderr);
+  assert.equal(JSON.parse(result.stdout).code, 'dev_runtime_unavailable');
 });
 
 test('profile list includes the active lease-backed worktree profile without persisting it', () => {

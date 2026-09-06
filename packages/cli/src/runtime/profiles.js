@@ -228,8 +228,11 @@ function processIsAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // Sandboxed children may be allowed to observe the worktree lease but not
+    // signal its dev.sh supervisor. POSIX EPERM proves that the PID exists;
+    // ESRCH (and every other probe failure) does not.
+    return error?.code === 'EPERM';
   }
 }
 
