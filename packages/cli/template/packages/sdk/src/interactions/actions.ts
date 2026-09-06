@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react';
 
-export type CollectionActionIntent = 'archive' | 'star' | 'delete' | 'custom';
+export type CollectionActionIntent =
+  | 'archive' | 'star' | 'delete'
+  | 'enable' | 'disable' | 'pause' | 'resume'
+  | 'move' | 'add-to-folder' | 'complete' | 'start-progress'
+  | 'custom';
 
 export interface CollectionActionContext<T> {
   selectedIds: string[];
@@ -13,6 +17,7 @@ export interface CollectionAction<T> {
   intent?: CollectionActionIntent;
   label?: string;
   icon?: ReactNode;
+  /** Omit to use the intent default, supply a key to override, or false to remove it. */
   shortcut?: string | false;
   destructive?: boolean;
   disabled?: boolean | ((context: CollectionActionContext<T>) => boolean);
@@ -35,6 +40,14 @@ const ACTION_DEFAULTS: Record<Exclude<CollectionActionIntent, 'custom'>, { label
   archive: { label: 'Archive', shortcut: 'E' },
   star: { label: 'Star', shortcut: 'S' },
   delete: { label: 'Delete', shortcut: '#' },
+  enable: { label: 'Enable', shortcut: 'E' },
+  disable: { label: 'Disable', shortcut: 'D' },
+  pause: { label: 'Pause', shortcut: 'P' },
+  resume: { label: 'Resume', shortcut: 'R' },
+  move: { label: 'Move', shortcut: 'M' },
+  'add-to-folder': { label: 'Add to folder', shortcut: 'F' },
+  complete: { label: 'Mark complete', shortcut: 'C' },
+  'start-progress': { label: 'Start progress', shortcut: 'P' },
 };
 
 export function collectionActionDefaults(intent: CollectionActionIntent | undefined): {

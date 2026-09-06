@@ -9,7 +9,8 @@ import React, {
   type ReactElement,
 } from 'react';
 import type { ResolvedCollectionAction } from '../interactions/actions';
-import { shortcutDisplay, useShortcuts, type ShortcutDefinition } from '../interactions/shortcuts';
+import { activateShortcutCollection, shortcutDisplay, useShortcuts, type ShortcutDefinition } from '../interactions/shortcuts';
+import { isInteractionElementVisible } from '../interactions/visibility';
 import type { ShortcutScope } from '../interactions/shortcuts';
 
 export type MultiSelectAction = ResolvedCollectionAction;
@@ -34,6 +35,9 @@ export interface MultiSelectActionBarProps {
   shortcutsEnabled?: boolean;
   /** Override the default collection shortcut scope. */
   shortcutScope?: ShortcutScope;
+  collectionOwnerId?: string;
+  isAvailable?: () => boolean;
+  onClearSelection?: () => void;
 }
 
 const containerBaseStyle: CSSProperties = {
@@ -114,7 +118,7 @@ const iconSlotStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  opacity: 0.8,
+  color: 'inherit',
 };
 
 export function MultiSelectActionBar({
@@ -125,6 +129,9 @@ export function MultiSelectActionBar({
   style,
   shortcutsEnabled = true,
   shortcutScope = 'collection',
+  collectionOwnerId,
+  isAvailable,
+  onClearSelection,
 }: MultiSelectActionBarProps): ReactElement | null {
   const barRef = useRef<HTMLDivElement>(null);
   const visible = selectedCount > 0;
@@ -142,15 +149,24 @@ export function MultiSelectActionBar({
         }));
       }
     };
-    const update = () => report(true);
+    const update = () => report(isAvailable?.() !== false && isInteractionElementVisible(bar));
     update();
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
     observer?.observe(bar);
+    const VisibilityObserver = bar.ownerDocument.defaultView?.MutationObserver;
+    const visibilityObserver = VisibilityObserver ? new VisibilityObserver(update) : null;
+    let element: Element | null = bar;
+    while (element) {
+      visibilityObserver?.observe(element, { attributes: true, attributeFilter: element === bar.ownerDocument.documentElement ? ['hidden', 'inert', 'aria-hidden', 'class'] : ['hidden', 'inert', 'aria-hidden', 'style', 'class'] });
+      const root: Node = element.getRootNode();
+      element = element.parentElement ?? ('host' in root ? (root as ShadowRoot).host : null);
+    }
     return () => {
       observer?.disconnect();
+      visibilityObserver?.disconnect();
       report(false);
     };
-  }, [visible]);
+  }, [isAvailable, visible]);
 
   const actionShortcuts = useMemo<ShortcutDefinition[]>(() => {
     return actions.flatMap((action): ShortcutDefinition[] => {
@@ -167,6 +183,8 @@ export function MultiSelectActionBar({
     enabled: shortcutsEnabled && selectedCount > 0,
     scope: shortcutScope,
     priority: 25,
+    collectionOwnerId,
+    isAvailable: () => isAvailable?.() !== false && isInteractionElementVisible(barRef.current),
   });
 
   if (selectedCount === 0) return null;
@@ -186,6 +204,14 @@ export function MultiSelectActionBar({
     <div
       ref={barRef}
       data-notis-bulk-actions
+      onFocusCapture={() => { if (collectionOwnerId) activateShortcutCollection(collectionOwnerId); }}
+      onMouseDownCapture={() => { if (collectionOwnerId) activateShortcutCollection(collectionOwnerId); }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !shortcutsEnabled || !onClearSelection || isAvailable?.() === false) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClearSelection();
+      }}
       role="toolbar"
       aria-label={`Bulk actions for ${selectedCount} selected ${countWord}`}
       className={className}
@@ -199,10 +225,11 @@ export function MultiSelectActionBar({
           [data-notis-bulk-divider] { display: none; }
           [data-notis-bulk-action-list] { width: 100%; }
           [data-notis-bulk-actions] button { min-height: 48px; font-size: 16px !important; }
+        }
+        @media (hover: none) and (pointer: coarse) {
           [data-notis-bulk-actions] kbd { display: none !important; }
           [data-notis-bulk-action-icon][data-has-shortcut] { display: inline-flex !important; }
         }
-        @media (hover: none) { [data-notis-bulk-actions] kbd { display: none !important; } }
       `}</style>
       <span data-notis-bulk-count style={countStyle}>{countLabel}</span>
       {actions.length > 0 ? <span data-notis-bulk-divider aria-hidden style={dividerStyle} /> : null}

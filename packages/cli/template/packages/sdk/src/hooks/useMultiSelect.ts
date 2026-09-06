@@ -43,10 +43,7 @@ export interface MultiSelectController<T> {
   onCheckboxClick: (id: string) => (event: ReactMouseEvent) => void;
   onRowMouseDown: (id: string) => (event: ReactMouseEvent) => void;
   getRowProps: (id: string) => { [ROW_ATTR]: string };
-  getItemProps: (id: string) => {
-    [ROW_ATTR]: string;
-    onMouseDown: (event: ReactMouseEvent) => void;
-  };
+  getItemProps: CollectionInteractionController<T>['getItemProps'];
   getCheckboxProps: (id: string) => {
     isSelected: boolean;
     onClick: (event: ReactMouseEvent) => void;
@@ -72,10 +69,7 @@ export function useMultiSelect<T>(options: UseMultiSelectOptions<T>): MultiSelec
   });
 
   const getRowProps = useCallback((id: string) => ({ [ROW_ATTR]: id }), []);
-  const getItemProps = useCallback((id: string) => ({
-    [ROW_ATTR]: id,
-    onMouseDown: controller.onRowMouseDown(id),
-  }), [controller.onRowMouseDown]);
+  const getItemProps = controller.getItemProps;
 
   return {
     selectedIds: controller.selectedIds,

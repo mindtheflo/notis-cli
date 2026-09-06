@@ -17,11 +17,16 @@ import {
 } from '../interactions/actions';
 import {
   activateShortcutCollection,
+  releaseShortcutCollection,
   createShortcutCollectionOwner,
   useShortcuts,
   type ShortcutDefinition,
   type ShortcutScope,
 } from '../interactions/shortcuts';
+
+import type { MultiSelectActionBarProps } from '../components/MultiSelectActionBar';
+import { isInteractionElementVisible } from '../interactions/visibility';
+import { useLongPressSelection } from './useLongPressSelection';
 
 export const COLLECTION_ITEM_ATTRIBUTE = 'data-notis-collection-item-id';
 const LEGACY_ROW_ATTRIBUTE = 'data-notis-row-id';
@@ -93,6 +98,8 @@ export interface UseCollectionInteractionsOptions<T> {
   enabled?: boolean;
   bindKeyboardShortcuts?: boolean;
   enableDragSelect?: boolean;
+  /** Touch-only long press; optional per view. */
+  enableLongPressSelection?: boolean;
   /** Plain item clicks activate the item and clear checkbox selection by default. */
   clearSelectionOnPlainClick?: boolean;
   dragThreshold?: number;
@@ -114,6 +121,7 @@ export interface CollectionInteractionController<T> {
   lastClickedId: string | null;
   dragRect: SelectionMarqueeRect | null;
   actions: ResolvedCollectionAction[];
+  getActionBarProps: () => Pick<MultiSelectActionBarProps, 'selectedCount' | 'actions' | 'collectionOwnerId' | 'isAvailable' | 'shortcutsEnabled' | 'onClearSelection'>;
 
   isSelected: (id: string) => boolean;
   getSelectedItems: () => T[];
@@ -128,7 +136,7 @@ export interface CollectionInteractionController<T> {
   onCheckboxClick: (id: string) => (event: ReactMouseEvent) => void;
   onRowMouseDown: (id: string) => (event: ReactMouseEvent) => void;
   getRowProps: (id: string) => Record<string, string>;
-  getItemProps: (id: string) => {
+  getItemProps: (id: string) => Partial<ReturnType<ReturnType<typeof useLongPressSelection>>> & {
     [COLLECTION_ITEM_ATTRIBUTE]: string;
     [LEGACY_ROW_ATTRIBUTE]: string;
     tabIndex: number;
@@ -213,6 +221,7 @@ export function useCollectionInteractions<T>(
     enabled = true,
     bindKeyboardShortcuts = true,
     enableDragSelect = selectionMode === 'multiple',
+    enableLongPressSelection = false,
     clearSelectionOnPlainClick = true,
     dragThreshold = 5,
     shortcuts: shortcutOverrides,
@@ -249,6 +258,11 @@ export function useCollectionInteractions<T>(
   const onActivateRef = useRef(onActivate);
   const resolveNextIdRef = useRef(resolveNextId);
   const containerRef = useRef<HTMLElement | null>(null);
+  const [containerElement, setContainerElement] = useState<HTMLElement | null>(null);
+  const setContainerRef = useCallback((node: HTMLElement | null) => {
+    containerRef.current = node;
+    setContainerElement(node);
+  }, []);
   const shortcutCollectionOwnerRef = useRef<string | null>(null);
   if (!shortcutCollectionOwnerRef.current) {
     shortcutCollectionOwnerRef.current = createShortcutCollectionOwner();
@@ -418,9 +432,10 @@ export function useCollectionInteractions<T>(
   const focusItem = useCallback((id: string) => {
     const nodes = containerRef.current?.querySelectorAll<HTMLElement>(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
     const node = nodes ? Array.from(nodes).find(
-      (candidate) => candidate.getAttribute(COLLECTION_ITEM_ATTRIBUTE) === id,
+      (candidate) => candidate.getAttribute(COLLECTION_ITEM_ATTRIBUTE) === id && isInteractionElementVisible(candidate),
     ) : null;
     node?.focus({ preventScroll: true });
+    node?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, []);
 
   const focusPointerItem = useCallback((id: string) => {
@@ -434,18 +449,19 @@ export function useCollectionInteractions<T>(
     const from = ids.indexOf(rangeAnchor);
     const to = ids.indexOf(id);
     const range = new Set(ids.slice(Math.min(from, to), Math.max(from, to) + 1));
-    const base = new Set(Array.from(selectedIdsRef.current).filter((selected) => !range.has(selected)));
-    selectRange(rangeAnchor, id);
-    setAnchor(rangeAnchor, 'range');
+    const base = keyboardRangeBaseRef.current ?? new Set(Array.from(selectedIdsRef.current).filter((selected) => !range.has(selected)));
     keyboardRangeBaseRef.current = base;
+    setAnchor(rangeAnchor, 'range');
+    replaceRange(rangeAnchor, id, 'range');
     focusPointerItem(id);
-  }, [focusPointerItem, selectRange, setAnchor]);
+  }, [focusPointerItem, replaceRange, setAnchor]);
 
   const moveActive = useCallback((direction: CollectionNavigationDirection, extend = false) => {
     const ids = selectableIdsRef.current;
     if (ids.length === 0) return;
     const current = activeIdRef.current;
-    let next = resolveNextIdRef.current?.({
+    // Range gestures follow the displayed order, independent of asymmetric grid geometry.
+    let next = extend ? null : resolveNextIdRef.current?.({
       direction,
       currentId: current,
       items: itemsRef.current,
@@ -519,11 +535,29 @@ export function useCollectionInteractions<T>(
     });
     return definitions;
   }, [activate, clear, keyboard, moveActive, selectAll, selectionMode, toggle]);
+  const isAvailable = useCallback(() => isInteractionElementVisible(containerRef.current), []);
+  useEffect(() => {
+    const owner = shortcutCollectionOwnerRef.current!;
+    const container = containerElement;
+    const Observer = container?.ownerDocument.defaultView?.MutationObserver;
+    const observer = Observer ? new Observer(() => {
+      if (!isAvailable()) releaseShortcutCollection(owner);
+    }) : null;
+    let element: Element | null = container;
+    while (element) {
+      observer?.observe(element, { attributes: true, attributeFilter: ['hidden', 'inert', 'aria-hidden', 'style', 'class'] });
+      const root: Node = element.getRootNode();
+      element = element.parentElement ?? ('host' in root ? (root as ShadowRoot).host : null);
+    }
+    return () => { observer?.disconnect(); releaseShortcutCollection(owner); };
+  }, [containerElement, isAvailable]);
+
   useShortcuts(keyDefinitions, {
     enabled: enabled && bindKeyboardShortcuts,
     scope: shortcutScope,
     priority: shortcutPriority,
     collectionOwnerId: shortcutCollectionOwnerRef.current,
+    isAvailable,
   });
 
   const activateCollectionShortcuts = useCallback(() => {
@@ -651,20 +685,28 @@ export function useCollectionInteractions<T>(
 
   const onCheckboxClick = useCallback((id: string) => (event: ReactMouseEvent) => {
     event.stopPropagation();
+    if (!enabled) return;
     if (event.shiftKey && selectionMode === 'multiple') {
       selectPointerRange(id);
     } else {
       toggle(id);
       focusPointerItem(id);
     }
-  }, [focusPointerItem, selectPointerRange, selectionMode, toggle]);
+  }, [enabled, focusPointerItem, selectPointerRange, selectionMode, toggle]);
 
   const getRowProps = useCallback((id: string) => ({
     [COLLECTION_ITEM_ATTRIBUTE]: id,
     [LEGACY_ROW_ATTRIBUTE]: id,
   }), []);
 
+  const longPress = useLongPressSelection((id) => {
+    if (!enabled || selectionMode === 'none') return;
+    activateCollectionShortcuts();
+    toggle(id);
+    focusPointerItem(id);
+  });
   const getItemProps = useCallback((id: string) => ({
+    ...(enableLongPressSelection ? longPress(id) : {}),
     [COLLECTION_ITEM_ATTRIBUTE]: id,
     [LEGACY_ROW_ATTRIBUTE]: id,
     tabIndex: activeIdRef.current === id || (!activeIdRef.current && selectableIdsRef.current[0] === id) ? 0 : -1,
@@ -677,7 +719,7 @@ export function useCollectionInteractions<T>(
     },
     onMouseDown: onRowMouseDown(id),
     onClick: (event: ReactMouseEvent) => {
-      if (event.defaultPrevented) return;
+      if (!enabled || event.defaultPrevented) return;
       if (!selectableIdsRef.current.includes(id)) return;
       const target = event.target as HTMLElement | null;
       const interactiveTarget = target?.closest(INTERACTIVE_SELECTOR);
@@ -692,19 +734,19 @@ export function useCollectionInteractions<T>(
       activate(id);
     },
     onKeyDown: (event: ReactKeyboardEvent) => {
-      if (event.key !== ' ' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!enabled || event.key !== ' ' || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.target !== event.currentTarget) return;
       event.preventDefault();
       if (selectionMode === 'none') activate(id);
       else toggle(id);
     },
-  }), [activate, activateCollectionShortcuts, clear, clearSelectionOnPlainClick, onRowMouseDown, selectPointerRange, selectionMode, setActive, toggle]);
+  }), [activate, activateCollectionShortcuts, clear, clearSelectionOnPlainClick, enabled, enableLongPressSelection, longPress, onRowMouseDown, selectPointerRange, selectionMode, setActive, toggle]);
 
   const getCheckboxProps = useCallback((id: string) => ({
     isSelected: selectedIdsRef.current.has(id),
-    disabled: !selectableIdsRef.current.includes(id),
+    disabled: !enabled || !selectableIdsRef.current.includes(id),
     onClick: onCheckboxClick(id),
-  }), [onCheckboxClick]);
+  }), [enabled, onCheckboxClick]);
 
   const getSelectedItems = useCallback(() => getItemsForIds(selectedIdsRef.current), [getItemsForIds]);
   const isSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
@@ -724,14 +766,23 @@ export function useCollectionInteractions<T>(
       icon: action.icon,
       shortcut,
       destructive: action.destructive ?? action.intent === 'delete',
-      disabled,
+      disabled: !enabled || disabled,
       pending: action.pending,
-      onRun: () => action.onRun(actionContext),
+      onRun: () => { if (!enabled || disabled || action.pending) return; return action.onRun(actionContext); },
     };
-  }), [actionContext, actionDefinitions]);
+  }), [actionContext, actionDefinitions, enabled]);
+
+  const getActionBarProps = useCallback(() => ({
+    selectedCount: selectedIds.size,
+    actions: resolvedActions,
+    collectionOwnerId: shortcutCollectionOwnerRef.current!,
+    isAvailable,
+    shortcutsEnabled: enabled && bindKeyboardShortcuts,
+    onClearSelection: clear,
+  }), [selectedIds.size, resolvedActions, isAvailable, enabled, bindKeyboardShortcuts, clear]);
 
   const getContainerProps = useCallback(() => ({
-    ref: (node: HTMLElement | null) => { containerRef.current = node; },
+    ref: setContainerRef,
     onMouseDown: (event: ReactMouseEvent) => {
       activateCollectionShortcuts();
       handleContainerMouseDown(event);
@@ -739,7 +790,7 @@ export function useCollectionInteractions<T>(
     onFocusCapture: activateCollectionShortcuts,
     onClickCapture: handleContainerClickCapture,
     style: { userSelect: 'none' as const },
-  }), [activateCollectionShortcuts, handleContainerClickCapture, handleContainerMouseDown]);
+  }), [activateCollectionShortcuts, handleContainerClickCapture, handleContainerMouseDown, setContainerRef]);
 
   return {
     selectedIds,
@@ -750,6 +801,7 @@ export function useCollectionInteractions<T>(
     lastClickedId: anchorId,
     dragRect,
     actions: resolvedActions,
+    getActionBarProps,
     isSelected,
     getSelectedItems,
     setActive,

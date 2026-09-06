@@ -151,3 +151,6 @@ export type {
 export { useToolQuery } from './hooks/useToolQuery';
 
 export { Skeleton, ViewSkeleton } from './components/Skeleton';
+
+export { useLongPressSelection } from './hooks/useLongPressSelection';
+export { isInteractionElementVisible } from './interactions/visibility';

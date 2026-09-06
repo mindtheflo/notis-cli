@@ -42,6 +42,8 @@ export interface UseShortcutsOptions {
   sequenceTimeoutMs?: number;
   /** Internal owner used to route collection shortcuts to the last interacted collection. */
   collectionOwnerId?: string;
+  /** Evaluated at dispatch time, including for retained hidden app views. */
+  isAvailable?: () => boolean;
 }
 
 interface ShortcutRegistration {
@@ -52,6 +54,8 @@ interface ShortcutRegistration {
   enabled: boolean;
   sequenceTimeoutMs: number;
   collectionOwnerId?: string;
+  /** Evaluated at dispatch time, including for retained hidden app views. */
+  isAvailable?: () => boolean;
   getShortcuts: () => ShortcutDefinition[];
 }
 
@@ -90,6 +94,11 @@ function getShortcutCollectionState() {
 export function createShortcutCollectionOwner(): string {
   const state = getShortcutCollectionState();
   return `collection-${state.nextOwnerId++}`;
+}
+
+export function releaseShortcutCollection(ownerId: string): void {
+  const state = getShortcutCollectionState();
+  if (state.activeOwnerId === ownerId) state.activeOwnerId = null;
 }
 
 export function activateShortcutCollection(ownerId: string): void {
@@ -233,7 +242,7 @@ function applicableRegistrations(
   registrations: Iterable<ShortcutRegistration>,
 ): ShortcutRegistration[] {
   const ordered = Array.from(registrations)
-    .filter((registration) => registration.enabled)
+    .filter((registration) => registration.enabled && registration.isAvailable?.() !== false)
     .sort((a, b) => b.priority - a.priority || b.order - a.order);
   const activeCollectionOwner = getShortcutCollectionState().activeOwnerId;
   const hasActiveCollection = Boolean(
@@ -246,6 +255,60 @@ function applicableRegistrations(
           || registration.collectionOwnerId === activeCollectionOwner,
       )
     : ordered;
+}
+
+// Standalone app verification and legacy hosts may not install a provider.
+// They must still arbitrate shortcuts together, not by effect/listener order.
+const FALLBACK_REGISTRIES_SYMBOL = Symbol.for('notis.sdk.fallback_shortcut_registries');
+interface FallbackShortcutRegistry {
+  registrations: Map<number, ShortcutRegistration>;
+  nextId: number;
+  dispatch: (event: KeyboardEvent) => void;
+}
+type FallbackShortcutGlobal = typeof globalThis & {
+  [FALLBACK_REGISTRIES_SYMBOL]?: WeakMap<Document, FallbackShortcutRegistry>;
+};
+
+function registerFallbackShortcut(input: Omit<ShortcutRegistration, 'id' | 'order'>): () => void {
+  const scope = globalThis as FallbackShortcutGlobal;
+  const registries = scope[FALLBACK_REGISTRIES_SYMBOL] ??= new WeakMap();
+  const ownerDocument = document;
+  let registry = registries.get(ownerDocument);
+  if (!registry) {
+    const registrations = new Map<number, ShortcutRegistration>();
+    registry = {
+      registrations,
+      nextId: 1,
+      dispatch: (event) => {
+        if (event.defaultPrevented) return;
+        const editable = isEditableShortcutEvent(event);
+        const token = chordToken(eventChord(event));
+        for (const registration of applicableRegistrations(registrations.values())) {
+          for (const shortcut of registration.getShortcuts()) {
+            if (shortcut.enabled === false || (editable && !shortcut.allowInEditable) || (event.repeat && !shortcut.allowRepeat)) continue;
+            const match = parseShortcut(shortcut).some(
+              (candidate) => candidate.sequence.length === 1 && chordToken(candidate.sequence[0]!) === token,
+            );
+            if (match) {
+              consumeShortcut(event, shortcut);
+              return;
+            }
+          }
+        }
+      },
+    };
+    registries.set(ownerDocument, registry);
+    ownerDocument.addEventListener('keydown', registry.dispatch, true);
+  }
+  const id = registry.nextId++;
+  registry.registrations.set(id, { ...input, id, order: id });
+  return () => {
+    registry.registrations.delete(id);
+    if (registry.registrations.size === 0) {
+      ownerDocument.removeEventListener('keydown', registry.dispatch, true);
+      registries.delete(ownerDocument);
+    }
+  };
 }
 
 function shortcutToken(raw: string): string | null {
@@ -575,7 +638,10 @@ export function useShortcuts(
     priority = 0,
     sequenceTimeoutMs = 1500,
     collectionOwnerId,
+    isAvailable,
   } = options;
+  const availableRef = useRef(isAvailable);
+  availableRef.current = isAvailable;
 
   useEffect(() => {
     if (!registry || !enabled) return;
@@ -585,30 +651,24 @@ export function useShortcuts(
       priority: SHORTCUT_SCOPE_PRIORITY[scope] + priority,
       sequenceTimeoutMs,
       collectionOwnerId,
-      getShortcuts: () => shortcutsRef.current,
+      isAvailable: () => availableRef.current?.() !== false,
+      getShortcuts: () => availableRef.current?.() === false ? [] : shortcutsRef.current,
     });
   }, [collectionOwnerId, enabled, priority, registry, scope, sequenceTimeoutMs]);
 
   // Compatibility fallback for SDK components rendered outside a provider.
   useEffect(() => {
     if (registry || !enabled) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isEditableShortcutEvent(event)) return;
-      const token = chordToken(eventChord(event));
-      for (const shortcut of shortcutsRef.current) {
-        if (shortcut.enabled === false || event.repeat && !shortcut.allowRepeat) continue;
-        const match = parseShortcut(shortcut).find(
-          (candidate) => candidate.sequence.length === 1 && chordToken(candidate.sequence[0]!) === token,
-        );
-        if (match) {
-          consumeShortcut(event, shortcut);
-          return;
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [enabled, registry]);
+    return registerFallbackShortcut({
+      enabled,
+      scope,
+      priority: SHORTCUT_SCOPE_PRIORITY[scope] + priority,
+      sequenceTimeoutMs,
+      collectionOwnerId,
+      isAvailable: () => availableRef.current?.() !== false,
+      getShortcuts: () => shortcutsRef.current,
+    });
+  }, [collectionOwnerId, enabled, priority, registry, scope, sequenceTimeoutMs]);
 }
 
 export function shortcutDisplay(raw: string): string {

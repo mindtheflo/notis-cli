@@ -40,3 +40,6 @@ export type { MultiSelectDragOverlayProps } from './components/MultiSelectDragOv
 export type { MultiSelectCheckboxProps as SelectionCheckboxProps } from './components/MultiSelectCheckbox';
 export type { MultiSelectDragOverlayProps as SelectionMarqueeProps } from './components/MultiSelectDragOverlay';
 export type { ShortcutHint, ShortcutHintsProps } from './components/ShortcutHints';
+
+export { useLongPressSelection } from './hooks/useLongPressSelection';
+export { isInteractionElementVisible } from './interactions/visibility';
