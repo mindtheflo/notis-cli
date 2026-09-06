@@ -964,7 +964,7 @@ export async function startAppDevServer({
       if (state.prepareTimer) clearTimeout(state.prepareTimer);
       state.prepareTimer = setTimeout(() => {
         state.prepareTimer = null;
-        void prepareArtifactBuild(state.projectDir).then(() => {
+        void prepareArtifactBuild(state.projectDir, { enforceDesign: false, log: (message) => logError(message) }).then(() => {
           // Name, icon, and route metadata can change without changing the
           // compiled JS bytes. Notify consumers immediately; a generated-entry
           // change will produce the normal second reload after Vite rebuilds.
@@ -1004,7 +1004,7 @@ export async function startAppDevServer({
 
   for (const state of appState.values()) {
     if (watch) {
-      await prepareArtifactBuild(state.projectDir);
+      await prepareArtifactBuild(state.projectDir, { enforceDesign: false, log: (message) => logError(message) });
       watchManifestInputs(state);
       pollForBundleAndWatch(state);
 

@@ -308,7 +308,7 @@ Examples:
 
 Build and upload the app to the linked Notis app.
 
-When to use: Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. This command does not publish to the app store.
+When to use: Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. Deploy refuses an artifact that has no passing `notis apps verify` for exactly these built bytes, so run verify after the last build. This command does not publish to the app store.
 
 Options:
 - `--app-id <id>` — Override linked app ID.

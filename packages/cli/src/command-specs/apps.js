@@ -39,6 +39,9 @@ import {
   appRowFieldsFromManifest,
   directDeploy,
   pullAppSource,
+  assertVerifiedArtifact,
+  writeVerifyStamp,
+  UNVERIFIED_DEPLOY_ENV,
 } from '../runtime/app-platform.js';
 import {
   filterScaffoldCatalog,
@@ -55,6 +58,7 @@ import {
 } from '../runtime/app-dev-roots.js';
 import {
   captureHarnessScreenshot,
+  describeDesignFinding,
   closeAgentBrowserSession,
   isAgentBrowserAvailable,
   runHarnessRoute,
@@ -576,6 +580,14 @@ function assertHarnessResult(result, route, databaseSlugs, mode = 'stub', capabi
       code: 'missing_collection_database_query',
       message: `Collection route "${route.slug}" did not query "${collectionDatabase}".`,
       details: { databaseSlug: collectionDatabase },
+    });
+  }
+  for (const finding of result.design || []) {
+    assertions.push({
+      ok: false,
+      code: 'design_rule_violation',
+      message: `Route "${route.slug}": ${describeDesignFinding(finding)}.`,
+      details: finding,
     });
   }
   if (mode === 'live') {
@@ -1896,8 +1908,17 @@ async function appsVerifyHandler(ctx) {
     };
     const overallOk = summary.failed === 0;
     const exitCode = overallOk ? EXIT_CODES.ok : EXIT_CODES.unexpected;
+    // The stamp is what `apps deploy` checks. A manual (--no-browser) run is
+    // not a verification, so it never unlocks a deploy.
+    const verifyStamp = writeVerifyStamp(projectDir, {
+      ok: overallOk && summary.manual === 0 && summary.total > 0,
+      mode,
+      summary,
+      results,
+    });
     const data = {
       status: overallOk ? (summary.manual ? 'manual' : 'passed') : 'failed',
+      artifact_hash: verifyStamp.artifact_hash,
       project_dir: projectDir,
       app_slug: appSlug,
       mode,
@@ -2311,6 +2332,14 @@ async function appsDeployHandler(ctx) {
     });
   }
 
+  // Never ship bytes that no passing `apps verify` has seen.
+  const gate = assertVerifiedArtifact(projectDir);
+  const deployWarnings = [];
+  if (!gate.gated) {
+    deployWarnings.push(`Deploying without a passing verify (${gate.reason}) because ${UNVERIFIED_DEPLOY_ENV}=1 is set.`);
+    process.stderr.write(`Warning: ${deployWarnings[0]}\n`);
+  }
+
   // Direct deploy mode: upload to Supabase storage directly
   if (ctx.options.direct) {
     if (needsPromotion) {
@@ -2323,6 +2352,7 @@ async function appsDeployHandler(ctx) {
       command: ctx.spec.command_path.join(' '),
       data: { app_id: appId, version, mode: 'direct' },
       humanSummary: `Deployed to app ${appId} (version ${version}) via direct upload`,
+      warnings: deployWarnings,
       meta: { mutating: true },
     });
   }
@@ -2915,7 +2945,7 @@ export const appsCommandSpecs = [
     command_path: ['apps', 'deploy'],
     summary: 'Build and upload the app to the linked Notis app.',
     when_to_use:
-      'Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. This command does not publish to the app store.',
+      'Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. Deploy refuses an artifact that has no passing `notis apps verify` for exactly these built bytes, so run verify after the last build. This command does not publish to the app store.',
     args_schema: {
       arguments: [
         { token: '[dir]', key: 'dir', description: 'Project directory (default: current dir).' },

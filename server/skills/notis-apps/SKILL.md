@@ -147,7 +147,7 @@ These are the most common mistakes agents make. Each one wastes time and produce
 - **NEVER explore server code or tool schemas to invent an alternative app workflow** -- Use the Notis CLI.
 - **NEVER work around a missing `collection.sidebar` portal tree by rendering a duplicate sidebar inside the app** -- keep the route manifest as the source of truth and escalate the missing portal sidebar as a platform bug instead.
 - **NEVER invent a custom visual language** -- Do not ship full-screen gradients, glassmorphism, bright neon palettes, or raw HTML controls as the primary UI. Apps should look like a natural extension of the portal.
-- **NEVER hand-roll buttons/cards/badges when the scaffold already provides shadcn primitives** -- Prefer `@/components/ui/*` and portal token classes such as `bg-background`, `bg-card`, `border-border`, and `text-muted-foreground`.
+- **NEVER hand-roll buttons/cards/badges when the scaffold already provides flat primitives** -- Prefer `@/components/ui/*` and portal token classes such as `bg-background`, `bg-muted`, and `text-muted-foreground`. Never add `border` or `shadow` classes to `Card`; a `Card` nested in a `Card` is flat automatically. See Design bar.
 
 ## Workflow
 
@@ -290,7 +290,7 @@ For arbitrary app-owned resources that are not Notis collection rows, set `resou
 
 ### Step 2: Build pages
 
-Standard React pages in `app/`. Use generic SDK tool hooks for data and build on top of the scaffolded shadcn components and portal shell classes (`notis-app-shell`, `notis-app-surface`):
+Standard React pages in `app/`. Use generic SDK tool hooks for data and build on top of the scaffolded flat components and portal shell classes (`notis-app-shell` for ordinary pages, `notis-app-split` for list-plus-detail pages, `notis-app-surface` for a flat panel):
 
 ```tsx
 import { useDocuments, ViewSkeleton } from '@notis/sdk';
@@ -361,15 +361,30 @@ await upsertTask.call({
 
 Do NOT pass Notion-style wrappers (`{select: {name: "Todo"}}`) when upserting.
 
-### Design rules
+### Design bar (enforced)
 
-- Start from the scaffolded `@/components/ui/*` components before writing new UI primitives.
-- Use restrained portal surfaces: `bg-background`, `bg-card`, `border-border`, `text-foreground`, `text-muted-foreground`.
-- Keep layouts compact and dashboard-like. Prefer cards, sections, badges, and tables over marketing-style hero treatments.
-- Respect the portal theme. Do not hardcode dark mode or create an app-specific palette.
-- If a screen looks like a standalone microsite instead of a portal tool, it is too custom.
+Every page must read as a native, flat Notis page. `npx --package @notis_ai/cli@latest -- notis apps build` and the deploy endpoint fail on the banned patterns below with the exact file and line; the only override is an inline `// notis-design-allow: <rule-id> <reason>` comment on the line before (reason required, at least 12 characters). Do not work around a failure by moving the markup elsewhere; fix it.
+
+Banned in `app/` and `components/` (form controls in `components/ui/{input,textarea,checkbox,switch,button}.tsx` are exempt):
+
+- Four-side `border` boxes, `border-dashed`, `divide-*`, `<hr>`, thick `border-l-2` bars, `ring-*` as a box or selection indicator (`focus-visible:ring-2` on controls is fine).
+- `shadow-*` on panels, tiles, rows, or bubbles. Only a floating popover or menu may use `shadow-lg` together with `bg-popover`.
+- Tailwind palette hues (`emerald-500`, `slate-200`, ...), hex colors, gradients, `backdrop-blur`, `font-serif`.
+- Uppercase `tracking-wide` eyebrows and marketing headlines. Page titles are plain nouns matching the route ("Dashboard", "Meetings").
+- Text below 12px (`text-[11px]`); use `text-xs` at minimum and `text-sm` for body.
+- `Badge variant="outline"`, raw `<select>`, in-app search inputs, duplicate sidebars, untouched scaffold placeholder copy.
+- Loading text ("Loading...") or whole-page spinners. Keep headings visible and render `Skeleton` / `ViewSkeleton` from `@notis/sdk` only in the missing region (see the Instant-view contract).
+
+Use instead:
+
+- `Card` from the scaffold: a flat `bg-muted` panel that becomes `bg-background` when nested. Page sections can also be plain `h2` + content with `space-y-8`.
+- `.list-row` / `.list-row-selected` from `@notis/sdk/styles.css` for rows and table bodies (tinted on mobile, transparent with hover tint on desktop, selection by tint). Tables are flat on the page: `text-xs` muted header, `text-sm` rows, no wrapping panel.
+- Stats as bare figures: `text-xs` label over `text-2xl font-semibold tabular-nums`. Tiles (`rounded-2xl bg-muted p-5`) only when they are the page's single grouping device.
+- `PageHeading` for the header, `NativeSelect` for filters, `Badge` variants `default | secondary | destructive`, tokens only (`text-foreground`, `text-muted-foreground`, `text-primary`, `bg-primary/10`, `text-destructive`, `bg-destructive/10`), `tabular-nums` on numbers, `min-w-0` on every grid item that can hold long text.
+- One hairline (`border-t` / `border-b border-border`) between major sections or large list entries is the only allowed line.
+- List-plus-detail pages are full-bleed: `notis-app-split` with `notis-app-pane-list` (tinted, one `border-r` hairline, fixed width on desktop, stacked on mobile) and `notis-app-pane-detail` (`bg-background`), never the centered `notis-app-shell`.
+- Respect the portal theme in both modes. Never hardcode dark mode or an app palette.
 - For Notes-style apps, the folder tree belongs to the portal sidebar when configured via `collection.sidebar`. The page content should complement that chrome, not duplicate or replace it.
-- Never indicate selected items with a heavy left-border bar (e.g. `border-l-2 border-l-foreground` paired with a muted background). It looks dated and clashes with the portal chrome. Use a single subtle background change (`bg-muted` for selected, `hover:bg-muted/50` for hover) and let typography or an icon carry the rest of the state.
 - Do not render any search input inside the app (in-page search rails, "Ask Notis…" pills, command-palette-style bars, etc.). The portal already owns the top-bar search field. Wire your view to it with `useTopBarSearch({ value, onChange, placeholder, onSubmit })` from `@notis/sdk` and let the page filter or refetch on the values it receives. Use its `setLoading` only for an explicit submitted search, never initial view loading or background refresh.
 
 ### Sidebar invariants
@@ -580,8 +595,8 @@ Runs the real desktop-local development workflow. The CLI should discover all ap
 
 ## Testing
 
-1. **Build validation**: `npx --package @notis_ai/cli@latest -- notis apps build` must succeed without errors. Vite surfaces TypeScript and bundling errors during this step.
-2. **Headless render verification** (recommended after every build): run `npx --package @notis_ai/cli@latest -- notis apps verify` locally. In a hosted sandbox, first run `npm exec --yes --package agent-browser@latest -- agent-browser install`, then run `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify`. It builds unless `--skip-build` is passed, spins up a loopback harness, drives `agent-browser` against every route, and reports per-route pass/fail with captured render errors and runtime calls.
+1. **Build validation**: `npx --package @notis_ai/cli@latest -- notis apps build` must succeed without errors. Vite surfaces TypeScript and bundling errors during this step, and the design bar lint fails the build on any banned pattern with the file and line to fix. The build also refreshes the app's embedded `packages/sdk` copy to the SDK this CLI ships, so hook and style updates land without a manual step.
+2. **Headless render verification** (required before every deploy): run `npx --package @notis_ai/cli@latest -- notis apps verify` locally. In a hosted sandbox, first run `npm exec --yes --package agent-browser@latest -- agent-browser install`, then run `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify`. It builds unless `--skip-build` is passed, spins up a loopback harness, drives `agent-browser` against every route at desktop (1280px) and phone (390px) widths, and reports per-route pass/fail with captured render errors, runtime calls, and design findings (`design_rule_violation`: a bordered box inside a bordered box, tinted panels nested three deep, text below 12px, a loading placeholder that outlives the data, horizontal overflow). A passing run writes `.notis/output/verify.json` keyed to the built artifact; `apps deploy` refuses any artifact without a passing stamp for exactly those bytes, so run verify after the last build.
 3. **Local development acceptance**: Run `notis apps dev [folder]` once to register the root, then verify each signed-in Desktop instance independently. For an unpublished app, expect one DEV-badged Workspace row. For a linked app, first confirm local `notisAppVersion` is strictly greater than installed `release_version`, then expect one substituted DEV-badged row; equal or lower must keep the online row and bundle. Verify the default route renders and live edits appear without restarting the CLI or Desktop. Use `notis apps roots list` as the persistence proof. Loopback bundle health alone does not prove that an authenticated instance mounted or rendered the app.
 4. **Post-deploy**: Read back the exact app id, version, and `portal_url` with `apps list --json`, run `apps verify --mode live`, verify the deployed bundle via `/portal_views/get` -> `runtime_descriptor.bundle.js_url`, and return that profile-appropriate exact Portal URL. A confirmed deploy followed by failed readback is deployed but not remotely verified; a failed live check is deployed but live verification failed. The portal renders app bundles directly as React components, so navigate to the app page when an authenticated browser is available.
 
@@ -600,7 +615,7 @@ Run `npx --package @notis_ai/cli@latest -- notis apps verify` after `npx --packa
 #### What the harness does not catch
 
 - Bugs that only manifest with real backend data (auth-scoped filters, RLS, malformed prod records). For those, swap the stub runtime for a real one that posts to `/portal_views/runtime_query` with a JWT.
-- Visual regressions (use `agent-browser screenshot` + a baseline compare if you need this).
+- Pixel-level visual regressions beyond the automated design checks (the harness does flag nested boxes, sub-12px text, lingering loading placeholders, and horizontal overflow at 390px). For anything else, use `agent-browser screenshot` + a baseline compare.
 - Bugs that depend on the portal's shadow-DOM stylesheet wrapping. The harness mounts in light DOM, so global Tailwind/shadcn classes work normally; portal-specific theme tokens injected as inline styles are not present.
 
 ## Troubleshooting

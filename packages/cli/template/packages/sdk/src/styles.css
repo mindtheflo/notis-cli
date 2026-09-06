@@ -28,8 +28,35 @@
     @apply mx-auto w-full max-w-[var(--portal-page-max-width)] px-4 py-6 md:px-4 md:py-8;
   }
 
+  /* Flat panel. No border, no shadow: the design bar allows a single hairline
+   * between sections and nothing around items. */
   .notis-app-surface {
-    @apply rounded-2xl border border-border bg-card text-card-foreground shadow-sm;
+    @apply rounded-2xl bg-muted text-card-foreground;
+  }
+
+  /* List rows: hover and selection are carried by background tint only. Rows
+   * read as tinted panels on mobile and as transparent rows on desktop. */
+  .list-row {
+    @apply rounded-xl bg-muted px-4 py-3 transition-colors lg:bg-transparent lg:hover:bg-muted/60;
+  }
+
+  .list-row-selected {
+    @apply bg-primary/[0.06] lg:bg-primary/[0.06] lg:hover:bg-primary/[0.06];
+  }
+
+  /* Split (list + detail) pages are full-bleed: use these instead of
+   * .notis-app-shell. The list pane is tinted and carries the one allowed
+   * hairline; the detail pane sits on the plain background. */
+  .notis-app-split {
+    @apply flex h-full min-h-0 w-full max-w-none flex-col lg:flex-row;
+  }
+
+  .notis-app-pane-list {
+    @apply w-full shrink-0 bg-muted/40 lg:w-80 lg:border-r lg:border-border xl:w-96;
+  }
+
+  .notis-app-pane-detail {
+    @apply min-w-0 flex-1 bg-background;
   }
 
   .notis-app-section {

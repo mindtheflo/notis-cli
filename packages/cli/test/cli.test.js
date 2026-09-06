@@ -21,6 +21,7 @@ import {
   readLinkedState,
   scaffoldProject,
   writeLinkedState,
+  writeVerifyStamp,
 } from '../src/runtime/app-platform.js';
 import {
   acquireScaffoldSource,
@@ -1740,6 +1741,8 @@ test('apps deploy sends pulled base version and updates linked state after deplo
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
   const { port } = server.address();
   try {
+    // Deploy refuses artifacts without a passing verify for these exact bytes.
+    writeVerifyStamp(projectDir, { ok: true, mode: 'stub', summary: { total: 1, passed: 1, failed: 0, manual: 0 }, results: [] });
     const result = await runCliAsync(
       ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
       { NOTIS_JWT: makeJwt() },
@@ -1796,6 +1799,8 @@ test('apps deploy promotes a dev-only project instead of failing', async () => {
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
   const { port } = server.address();
   try {
+    // Deploy refuses artifacts without a passing verify for these exact bytes.
+    writeVerifyStamp(projectDir, { ok: true, mode: 'stub', summary: { total: 1, passed: 1, failed: 0, manual: 0 }, results: [] });
     const result = await runCliAsync(
       ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
       { NOTIS_JWT: makeJwt() },
@@ -1847,6 +1852,8 @@ test('apps deploy does not direct-fallback after an ambiguous backend timeout', 
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
   const { port } = server.address();
   try {
+    // Deploy refuses artifacts without a passing verify for these exact bytes.
+    writeVerifyStamp(projectDir, { ok: true, mode: 'stub', summary: { total: 1, passed: 1, failed: 0, manual: 0 }, results: [] });
     const result = await runCliAsync(
       [
         '--json',
@@ -1902,6 +1909,8 @@ test('apps deploy does not direct-fallback after a post-commit socket reset', as
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
   const { port } = server.address();
   try {
+    // Deploy refuses artifacts without a passing verify for these exact bytes.
+    writeVerifyStamp(projectDir, { ok: true, mode: 'stub', summary: { total: 1, passed: 1, failed: 0, manual: 0 }, results: [] });
     const result = await runCliAsync(
       ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
       { NOTIS_JWT: makeJwt() },
@@ -1950,6 +1959,8 @@ test('apps deploy fails closed after a partial successful response body', async 
   await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
   const { port } = server.address();
   try {
+    // Deploy refuses artifacts without a passing verify for these exact bytes.
+    writeVerifyStamp(projectDir, { ok: true, mode: 'stub', summary: { total: 1, passed: 1, failed: 0, manual: 0 }, results: [] });
     const result = await runCliAsync(
       ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'deploy', projectDir, '--skip-build'],
       { NOTIS_JWT: makeJwt() },

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { buildArtifact } from '../src/runtime/app-platform.js';
+import { buildArtifact, computeArtifactHash } from '../src/runtime/app-platform.js';
 import { startAppDevServer } from '../src/runtime/app-dev-server.js';
 import { HIDE_HARNESS_STATUS_SCRIPT } from '../src/runtime/agent-browser.js';
 import { getAvailablePort } from '../src/runtime/ports.js';
@@ -85,11 +85,12 @@ async function buildAppProject(options = {}) {
   return projectDir;
 }
 
-function writeMockAgentBrowser(harness) {
+function writeMockAgentBrowser(harness, { design = [] } = {}) {
   const binDir = mkdtempSync(join(tmpdir(), 'notis-agent-browser-'));
   const scriptPath = join(binDir, 'agent-browser');
   writeFileSync(scriptPath, `#!/usr/bin/env node
 const harness = ${JSON.stringify(harness)};
+const design = ${JSON.stringify(design)};
 const args = process.argv.slice(2);
 if (args.includes('--version')) {
   process.stdout.write('agent-browser mock\\n');
@@ -112,11 +113,16 @@ for (let i = 0; i < args.length; i += 1) {
   break;
 }
 if (command === 'eval') {
+  const script = args[args.indexOf('eval') + 1] || '';
+  const isDesign = script.includes('__notisDesignAssertions');
   process.stdout.write(JSON.stringify({
     success: true,
-    data: { result: JSON.stringify(harness) },
+    data: { result: JSON.stringify(isDesign ? design : harness) },
     error: null,
   }));
+  process.exit(0);
+}
+if (command === 'set') {
   process.exit(0);
 }
 if (command === 'snapshot') {
@@ -545,4 +551,53 @@ test('apps verify --mode live passes a route that makes no runtime calls', async
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(JSON.parse(result.stdout).data.results[0].assertions.length, 0);
+});
+
+test('apps verify fails a mounted route on runtime design findings and stamps the artifact', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser(
+    { mounted: true, renderStarted: true, errors: [], runtimeCalls: [] },
+    { design: [
+      { kind: 'nested_border_box', snippet: 'div.rounded-xl.border "Total"' },
+      { kind: 'text_below_12px', snippet: 'p.text-[10px] "meta"', font_size: 10 },
+    ] },
+  );
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.notEqual(result.status, 0);
+  const payload = JSON.parse(result.stdout);
+  const codes = payload.data.results[0].assertions.map((assertion) => assertion.code);
+  assert.deepEqual(codes, ['design_rule_violation', 'design_rule_violation', 'design_rule_violation', 'design_rule_violation']);
+  assert.match(payload.data.results[0].assertions[0].message, /bordered box sits inside another bordered box at desktop/);
+
+  const stamp = JSON.parse(readFileSync(join(projectDir, '.notis', 'output', 'verify.json'), 'utf-8'));
+  assert.equal(stamp.ok, false);
+  assert.equal(stamp.artifact_hash, payload.data.artifact_hash);
+  assert.equal(typeof stamp.artifact_hash, 'string');
+});
+
+test('apps verify writes a passing stamp whose hash matches the built artifact', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser({ mounted: true, renderStarted: true, errors: [], runtimeCalls: [] });
+
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--json'], {
+    PATH: `${mockBin}:${process.env.PATH}`,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const stamp = JSON.parse(readFileSync(join(projectDir, '.notis', 'output', 'verify.json'), 'utf-8'));
+  assert.equal(stamp.ok, true);
+  assert.equal(stamp.artifact_hash, computeArtifactHash(projectDir));
+  assert.equal(stamp.routes[0].status, 'passed');
+});
+
+test('apps verify --no-browser never writes a passing stamp', async () => {
+  const projectDir = await buildAppProject();
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--no-browser', '--json']);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const stamp = JSON.parse(readFileSync(join(projectDir, '.notis', 'output', 'verify.json'), 'utf-8'));
+  assert.equal(stamp.ok, false);
 });

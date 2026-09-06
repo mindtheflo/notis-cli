@@ -227,6 +227,7 @@ export async function runHarnessRoute({
   sessionName,
   timeoutMs = 10_000,
   snapshotPath = null,
+  designViewports = DEFAULT_DESIGN_VIEWPORTS,
 }) {
   const opened = await runAgentBrowser(['--session', sessionName, 'open', url], {
     timeoutMs: Math.min(Math.max(timeoutMs, 5000), 30_000),
@@ -283,14 +284,33 @@ export async function runHarnessRoute({
   }
 
   const timedOut = !harness.mounted && Date.now() >= deadline;
+  const runtimeCalls = Array.isArray(harness.runtimeCalls) ? harness.runtimeCalls : [];
+
+  // Design assertions only mean something on a mounted route. Loading
+  // placeholders are excused while a runtime call is still in flight.
+  let design = [];
+  let designToolError = null;
+  if (harness.mounted && Array.isArray(designViewports) && designViewports.length > 0) {
+    await delay(500);
+    const pending = runtimeCalls.some((call) => call && call.ok == null);
+    const collected = await collectDesignFindings(sessionName, {
+      viewports: designViewports,
+      skipLoadingCheck: pending,
+    });
+    design = collected.findings;
+    designToolError = collected.tool_error;
+  }
+
   return {
     mounted: Boolean(harness.mounted),
     renderStarted: Boolean(harness.renderStarted),
     errors: Array.isArray(harness.errors) ? harness.errors : [],
-    runtimeCalls: Array.isArray(harness.runtimeCalls) ? harness.runtimeCalls : [],
+    runtimeCalls,
     snapshotPath: savedSnapshotPath,
     timed_out: timedOut,
     tool_error: null,
+    design,
+    design_tool_error: designToolError,
     raw: harness,
   };
 }
@@ -408,6 +428,8 @@ export async function captureHarnessScreenshot({
 
   // Let the route settle (async data, resize transitions) before the capture.
   await delay(500);
+  const designResult = await evalDesignAssertions(sessionName, { viewport: 'capture' });
+  const design = Array.isArray(designResult) ? designResult : [];
 
   mkdirSync(dirname(screenshotPath), { recursive: true });
   const screenshotArgs = ['--session', sessionName, 'screenshot'];
@@ -446,6 +468,7 @@ export async function captureHarnessScreenshot({
   }
 
   return {
+    design,
     ok: true,
     mounted: true,
     screenshotPath,
@@ -461,4 +484,147 @@ export async function closeAgentBrowserSession(sessionName) {
     timeoutMs: 5000,
   });
   return result.exitCode === 0;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime design assertions.
+//
+// The static design lint (app-boundary-validator.js) catches banned class
+// names. This script runs in the mounted harness page and catches what a
+// regex cannot: a bordered box nested in a bordered box across files, tinted
+// panels stacked three deep, text that computes below 12px, horizontal
+// overflow at a phone width, and loading placeholders that outlive the data.
+// Palette colors are deliberately not checked here: at runtime a token and a
+// hardcoded hue resolve to the same RGB, so that stays with the static lint.
+// ---------------------------------------------------------------------------
+export const DESIGN_ASSERTIONS_MARKER = '__notisDesignAssertions';
+
+export const DESIGN_ASSERTIONS_SCRIPT = `(() => {
+  /* ${DESIGN_ASSERTIONS_MARKER} */
+  const root = document.getElementById('root') || document.body;
+  const out = [];
+  const seen = new Set();
+  const push = (kind, el, extra) => {
+    const cls = String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || '').trim().slice(0, 80);
+    const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60);
+    const snippet = el.tagName.toLowerCase() + (cls ? '.' + cls.split(/\\s+/).slice(0, 6).join('.') : '') + (text ? ' "' + text + '"' : '');
+    const key = kind + '|' + snippet;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(Object.assign({ kind, snippet }, extra || {}));
+  };
+  const controls = new Set(['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'A', 'SUMMARY']);
+  const isControl = (el) => controls.has(el.tagName) || /^(button|checkbox|switch|radio|combobox|textbox|tab|menuitem)$/.test(el.getAttribute('role') || '');
+  const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const isBox = (el) => {
+    const cs = getComputedStyle(el);
+    if (!['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].every((k) => parseFloat(cs[k]) > 0)) return false;
+    if (/rgba\\(\\d+, \\d+, \\d+, 0\\)|transparent/.test(cs.borderTopColor)) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 40 && r.height > 20;
+  };
+  const bg = (el) => getComputedStyle(el).backgroundColor;
+  const transparent = (c) => !c || c === 'transparent' || /rgba\\(\\d+, \\d+, \\d+, 0\\)/.test(c);
+  const isPanel = (el) => {
+    if (transparent(bg(el))) return false;
+    if (parseFloat(getComputedStyle(el).borderRadius) <= 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 160 && r.height > 48;
+  };
+  const all = Array.from(root.querySelectorAll('*'));
+  for (const el of all) {
+    if (el.id === 'harness-status' || !visible(el) || isControl(el)) continue;
+    if (isBox(el)) {
+      let p = el.parentElement; let depth = 0;
+      while (p && p !== root && depth < 6) { if (!isControl(p) && isBox(p)) { push('nested_border_box', el); break; } p = p.parentElement; depth += 1; }
+    }
+    if (isPanel(el)) {
+      let p = el.parentElement; let panels = 0;
+      while (p && p !== root) { if (isPanel(p)) panels += 1; p = p.parentElement; }
+      if (panels >= 2) push('nested_tinted_panel', el, { depth: panels + 1 });
+    }
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = (node.textContent || '').trim();
+    if (!text) continue;
+    const el = node.parentElement;
+    if (!el || el.closest('#harness-status') || !visible(el)) continue;
+    const size = parseFloat(getComputedStyle(el).fontSize);
+    if (size > 0 && size < 12) push('text_below_12px', el, { font_size: size });
+    if (/^Loading(\\.{3}|\\u2026)?(\\s|$)/.test(text)) push('loading_placeholder_after_mount', el);
+  }
+  if (root.querySelector('[data-notis-content-skeleton]')) push('loading_placeholder_after_mount', root.querySelector('[data-notis-content-skeleton]'));
+  const doc = document.documentElement;
+  if (doc.scrollWidth > doc.clientWidth + 1) out.push({ kind: 'horizontal_overflow', snippet: 'document', scroll_width: doc.scrollWidth, client_width: doc.clientWidth });
+  return JSON.stringify(out.slice(0, 40));
+})()`;
+
+export const DEFAULT_DESIGN_VIEWPORTS = [
+  { name: 'desktop', width: 1280, height: 900 },
+  { name: 'mobile', width: 390, height: 844 },
+];
+
+const DESIGN_KIND_MESSAGES = {
+  nested_border_box: 'a bordered box sits inside another bordered box',
+  nested_tinted_panel: 'tinted panels are nested three deep',
+  text_below_12px: 'visible text renders below 12px',
+  loading_placeholder_after_mount: 'a loading placeholder is still visible after the route mounted with its data',
+  horizontal_overflow: 'the page overflows horizontally',
+};
+
+export function describeDesignFinding(finding) {
+  const base = DESIGN_KIND_MESSAGES[finding.kind] || finding.kind;
+  const where = finding.viewport ? ` at ${finding.viewport}` : '';
+  const detail = finding.snippet && finding.snippet !== 'document' ? `: ${finding.snippet}` : '';
+  return `${base}${where}${detail}`;
+}
+
+/**
+ * Evaluate the design assertions in the current page. Returns an array of
+ * findings, or `{ tool_error }` when agent-browser could not run the script.
+ */
+export async function evalDesignAssertions(sessionName, { viewport = null, timeoutMs = 8000 } = {}) {
+  const result = await runAgentBrowser(
+    ['--session', sessionName, '--json', 'eval', DESIGN_ASSERTIONS_SCRIPT],
+    { timeoutMs },
+  );
+  if (result.exitCode !== 0) {
+    return { tool_error: commandError('design_eval', result) };
+  }
+  try {
+    const payload = parseAgentBrowserJson(result.stdout);
+    const raw = payload?.data?.result ?? payload?.result ?? payload?.data ?? null;
+    const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(value)) return [];
+    return value.map((finding) => ({ ...finding, viewport: viewport || finding.viewport || null }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Run the design assertions at each viewport. A viewport that agent-browser
+ * cannot set is skipped (older agent-browser builds) rather than failing the
+ * route, so verify degrades to the static lint instead of blocking.
+ */
+export async function collectDesignFindings(sessionName, { viewports = DEFAULT_DESIGN_VIEWPORTS, settleMs = 350, skipLoadingCheck = false } = {}) {
+  const findings = [];
+  let toolError = null;
+  for (const viewport of viewports) {
+    const applied = await setViewport(sessionName, viewport.width, viewport.height);
+    if (!applied) continue;
+    await delay(settleMs);
+    const result = await evalDesignAssertions(sessionName, { viewport: viewport.name });
+    if (Array.isArray(result)) {
+      for (const finding of result) {
+        if (skipLoadingCheck && finding.kind === 'loading_placeholder_after_mount') continue;
+        findings.push(finding);
+      }
+    } else if (!toolError) {
+      toolError = result.tool_error;
+    }
+  }
+  return { findings, tool_error: toolError };
 }

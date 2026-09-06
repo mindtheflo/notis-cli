@@ -181,3 +181,224 @@ export function validateArtifactBoundary(files) {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Design rules
+//
+// The portal boundary rules above keep an app inside its surface. The design
+// rules below keep it looking like a native, flat Notis page: no bordered
+// boxes around items, no dividers, no palette colors, no eyebrows, no loading
+// text. They are path-scoped, report line numbers, and only ever run on the
+// app's own source files (never on the bundled artifact, where every
+// dependency legitimately contains the word "border").
+//
+// The only override is an inline directive on the same line or the line
+// before the match:
+//   // notis-design-allow: <rule-id> <reason of at least N characters>
+// Allowed matches are reported with `allowed: true` so they stay visible.
+// ---------------------------------------------------------------------------
+
+export const DESIGN_RULES_PATH_CANDIDATES = [
+  resolve(moduleDir, '../../../../server/config/notis_app_design_rules.json'),
+  resolve(moduleDir, '../../config/notis_app_design_rules.json'),
+];
+
+export function resolveDesignRulesPath() {
+  for (const candidate of DESIGN_RULES_PATH_CANDIDATES) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return DESIGN_RULES_PATH_CANDIDATES[DESIGN_RULES_PATH_CANDIDATES.length - 1];
+}
+
+const DEFAULT_DESIGN_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.css'];
+
+function globToRegExp(glob) {
+  let source = '';
+  for (let index = 0; index < glob.length; index += 1) {
+    const char = glob[index];
+    if (char === '*') {
+      if (glob[index + 1] === '*') {
+        index += 1;
+        if (glob[index + 1] === '/') {
+          index += 1;
+          source += '(?:.*/)?';
+        } else {
+          source += '.*';
+        }
+      } else {
+        source += '[^/]*';
+      }
+    } else if (char === '?') {
+      source += '[^/]';
+    } else {
+      source += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return new RegExp(`^${source}$`);
+}
+
+function matchesAny(relPath, globs) {
+  return (globs || []).some((glob) => globToRegExp(glob).test(relPath));
+}
+
+let compiledDesignRules = null;
+
+export function loadDesignRules({ rulesPath = resolveDesignRulesPath() } = {}) {
+  let payload = null;
+  try {
+    const parsed = JSON.parse(readFileSync(rulesPath, 'utf-8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      payload = parsed;
+    }
+  } catch (error) {
+    process.stderr.write(
+      `Warning: could not load Notis app design rules (${error.message}); skipping design checks.\n`,
+    );
+  }
+  if (!payload) {
+    return { include: [], exclude: [], extensions: DEFAULT_DESIGN_EXTENSIONS, rules: [], allowDirective: 'notis-design-allow', allowReasonMinLength: 12 };
+  }
+  return {
+    include: Array.isArray(payload.include) ? payload.include : ['app/**', 'components/**'],
+    exclude: Array.isArray(payload.exclude) ? payload.exclude : [],
+    extensions: Array.isArray(payload.extensions) ? payload.extensions : DEFAULT_DESIGN_EXTENSIONS,
+    allowDirective: typeof payload.allow_directive === 'string' ? payload.allow_directive : 'notis-design-allow',
+    allowReasonMinLength: Number.isInteger(payload.allow_reason_min_length) ? payload.allow_reason_min_length : 12,
+    rules: (Array.isArray(payload.rules) ? payload.rules : []).map((rule) => ({
+      id: rule.id,
+      severity: rule.severity === 'warn' ? 'warn' : 'error',
+      scope: rule.scope === 'file' ? 'file' : 'line',
+      regex: new RegExp(rule.pattern, rule.scope === 'file' ? '' : 'gm'),
+      message: rule.message,
+      include: Array.isArray(rule.include) ? rule.include : null,
+      exclude: Array.isArray(rule.exclude) ? rule.exclude : [],
+    })),
+  };
+}
+
+function getCompiledDesignRules() {
+  if (!compiledDesignRules) {
+    compiledDesignRules = loadDesignRules();
+  }
+  return compiledDesignRules;
+}
+
+function lineNumberAt(content, index) {
+  let line = 1;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (content.charCodeAt(cursor) === 10) line += 1;
+  }
+  return line;
+}
+
+function findAllowDirective(lines, lineNumber, ruleId, directive) {
+  const pattern = new RegExp(`${directive}:\\s*${ruleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b\\s*(.*)$`);
+  for (const candidate of [lines[lineNumber - 1], lines[lineNumber - 2]]) {
+    if (typeof candidate !== 'string') continue;
+    const match = candidate.match(pattern);
+    if (match) {
+      return match[1].replace(/\*\/\s*}?\s*$/, '').replace(/-->\s*$/, '').trim();
+    }
+  }
+  return null;
+}
+
+export function collectDesignViolationsForFile(relPath, content, config = getCompiledDesignRules()) {
+  const normalized = relPath.split('\\').join('/');
+  if (!config.extensions.includes(extname(normalized))) return [];
+  if (!matchesAny(normalized, config.include)) return [];
+  if (matchesAny(normalized, config.exclude)) return [];
+
+  const lines = content.split('\n');
+  const violations = [];
+  for (const rule of config.rules) {
+    if (rule.include && !matchesAny(normalized, rule.include)) continue;
+    if (matchesAny(normalized, rule.exclude)) continue;
+
+    const matches = [];
+    if (rule.scope === 'file') {
+      const match = rule.regex.exec(content);
+      if (match) matches.push(match.index);
+    } else {
+      rule.regex.lastIndex = 0;
+      let match;
+      while ((match = rule.regex.exec(content)) !== null) {
+        matches.push(match.index);
+        if (match[0].length === 0) rule.regex.lastIndex += 1;
+      }
+    }
+
+    const seenLines = new Set();
+    for (const index of matches) {
+      const line = lineNumberAt(content, index);
+      if (seenLines.has(line)) continue;
+      seenLines.add(line);
+      const reason = findAllowDirective(lines, line, rule.id, config.allowDirective);
+      const allowed = reason !== null && reason.length >= config.allowReasonMinLength;
+      violations.push({
+        file: normalized,
+        line,
+        ruleId: rule.id,
+        severity: allowed ? 'warn' : rule.severity,
+        message: reason !== null && !allowed
+          ? `${rule.message} (a notis-design-allow directive needs a reason of at least ${config.allowReasonMinLength} characters)`
+          : rule.message,
+        allowed,
+        reason: allowed ? reason : null,
+      });
+    }
+  }
+  return violations;
+}
+
+export function collectProjectDesignViolations(projectDir, config = getCompiledDesignRules()) {
+  const files = [];
+  collectProjectFiles(projectDir, projectDir, files);
+  return files.flatMap((file) => collectDesignViolationsForFile(file.relPath, file.content, config));
+}
+
+export function collectSourceDesignViolations(files, config = getCompiledDesignRules()) {
+  return Object.entries(files).flatMap(([relPath, rawContent]) => {
+    const content = Buffer.isBuffer(rawContent)
+      ? rawContent.toString('utf-8')
+      : typeof rawContent === 'string'
+        ? rawContent
+        : String(rawContent ?? '');
+    return collectDesignViolationsForFile(relPath, content, config);
+  });
+}
+
+export function formatDesignViolation(violation) {
+  const prefix = violation.allowed ? 'allowed' : violation.severity;
+  const suffix = violation.allowed ? ` (${violation.reason})` : '';
+  return `${violation.file}:${violation.line} [${violation.ruleId}] ${prefix}: ${violation.message}${suffix}`;
+}
+
+/**
+ * Enforce the design rules on an app's source tree.
+ *
+ * Returns every violation (allowed ones included) so callers can print
+ * warnings. When `enforce` is true (build, verify, screenshot, deploy) any
+ * unallowed error-severity violation aborts with a usage error that lists the
+ * exact file and line to fix. Dev servers pass `enforce: false` so a
+ * half-edited page still reloads.
+ */
+export function validateProjectDesign(projectDir, { enforce = true, log = null } = {}) {
+  const violations = collectProjectDesignViolations(projectDir);
+  const blocking = violations.filter((violation) => !violation.allowed && violation.severity === 'error');
+  const nonBlocking = violations.filter((violation) => !blocking.includes(violation));
+  if (typeof log === 'function') {
+    for (const violation of nonBlocking) log(`[design] ${formatDesignViolation(violation)}`);
+    if (!enforce) for (const violation of blocking) log(`[design] ${formatDesignViolation(violation)}`);
+  }
+  if (enforce && blocking.length > 0) {
+    throw usageError(
+      `Project violates the Notis app design bar (${blocking.length} issue${blocking.length === 1 ? '' : 's'}). `
+      + 'Fix each line below; the only override is an inline "// notis-design-allow: <rule-id> <reason>" comment on the line before.\n'
+      + blocking.map((violation) => `  - ${formatDesignViolation(violation)}`).join('\n'),
+    );
+  }
+  return violations;
+}

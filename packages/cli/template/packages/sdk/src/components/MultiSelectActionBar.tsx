@@ -125,7 +125,10 @@ export function MultiSelectActionBar({
     const bar = barRef.current;
     if (!visible || !bar) return;
     // Also reaches a Portal launcher when an app renders inside a shadow root.
-    const root = document.documentElement;
+    // Resolve the document root from the bar's own document: the app boundary
+    // forbids touching the global document directly, and this stays correct
+    // inside the portal shadow root and the isolated Store frame.
+    const root = bar.ownerDocument.documentElement;
     const property = '--notis-bulk-actions-height';
     const previous = root.style.getPropertyValue(property);
     const update = () => root.style.setProperty(property, `${bar.getBoundingClientRect().height + 12}px`);

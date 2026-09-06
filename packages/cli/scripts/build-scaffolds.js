@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
-import { copyBoundaryRules } from './copy-boundary-rules.js';
+import { copyBoundaryRules, copyDesignRules } from './copy-boundary-rules.js';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, '..');
@@ -14,6 +14,8 @@ const baseSkillNames = ['notis-apps', 'notis-query', 'notis-cli'];
 // installed via npm (the in-repo server/config path escapes the package).
 const boundaryRulesTarget = copyBoundaryRules({ repoRoot, cliRoot });
 process.stdout.write(`Copied app boundary rules to ${boundaryRulesTarget}\n`);
+const designRulesTarget = copyDesignRules({ repoRoot, cliRoot });
+process.stdout.write(`Copied app design rules to ${designRulesTarget}\n`);
 const distDir = join(cliRoot, 'dist');
 const outputBaseSkillsDir = join(distDir, 'base-skills');
 

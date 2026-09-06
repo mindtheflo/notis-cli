@@ -24,8 +24,25 @@ export function copyBoundaryRules({ repoRoot = DEFAULT_REPO_ROOT, cliRoot = DEFA
   return target;
 }
 
+// The design rules ship the same way: the CLI enforces them at build time and
+// the server enforces them again on deploy, both from server/config.
+export const DESIGN_RULES_RELATIVE_PATH = 'config/notis_app_design_rules.json';
+
+export function copyDesignRules({ repoRoot = DEFAULT_REPO_ROOT, cliRoot = DEFAULT_CLI_ROOT } = {}) {
+  const source = join(repoRoot, 'server', 'config', 'notis_app_design_rules.json');
+  if (!existsSync(source)) {
+    throw new Error(`App design rules not found at ${source}`);
+  }
+  const target = join(cliRoot, DESIGN_RULES_RELATIVE_PATH);
+  mkdirSync(dirname(target), { recursive: true });
+  copyFileSync(source, target);
+  return target;
+}
+
 // Allow running directly: node ./scripts/copy-boundary-rules.js
 if (import.meta.url === `file://${process.argv[1]}`) {
   const target = copyBoundaryRules();
   process.stdout.write(`Copied app boundary rules to ${target}\n`);
+  const designTarget = copyDesignRules();
+  process.stdout.write(`Copied app design rules to ${designTarget}\n`);
 }

@@ -7,17 +7,17 @@
  */
 
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { closeSync, constants as fsConstants, copyFileSync, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
 import { usageError } from './errors.js';
 import { acquireScaffoldSource, loadScaffoldCatalog } from './app-registry-scaffolds.js';
-import { validateArtifactBoundary, validateProjectBoundary } from './app-boundary-validator.js';
+import { validateArtifactBoundary, validateProjectBoundary, validateProjectDesign } from './app-boundary-validator.js';
 import { CHANGELOG_MERGE_DATE, readAppChangelog } from './app-changelog.js';
 
 const NOTIS_DIR = '.notis';
@@ -775,8 +775,10 @@ function generateEntryFile(projectDir, routes) {
   return entryPath;
 }
 
-export async function prepareArtifactBuild(projectDir) {
+export async function prepareArtifactBuild(projectDir, { enforceDesign = true, log = null } = {}) {
+  syncEmbeddedSdk(projectDir, { log });
   validateProjectBoundary(projectDir);
+  validateProjectDesign(projectDir, { enforce: enforceDesign, log });
   const appConfig = await loadAppConfig(projectDir);
   const detectedRoutes = resolveConfiguredRoutes(appConfig, projectDir);
 
@@ -1799,6 +1801,67 @@ function ensureScaffoldLocalSdk(projectDir, pkg) {
 
   mkdirSync(dirname(localSdkDir), { recursive: true });
   cpSync(TEMPLATE_SDK_DIR, localSdkDir, { recursive: true, dereference: true });
+}
+
+function listFilesRecursive(dir, base = dir, results = []) {
+  if (!existsSync(dir)) return results;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      listFilesRecursive(fullPath, base, results);
+    } else {
+      results.push(fullPath.slice(base.length + 1).split(sep).join('/'));
+    }
+  }
+  return results;
+}
+
+/**
+ * Keep an app's embedded `packages/sdk` copy identical to the SDK this CLI
+ * ships. The copy is a mirror by contract (the parity test in the CLI keeps
+ * the template in step with packages/sdk), so an app never edits it; before
+ * this sync existed every app silently ran whatever SDK snapshot it was
+ * scaffolded with and never received hook or style updates.
+ *
+ * Files that exist locally but not in the template are left alone with a
+ * warning so a deliberate local addition is never destroyed.
+ */
+export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPLATE_SDK_DIR } = {}) {
+  const localSdkDir = join(projectDir, 'packages', 'sdk');
+  if (!existsSync(join(localSdkDir, 'package.json'))) {
+    return { updated: false, reason: 'no-embedded-sdk' };
+  }
+  if (!existsSync(join(templateSdkDir, 'package.json'))) {
+    return { updated: false, reason: 'no-template-sdk' };
+  }
+
+  const templateFiles = listFilesRecursive(templateSdkDir).filter(
+    (relPath) => relPath === 'package.json' || relPath === 'tsconfig.json' || relPath.startsWith('src/'),
+  );
+  const changed = [];
+  for (const relPath of templateFiles) {
+    const source = readFileSync(join(templateSdkDir, relPath));
+    const targetPath = join(localSdkDir, relPath);
+    if (existsSync(targetPath) && Buffer.compare(readFileSync(targetPath), source) === 0) continue;
+    mkdirSync(dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, source);
+    changed.push(relPath);
+  }
+
+  const templateSet = new Set(templateFiles);
+  const foreign = listFilesRecursive(localSdkDir)
+    .filter((relPath) => relPath.startsWith('src/') && !templateSet.has(relPath));
+
+  const templateVersion = JSON.parse(readFileSync(join(templateSdkDir, 'package.json'), 'utf-8')).version;
+  const emit = typeof log === 'function' ? log : (message) => process.stderr.write(`${message}\n`);
+  if (changed.length > 0) {
+    emit(`Updated embedded @notis/sdk to ${templateVersion} (${changed.length} file${changed.length === 1 ? '' : 's'}).`);
+  }
+  for (const relPath of foreign) {
+    emit(`Warning: packages/sdk/${relPath} is not part of the @notis/sdk template and was left unchanged.`);
+  }
+  return { updated: changed.length > 0, changed, foreign, templateVersion };
 }
 
 // Registry bookkeeping shipped alongside a published app's source: the listing
@@ -2869,6 +2932,7 @@ export async function directDeploy(projectDir, appId) {
   const artifactFiles = readArtifactFiles(projectDir);
   const sourceFiles = readSourceFiles(projectDir);
   validateArtifactBoundary(artifactFiles);
+  validateProjectDesign(projectDir, { enforce: true });
 
   // Get current version and increment
   const { currentVersion } = await getAppCurrentVersion(supabaseUrl, supabaseKey, appId);
@@ -2918,4 +2982,91 @@ export async function directDeploy(projectDir, appId) {
   await updateAppVersion(supabaseUrl, supabaseKey, appId, newVersion, deployManifest);
 
   return { version: newVersion };
+}
+
+// ---------------------------------------------------------------------------
+// Verify stamp and deploy gate.
+//
+// `notis apps verify` records what it checked against a hash of the built
+// artifact. `notis apps deploy` refuses to ship an artifact that has no
+// passing verify for exactly those bytes, so a rebuild after verify (or no
+// verify at all) cannot reach users. There is no CLI flag to skip this; the
+// only break-glass is NOTIS_ALLOW_UNVERIFIED_DEPLOY=1, which prints a warning.
+// ---------------------------------------------------------------------------
+export const VERIFY_STAMP_FILE = join(OUTPUT_DIR, 'verify.json');
+export const UNVERIFIED_DEPLOY_ENV = 'NOTIS_ALLOW_UNVERIFIED_DEPLOY';
+
+export function computeArtifactHash(projectDir) {
+  const outputDir = join(projectDir, OUTPUT_DIR);
+  const bundleDir = join(outputDir, 'bundle');
+  const hash = createHash('sha256');
+  const files = listFilesRecursive(bundleDir).sort();
+  for (const relPath of files) {
+    hash.update(`bundle/${relPath}\0`);
+    hash.update(readFileSync(join(bundleDir, relPath)));
+    hash.update('\0');
+  }
+  const manifestPath = join(projectDir, MANIFEST_FILE);
+  if (existsSync(manifestPath)) {
+    hash.update('manifest.json\0');
+    hash.update(readFileSync(manifestPath));
+  }
+  if (files.length === 0 && !existsSync(manifestPath)) return null;
+  return hash.digest('hex');
+}
+
+export function writeVerifyStamp(projectDir, { ok, mode, summary, results }) {
+  const stamp = {
+    version: 1,
+    artifact_hash: computeArtifactHash(projectDir),
+    generated_at: new Date().toISOString(),
+    mode,
+    ok: Boolean(ok),
+    summary,
+    routes: (results || []).map((result) => ({
+      route: result.route,
+      status: result.status,
+      assertions: (result.assertions || []).map((assertion) => ({ code: assertion.code, message: assertion.message })),
+    })),
+  };
+  const stampPath = join(projectDir, VERIFY_STAMP_FILE);
+  mkdirSync(dirname(stampPath), { recursive: true });
+  writeFileSync(stampPath, JSON.stringify(stamp, null, 2) + '\n');
+  return stamp;
+}
+
+export function readVerifyStamp(projectDir) {
+  const stampPath = join(projectDir, VERIFY_STAMP_FILE);
+  if (!existsSync(stampPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(stampPath, 'utf-8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Throw unless `.notis/output/verify.json` records a passing verify for the
+ * artifact currently in `.notis/output`. Returns `{ gated: false, reason }`
+ * when the break-glass environment variable is set so the caller can warn.
+ */
+export function assertVerifiedArtifact(projectDir, { env = process.env } = {}) {
+  const stamp = readVerifyStamp(projectDir);
+  const currentHash = computeArtifactHash(projectDir);
+  let reason = null;
+  if (!stamp) {
+    reason = 'no "notis apps verify" result exists for this project';
+  } else if (!stamp.ok) {
+    reason = `the last "notis apps verify" failed (${stamp.summary?.failed ?? '?'} route${stamp.summary?.failed === 1 ? '' : 's'})`;
+  } else if (stamp.artifact_hash !== currentHash) {
+    reason = 'the built artifact changed since the last passing "notis apps verify"';
+  }
+  if (!reason) return { gated: true, stamp };
+  if (env[UNVERIFIED_DEPLOY_ENV] === '1') {
+    return { gated: false, reason, stamp };
+  }
+  throw usageError(
+    `Deploy blocked: ${reason}. Run \`npx --package @notis_ai/cli@latest -- notis apps verify\` on this build and deploy again.`,
+  );
 }
