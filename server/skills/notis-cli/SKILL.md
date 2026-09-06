@@ -4,6 +4,7 @@ description: Use when agents should work through the Notis CLI, especially to de
 feature_flag: cli_access
 mcp_resource: true
 mcp_tool_patterns: []
+mcp_references: ["references/app-delivery.md", "references/tool-examples.md", "references/native-databases.md", "references/troubleshooting.md"]
 ---
 
 # Notis CLI Skill
@@ -14,7 +15,6 @@ This skill covers two main CLI workflows:
 
 1. Developing Notis apps locally.
 2. Accessing Notis, Composio, and MCP tools through the CLI.
-
 ## When to use this skill
 
 Activate this skill when:
@@ -71,81 +71,15 @@ This is especially important when:
 
 Treat the Notis CLI the same way you would treat a Composio-style tool router flow: discover what is available first, then execute the right tool through the CLI.
 
-## Release-only delivery
+## User and repository policy takes precedence
 
-Workspace runs released app versions only. Local and cloud agents use the same workflow.
-A request to create or edit app source authorizes updating that app in Workspace after checks pass.
-Explicit read-only, preview-only or no-deploy requests stop at local artifacts and checks: no remote
-app/resource creation or mutation, Workspace preview, deployment or live verification. Store
-publication always needs separate explicit approval.
-
-1. Inspect the effective CLI profile and the exact app's current version with `apps list --json`.
-   For an existing released app, preserve local edits and pull its exact app ID into the intended
-   directory. Retain the profile/app link, deployment version and revision. An unreleased container
-   has no source to pull: recover its original local source and edits, or scaffold locally only if
-   that source cannot be recovered. Confirm its exact ID, edit permission and personal/team scope,
-   then run `apps link <app-id> <source-directory> --expected-version 0` to resume that same container.
-   If a release has appeared, preserve local source separately, pull the current release into a fresh
-   directory and reapply the intended edits. The link guard compares against the same remote read
-   whose version/revision it saves; deploy still rejects a release racing after that read. Do not pull
-   missing source or create another remote app to recover a failed first release.
-2. Scaffold a new app locally, or edit the pulled source. Run `apps build` and automated
-   `apps verify` before new remote creation. Missing browser tooling or failed checks blocks delivery;
-   printed URLs and `--no-browser` are not passing verification. Install browser tooling with
-   `npm exec --yes --package agent-browser@latest -- agent-browser install`; if needed run
-   `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify`.
-3. Reconcile `apps list --json` and the exact intended name/slug, edit permission and personal/team
-   scope. Default to personal only when no team was requested. Reuse a matching editable identity;
-   stop on ambiguous matches or conflicting identity/scope. Create only when none exists, using
-   `apps create "<exact app name>" .` (or `--team-id <verified team ID>`). Read back the same ID.
-   A failed first release leaves a container: reuse it, never duplicate or automatically delete it.
-4. Compare existing app-owned schemas. Create only necessary missing databases against that exact
-   app ID. Change existing schemas by verified database ID and ownership, and only with backward-
-   compatible changes before release. Read back each change. Breaking changes need separate coordination.
-   Ordinary note/record edits and existing resource editors remain immediate.
-5. Run `apps deploy` against the same linked app. It builds, verifies a frozen source/artifact
-   snapshot with stubs, then sends that snapshot to the backend. `--skip-build` accepts only unchanged,
-   valid output and still verifies. Do not bypass the backend or create implicitly on deploy.
-6. Read back the exact installed app ID, integer version and Portal URL with `apps list --json`.
-   Run `apps verify --mode live` and open the installed app in the actual Portal for surface proof.
-   A live harness check alone does not prove the deployed bundle rendered in Portal.
-7. Report **failed before activation**, **deployed but unverified**, or **outcome unknown** accurately.
-   Never blindly replay an uncertain create/deploy response; reconcile its exact identity/version first.
-   `apps publish --confirm-ready` is **Publish to Store**, separately approved and listing-gated.
-   Workspace delivery is **Update app**, with no Store screenshot/readiness requirement.
-
-### Restore historical source as a new release
-
-Pull the current release into a fresh checkout first. Retrieve historical source into a different
-folder (`apps pull <id> <historical-dir> --source-version <n>`). Replace source in the current checkout
-without replacing its `.notis` profile/app link or deployment base. Update `package.json`'s
-`notisAppVersion`, check compatibility with current resources, build, verify and deploy as a new
-release. Preserve app/database/skill IDs. Never decrement the deployment counter, rewrite snapshots,
-or claim to undo user data or external actions.
-
-## IMPORTANT: When NOT to use tool access for app development
-
-When building or deploying a Notis app, do NOT use `npx --package @notis_ai/cli@latest -- notis tools exec` for app file operations:
-
-- Loading or saving app files -- use `npx --package @notis_ai/cli@latest -- notis apps build` and `npx --package @notis_ai/cli@latest -- notis apps deploy`
-- Linting app files -- use `npx --package @notis_ai/cli@latest -- notis apps build` which validates automatically
-- Managing app routes -- write standard Vite + React pages in `app/`, not raw JS files
-
-Database schemas are the exception: declaring a slug in `notis.config.ts` does
-not create it. Use the discovery-first native database tool workflow to
-create/update and read back each app-owned schema before deployment. Tool calls
-are also valid for testing runtime behavior after deployment.
-
-## Section 2: Accessing Tools Through the Notis CLI
-
-Use this section when the current agent does not already have the right tool and needs to reach tools through Notis.
-
-This is the main escape hatch for:
-
-- direct MCP access
-- Composio-backed integrations
-- native Notis tools that are available through the generic CLI tool bridge
-- any task where you need to discover the canonical tool name and schema before execution
+Default delivery below applies only when no more restrictive user or repository
+instruction exists. Explicit preview-only/no-deploy requests and standing requirements
+for explicit deployment consent override the default. Preserve that authority across
+local and cloud runs. For local-only work, build and run stub verification; do not
+create remote resources or activate an app. `apps dev` is not a supported delivery
+path; use the CLI's documented build/verification harness. Store publication remains
+separately authorized.
 
 ### Tool access workflow
 
@@ -193,129 +127,14 @@ discovery request before every connected-service action.
 - Use `--reconnect` to replace an existing connection. If multiple accounts exist, select one with `--connection-id <id>`.
 - For API keys, basic auth, or other credential JSON, prefer `--credentials -` and pipe or redirect stdin. Avoid inline secrets because they can enter shell history and process listings.
 
-### Toolkit mental model
+## Task guides
 
-Typical toolkit namespaces include:
+Read only the guide needed for this task. Relative links resolve in the skill bundle.
+For hosted MCP, fetch the matching `notis://docs/notis-cli/references/<file>.md` URI
+with resources/read or the available Notis resource-fetch tool; the root resource
+also rewrites these links to their published URIs.
 
-- `notis` for native Notis tools
-- `composio-*` for Composio-backed integrations
-- `mcp-*` for MCP-backed tools
-
-The pattern is:
-
-1. discover toolkits
-2. search tools
-3. inspect schema if needed
-4. execute the canonical tool
-
-### Tool access examples
-
-Find a tool:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools toolkits
-npx --package @notis_ai/cli@latest -- notis tools search "list today's calendar events"
-```
-
-Inspect a tool before execution:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools describe composio-googlecalendar-list_events
-npx --package @notis_ai/cli@latest -- notis tools exec composio-googlecalendar-list_events --get-schema
-```
-
-Dry-run a tool call:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --dry-run --arguments '{"database_slug":"tasks"}'
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --dry-run --arguments '{"database_id":"tasks-db-id","query":{"page_size":10}}'
-```
-
-Execute a tool call:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --arguments '{"database_slug":"tasks"}'
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"database_id":"tasks-db-id","query":{"page_size":10}}'
-```
-
-Connect a missing toolkit:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools link github
-```
-
-Reconnect a credential-based toolkit without putting the secret in shell history:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools link dataforseo --reconnect --credentials - < credentials.json
-```
-
-## Native database access
-
-Native Notis databases are accessed through the generic tool workflow, not a first-class database command group. Use these canonical tool names:
-
-- `LOCAL_NOTIS_DATABASE_LIST_DATABASES` -- list databases accessible to the current profile
-- `LOCAL_NOTIS_DATABASE_GET_DATABASE` -- inspect read-only metadata and schema detail
-- `LOCAL_NOTIS_DATABASE_QUERY` -- query documents from a database
-- `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` -- create or update a database schema. Every database belongs to a Notis app: creation requires the owning app's slug or id in the `app` argument (create the app first with `LOCAL_NOTIS_CREATE_APP` if needed)
-
-Example workflow before building an app:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_LIST_DATABASES --arguments '{}'
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --get-schema
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --arguments '{"database_slug":"social_media_calendar"}'
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"database_id":"social-media-calendar-db-id","query":{"page_size":1}}'
-```
-
-When `LOCAL_NOTIS_DATABASE_LIST_DATABASES` or `LOCAL_NOTIS_DATABASE_GET_DATABASE` returns a database ID, prefer `database_id` for `LOCAL_NOTIS_DATABASE_QUERY`; `database_slug` remains supported as a fallback.
-
-## Supporting commands
-
-- `npx --package @notis_ai/cli@latest -- notis whoami` — confirm which account and endpoint a command will target
-- `npx --package @notis_ai/cli@latest -- notis doctor` — verify CLI config, auth, routing, and API reachability before relying on the CLI
-- `npx --package @notis_ai/cli@latest -- notis describe <command...>` — get the exact command contract for first-class CLI commands
-
-## Summary
-
-Use `notis-cli` for two things:
-
-1. local app development through `npx --package @notis_ai/cli@latest -- notis apps ...`
-2. tool discovery and execution through `npx --package @notis_ai/cli@latest -- notis tools ...`
-
-Most importantly: if you do not currently have the tool you need, especially for direct MCP or integration work, use the Notis CLI instead of treating the task as blocked.
-
-## Troubleshooting
-
-### CLI returns `auth_expired` or `auth_missing`
-
-The profile's browser authorization has lapsed or was never granted. Run
-`notis login` (add `--profile <name>` when the failing profile is not the
-active one) and have the user approve the browser prompt. In JSON/agent mode
-the first hint is the exact command to run. Do not copy refresh tokens into
-commands or try to mint a credential yourself.
-
-If the profile is a `dev-*` one, the fix is to restart `./dev.sh` in the
-workspace it belongs to, or to switch to a real account profile.
-
-### Deploy fails with "network_error" or "fetch failed"
-
-Run `notis doctor` to verify the effective profile and endpoint. Read back the exact app ID,
-version and release state before retrying. An uncertain network response is not proof of rollback.
-There is no direct storage deployment path. Repair authentication when needed without changing the
-intended profile, then reconcile the previous outcome before starting a new release.
-
-Localhost backends are a Notis-developer test lane owned by `./dev.sh` and its lease-backed profile.
-Do not silently switch between that lane and a live account.
-
-### Health or tool-roundtrip errors
-
-Local scaffold/build and stub verification can run without an API connection (dependencies and
-browser tooling must already be available). `link`, `pull`, `create`, `list`, `deploy`, live verification
-and Store operations require the intended backend. Never bypass it.
-
-### Stale bundle in Portal after an update
-
-Every successful release gets a new integer deployment version. Read back that version, then use
-normal refresh/navigation to load it. Never overwrite or decrement an existing deployment version.
+- [App delivery](references/app-delivery.md)
+- [Toolkit mental model](references/tool-examples.md)
+- [Native database access](references/native-databases.md)
+- [Supporting commands](references/troubleshooting.md)

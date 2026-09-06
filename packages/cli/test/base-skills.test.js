@@ -80,3 +80,16 @@ test('preserves a conflicting user-owned symlink as a backup', async (t) => {
     join(home, '.notis', 'skills', 'base', 'notis-cli'),
   );
 });
+
+test('base skill materialization preserves task references byte-for-byte', async (t) => {
+  const { root, home, sourceRoot } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const text = '# Query reference\n\nPreserve pagination and schema rules.\n';
+  mkdirSync(join(sourceRoot, 'notis-query', 'references'));
+  writeFileSync(join(sourceRoot, 'notis-query', 'references', 'query.md'), text);
+  reconcileBaseSkills({ home, sourceRoot, userId: 'user-123', now: 1 });
+  const paths = getBaseSkillPaths({ home, userId: 'user-123' });
+  for (const target of paths.targetRoots) {
+    assert.equal(readFileSync(join(target, 'notis-query', 'references', 'query.md'), 'utf8'), text);
+  }
+});
