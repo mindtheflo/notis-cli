@@ -1,25 +1,43 @@
 import { getJwtSubject } from '../runtime/profiles.js';
 import { reconcileAllSkills } from '../runtime/sync-skills.js';
+import { ensureFreshOAuthCredential } from '../runtime/oauth.js';
+import { installSkillSyncService } from '../runtime/skill-sync-service.js';
 
 async function loadSkillSyncEngine() {
   return import('../../dist/skill-sync/index.js');
 }
 
-async function syncSkillsHandler(ctx) {
+export async function syncSkillsHandler(ctx, {
+  refresh = ensureFreshOAuthCredential, loadEngine = loadSkillSyncEngine,
+  reconcile = reconcileAllSkills, install = installSkillSyncService,
+} = {}) {
+  await refresh(ctx.runtime);
   const userId = ctx.runtime.oauthUserId || getJwtSubject(ctx.runtime.jwt);
-  const { runSkillSync } = await loadSkillSyncEngine();
-  const result = await reconcileAllSkills({
+  const { runSkillSync, fetchSyncSettings } = await loadEngine();
+  const settings = await fetchSyncSettings(ctx.runtime.apiBase, ctx.runtime.jwt);
+  const result = await reconcile({
     serverUrl: ctx.runtime.apiBase,
     jwt: ctx.runtime.jwt,
-    userId,
+    userId: settings.user_id || userId,
     honorSyncEnabled: Boolean(ctx.options.electronRepeat),
-    runAccountSync: runSkillSync,
+    runAccountSync: (serverUrl, jwt, dependencies, options) => runSkillSync(
+      serverUrl, jwt, { ...dependencies, fetchSyncSettings: async () => settings }, options,
+    ),
   });
+  if (settings.sync_enabled && !ctx.options.electronRepeat) {
+    try {
+      result.automaticSync = await install(ctx.runtime);
+    } catch (error) {
+      result.automaticSync = { status: 'error', message: error.message };
+    }
+  }
 
   const failures = [...(result.failedPushes || []), ...(result.failedLinks || [])];
   return ctx.output.emitSuccess({
     command: 'skills sync',
     data: result,
+    warnings: result.automaticSync?.status === 'error'
+      ? [`Skills synced, but automatic refresh could not start: ${result.automaticSync.message}`] : [],
     humanSummary: failures.length ? `Skill sync completed with ${failures.length} reported failures; inspect failedPushes and failedLinks.` : result.syncEnabled
       ? `Synced account skills and kept ${result.baseSkills.length} base skills current.`
       : `Automatic Desktop sync is off; kept ${result.baseSkills.length} base skills current.`,

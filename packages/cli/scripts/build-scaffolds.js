@@ -44,6 +44,15 @@ await build({
 });
 process.stdout.write(`Built CLI skill sync engine in ${join(distDir, 'skill-sync')}\n`);
 
+await build({
+  entryPoints: [join(cliRoot, 'src', 'skill-sync-worker-entry.js')],
+  outfile: join(distDir, 'skill-sync-worker.mjs'),
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node18',
+});
+
 // Memory hooks need an immutable, self-contained CLI runtime. The installed
 // launcher copies this exact bundle into ~/.notis rather than retaining a path
 // into an ephemeral npx cache or source checkout. Sharp is lazy-loaded and is

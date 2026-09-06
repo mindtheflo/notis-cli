@@ -10,6 +10,7 @@ import { reportCliCommand } from './runtime/telemetry.js';
 import { reconcileBaseSkillsBestEffort } from './runtime/base-skills.js';
 import { detectedAgentIds } from './runtime/agent-setup.js';
 import { withSkillSyncLock } from './runtime/sync-skills.js';
+import { maybeInstallSkillSyncService } from './runtime/skill-sync-service.js';
 import {
   CHANNEL_SWITCH_ENV,
   resolveChannelSwitch,
@@ -188,6 +189,9 @@ function attachSpec(program, parentMap, spec, specs, launchContext = {}) {
         ...launchContext,
       });
       process.exitCode = typeof exitCode === 'number' ? exitCode : 0;
+      if (process.exitCode === 0 && !['logout', 'agent-context', 'agent-capture'].includes(spec.command_path[0])) {
+        await maybeInstallSkillSyncService(runtime).catch(() => undefined);
+      }
       await reportCliCommand({
         spec,
         runtime,

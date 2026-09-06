@@ -12,6 +12,8 @@ export interface SyncedSkill {
   /** Actual readable managed links, never inferred from desired targets. */
   verifiedAgentLinks?: Partial<AgentTargets>;
   cloudUpdatedAt?: string;
+  /** Content accepted on disk; independent of server-specific folder hash formats. */
+  cloudContentHash?: string;
   syncedAt: string;
 }
 

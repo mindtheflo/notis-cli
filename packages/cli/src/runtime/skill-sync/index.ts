@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   AgentTargets,
   LocalSkill,
@@ -33,6 +34,7 @@ import {
 } from "./symlink-manager";
 import { getPushCandidates } from "./sync-plan";
 import { writeCloudSkillWithBundleFallback } from "./write-cloud-skill";
+export { fetchSyncSettings } from './cloud-client';
 
 export interface RunSkillSyncResult {
   syncEnabled: boolean;
@@ -147,7 +149,17 @@ function decodeJwtSubject(jwt: string): string | null {
   }
 }
 
-function shouldWriteCloudSkill(
+function cloudContentHash(skill: SyncPullResponse['skills'][number]): string {
+  return createHash('sha256').update(JSON.stringify({
+    md: skill.skill_md,
+    hash: skill.skill_folder_hash,
+    source: skill.skill_source_url,
+    files: skill.bundle_files?.slice().sort((a, b) => a.path.localeCompare(b.path)),
+    hydrationFailed: skill.bundle_hydration_failed === true,
+  })).digest('hex');
+}
+
+export function shouldWriteCloudSkill(
   cloudSkill: SyncPullResponse["skills"][number],
   localSkills: Map<string, LocalSkill>,
   previousState: NotisSyncState,
@@ -159,17 +171,20 @@ function shouldWriteCloudSkill(
     return true;
   }
 
+  const previous = previousState.skills[skillName];
+  if (previous?.folderHash === localSkill.folderHash
+    && previous.cloudContentHash === cloudContentHash(cloudSkill)) return false;
+
   if (cloudSkill.source === "curated") {
     return cloudHash ? cloudHash !== localSkill.folderHash : true;
   }
 
-  const previous = previousState.skills[skillName];
   const localChangedSinceLastSync =
     !previous || previous.folderHash !== localSkill.folderHash;
   return (
     !localChangedSinceLastSync &&
-    Boolean(cloudHash) &&
-    cloudHash !== localSkill.folderHash
+    ((Boolean(cloudHash) && cloudHash !== localSkill.folderHash)
+      || Boolean(previous?.cloudContentHash && previous.cloudContentHash !== cloudContentHash(cloudSkill)))
   );
 }
 
@@ -178,6 +193,7 @@ function buildSyncState(
   localSkills: LocalSkill[],
   lastSyncedAt: string | null,
   verifiedAgentLinks: Record<string, Partial<AgentTargets>> = {},
+  failedContentNames: ReadonlySet<string> = new Set(),
 ): NotisSyncState {
   const localSkillMap = toSkillMap(localSkills);
   const skills = Object.fromEntries(
@@ -191,6 +207,8 @@ function buildSyncState(
           agentTargets: normalizeAgentTargets(skill.agent_targets),
           verifiedAgentLinks: skill.status === "active" ? verifiedAgentLinks[skill.name] ?? {} : {},
           cloudUpdatedAt: skill.updated_at,
+          ...(!failedContentNames.has(skill.name) && !skill.skill_source_url
+            ? { cloudContentHash: cloudContentHash(skill) } : {}),
           syncedAt: lastSyncedAt || new Date().toISOString(),
         },
       ];
@@ -392,7 +410,7 @@ export async function materializeCloudSkillsForLocalShell(
   for (const failure of failedDownloads) delete verifiedLinks[failure.name];
 
   await deps.writeSyncState(
-    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks),
+    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks, new Set(failedDownloads.map(item => item.name))),
     syncPaths,
   );
 
@@ -629,7 +647,7 @@ export async function runSkillSync(
   const lastSyncedAt = pullResponse.last_synced_at || new Date().toISOString();
 
   await deps.writeSyncState(
-    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks),
+    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks, new Set(failedDownloads.map(item => item.name))),
     syncPaths,
   );
 

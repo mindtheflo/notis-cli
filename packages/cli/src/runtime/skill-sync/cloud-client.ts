@@ -9,6 +9,7 @@ async function requestJson<T>(
   options: { method?: string; body?: JsonBody } = {},
 ): Promise<T> {
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(90_000),
     method: options.method || 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -59,7 +60,7 @@ export async function pushChangedSkills(
 }
 
 export async function downloadSkillBundle(bundleUrl: string): Promise<Buffer> {
-  const response = await fetch(bundleUrl);
+  const response = await fetch(bundleUrl, { signal: AbortSignal.timeout(90_000) });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`GET ${bundleUrl} → ${response.status}: ${text}`);
