@@ -14,6 +14,13 @@ import type { ShortcutScope } from '../interactions/shortcuts';
 
 export type MultiSelectAction = ResolvedCollectionAction;
 
+/** The Portal owns global launcher positioning; app code only reports its own bar. */
+export const BULK_ACTION_LAYOUT_EVENT = 'notis:bulk-actions-layout';
+export interface BulkActionLayoutDetail {
+  bar: HTMLElement;
+  active: boolean;
+}
+
 export interface MultiSelectActionBarProps {
   selectedCount: number;
   actions: MultiSelectAction[];
@@ -124,21 +131,24 @@ export function MultiSelectActionBar({
   useEffect(() => {
     const bar = barRef.current;
     if (!visible || !bar) return;
-    // Also reaches a Portal launcher when an app renders inside a shadow root.
-    // Resolve the document root from the bar's own document: the app boundary
-    // forbids touching the global document directly, and this stays correct
-    // inside the portal shadow root and the isolated Store frame.
-    const root = bar.ownerDocument.documentElement;
-    const property = '--notis-bulk-actions-height';
-    const previous = root.style.getPropertyValue(property);
-    const update = () => root.style.setProperty(property, `${bar.getBoundingClientRect().height + 12}px`);
+    // Notify the owning document, including from a shadow root or after unmount.
+    // Only the Portal host may measure this bar and change global layout styles.
+    const report = (active: boolean) => {
+      const owner = bar.ownerDocument;
+      const LayoutEvent = owner.defaultView?.CustomEvent;
+      if (LayoutEvent) {
+        owner.dispatchEvent(new LayoutEvent<BulkActionLayoutDetail>(BULK_ACTION_LAYOUT_EVENT, {
+          detail: { bar, active },
+        }));
+      }
+    };
+    const update = () => report(true);
     update();
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
     observer?.observe(bar);
     return () => {
       observer?.disconnect();
-      if (previous) root.style.setProperty(property, previous);
-      else root.style.removeProperty(property);
+      report(false);
     };
   }, [visible]);
 

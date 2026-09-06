@@ -24,7 +24,7 @@ Tool name shapes: `LOCAL_NOTIS_*` (native Notis), `LOCAL_NOTIS_DATABASE_*` (data
 - **Automations:** `LOCAL_NOTIS_INSERT_AUTOMATION`, `LOCAL_NOTIS_UPDATE_AUTOMATION`, and `LOCAL_NOTIS_RUN_AUTOMATION` run an agent prompt on a cron schedule or event trigger; `LOCAL_NOTIS_LIST_INTEGRATION_TRIGGERS` lists triggers. Fixed text at a time is a reminder; work an agent must perform is an automation.
 - **Databases and notes:** `LOCAL_NOTIS_DATABASE_QUERY` reads; generated `LOCAL_NOTIS_DATABASE_UPSERT_<SLUG>` tools write rows; `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` creates or alters a schema. Discover the exact per-database tool names before use.
 - **Deep research:** `LOCAL_NOTIS_DEEP_SEARCH` performs public multi-source research.
-- **Notis apps:** `notis apps init|pull|dev|build|verify|create|link|deploy|doctor`. For local testing, stop after `apps dev`. If deployment is explicitly requested, build and verify first. Store submission is separate: never run `apps publish --confirm-ready` without explicit approval of the current Store preview.
+- **Notis apps:** Use the notis-apps skill and release-only workflow. App create/edit requests authorize Workspace deployment after checks on local and cloud computers. Explicit read-only, preview-only or no-deploy requests stop at local checks without remote mutations. Preserve exact app identity and deployment base. Verify the installed result. Store publication requires separate approval.
 
 ### Rules
 

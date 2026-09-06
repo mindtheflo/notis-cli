@@ -7,7 +7,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { randomUUID, createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants as fsConstants, copyFileSync, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -573,9 +573,9 @@ export function inspectListingReadiness(projectDir, appConfig = null) {
 // Build
 // ---------------------------------------------------------------------------
 
-export async function runProjectScript({ projectDir, scriptName, env = {}, stdio = 'inherit' }) {
+export async function runProjectScript({ projectDir, scriptName, args = [], env = {}, stdio = 'inherit' }) {
   await new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('npm', ['run', scriptName], {
+    const child = spawn('npm', ['run', scriptName, ...(args.length ? ['--', ...args] : [])], {
       cwd: projectDir,
       stdio,
       env: { ...process.env, ...env },
@@ -776,7 +776,6 @@ function generateEntryFile(projectDir, routes) {
 }
 
 export async function prepareArtifactBuild(projectDir, { enforceDesign = true, log = null } = {}) {
-  syncEmbeddedSdk(projectDir, { log });
   validateProjectBoundary(projectDir);
   validateProjectDesign(projectDir, { enforce: enforceDesign, log });
   const appConfig = await loadAppConfig(projectDir);
@@ -1079,14 +1078,31 @@ export function resolveConfiguredAppSkills(appConfig, projectDir) {
  * Build the app bundle: generate entry file, run `vite build`, package into .notis/output/.
  */
 export async function buildArtifact(projectDir, { stdio = 'inherit' } = {}) {
+  projectDir = realpathSync(projectDir);
+  const workspace = withAppReleaseWorkspace(projectDir, (identity) => {
+    rmSync('build-receipt.json', { force: true });
+    return identity;
+  }, { create: true });
+  // SDK refresh is intentional source preparation, before the immutable build receipt.
+  syncEmbeddedSdk(projectDir);
+  const sourceHash = appFilesDigest(collectSourceFiles(projectDir));
   await prepareArtifactBuild(projectDir);
 
-  // Run Vite build
+  // Historical source must round-trip byte-for-byte. Supply the compatible
+  // config loader at execution for the old canonical script, without editing
+  // pulled package.json files or interpreting custom shell commands.
+  const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8'));
+  const args = String(pkg.scripts?.build || '').trim() === 'vite build'
+    ? ['--configLoader', 'runner']
+    : [];
   await runProjectScript({
     projectDir,
     scriptName: 'build',
+    args,
     stdio,
   });
+
+  withAppReleaseWorkspace(projectDir, () => {}, { expected: workspace });
 
   // Verify the canonical `.notis/output/bundle` packaging contract.
   const builtBundleDir = resolveBuiltBundleDir(projectDir);
@@ -1102,6 +1118,20 @@ export async function buildArtifact(projectDir, { stdio = 'inherit' } = {}) {
 
   const manifest = readManifest(projectDir);
 
+  if (sourceHash !== appFilesDigest(collectSourceFiles(projectDir))) {
+    throw usageError('App source changed during the build. Build again before deploying.');
+  }
+  const receipt = JSON.stringify({
+    source_hash: sourceHash,
+    artifact_hash: appFilesDigest(collectArtifactFiles(projectDir)),
+  });
+  withAppReleaseWorkspace(projectDir, () => {
+    const temporary = `.build-receipt-${randomUUID()}`;
+    try {
+      writeFileSync(temporary, receipt, { flag: 'wx' });
+      renameSync(temporary, 'build-receipt.json');
+    } finally { rmSync(temporary, { force: true }); }
+  }, { expected: workspace });
   return { manifest, outputDir: join(projectDir, OUTPUT_DIR) };
 }
 
@@ -1143,12 +1173,9 @@ function copyMetadataAssets(projectDir) {
 const PROFILE_LINK_FIELDS = new Set([
   'app_id',
   'linked_at',
+  'expected_updated_at',
   'deployed_at',
   'version',
-  'dev_app_id',
-  'dev_linked_at',
-  'auto_linked_at',
-  'cloud_computer_shell_consent',
 ]);
 
 function splitLinkedState(state) {
@@ -1478,14 +1505,6 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
           config = config.replace(/'My Notis App'/, displayName);
         }
       }
-      if (/devSlug\s*:/.test(config)) {
-        config = config.replace(/devSlug\s*:\s*(['"`])[\s\S]*?\1/, `devSlug: ${slugName}`);
-      } else {
-        config = config.replace(
-          /name\s*:\s*(['"`])[\s\S]*?\1/,
-          (nameDeclaration) => `${nameDeclaration},\n  devSlug: ${slugName}`,
-        );
-      }
       config = removeConfigArrayProperty(config, 'screenshots');
       writeFileSync(configPath, config);
     }
@@ -1662,6 +1681,14 @@ function normalizeScaffoldPackageScripts(pkg) {
   if (!scripts || typeof scripts !== 'object' || Array.isArray(scripts)) {
     return;
   }
+  // The linked SDK exports TypeScript. Vite's bundled config loader externalizes
+  // that import to Node, which cannot load it on supported Node 18/20 runtimes.
+  // Normalize only canonical commands; never parse or rewrite custom shell code.
+  for (const [name, command] of Object.entries(scripts)) {
+    if (typeof command === 'string' && /^(vite|vite build|vite preview)$/.test(command.trim())) {
+      scripts[name] = `${command.trim()} --configLoader runner`;
+    }
+  }
   const generateEntry = String(scripts['generate-entry'] || '').trim();
   if (!/^tsx\s+\.\.\/\.\.\/scripts\/generate-entry\.ts\s+\.$/.test(generateEntry)) {
     return;
@@ -1811,7 +1838,7 @@ function listFilesRecursive(dir, base = dir, results = []) {
     if (entry.isDirectory()) {
       listFilesRecursive(fullPath, base, results);
     } else {
-      results.push(fullPath.slice(base.length + 1).split(sep).join('/'));
+      results.push(relative(base, fullPath).split(sep).join('/'));
     }
   }
   return results;
@@ -1828,32 +1855,96 @@ function listFilesRecursive(dir, base = dir, results = []) {
  * warning so a deliberate local addition is never destroyed.
  */
 export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPLATE_SDK_DIR } = {}) {
-  const localSdkDir = join(projectDir, 'packages', 'sdk');
-  if (!existsSync(join(localSdkDir, 'package.json'))) {
-    return { updated: false, reason: 'no-embedded-sdk' };
-  }
-  if (!existsSync(join(templateSdkDir, 'package.json'))) {
+  const canonicalProjectDir = realpathSync(projectDir);
+  const canonicalTemplateDir = resolve(templateSdkDir);
+  if (!existsSync(join(canonicalTemplateDir, 'package.json'))) {
     return { updated: false, reason: 'no-template-sdk' };
   }
-
-  const templateFiles = listFilesRecursive(templateSdkDir).filter(
+  const previousCwd = process.cwd();
+  const previousIdentity = capturePullTargetIdentity(previousCwd);
+  const projectIdentity = capturePullTargetIdentity(canonicalProjectDir);
+  const templateFiles = listFilesRecursive(canonicalTemplateDir).filter(
     (relPath) => relPath === 'package.json' || relPath === 'tsconfig.json' || relPath.startsWith('src/'),
   );
   const changed = [];
-  for (const relPath of templateFiles) {
-    const source = readFileSync(join(templateSdkDir, relPath));
-    const targetPath = join(localSdkDir, relPath);
-    if (existsSync(targetPath) && Buffer.compare(readFileSync(targetPath), source) === 0) continue;
-    mkdirSync(dirname(targetPath), { recursive: true });
-    writeFileSync(targetPath, source);
-    changed.push(relPath);
+  let foreign = [];
+
+  // Pin each app-controlled parent as cwd before touching a child. Absolute
+  // path writes would follow a replaced packages/sdk or src directory link.
+  function inDirectory(name, callback, { create = false } = {}) {
+    const parentIdentity = capturePullTargetIdentity('.');
+    let identity = capturePullTargetIdentity(name);
+    if (!identity.exists) {
+      if (!create) return { updated: false, reason: 'no-embedded-sdk' };
+      mkdirSync(name);
+      identity = capturePullTargetIdentity(name);
+    }
+    process.chdir(name);
+    try {
+      assertPullTargetIdentity('.', identity);
+      return callback();
+    } finally {
+      process.chdir('..');
+      assertPullTargetIdentity('.', parentIdentity);
+    }
   }
 
-  const templateSet = new Set(templateFiles);
-  const foreign = listFilesRecursive(localSdkDir)
-    .filter((relPath) => relPath.startsWith('src/') && !templateSet.has(relPath));
+  function mirrorFile(segments, source) {
+    if (segments.length > 1) {
+      return inDirectory(segments[0], () => mirrorFile(segments.slice(1), source), { create: true });
+    }
+    const name = segments[0];
+    let before;
+    try { before = lstatSync(name, { bigint: true }); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (before) {
+      if (before.isSymbolicLink() || !before.isFile()) {
+        throw usageError(`Refusing to refresh the SDK through an unsafe target: ${name}`);
+      }
+      const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      try {
+        if (Buffer.compare(readStablePinnedFile(descriptor, before, `SDK file ${name}`), source) === 0) return false;
+      } finally { closeSync(descriptor); }
+    }
+    // Replace, never truncate: an app-controlled hard link must not modify
+    // another file. O_EXCL staging and rename are relative to the pinned cwd.
+    const temporary = `.notis-sdk-sync-${randomUUID()}`;
+    try {
+      writeFileSync(temporary, source, { flag: 'wx' });
+      renameSync(temporary, name);
+    } finally { rmSync(temporary, { force: true }); }
+    return true;
+  }
 
-  const templateVersion = JSON.parse(readFileSync(join(templateSdkDir, 'package.json'), 'utf-8')).version;
+  try {
+    process.chdir(canonicalProjectDir);
+    assertPullTargetIdentity('.', projectIdentity);
+    const result = inDirectory('packages', () => inDirectory('sdk', () => {
+      let packageStat;
+      try { packageStat = lstatSync('package.json'); }
+      catch (error) {
+        if (error.code === 'ENOENT') return { updated: false, reason: 'no-embedded-sdk' };
+        throw error;
+      }
+      if (packageStat.isSymbolicLink() || !packageStat.isFile()) {
+        throw usageError('Refusing to refresh the SDK through an unsafe package.json target.');
+      }
+      for (const relPath of templateFiles) {
+        const source = readFileSync(join(canonicalTemplateDir, relPath));
+        if (mirrorFile(relPath.split('/'), source)) changed.push(relPath);
+      }
+      const templateSet = new Set(templateFiles);
+      foreign = listFilesRecursive('.').filter((relPath) => relPath.startsWith('src/') && !templateSet.has(relPath));
+      return null;
+    }));
+    if (result) return result;
+    assertPullTargetIdentity('.', projectIdentity);
+  } finally {
+    process.chdir(previousCwd);
+    assertPullTargetIdentity('.', previousIdentity);
+  }
+
+  const templateVersion = JSON.parse(readFileSync(join(canonicalTemplateDir, 'package.json'), 'utf-8')).version;
   const emit = typeof log === 'function' ? log : (message) => process.stderr.write(`${message}\n`);
   if (changed.length > 0) {
     emit(`Updated embedded @notis/sdk to ${templateVersion} (${changed.length} file${changed.length === 1 ? '' : 's'}).`);
@@ -2069,6 +2160,7 @@ export function collectArtifactFiles(projectDir) {
   function walk(dir, prefix) {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
+      if (entry.name.startsWith('.') || (!prefix && entry.name === 'verify.json')) continue;
       const fullPath = join(dir, entry.name);
       const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
@@ -2452,6 +2544,30 @@ async function withPullTargetLock(targetDir, callback) {
   }
 }
 
+// Persist only an unfinished create intent. Concurrent/retried invocations share
+// its key; a fully read-back creation closes it so later new creations cannot
+// replay an app that was subsequently deleted.
+export function beginAppCreateIntent(identity, explicitKey = null) {
+  const identityHash = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  const path = join(homedir(), '.notis', 'app-create-intents', `${identityHash}.json`);
+  return withStateWriteLock(path, () => {
+    let intent;
+    if (existsSync(path)) intent = JSON.parse(readFileSync(path, 'utf8'));
+    if (intent && explicitKey && intent.key !== explicitKey) {
+      throw usageError('An unfinished creation exists for this identity. Reconcile it before changing its idempotency key.');
+    }
+    if (!intent) {
+      intent = { key: explicitKey || `app-create-${randomUUID()}` };
+      writeFileSync(path, JSON.stringify(intent), { mode: 0o600 });
+    }
+    return { ...intent, complete() {
+      withStateWriteLock(path, () => {
+        if (existsSync(path) && JSON.parse(readFileSync(path, 'utf8')).key === intent.key) unlinkSync(path);
+      });
+    } };
+  });
+}
+
 export async function pullAppSource(args) {
   const targetDir = resolve(args.targetDir);
   return withPullTargetLock(
@@ -2478,6 +2594,7 @@ async function pullAppSourceUnlocked({
   version = 'latest',
   force = false,
   profileKey = null,
+  expectedUpdatedAt = null,
 }, assertLockOwnership, assertParentIdentity, initialTargetIdentity) {
   assertLockOwnership();
   assertParentIdentity();
@@ -2643,6 +2760,7 @@ async function pullAppSourceUnlocked({
       writeLinkedState(targetRoot, {
         app_id: appId,
         ...(Number.isFinite(linkedVersion) ? { version: linkedVersion } : {}),
+        ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
         linked_at: new Date().toISOString(),
       }, profileKey);
       assertPullTargetIdentity(targetDir, activeTargetIdentity);
@@ -2752,249 +2870,131 @@ function readArtifactFiles(projectDir) {
   return files;
 }
 
-// ---------------------------------------------------------------------------
-// Direct deploy (bypasses backend server)
-// ---------------------------------------------------------------------------
+/** Fingerprint exact source/artifact bytes, independent of directory enumeration order. */
+export function appFilesDigest(files) {
+  return createHash('sha256').update(JSON.stringify(Object.keys(files).sort().map((key) => [key, files[key]]))).digest('hex');
+}
 
-/**
- * Resolve Supabase credentials from the server/.env file in the repo workspace.
- * Falls back to environment variables.
- */
-function resolveSupabaseCredentials() {
-  const envPaths = [
-    resolve(process.cwd(), 'server/.env'),
-    resolve(process.cwd(), '../server/.env'),
-    resolve(process.cwd(), '../../server/.env'),
-  ];
+/** Run synchronous release bookkeeping relative to a pinned, real .notis directory. */
+function withAppReleaseWorkspace(projectDir, operation, { create = false, expected = null } = {}) {
+  const canonicalProjectDir = expected?.projectDir || realpathSync(projectDir);
+  const projectIdentity = expected?.projectIdentity || capturePullTargetIdentity(canonicalProjectDir);
+  const previousCwd = process.cwd();
+  const previousIdentity = capturePullTargetIdentity(previousCwd);
+  try {
+    process.chdir(canonicalProjectDir);
+    assertPullTargetIdentity('.', projectIdentity);
+    let notisIdentity = capturePullTargetIdentity(NOTIS_DIR);
+    if (!notisIdentity.exists && create) {
+      mkdirSync(NOTIS_DIR);
+      notisIdentity = capturePullTargetIdentity(NOTIS_DIR);
+    }
+    if (!notisIdentity.exists) throw usageError('No build workspace found. Run notis apps build first.');
+    if (expected) assertPullTargetIdentity(NOTIS_DIR, expected.notisIdentity);
+    process.chdir(NOTIS_DIR);
+    assertPullTargetIdentity('.', notisIdentity);
+    const value = operation({ projectDir: canonicalProjectDir, projectIdentity, notisIdentity });
+    assertPullTargetIdentity('.', notisIdentity);
+    assertPullTargetIdentity(canonicalProjectDir, projectIdentity);
+    assertPullTargetIdentity(join(canonicalProjectDir, NOTIS_DIR), notisIdentity);
+    return value;
+  } finally {
+    process.chdir(previousCwd);
+    assertPullTargetIdentity('.', previousIdentity);
+  }
+}
 
-  let supabaseUrl = process.env.SUPABASE_URL;
-  let supabaseSubdomain = process.env.SUPABASE_SUBDOMAIN;
-  let supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-
-  for (const envPath of envPaths) {
-    if (existsSync(envPath)) {
-      const content = readFileSync(envPath, 'utf-8');
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('#') || !trimmed.includes('=')) continue;
-        const eqIdx = trimmed.indexOf('=');
-        const key = trimmed.slice(0, eqIdx).trim();
-        let value = trimmed.slice(eqIdx + 1).trim();
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-          value = value.slice(1, -1);
+/** Capture one checked build. Verification and upload must use these same bytes. */
+export function prepareAppRelease(projectDir) {
+  let release;
+  try {
+    return withAppReleaseWorkspace(projectDir, (workspace) => {
+      const sourceFiles = collectSourceFiles(workspace.projectDir);
+      const files = collectArtifactFiles(workspace.projectDir);
+      let receipt;
+      try {
+        const before = lstatSync('build-receipt.json', { bigint: true });
+        if (!before.isFile() || before.isSymbolicLink()) throw usageError('Unsafe build receipt.');
+        const descriptor = openSync('build-receipt.json', fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+        try { receipt = JSON.parse(readStablePinnedFile(descriptor, before, 'Build receipt').toString('utf8')); }
+        finally { closeSync(descriptor); }
+      } catch (error) {
+        if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+      }
+      if (receipt?.source_hash !== appFilesDigest(sourceFiles) || receipt?.artifact_hash !== appFilesDigest(files)) {
+        throw usageError('Build output is missing or stale. Run notis apps build before deploying.');
+      }
+      // Nest under the source project so imports resolve its installed dependencies.
+      // Every staging write is relative to pinned directories, never a replaced parent path.
+      const frozenName = mkdtempSync('release-');
+      const frozenIdentity = capturePullTargetIdentity(frozenName);
+      const frozenDir = join(workspace.projectDir, NOTIS_DIR, frozenName);
+      let closed = false;
+      const close = () => {
+        process.removeListener('exit', close);
+        if (closed) return;
+        withAppReleaseWorkspace(workspace.projectDir, () => {
+          assertPullTargetIdentity(frozenName, frozenIdentity);
+          rmSync(frozenName, { recursive: true, force: true });
+        }, { expected: workspace });
+        closed = true;
+      };
+      function writeEntry(segments, content) {
+        const name = segments[0];
+        if (segments.length === 1) {
+          writeFileSync(name, content, { flag: 'wx' });
+          return;
         }
-        if (key === 'SUPABASE_URL' && !supabaseUrl) supabaseUrl = value;
-        if (key === 'SUPABASE_SUBDOMAIN' && !supabaseSubdomain) supabaseSubdomain = value;
-        if ((key === 'SUPABASE_SERVICE_ROLE_KEY' || key === 'SUPABASE_SERVICE_KEY') && !supabaseKey) supabaseKey = value;
+        const parentIdentity = capturePullTargetIdentity('.');
+        let identity = capturePullTargetIdentity(name);
+        if (!identity.exists) {
+          mkdirSync(name);
+          identity = capturePullTargetIdentity(name);
+        }
+        process.chdir(name);
+        try {
+          assertPullTargetIdentity('.', identity);
+          writeEntry(segments.slice(1), content);
+        } finally {
+          process.chdir('..');
+          assertPullTargetIdentity('.', parentIdentity);
+        }
       }
-      break;
-    }
-  }
-
-  // Derive URL from subdomain if needed
-  if (!supabaseUrl && supabaseSubdomain) {
-    supabaseUrl = `https://${supabaseSubdomain}.supabase.co`;
-  }
-
-  if (!supabaseUrl || !supabaseKey) {
-    throw usageError(
-      'Cannot resolve Supabase credentials for direct deploy. ' +
-      'Ensure server/.env exists with SUPABASE_SUBDOMAIN (or SUPABASE_URL) and SUPABASE_SERVICE_KEY, ' +
-      'or set them as environment variables.',
-    );
-  }
-
-  return { supabaseUrl, supabaseKey };
-}
-
-/**
- * Upload a file to Supabase Storage with upsert.
- */
-async function uploadToStorage(supabaseUrl, supabaseKey, bucket, storagePath, content, contentType) {
-  const url = `${supabaseUrl}/storage/v1/object/${bucket}/${storagePath}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${supabaseKey}`,
-      'Content-Type': contentType,
-      'x-upsert': 'true',
-    },
-    body: content,
-  });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Storage upload failed (${response.status}): ${text}`);
-  }
-}
-
-async function ensureStorageBucket(supabaseUrl, supabaseKey, bucket, options = {}) {
-  const encodedBucket = encodeURIComponent(bucket);
-  const headers = {
-    'Authorization': `Bearer ${supabaseKey}`,
-    'apikey': supabaseKey,
-  };
-  const inspectResponse = await fetch(`${supabaseUrl}/storage/v1/bucket/${encodedBucket}`, {
-    headers,
-  });
-  if (inspectResponse.ok) {
-    return;
-  }
-  if (inspectResponse.status !== 404) {
-    const text = await inspectResponse.text().catch(() => '');
-    throw new Error(`Failed to inspect storage bucket ${bucket} (${inspectResponse.status}): ${text}`);
-  }
-
-  const createResponse = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
-    method: 'POST',
-    headers: {
-      ...headers,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      id: bucket,
-      name: bucket,
-      public: Boolean(options.public),
-    }),
-  });
-  if (createResponse.ok) {
-    return;
-  }
-
-  const text = await createResponse.text().catch(() => '');
-  if (createResponse.status === 409 || /already exists|duplicate/i.test(text)) {
-    return;
-  }
-  throw new Error(`Failed to create storage bucket ${bucket} (${createResponse.status}): ${text}`);
-}
-
-/**
- * Get the current app manifest version from the apps table.
- */
-async function getAppCurrentVersion(supabaseUrl, supabaseKey, appId) {
-  const encodedAppId = encodeURIComponent(appId);
-  const url = `${supabaseUrl}/rest/v1/apps?id=eq.${encodedAppId}&select=manifest`;
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${supabaseKey}`,
-      'apikey': supabaseKey,
-    },
-  });
-  if (!response.ok) throw new Error(`Failed to get app version: ${response.status}`);
-  const rows = await response.json();
-  if (!rows.length) throw usageError(`App ${appId} not found.`);
-  const manifest = rows[0].manifest || {};
-  return { currentVersion: manifest.version || 0, manifest };
-}
-
-/**
- * Update the app manifest in the apps table.
- */
-async function updateAppVersion(supabaseUrl, supabaseKey, appId, newVersion, manifest) {
-  const encodedAppId = encodeURIComponent(appId);
-  const url = `${supabaseUrl}/rest/v1/apps?id=eq.${encodedAppId}`;
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${supabaseKey}`,
-      'apikey': supabaseKey,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=minimal',
-    },
-    body: JSON.stringify({
-      manifest: { ...manifest, version: newVersion },
-      ...appRowFieldsFromManifest(manifest),
-      updated_at: new Date().toISOString(),
-    }),
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Failed to update app version: ${response.status} ${text}`);
-  }
-}
-
-const CONTENT_TYPE_MAP = {
-  '.js': 'application/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.html': 'text/html',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-};
-
-/**
- * Deploy app bundle directly to Supabase storage, bypassing the backend server.
- */
-export async function directDeploy(projectDir, appId) {
-  const { supabaseUrl, supabaseKey } = resolveSupabaseCredentials();
-  const manifest = readManifest(projectDir);
-  const artifactFiles = readArtifactFiles(projectDir);
-  const sourceFiles = readSourceFiles(projectDir);
-  validateArtifactBoundary(artifactFiles);
-  validateProjectDesign(projectDir, { enforce: true });
-
-  // Get current version and increment
-  const { currentVersion } = await getAppCurrentVersion(supabaseUrl, supabaseKey, appId);
-  const newVersion = currentVersion + 1;
-
-  // Upload all files from the output directory
-  const bucket = 'app-code';
-  await ensureStorageBucket(supabaseUrl, supabaseKey, bucket, { public: false });
-  await ensureStorageBucket(supabaseUrl, supabaseKey, 'app-source', { public: false });
-
-  async function uploadDir(dir, prefix) {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        await uploadDir(fullPath, relPath);
-      } else {
-        const ext = entry.name.includes('.') ? '.' + entry.name.split('.').pop() : '';
-        const contentType = CONTENT_TYPE_MAP[ext] || 'application/octet-stream';
-        const content = readFileSync(fullPath);
-        const storagePath = `${appId}/v${newVersion}/${relPath}`;
-        await uploadToStorage(supabaseUrl, supabaseKey, bucket, storagePath, content, contentType);
+      try {
+        process.chdir(frozenName);
+        try {
+          assertPullTargetIdentity('.', frozenIdentity);
+          for (const [path, encoded] of Object.entries(sourceFiles)) {
+            writeEntry(path.split('/'), Buffer.from(encoded, 'base64'));
+          }
+          for (const [path, encoded] of Object.entries(files)) {
+            writeEntry([NOTIS_DIR, 'output', ...path.split('/')], Buffer.from(encoded, 'base64'));
+          }
+        } finally {
+          process.chdir('..');
+          assertPullTargetIdentity('.', workspace.notisIdentity);
+        }
+        const manifest = JSON.parse(Buffer.from(files['manifest.json'], 'base64').toString('utf8'));
+        process.once('exit', close);
+        release = { projectDir: frozenDir, files, sourceFiles, manifest, close };
+        return release;
+      } catch (error) {
+        try { close(); } catch { /* Retain owned staging if its parent identity changed. */ }
+        throw error;
       }
-    }
+    });
+  } catch (error) {
+    try { release?.close(); } catch { /* Parent replacement retains staging, never follows it. */ }
+    throw error;
   }
-
-  await uploadDir(join(projectDir, OUTPUT_DIR), '');
-
-  for (const [relPath, content] of Object.entries(sourceFiles)) {
-    const ext = relPath.includes('.') ? `.${relPath.split('.').pop()}` : '';
-    const contentType = CONTENT_TYPE_MAP[ext] || 'application/octet-stream';
-    const storagePath = `${appId}/v${newVersion}/${relPath}`;
-    await uploadToStorage(supabaseUrl, supabaseKey, 'app-source', storagePath, content, contentType);
-  }
-
-  // Update the app record -- include storage_prefix so the portal can resolve bundle URLs
-  const storagePrefix = `${appId}/v${newVersion}/`;
-  const deployManifest = {
-    ...manifest,
-    version: newVersion,
-    storage_bucket: bucket,
-    storage_prefix: storagePrefix,
-    source_storage_bucket: 'app-source',
-    source_storage_prefix: storagePrefix,
-  };
-  await updateAppVersion(supabaseUrl, supabaseKey, appId, newVersion, deployManifest);
-
-  return { version: newVersion };
 }
 
 // ---------------------------------------------------------------------------
-// Verify stamp and deploy gate.
-//
-// `notis apps verify` records what it checked against a hash of the built
-// artifact. `notis apps deploy` refuses to ship an artifact that has no
-// passing verify for exactly those bytes, so a rebuild after verify (or no
-// verify at all) cannot reach users. There is no CLI flag to skip this; the
-// only break-glass is NOTIS_ALLOW_UNVERIFIED_DEPLOY=1, which prints a warning.
+// Standalone verification diagnostics, never deployment authority.
+// Deploy automatically verifies a frozen snapshot before upload; neither a
+// forged passing report nor an environment variable may bypass that check.
 // ---------------------------------------------------------------------------
 export const VERIFY_STAMP_FILE = join(OUTPUT_DIR, 'verify.json');
-export const UNVERIFIED_DEPLOY_ENV = 'NOTIS_ALLOW_UNVERIFIED_DEPLOY';
 
 export function computeArtifactHash(projectDir) {
   const outputDir = join(projectDir, OUTPUT_DIR);
@@ -3044,29 +3044,4 @@ export function readVerifyStamp(projectDir) {
   } catch {
     return null;
   }
-}
-
-/**
- * Throw unless `.notis/output/verify.json` records a passing verify for the
- * artifact currently in `.notis/output`. Returns `{ gated: false, reason }`
- * when the break-glass environment variable is set so the caller can warn.
- */
-export function assertVerifiedArtifact(projectDir, { env = process.env } = {}) {
-  const stamp = readVerifyStamp(projectDir);
-  const currentHash = computeArtifactHash(projectDir);
-  let reason = null;
-  if (!stamp) {
-    reason = 'no "notis apps verify" result exists for this project';
-  } else if (!stamp.ok) {
-    reason = `the last "notis apps verify" failed (${stamp.summary?.failed ?? '?'} route${stamp.summary?.failed === 1 ? '' : 's'})`;
-  } else if (stamp.artifact_hash !== currentHash) {
-    reason = 'the built artifact changed since the last passing "notis apps verify"';
-  }
-  if (!reason) return { gated: true, stamp };
-  if (env[UNVERIFIED_DEPLOY_ENV] === '1') {
-    return { gated: false, reason, stamp };
-  }
-  throw usageError(
-    `Deploy blocked: ${reason}. Run \`npx --package @notis_ai/cli@latest -- notis apps verify\` on this build and deploy again.`,
-  );
 }

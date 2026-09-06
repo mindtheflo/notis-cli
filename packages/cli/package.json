@@ -22,7 +22,6 @@
     "prepack": "npm run build",
     "pretest": "npm run build",
     "release:prepare": "npm run build && node ./scripts/prepare-publish.js --apply",
-    "cli:set-mode": "node ./scripts/set-cli-mode.js",
     "smoke": "node ./scripts/smoke-package.js",
     "test": "node --test --test-timeout=120000"
   },

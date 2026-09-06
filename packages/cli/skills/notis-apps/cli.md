@@ -2,56 +2,29 @@
 
 When running outside the Notis container, use the `notis` CLI to work with Notis Apps locally.
 
-Notis apps are Vite + React projects using `@notis/sdk`. The workflow is init, dev, build, verify, create/link, pull, deploy, and doctor.
+Notis apps are Vite + React projects using `@notis/sdk`. Workspace runs released versions only.
+Local and cloud create/edit requests authorize Workspace delivery after checks; explicit read-only,
+preview-only or no-deploy requests stop at local artifacts without remote mutation. Store publication
+requires separate approval.
 
-Important: `notis apps deploy` updates the linked installed app. It is not an app-store publishing flow.
+## Core workflow
 
-## Setup
+1. Preserve local edits; pull the exact existing released app and current deployment base. For an
+   unreleased container, recover original source (or scaffold locally if unrecoverable), reconcile
+   its exact ID/current version/edit permission/scope and run apps link <app-id> <source-directory>
+   --expected-version 0. If a release has appeared, preserve local source separately and pull/reapply
+   on that current release. Never pull missing source or create another remote recovery app.
+2. Build and automatically verify before new remote creation. Browser tooling is required.
+3. Reconcile exact profile/app identity and personal/team scope. Create only if absent; never duplicate
+   a failed first-release container. Prepare only necessary backward-compatible resource changes.
+4. Deploy the same linked app. Deploy builds, verifies a frozen snapshot, then uploads those bytes.
+   `--skip-build` still verifies and rejects stale output. No Store media requirement applies.
+5. Read back the exact installed ID/version/Portal URL, run live verification, and open the installed
+   app in Portal. Report unknown or deployed-but-unverified outcomes; never blindly redeploy.
 
-Run `npx --package @notis_ai/cli@latest -- notis login` to authorize the CLI. Run commands through NPX, for example `npx --package @notis_ai/cli@latest -- notis apps list`.
-
-For CI, hosted agents, or internal scripts, pass a non-persisted token with `NOTIS_JWT=<token>` and use `--api-base <server-url>` when targeting a non-default server.
-
-## Core Workflow
-
-1. Scaffold a new app:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis apps init
-```
-
-2. Or pull an installed app's saved source snapshot:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis apps pull <app-id> ./my-app
-cd ./my-app
-npm install
-```
-
-3. Develop locally with live reload:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis apps dev
-```
-
-4. Build the production artifact:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis apps build
-```
-
-5. Verify the built artifact headlessly:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis apps verify
-```
-
-6. Link the project if it was not created or pulled from an app, then deploy:
-
-```bash
-npx --package @notis_ai/cli@latest -- notis apps link <app-id>
-npx --package @notis_ai/cli@latest -- notis apps deploy
-```
+For source restoration, pull the current release into a fresh checkout and historical source into
+another folder. Replace source while retaining the current profile/app link and deployment base,
+change the package release label, check resource compatibility and deploy as a new release.
 
 ## Commands
 
@@ -110,45 +83,12 @@ Create a new remote Notis app and optionally link a local project to it.
 
 When to use: Provision a fresh remote app before the first deploy. Pass a project directory to link it immediately.
 
+Options:
+- `--team-id <id>` — Create or reuse the exact team-scoped app (default: personal).
+
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps create "My App"`
 - `npx --package @notis_ai/cli@latest -- notis apps create "My App" .`
-
-### `npx --package @notis_ai/cli@latest -- notis apps dev [dir]`
-
-Register a development root and connect its apps to the shared local development host.
-
-When to use: Run this once for any folder that should be watched permanently. The folder itself, direct child apps, and apps/* are discovered automatically by every signed-in Notis Desktop instance. A linked app substitutes its online bundle only when local notisAppVersion is strictly greater than the installed release.
-
-Options:
-- `--port <number>` — Local bundle server port (default: 5173).
-- `--scratch` — Use isolated empty databases, bundled skills, and bundled automations for this session instead of the installed app's resources. For fixture work and destructive experiments.
-- `--live-data` — Deprecated: using the installed app's real resources is now the default. Accepted as a no-op; use `--scratch` for the old isolated behavior.
-- `--grant-cloud-shell` — Approve a cloudComputer: 'shell' declaration without the interactive prompt. The grant persists for this dev app; authorship alone never grants it.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis apps dev`
-- `npx --package @notis_ai/cli@latest -- notis apps dev ./my-app`
-- `npx --package @notis_ai/cli@latest -- notis apps dev ./workspace --port 5200`
-- `npx --package @notis_ai/cli@latest -- notis apps dev --scratch  # isolated resources for fixture or schema experiments`
-
-### `npx --package @notis_ai/cli@latest -- notis apps roots list`
-
-List persistent machine-local Notis app development roots.
-
-When to use: See which folders every local Notis Desktop instance watches for development apps.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis apps roots list`
-
-### `npx --package @notis_ai/cli@latest -- notis apps roots remove <folder>`
-
-Stop watching a registered Notis app development root.
-
-When to use: Remove a persistent development root. The built-in ~/.notis/apps root cannot be removed.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis apps roots remove ./old-apps`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps build [dir]`
 
@@ -210,15 +150,19 @@ Link a local project to a remote Notis app.
 
 When to use: Connect a local project to an existing app for deployment.
 
+Options:
+- `--expected-version <version>` — Link only if the remote deployment version still matches this non-negative integer.
+
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps link abc123`
 - `npx --package @notis_ai/cli@latest -- notis apps link abc123 ./my-app`
+- `npx --package @notis_ai/cli@latest -- notis apps link abc123 ./recovered-app --expected-version 0`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps pull <app-id> [dir]`
 
 Download a Notis app source snapshot into a local project folder.
 
-When to use: Edit an installed app locally. Preserve any local edits, pull and link the latest persisted source, then increment package.json notisAppVersion above that release before notis apps dev; continue with build and deploy.
+When to use: Edit an installed app. Preserve local edits, pull and link its persisted source, then build, verify and deploy.
 
 Options:
 - `--force` — Overwrite a non-empty target directory.
@@ -230,20 +174,15 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis apps deploy [dir]`
 
-Build and upload the app to the linked Notis app.
+Build, verify and release the linked Workspace app.
 
-When to use: Ship the installed app to production for the linked user/team app. A project that has only a development app is promoted in place on first deploy: same app id, same databases, dev markers removed. Deploy refuses an artifact that has no passing `notis apps verify` for exactly these built bytes, so run verify after the last build. This command does not publish to the app store.
+When to use: Build, verify and release the linked personal or team Workspace app. This command does not publish to the Store.
 
 Options:
 - `--app-id <id>` — Override linked app ID.
-- `--skip-build` — Skip the build step (use existing .notis/output/).
-- `--direct` — Explicitly upload to Supabase storage, bypassing the backend server.
+- `--skip-build` — Reuse unchanged build output; automated verification still runs.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis apps deploy`
-- `npx --package @notis_ai/cli@latest -- notis apps deploy --skip-build`
-- `npx --package @notis_ai/cli@latest -- notis apps deploy --app-id abc123`
-- `npx --package @notis_ai/cli@latest -- notis apps deploy --direct`
 
 ### `npx --package @notis_ai/cli@latest -- notis apps publish [dir]`
 

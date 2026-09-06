@@ -71,122 +71,57 @@ This is especially important when:
 
 Treat the Notis CLI the same way you would treat a Composio-style tool router flow: discover what is available first, then execute the right tool through the CLI.
 
-## Section 1: Developing Notis Apps
+## Release-only delivery
 
-Use this section when the goal is to create or update a Notis app from a local
-workspace or a hosted sandbox.
+Workspace runs released app versions only. Local and cloud agents use the same workflow.
+A request to create or edit app source authorizes updating that app in Workspace after checks pass.
+Explicit read-only, preview-only or no-deploy requests stop at local artifacts and checks: no remote
+app/resource creation or mutation, Workspace preview, deployment or live verification. Store
+publication always needs separate explicit approval.
 
-Notis apps are Vite + React projects using `@notis/sdk`. After init or pull and editing, choose one terminal branch: local Desktop uses `dev → build → verify → user approval → deploy`; hosted sandbox uses `build → verify → identity/schema reconciliation → deploy`; Store submission is a later, separately confirmed action.
+1. Inspect the effective CLI profile and the exact app's current version with `apps list --json`.
+   For an existing released app, preserve local edits and pull its exact app ID into the intended
+   directory. Retain the profile/app link, deployment version and revision. An unreleased container
+   has no source to pull: recover its original local source and edits, or scaffold locally only if
+   that source cannot be recovered. Confirm its exact ID, edit permission and personal/team scope,
+   then run `apps link <app-id> <source-directory> --expected-version 0` to resume that same container.
+   If a release has appeared, preserve local source separately, pull the current release into a fresh
+   directory and reapply the intended edits. The link guard compares against the same remote read
+   whose version/revision it saves; deploy still rejects a release racing after that read. Do not pull
+   missing source or create another remote app to recover a failed first release.
+2. Scaffold a new app locally, or edit the pulled source. Run `apps build` and automated
+   `apps verify` before new remote creation. Missing browser tooling or failed checks blocks delivery;
+   printed URLs and `--no-browser` are not passing verification. Install browser tooling with
+   `npm exec --yes --package agent-browser@latest -- agent-browser install`; if needed run
+   `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify`.
+3. Reconcile `apps list --json` and the exact intended name/slug, edit permission and personal/team
+   scope. Default to personal only when no team was requested. Reuse a matching editable identity;
+   stop on ambiguous matches or conflicting identity/scope. Create only when none exists, using
+   `apps create "<exact app name>" .` (or `--team-id <verified team ID>`). Read back the same ID.
+   A failed first release leaves a container: reuse it, never duplicate or automatically delete it.
+4. Compare existing app-owned schemas. Create only necessary missing databases against that exact
+   app ID. Change existing schemas by verified database ID and ownership, and only with backward-
+   compatible changes before release. Read back each change. Breaking changes need separate coordination.
+   Ordinary note/record edits and existing resource editors remain immediate.
+5. Run `apps deploy` against the same linked app. It builds, verifies a frozen source/artifact
+   snapshot with stubs, then sends that snapshot to the backend. `--skip-build` accepts only unchanged,
+   valid output and still verifies. Do not bypass the backend or create implicitly on deploy.
+6. Read back the exact installed app ID, integer version and Portal URL with `apps list --json`.
+   Run `apps verify --mode live` and open the installed app in the actual Portal for surface proof.
+   A live harness check alone does not prove the deployed bundle rendered in Portal.
+7. Report **failed before activation**, **deployed but unverified**, or **outcome unknown** accurately.
+   Never blindly replay an uncertain create/deploy response; reconcile its exact identity/version first.
+   `apps publish --confirm-ready` is **Publish to Store**, separately approved and listing-gated.
+   Workspace delivery is **Update app**, with no Store screenshot/readiness requirement.
 
-Important: `deploy` only updates the installed app artifact for the current user or team. Store submission is a separate, user-gated step. After the user explicitly confirms that the current App Details page and Store listing are ready, `apps publish --confirm-ready` submits the matching deployed version through the backend review flow.
+### Restore historical source as a new release
 
-Choose the execution path before changing the app:
-
-- **Hosted sandbox**: a sandbox instruction or `/vercel/sandbox` working tree
-  proves that Desktop cannot mount the source. Do not run `apps dev`. A create
-  or edit request authorizes `apps deploy` after `apps build` and automated
-  `apps verify` pass unless the user explicitly requests preview-only,
-  read-only, or no deployment; inspection, review, and diagnosis stay
-  read-only. `apps pull <app-id>` links an existing app. Test before any remote
-  mutation. If an opt-out applies, stop there without create/link, database
-  mutation, deploy, or post-deploy checks. Otherwise, for a new unlinked app,
-  compare profile state and `apps list --json` with the canonical
-  `notis.config.ts` `name` and intended personal/team scope: link one exact
-  editable non-development match after a metadata-only (`include_documents:
-  false`) detail read proves scope, fail on any ambiguity/development
-  collision/scope mismatch, or create only on zero exact matches. Default new
-  apps to personal scope unless the user explicitly asks for team scope. Prove
-  canonicalizing the config title yields its name. For personal creation, run
-  `apps create "<canonical-config-title>" . --json` exactly once. For explicit
-  team scope, discover/describe and dry-run `LOCAL_NOTIS_CREATE_APP`, execute it
-  exactly once with team visibility and verified current team scope, verify the
-  returned identity/scope, and link that exact id. In a fresh sandbox, install Agent Browser with `npm exec --yes --package
-  agent-browser@latest -- agent-browser install` and run verification through
-  `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest --
-  notis apps verify`. Read back the exact app id/version and Portal URL with `apps list --json`, run
-  the same combined command with `apps verify --mode live`, and return the exact
-  Portal URL. Stop before deployment on test failure and before retry on an
-  outcome-unknown create or deploy.
-- **Local computer**: run `apps dev`, let the user test the DEV-badged app, and
-  deploy that development identity directly only after the user explicitly
-  asks; never run `apps create` after `apps dev`.
-
-### App development workflow
-
-1. Scaffold a new app (every published Store app is a scaffold; `notis apps scaffolds list [--search <term>]` lists them from the public registry, and `--from <slug>` downloads that app's source):
-   - `npx --package @notis_ai/cli@latest -- notis apps init ["My App"] [--from <slug>]`
-2. Or pull an existing app's source to edit it (the project is linked automatically):
-   - `npx --package @notis_ai/cli@latest -- notis apps pull <app-id>`
-   - then run `npm install`, increment `notisAppVersion`, and edit
-3. **Local Desktop branch:** run `apps dev` for live testing, confirm the DEV
-   app and root/mount acceptance checks, then run `apps build` and `apps verify`.
-   Let the user test the DEV app and stop for explicit user approval. When
-   approved, run exactly one `apps deploy` to promote the existing `dev_app_id`
-   (or update the already linked app), then read it back. Never run `apps create`
-   after `apps dev`.
-4. **Hosted sandbox branch:** bootstrap Agent Browser as described above, then
-   run `apps build` followed by the automated hosted `apps verify`. If automatic
-   deployment is opted out, stop after those tests with no app create/link,
-   database mutation, deploy, or post-deploy check. Otherwise, for a new hosted
-   app, reconcile `.notis/state.json` and `apps list --json` against
-   the canonical config `name` and intended scope (personal by default; team
-   only when explicitly requested). Include
-   development rows as collision checks. Link one exact editable non-dev match
-   only after a metadata-only (`include_documents: false`) exact app detail
-   proves scope; fail on multiple/scope mismatch, or create only on zero. Prove
-   canonicalize(config title) equals config name. For personal creation, run
-   `apps create "<canonical-config-title>" . --json` exactly once and verify id,
-   slug, edit permission, and personal scope. For explicit team scope, discover
-   and describe `LOCAL_NOTIS_CREATE_APP`, dry-run it, then execute it exactly once
-   with the canonical title, team visibility, and verified current team scope;
-   verify id/slug/team scope/edit permission and `apps link` that exact id. Then
-   compare declared databases, mutate only
-   missing/changed backward-compatible schemas with ownership proof, run exactly
-   one `apps deploy`, and read back id/version/Portal URL before live verify.
-5. Check project health:
-   - `npx --package @notis_ai/cli@latest -- notis apps doctor`
-6. Only after the user explicitly approves the current Store preview, submit the deployed version:
-   - `npx --package @notis_ai/cli@latest -- notis apps publish --confirm-ready`
-
-### App development rules
-
-- Always `build` before `deploy`; run `verify` before deploy when validating an app change.
-- Never run `apps dev` in a hosted sandbox. Deploy every successfully verified
-  sandbox app create or edit unless explicitly told preview-only, read-only, or
-  no-deploy, then prove the remote id/version and live runtime. Other app tasks
-  do not authorize mutation.
-- Deploy does not create databases. Compare first; materialize only missing or
-  changed hosted-app schemas, and verify exact ownership before an update.
-- Build and verify before hosted app creation or database mutation. Only
-  backward-compatible schema expansion may happen before deployment.
-- In hosted sandboxes, bootstrap `agent-browser` and include its package on the
-  verification command's `PATH`; `--no-browser` is not a passing automated gate.
-- Never deploy a local Desktop edit until the user tests the DEV app and asks.
-- Prefer `npx --package @notis_ai/cli@latest -- notis apps deploy` for the first deploy of a project already run with `apps dev`; it promotes the development app in place.
-- Link before `deploy`, or pass `--app-id <id>` when intentionally deploying without writing local link state.
-- Use `npx --package @notis_ai/cli@latest -- notis apps doctor` to diagnose configuration or dependency issues.
-- Use `npx --package @notis_ai/cli@latest -- notis apps list --json` to discover exact slugs, permissions, versions, and Portal links before linking and after deployment; use a metadata-only (`include_documents: false`) exact app-detail read to prove personal/team scope without materializing databases.
-- Never treat deploy approval as Store approval. Set visibility to Team or Public first, then run `apps publish --confirm-ready` only after the user explicitly confirms the current App Details page and Store listing.
-- `apps publish --confirm-ready` submits the deployed snapshot through the same backend review flow as App Details. It must reject missing confirmation, incomplete listing media, a local/deployed version mismatch, private visibility, or an existing pending review.
-
-### App development command reference
-
-- `npx --package @notis_ai/cli@latest -- notis apps list` -- list accessible apps
-- `npx --package @notis_ai/cli@latest -- notis apps init` -- scaffold a new Vite + React + `@notis/sdk` project
-- `npx --package @notis_ai/cli@latest -- notis apps pull <app-id> [dir] [--force] [--source-version <n>]` -- download the persisted source snapshot for an installed app and link the local directory to that app/version; legacy apps must be redeployed once with the current CLI before they can be pulled
-- `npx --package @notis_ai/cli@latest -- notis apps dev` -- discover local apps, register desktop-local dev sessions, and load them as DEV-badged Workspace rows in the Electron Portal
-- `npx --package @notis_ai/cli@latest -- notis apps build` -- compile the production artifact
-- `npx --package @notis_ai/cli@latest -- notis apps verify` -- headless render-smoke packaged routes before deploy
-- `npx --package @notis_ai/cli@latest -- notis apps create` -- create a fresh remote app and optionally link the local project
-- `npx --package @notis_ai/cli@latest -- notis apps link` -- associate the project with a remote app
-- `npx --package @notis_ai/cli@latest -- notis apps deploy` -- upload the artifact and editable source snapshot to the linked installed app in Notis
-- `npx --package @notis_ai/cli@latest -- notis apps deploy --direct` -- deploy directly to Supabase storage, bypassing the backend server (auto-fallback when server is down)
-- `npx --package @notis_ai/cli@latest -- notis apps publish --confirm-ready` -- submit the matching deployed version for Team or Public Store review after explicit user confirmation
-- `npx --package @notis_ai/cli@latest -- notis apps doctor` -- run project diagnostics
-
-App Details remains the visual review surface and offers the same Publish/Update action. The CLI command is for agents completing an already approved submission; it does not weaken the separate confirmation gate.
-
-If the task is specifically about app structure, runtime behavior, or database/view packaging, pair this skill with the `notis-apps` skill. Use `notis-cli` for the command workflow and `notis-apps` for the product/runtime contract.
+Pull the current release into a fresh checkout first. Retrieve historical source into a different
+folder (`apps pull <id> <historical-dir> --source-version <n>`). Replace source in the current checkout
+without replacing its `.notis` profile/app link or deployment base. Update `package.json`'s
+`notisAppVersion`, check compatibility with current resources, build, verify and deploy as a new
+release. Preserve app/database/skill IDs. Never decrement the deployment counter, rewrite snapshots,
+or claim to undo user data or external actions.
 
 ## IMPORTANT: When NOT to use tool access for app development
 
@@ -366,23 +301,21 @@ workspace it belongs to, or to switch to a real account profile.
 
 ### Deploy fails with "network_error" or "fetch failed"
 
-The CLI defaults to the live Notis API (`https://api.notis.ai`, or
-`https://api-beta.notis.ai` when the signed-in user is on beta). Solutions:
+Run `notis doctor` to verify the effective profile and endpoint. Read back the exact app ID,
+version and release state before retrying. An uncertain network response is not proof of rollback.
+There is no direct storage deployment path. Repair authentication when needed without changing the
+intended profile, then reconcile the previous outcome before starting a new release.
 
-1. Run `npx --package @notis_ai/cli@latest -- notis doctor` and confirm `api_base` is a live Notis host
-2. Use `--direct` for app deploys when you only need Supabase storage upload: `npx --package @notis_ai/cli@latest -- notis apps deploy --direct`
-3. If auth looks stale, run `npx --package @notis_ai/cli@latest -- notis login` and retry
+Localhost backends are a Notis-developer test lane owned by `./dev.sh` and its lease-backed profile.
+Do not silently switch between that lane and a live account.
 
-Localhost backends are a Notis-developer test lane only. Do not retarget the CLI at loopback from this skill — that path is owned by `./dev.sh`, which exposes its own lease-backed `dev-*` profile.
+### Health or tool-roundtrip errors
 
-### `npx --package @notis_ai/cli@latest -- notis doctor` shows health/tool_roundtrip errors
+Local scaffold/build and stub verification can run without an API connection (dependencies and
+browser tooling must already be available). `link`, `pull`, `create`, `list`, `deploy`, live verification
+and Store operations require the intended backend. Never bypass it.
 
-The CLI health check pings the configured live API. App development commands that are `backend_call: local` (`init`, `build`, `verify`, `link`, `doctor`) work offline. `dev`, `pull`, `create`, `list`, and normal `deploy` need the live API; `deploy --direct` can bypass it when Supabase credentials are available.
+### Stale bundle in Portal after an update
 
-### Stale bundle in the portal after deploy
-
-The portal caches app bundles by version. If you re-deploy to the same version, the portal may serve the cached old bundle. Solutions:
-
-1. Hard refresh the portal page (Cmd+Shift+R)
-2. Open browser DevTools > Application > Storage > Clear site data
-3. The bundle cache key includes version number -- incrementing the version forces a fresh load
+Every successful release gets a new integer deployment version. Read back that version, then use
+normal refresh/navigation to load it. Never overwrite or decrement an existing deployment version.

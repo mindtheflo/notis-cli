@@ -16,7 +16,7 @@ function project() {
   return projectDir;
 }
 
-test('development and installed links are scoped by authenticated environment', () => {
+test('Installed links are scoped by authenticated environment', () => {
   const projectDir = project();
   const production = appLinkedStateProfileKey({
     apiBase: 'https://api.notis.ai',
@@ -26,12 +26,10 @@ test('development and installed links are scoped by authenticated environment', 
     apiBase: 'https://api-beta.notis.ai/',
     userId: 'user-1',
   });
-  writeLinkedState(projectDir, { app_id: 'prod-app', dev_app_id: 'prod-dev' }, production);
-  writeLinkedState(projectDir, { app_id: 'beta-app', dev_app_id: 'beta-dev' }, beta);
+  writeLinkedState(projectDir, { app_id: 'prod-app' }, production);
+  writeLinkedState(projectDir, { app_id: 'beta-app' }, beta);
   assert.equal(readLinkedState(projectDir, production).app_id, 'prod-app');
-  assert.equal(readLinkedState(projectDir, production).dev_app_id, 'prod-dev');
   assert.equal(readLinkedState(projectDir, beta).app_id, 'beta-app');
-  assert.equal(readLinkedState(projectDir, beta).dev_app_id, 'beta-dev');
 });
 
 test('legacy scalar links migrate compatibly into the first authenticated profile', () => {

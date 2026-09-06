@@ -2,7 +2,6 @@ import { defineNotisApp } from '@notis/sdk/config';
 
 export default defineNotisApp({
   name: 'my-notis-app',
-  devSlug: 'my-notis-app',
   title: 'My Notis App',
   description: 'A focused Notis app with one route and one database-backed workflow.',
   icon: 'phosphor:squares-four',

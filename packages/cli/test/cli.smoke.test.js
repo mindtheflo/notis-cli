@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { appLinkedStateProfileKey, readLinkedState, writeLinkedState } from '../src/runtime/app-platform.js';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -88,14 +89,24 @@ function startFakeBackend() {
       return;
     }
 
+    if (payload.tool_name === 'LOCAL_NOTIS_LIST_APPS') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(state.inventoryResponse ?? { apps: state.app ? [state.app] : [] }));
+      return;
+    }
+
     if (payload.tool_name === 'LOCAL_NOTIS_CREATE_APP') {
       state.app = {
         id: 'app-smoke-123',
         name: payload.arguments?.name || 'Smoke App',
+        slug: payload.arguments?.slug || 'smoke-app',
         description: payload.arguments?.description || null,
         icon: payload.arguments?.icon || null,
         current_version: state.version,
         status: 'draft',
+        can_edit: true,
+        team_id: null,
+        updated_at: state.updatedAt,
       };
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
@@ -221,7 +232,60 @@ test('CLI happy path smoke test covers create', async () => {
     assert.ok(createRequest, 'expected a create_app request to be sent');
     assert.equal(createRequest.arguments.name, 'Smoke App');
     assert.equal(createRequest.arguments.description, undefined);
+    const retry = await runCli(['apps', 'create', 'Smoke App', '--json'], { homeDir, env: sharedEnv });
+    assert.equal(retry.status, 0, retry.stdout);
+    assert.equal(JSON.parse(retry.stdout).data.reused, true);
+    assert.equal(fakeBackend.state.requests.filter(request => request.tool_name === 'LOCAL_NOTIS_CREATE_APP').length, 1);
+    // A later genuinely new create must not replay the completed creation.
+    fakeBackend.state.app = null;
+    const recreated = await runCli(['apps', 'create', 'Smoke App', '--json'], { homeDir, env: sharedEnv });
+    assert.equal(recreated.status, 0, recreated.stdout);
+    const creates = fakeBackend.state.requests.filter(request => request.tool_name === 'LOCAL_NOTIS_CREATE_APP');
+    assert.equal(creates.length, 2);
+    assert.notEqual(creates[0].idempotency_key, creates[1].idempotency_key);
+
   } finally {
     await fakeBackend.close();
   }
+});
+
+for (const inventoryResponse of [{ status: 'error', message: 'unavailable' }, { apps: null }, { successful: false, apps: [] }]) {
+  test(`create refuses incomplete inventory: ${JSON.stringify(inventoryResponse)}`, async () => {
+    const backend = await startFakeBackend();
+    const homeDir = mkdtempSync(join(tmpdir(), 'notis-create-inventory-'));
+    try {
+      backend.state.inventoryResponse = inventoryResponse;
+      const result = await runCli(['apps', 'create', 'No Duplicate', '--json'], {
+        homeDir, env: { NOTIS_API_BASE: backend.apiBase, NOTIS_NON_INTERACTIVE: '1' },
+      });
+      assert.notEqual(result.status, 0, result.stdout);
+      assert.equal(backend.state.requests.some(request => request.tool_name === 'LOCAL_NOTIS_CREATE_APP'), false);
+    } finally { await backend.close(); }
+  });
+}
+
+test('relink refreshes the same release revision but rejects a changed deployment base', async () => {
+  const backend = await startFakeBackend();
+  const homeDir = mkdtempSync(join(tmpdir(), 'notis-relink-home-'));
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-relink-source-'));
+  const sourcePath = join(projectDir, 'local-edit.txt');
+  writeFileSync(sourcePath, 'preserved local source');
+  const profileKey = appLinkedStateProfileKey({ apiBase: backend.apiBase, userId: 'smoke-user' });
+  writeLinkedState(projectDir, { app_id: 'app-smoke-123', version: 3, expected_updated_at: 'old-revision' }, profileKey);
+  backend.state.app = { id: 'app-smoke-123', current_version: 3, updated_at: 'new-revision', can_edit: true };
+  try {
+    const args = ['apps', 'link', 'app-smoke-123', projectDir, '--json'];
+    const options = { homeDir, env: { NOTIS_API_BASE: backend.apiBase, NOTIS_NON_INTERACTIVE: '1' } };
+    const same = await runCli(args, options);
+    assert.equal(same.status, 0, same.stdout + same.stderr);
+    const refreshed = readLinkedState(projectDir, profileKey);
+    assert.equal(refreshed.version, 3);
+    assert.equal(refreshed.expected_updated_at, 'new-revision');
+    backend.state.app.current_version = 4;
+    const changed = await runCli(args, options);
+    assert.notEqual(changed.status, 0, changed.stdout);
+    assert.deepEqual(readLinkedState(projectDir, profileKey), refreshed);
+    assert.equal(readFileSync(sourcePath, 'utf8'), 'preserved local source');
+    assert.ok(backend.state.requests.every(request => request.tool_name === 'LOCAL_NOTIS_LIST_APPS'));
+  } finally { await backend.close(); }
 });

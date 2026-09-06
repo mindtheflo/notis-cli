@@ -1,20 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 
 import {
-  assertVerifiedArtifact,
+  appFilesDigest,
+  buildArtifact,
+  collectArtifactFiles,
+  collectSourceFiles,
+  prepareAppRelease,
   computeArtifactHash,
   readVerifyStamp,
-  UNVERIFIED_DEPLOY_ENV,
   writeVerifyStamp,
 } from '../src/runtime/app-platform.js';
-
-const cliRoot = resolve(import.meta.dirname, '..');
-const binPath = join(cliRoot, 'bin', 'notis.js');
 
 function createBuiltProject() {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-deploy-gate-'));
@@ -33,58 +32,122 @@ const passing = (results = [{ route: 'home', status: 'passed', assertions: [] }]
   results,
 });
 
-test('assertVerifiedArtifact blocks without a stamp, with a failed stamp, and with a stale hash', () => {
+test('standalone verification diagnostics record failures and the exact checked artifact hash', () => {
   const projectDir = createBuiltProject();
   try {
-    assert.throws(() => assertVerifiedArtifact(projectDir, { env: {} }), /Deploy blocked: no "notis apps verify" result/);
-
+    assert.equal(readVerifyStamp(projectDir), null);
     writeVerifyStamp(projectDir, { ...passing(), ok: false, summary: { total: 1, passed: 0, failed: 1, manual: 0 } });
-    assert.throws(() => assertVerifiedArtifact(projectDir, { env: {} }), /last "notis apps verify" failed \(1 route\)/);
-
+    assert.equal(readVerifyStamp(projectDir).ok, false);
     writeVerifyStamp(projectDir, passing());
-    assert.equal(assertVerifiedArtifact(projectDir, { env: {} }).gated, true);
-
+    const checked = readVerifyStamp(projectDir);
+    assert.equal(checked.ok, true);
+    assert.equal(checked.artifact_hash, computeArtifactHash(projectDir));
     writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export const app = 2;\n');
-    assert.notEqual(readVerifyStamp(projectDir).artifact_hash, computeArtifactHash(projectDir));
-    assert.throws(() => assertVerifiedArtifact(projectDir, { env: {} }), /artifact changed since the last passing/);
+    assert.notEqual(checked.artifact_hash, computeArtifactHash(projectDir));
+    // The stored diagnostics remain an honest record of the old bytes, not
+    // deployment authority. Frozen deploy rejection is exercised end-to-end
+    // in apps-verify.test.js, including a forged stamp and old bypass env var.
+    assert.deepEqual(readVerifyStamp(projectDir), checked);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
 
-test('the break-glass environment variable allows the deploy but reports why', () => {
+function writeReceipt(projectDir) {
+  writeFileSync(join(projectDir, '.notis', 'build-receipt.json'), JSON.stringify({
+    source_hash: appFilesDigest(collectSourceFiles(projectDir)),
+    artifact_hash: appFilesDigest(collectArtifactFiles(projectDir)),
+  }));
+}
+
+test('build and release reject a linked .notis parent without deleting or staging outside', async () => {
   const projectDir = createBuiltProject();
+  const outside = mkdtempSync(join(tmpdir(), 'notis-release-outside-'));
   try {
-    const gate = assertVerifiedArtifact(projectDir, { env: { [UNVERIFIED_DEPLOY_ENV]: '1' } });
-    assert.equal(gate.gated, false);
-    assert.match(gate.reason, /no "notis apps verify" result/);
+    writeFileSync(join(outside, 'build-receipt.json'), 'outside sentinel');
+    rmSync(join(projectDir, '.notis'), { recursive: true });
+    symlinkSync(outside, join(projectDir, '.notis'), 'dir');
+    await assert.rejects(buildArtifact(projectDir), /unsafe target/);
+    assert.throws(() => prepareAppRelease(projectDir), /unsafe target/);
+    assert.equal(readFileSync(join(outside, 'build-receipt.json'), 'utf8'), 'outside sentinel');
+    assert.deepEqual(readdirSync(outside), ['build-receipt.json']);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 
-test('apps deploy refuses an unverified artifact before touching the network, including --direct', () => {
+test('release rejects a linked receipt and creates no frozen directory', () => {
   const projectDir = createBuiltProject();
+  const outside = mkdtempSync(join(tmpdir(), 'notis-receipt-outside-'));
   try {
-    for (const extra of [[], ['--direct']]) {
-      const result = spawnSync(process.execPath, [
-        binPath, 'apps', 'deploy', projectDir, '--app-id', 'app-123', '--skip-build', '--json', ...extra,
-      ], {
-        cwd: cliRoot,
-        env: {
-          ...process.env,
-          HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
-          NODE_ENV: 'test',
-          NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
-          NOTIS_JWT: 'test-token',
-          [UNVERIFIED_DEPLOY_ENV]: '',
-        },
-        encoding: 'utf-8',
-      });
-      assert.notEqual(result.status, 0);
-      assert.match(`${result.stdout}\n${result.stderr}`, /Deploy blocked: no \\?"notis apps verify\\?" result/);
-    }
+    writeReceipt(projectDir);
+    const receipt = join(projectDir, '.notis', 'build-receipt.json');
+    renameSync(receipt, join(outside, 'receipt'));
+    symlinkSync(join(outside, 'receipt'), receipt);
+    assert.throws(() => prepareAppRelease(projectDir), /Unsafe build receipt/);
+    assert.deepEqual(readdirSync(join(projectDir, '.notis')).sort(), ['build-receipt.json', 'output']);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('frozen staging uses captured bytes and closes idempotently', () => {
+  const projectDir = createBuiltProject();
+  try {
+    writeReceipt(projectDir);
+    const release = prepareAppRelease(projectDir);
+    writeFileSync(join(projectDir, 'package.json'), '{}');
+    assert.notEqual(readFileSync(join(release.projectDir, 'package.json'), 'utf8'), '{}');
+    release.close();
+    release.close();
+    assert.equal(existsSync(release.projectDir), false);
+  } finally { rmSync(projectDir, { recursive: true, force: true }); }
+});
+
+test('release cleanup rejects a replaced .notis parent without removing outside or retained staging', () => {
+  const projectDir = createBuiltProject();
+  const outside = mkdtempSync(join(tmpdir(), 'notis-close-outside-'));
+  try {
+    writeReceipt(projectDir);
+    const release = prepareAppRelease(projectDir);
+    const frozenName = release.projectDir.split('/').at(-1);
+    mkdirSync(join(outside, frozenName));
+    writeFileSync(join(outside, frozenName, 'keep'), 'outside sentinel');
+    renameSync(join(projectDir, '.notis'), join(projectDir, '.notis-retained'));
+    symlinkSync(outside, join(projectDir, '.notis'), 'dir');
+    assert.throws(() => release.close(), /unsafe target/);
+    assert.equal(readFileSync(join(outside, frozenName, 'keep'), 'utf8'), 'outside sentinel');
+    assert.ok(existsSync(join(projectDir, '.notis-retained', frozenName)));
+    assert.ok(!process.listeners('exit').includes(release.close));
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('build pins .notis identity across a parent swap before chdir', async () => {
+  const projectDir = createBuiltProject();
+  const outside = mkdtempSync(join(tmpdir(), 'notis-pin-outside-'));
+  const originalChdir = process.chdir;
+  let swapped = false;
+  try {
+    writeFileSync(join(outside, 'build-receipt.json'), 'outside sentinel');
+    process.chdir = function (path) {
+      if (path === '.notis' && !swapped) {
+        swapped = true;
+        renameSync(join(projectDir, '.notis'), join(projectDir, '.notis-retained'));
+        symlinkSync(outside, join(projectDir, '.notis'), 'dir');
+      }
+      return originalChdir.call(process, path);
+    };
+    await assert.rejects(buildArtifact(projectDir), /target changed/);
+    assert.equal(swapped, true);
+    assert.equal(readFileSync(join(outside, 'build-receipt.json'), 'utf8'), 'outside sentinel');
+  } finally {
+    process.chdir = originalChdir;
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });

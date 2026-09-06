@@ -198,8 +198,6 @@ export interface NotisAppToolBinding {
 export interface NotisAppConfig {
   /** URL-safe app slug. Existing apps may still use a display name here. */
   name: string;
-  /** Stable local-development slug. Defaults to a slug derived from `name`. */
-  devSlug?: string;
   /** Human display title, Raycast-style. Falls back to `name`. */
   title?: string;
   description?: string;

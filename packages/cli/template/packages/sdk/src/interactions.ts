@@ -29,7 +29,8 @@ export type {
   SelectionMarqueeRect,
   UseCollectionInteractionsOptions,
 } from './hooks/useCollectionInteractions';
-export { MultiSelectActionBar } from './components/MultiSelectActionBar';
+export { MultiSelectActionBar, BULK_ACTION_LAYOUT_EVENT } from './components/MultiSelectActionBar';
+export type { BulkActionLayoutDetail } from './components/MultiSelectActionBar';
 export { MultiSelectCheckbox, MultiSelectCheckbox as SelectionCheckbox } from './components/MultiSelectCheckbox';
 export { MultiSelectDragOverlay, MultiSelectDragOverlay as SelectionMarquee } from './components/MultiSelectDragOverlay';
 export { ShortcutHints } from './components/ShortcutHints';

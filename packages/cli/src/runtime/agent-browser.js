@@ -597,24 +597,26 @@ export async function evalDesignAssertions(sessionName, { viewport = null, timeo
     const payload = parseAgentBrowserJson(result.stdout);
     const raw = payload?.data?.result ?? payload?.result ?? payload?.data ?? null;
     const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!Array.isArray(value)) return [];
+    if (!Array.isArray(value)) throw new Error('Design evaluation did not return a findings array.');
     return value.map((finding) => ({ ...finding, viewport: viewport || finding.viewport || null }));
-  } catch {
-    return [];
+  } catch (error) {
+    return { tool_error: { phase: 'design_eval_parse', message: error.message } };
   }
 }
 
 /**
- * Run the design assertions at each viewport. A viewport that agent-browser
- * cannot set is skipped (older agent-browser builds) rather than failing the
- * route, so verify degrades to the static lint instead of blocking.
+ * Run every requested viewport. Missing browser checks are incomplete proof,
+ * not a passing design result, even when static source lint passed.
  */
 export async function collectDesignFindings(sessionName, { viewports = DEFAULT_DESIGN_VIEWPORTS, settleMs = 350, skipLoadingCheck = false } = {}) {
   const findings = [];
   let toolError = null;
   for (const viewport of viewports) {
     const applied = await setViewport(sessionName, viewport.width, viewport.height);
-    if (!applied) continue;
+    if (!applied) {
+      toolError ||= { phase: 'design_viewport', message: `Could not set ${viewport.name} viewport.` };
+      continue;
+    }
     await delay(settleMs);
     const result = await evalDesignAssertions(sessionName, { viewport: viewport.name });
     if (Array.isArray(result)) {

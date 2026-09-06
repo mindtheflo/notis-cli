@@ -185,56 +185,29 @@ function renderAppsSkillDoc() {
 
 When running outside the Notis container, use the \`notis\` CLI to work with Notis Apps locally.
 
-Notis apps are Vite + React projects using \`@notis/sdk\`. The workflow is init, dev, build, verify, create/link, pull, deploy, and doctor.
+Notis apps are Vite + React projects using \`@notis/sdk\`. Workspace runs released versions only.
+Local and cloud create/edit requests authorize Workspace delivery after checks; explicit read-only,
+preview-only or no-deploy requests stop at local artifacts without remote mutation. Store publication
+requires separate approval.
 
-Important: \`notis apps deploy\` updates the linked installed app. It is not an app-store publishing flow.
+## Core workflow
 
-## Setup
+1. Preserve local edits; pull the exact existing released app and current deployment base. For an
+   unreleased container, recover original source (or scaffold locally if unrecoverable), reconcile
+   its exact ID/current version/edit permission/scope and run apps link <app-id> <source-directory>
+   --expected-version 0. If a release has appeared, preserve local source separately and pull/reapply
+   on that current release. Never pull missing source or create another remote recovery app.
+2. Build and automatically verify before new remote creation. Browser tooling is required.
+3. Reconcile exact profile/app identity and personal/team scope. Create only if absent; never duplicate
+   a failed first-release container. Prepare only necessary backward-compatible resource changes.
+4. Deploy the same linked app. Deploy builds, verifies a frozen snapshot, then uploads those bytes.
+   \`--skip-build\` still verifies and rejects stale output. No Store media requirement applies.
+5. Read back the exact installed ID/version/Portal URL, run live verification, and open the installed
+   app in Portal. Report unknown or deployed-but-unverified outcomes; never blindly redeploy.
 
-Run \`${NPX_NOTIS} login\` to authorize the CLI. Run commands through NPX, for example \`${NPX_NOTIS} apps list\`.
-
-For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NOTIS_JWT=<token>\` and use \`--api-base <server-url>\` when targeting a non-default server.
-
-## Core Workflow
-
-1. Scaffold a new app:
-
-\`\`\`bash
-npx --package @notis_ai/cli@latest -- notis apps init
-\`\`\`
-
-2. Or pull an installed app's saved source snapshot:
-
-\`\`\`bash
-npx --package @notis_ai/cli@latest -- notis apps pull <app-id> ./my-app
-cd ./my-app
-npm install
-\`\`\`
-
-3. Develop locally with live reload:
-
-\`\`\`bash
-npx --package @notis_ai/cli@latest -- notis apps dev
-\`\`\`
-
-4. Build the production artifact:
-
-\`\`\`bash
-npx --package @notis_ai/cli@latest -- notis apps build
-\`\`\`
-
-5. Verify the built artifact headlessly:
-
-\`\`\`bash
-npx --package @notis_ai/cli@latest -- notis apps verify
-\`\`\`
-
-6. Link the project if it was not created or pulled from an app, then deploy:
-
-\`\`\`bash
-npx --package @notis_ai/cli@latest -- notis apps link <app-id>
-npx --package @notis_ai/cli@latest -- notis apps deploy
-\`\`\`
+For source restoration, pull the current release into a fresh checkout and historical source into
+another folder. Replace source while retaining the current profile/app link and deployment base,
+change the package release label, check resource compatibility and deploy as a new release.
 
 ## Commands
 

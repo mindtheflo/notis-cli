@@ -2,7 +2,6 @@ import { defineNotisApp } from '@notis/sdk/config';
 
 export default defineNotisApp({
   name: 'demo-dice',
-  devSlug: 'demo-dice',
   title: 'Demo Dice',
   description: 'Fixture app standing in for a published Store app in the public registry.',
   tagline: 'Roll dice from a published Store app.',
