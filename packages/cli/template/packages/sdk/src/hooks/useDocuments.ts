@@ -19,6 +19,8 @@ export interface UseDocumentsOptions {
   offset?: number;
   /** Fetch every page, starting at offset, instead of returning only one page. */
   fetchAll?: boolean;
+  /** App-view lists can omit bodies until opening/searching a document. Default: true. */
+  includeContent?: boolean;
   enabled?: boolean;
 }
 
@@ -47,7 +49,7 @@ export function useDocuments(
 ): UseDocumentsResult {
   const runtime = useNotisRuntime();
   const query = useQuery<DocumentRecord[]>(
-    ['documents', databaseSlug, options.filter ?? null, options.pageSize ?? null, options.offset ?? 0, Boolean(options.fetchAll)],
+    ['documents', databaseSlug, options.filter ?? null, options.pageSize ?? null, options.offset ?? 0, Boolean(options.fetchAll), options.includeContent !== false],
     async () => {
       if (!runtime) throw new Error('Notis runtime not available');
       const allDocuments: unknown[] = [];
@@ -58,6 +60,7 @@ export function useDocuments(
           query: {
             ...(options.filter ?? {}),
             ...(options.pageSize !== undefined ? { page_size: options.pageSize } : {}),
+            ...(options.includeContent === false ? { include_content: false } : {}),
           },
           ...(offset > 0 ? { offset } : {}),
         }, { dedupe: true, readOnly: true });

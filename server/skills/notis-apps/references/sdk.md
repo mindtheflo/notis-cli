@@ -6,8 +6,9 @@ already installs `ShortcutProvider`; app code should not add a second provider.
 | API | Signature | Description |
 |-----|-----------|-------------|
 | `useNotis()` | `() => { app, route, databases, collectionItem, resourceId, ready }` | App metadata, current route, selected collection item, decoded exact-resource id, ready state |
-| `useTool<TArgs, TResult>(name)` | `(name: string) => { call, loading, error }` | Call a declared tool with app-defined argument/result types. Identical idempotent reads may use `call(args, { dedupe: true })`; never dedupe writes |
+| `useTool<TArgs, TResult>(name)` | `(name: string) => { call, loading, error }` | Call a declared tool with app-defined argument/result types. Identified reads use `call(args, { readOnly: true, dedupe: true })`; never dedupe writes. See [cached-read ownership](design.md#instant-view-loading-contract-required). |
 | `useTools()` | `() => { tools, loading }` | List available tools |
+| `useDocuments(slug, opts?)` | `(slug: string, opts?) => { documents, loading, hasData, error, refetch }` | Query an app database. Bodies are included by default. For metadata-only lists, opt into `includeContent: false`; load the opened record with `useDocument` and defer any full-body search query until needed. Metadata and full-content query caches are separate. |
 | `useNotisNavigation()` | `() => { toRoute, toDocument, toApp }` | Navigate between routes (including `toRoute(path, { resourceId })`), documents, or the app root |
 | `useTopBarSearch(opts)` | `({ value, onChange, placeholder?, onSubmit? }) => { setLoading }` | Bind the current view to the Portal-owned top-bar search input |
 | `useBackend()` | `() => { request }` | Raw backend request proxy with JWT auth |

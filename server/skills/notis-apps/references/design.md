@@ -1,13 +1,56 @@
 ## Building an App
 
+### Design defaults
+
+- Start from the closest Store scaffold (`apps scaffolds list`, then `apps init
+  --from <slug>`), or preserve the existing app's good patterns.
+- Make the main task obvious. Use compact spacing, readable text, plain page
+  titles, Phosphor icons, and the scaffold's buttons, filters, rows, and cards.
+- Match Notis in light and dark mode. Use theme tokens and restrained accents;
+  prefer flat surfaces and selection tints over decorative boxes and shadows.
+- Choose the right layout: `notis-app-shell` for ordinary content;
+  `notis-app-split`, `notis-app-pane-list`, and `notis-app-pane-detail` for a
+  full-viewport list and reader. Keep reading text comfortably sized. Let mobile
+  stack or adapt the content rather than squeeze a desktop layout onto a phone.
+- Let Notis own navigation, folder trees, and search. Use `PageHeading`,
+  `NativeSelect`, `.list-row`, and `useTopBarSearch` instead of duplicating chrome.
+- Prefer inline optimistic edits for simple changes, with rollback on failure.
+  Use a dialog for multi-field edits or destructive confirmation.
+
+Build enforces the existing design rules and reports violations by file/line.
+Use those diagnostics to fix specific problems; passing them does not establish
+that the design is good. See [troubleshooting](troubleshooting.md) when needed.
+
+### Look at the result
+
+Run build and verification, then inspect screenshots of the affected view at a
+normal desktop width and a phone width. For new layouts or theme changes, check
+both themes. Keep the review focused on the task, not a new report or approval cycle:
+
+- Does the layout use the available viewport correctly, including while loading?
+- Do sizing, spacing, text, and scrolling look right? Is anything clipped or overflowing?
+- Do loading placeholders match the real content instead of changing the layout?
+- Does the main interaction work, and do empty/error states explain what to do?
+
+Use temporary fixtures to expose slow reads, empty results, and errors where
+relevant; do not alter real user records for a screenshot. Actually inspect the
+images, fix what is wrong, and recheck the affected state. After an authorized
+release, repeat the affected-view check inside Notis as described in
+[Delivery](release.md). A standalone harness is not proof of the host layout.
+
 ### Step 1: Define the config
+
+Use `~/.notis/apps/<slug>` by default, or pass the user's intended directory to
+`apps init` / `apps pull`. Avoid a parent workspace that selects an unrelated CLI
+profile. Keep the exact installed identity when editing; do not rename a machine
+slug just to correct its display title.
 
 Create `notis.config.ts` with:
 - **name** -- Stable machine identity in lowercase kebab-case, such as `link-building`; do not use display casing here
 - **title** -- Human-facing app name with deliberate casing, such as `Link Building`; preserve brands and acronyms exactly
 - **databases** -- Slug references to existing Notis databases
 - **routes** -- Route-first sidebar entries with explicit `slug`, optional `parentSlug`, and optional `collection.sidebar` tree config
-- **tools** -- Final tool names the app can call at runtime. Use the shared discovery flow (`COMPOSIO_SEARCH_TOOLS`, then `COMPOSIO_GET_TOOL_SCHEMAS`) while building the app, and copy the returned final names into this list. Examples include `LOCAL_NOTIS_DATABASE_QUERY`, `LOCAL_NOTIS_MONID_RUN`, `GMAIL_SEND_EMAIL`, `LOCAL_POSTFORME_CREATE_POST`, and `LOCAL_MCP_<SERVER>_<TOOL>`. App code calls each declared name directly through `useTool`; it does not wrap provider or MCP calls in `COMPOSIO_MULTI_EXECUTE_TOOL`. Access stays scoped to the signed-in user's own connections, native database tools stay scoped to the app's databases unless `capabilities.workspaceDatabases: 'read'` is granted, and metered tools use the CLI-equivalent credit-cap and fail-closed usage-billing path.
+- **tools** -- Final tool names the app can call at runtime. Discover tools with `notis tools search "<what you need>"`, inspect their schemas with `notis tools describe <tool>`, and copy the returned final names into this list. Examples include `LOCAL_NOTIS_DATABASE_QUERY`, `LOCAL_NOTIS_MONID_RUN`, `GMAIL_SEND_EMAIL`, `LOCAL_POSTFORME_CREATE_POST`, and `LOCAL_MCP_<SERVER>_<TOOL>`. App code calls each declared name directly through `useTool`; it does not wrap provider or MCP calls in `COMPOSIO_MULTI_EXECUTE_TOOL`. Access stays scoped to the signed-in user's own connections, native database tools stay scoped to the app's databases unless `capabilities.workspaceDatabases: 'read'` is granted, and metered tools use the CLI-equivalent credit-cap and fail-closed usage-billing path.
 
 For collection-backed sidebars, use the route schema directly:
 
@@ -64,7 +107,7 @@ Build a client-side, multi-route app with one persistent `app/layout.tsx` shell.
 
 | State | Required UI |
 | --- | --- |
-| First read, no successful data | Keep headings/navigation/layout visible; use content-shaped skeletons only in missing regions. No page spinner or whole-page `Loading...`. |
+| First read, no successful data | Keep headings/navigation/layout visible; use content-shaped skeletons only in missing regions, with the same pane bounds as the loaded view. No page spinner or whole-page `Loading...`. |
 | Cached view / successful empty result | Render synchronously from the shared SDK cache. Empty results are real cached results. |
 | Background refresh | Keep current content and selection. Never replace populated content with a skeleton; do not drive the top-bar spinner from mount/refetch state. |
 | Explicit Save / Upload / submitted search | Progress belongs in that button or affected section. Disable only the conflicting action. |
@@ -108,38 +151,6 @@ await upsertTask.call({
 ```
 
 Do NOT pass Notion-style wrappers (`{select: {name: "Todo"}}`) when upserting.
-
-### Design bar (enforced)
-
-Every page must read as a native, flat Notis page. `npx --package @notis_ai/cli@latest -- notis apps build` and the deploy endpoint fail on the banned patterns below with the exact file and line; the only override is an inline `// notis-design-allow: <rule-id> <reason>` comment on the line before (reason required, at least 12 characters). Do not work around a failure by moving the markup elsewhere; fix it.
-
-Banned in `app/` and `components/` (form controls in `components/ui/{input,textarea,checkbox,switch,button}.tsx` are exempt):
-
-- Four-side `border` boxes, `border-dashed`, `divide-*`, `<hr>`, thick `border-l-2` bars, `ring-*` as a box or selection indicator (`focus-visible:ring-2` on controls is fine).
-- `shadow-*` on panels, tiles, rows, or bubbles. Only a floating popover or menu may use `shadow-lg` together with `bg-popover`.
-- Tailwind palette hues (`emerald-500`, `slate-200`, ...), hex colors, gradients, `backdrop-blur`, `font-serif`.
-- Uppercase `tracking-wide` eyebrows and marketing headlines. Page titles are plain nouns matching the route ("Dashboard", "Meetings").
-- Text below 12px (`text-[11px]`); use `text-xs` at minimum and `text-sm` for body.
-- `Badge variant="outline"`, raw `<select>`, in-app search inputs, duplicate sidebars, untouched scaffold placeholder copy.
-- Loading text ("Loading...") or whole-page spinners. Keep headings visible and render `Skeleton` / `ViewSkeleton` from `@notis/sdk` only in the missing region (see the Instant-view contract).
-
-Use instead:
-
-- `Card` from the scaffold: a flat `bg-muted` panel that becomes `bg-background` when nested. Page sections can also be plain `h2` + content with `space-y-8`.
-- `.list-row` / `.list-row-selected` from `@notis/sdk/styles.css` for rows and table bodies (tinted on mobile, transparent with hover tint on desktop, selection by tint). Tables are flat on the page: `text-xs` muted header, `text-sm` rows, no wrapping panel.
-- Stats as bare figures: `text-xs` label over `text-2xl font-semibold tabular-nums`. Tiles (`rounded-2xl bg-muted p-5`) only when they are the page's single grouping device.
-- `PageHeading` for the header, `NativeSelect` for filters, `Badge` variants `default | secondary | destructive`, tokens only (`text-foreground`, `text-muted-foreground`, `text-primary`, `bg-primary/10`, `text-destructive`, `bg-destructive/10`), `tabular-nums` on numbers, `min-w-0` on every grid item that can hold long text.
-- One hairline (`border-t` / `border-b border-border`) between major sections or large list entries is the only allowed line.
-- List-plus-detail pages are full-bleed: `notis-app-split` with `notis-app-pane-list` (tinted, one `border-r` hairline, fixed width on desktop, stacked on mobile) and `notis-app-pane-detail` (`bg-background`), never the centered `notis-app-shell`.
-- Respect the portal theme in both modes. Never hardcode dark mode or an app palette.
-- For Notes-style apps, the folder tree belongs to the portal sidebar when configured via `collection.sidebar`. The page content should complement that chrome, not duplicate or replace it.
-- Do not render any search input inside the app (in-page search rails, "Ask Notis…" pills, command-palette-style bars, etc.). The portal already owns the top-bar search field. Wire your view to it with `useTopBarSearch({ value, onChange, placeholder, onSubmit })` from `@notis/sdk` and let the page filter or refetch on the values it receives. Use its `setLoading` only for an explicit submitted search, never initial view loading or background refresh.
-
-### Sidebar invariants
-
-- When a user asks for folders, sections, or hierarchy in the app sidebar, express that through `routes` and `collection.sidebar` in `notis.config.ts`.
-- Treat an existing collection-tree sidebar as a locked structural requirement unless the user explicitly asks to change navigation architecture.
-- If the sidebar appears missing for the installed app, do not silently redesign around it. Preserve the manifest contract, call out the discrepancy, and treat it as a portal/runtime bug.
 
 ### Step 3: Root layout
 

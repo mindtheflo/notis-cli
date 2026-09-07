@@ -68,6 +68,8 @@ export function createQueryClient(options: {
   maxEntries?: number;
   now?: () => number;
   schedule?: ReturnType<typeof createPrefetchQueue>;
+  /** Bounds idempotent reads only; never retries the underlying callback. */
+  readTimeoutMs?: number;
 } = {}): NotisQueryClient {
   const entries = new Map<string, Entry>();
   const now = options.now ?? Date.now;
@@ -117,14 +119,20 @@ export function createQueryClient(options: {
       const generation = ++value.generation;
       const requestEpoch = epoch;
       const canCommit = () => epoch === requestEpoch && value.generation === generation && entries.get(key) === value;
-      const request = Promise.resolve().then(read).then((data) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('This read took too long. Please retry.')), options.readTimeoutMs ?? 30_000);
+        // Node-based verification must not stay alive for a retired browser read.
+        if (typeof timeout === 'object' && 'unref' in timeout) timeout.unref();
+      });
+      const request = Promise.race([Promise.resolve().then(read), deadline]).then((data) => {
         if (canCommit()) publish(value, { ...value.snapshot, data, hasData: true, isFetching: false, error: null, updatedAt: now() });
         return data;
       }, (reason) => {
         const error = reason instanceof Error ? reason : new Error(String(reason));
         if (canCommit()) publish(value, { ...value.snapshot, isFetching: false, error });
         throw error;
-      }).finally(() => { if (value.pending === request) value.pending = undefined; prune(); });
+      }).finally(() => { clearTimeout(timeout); if (value.pending === request) value.pending = undefined; prune(); });
       value.pending = request;
       publish(value, { ...value.snapshot, isFetching: true, error: null });
       return request;

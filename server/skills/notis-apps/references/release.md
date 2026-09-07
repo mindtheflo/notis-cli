@@ -1,93 +1,99 @@
-## Release-only delivery
+## Delivery
 
-Workspace runs released app versions only. Local and cloud agents use the same workflow.
-A request to create or edit app source authorizes updating that app in Workspace after checks pass.
-Explicit read-only, preview-only or no-deploy requests stop at local artifacts and checks: no remote
-app/resource creation or mutation, Workspace preview, deployment or live verification. Store
-publication always needs separate explicit approval.
+Workspace runs released versions only. Local and cloud agents use the same
+workflow. Run Notis commands through
+`npx --package @notis_ai/cli@latest -- notis ...`.
 
-1. Inspect the effective CLI profile and the exact app's current version with `apps list --json`.
-   For an existing released app, preserve local edits and pull its exact app ID into the intended
-   directory. Retain the profile/app link, deployment version and revision. An unreleased container
-   has no source to pull: recover its original local source and edits, or scaffold locally only if
-   that source cannot be recovered. Confirm its exact ID, edit permission and personal/team scope,
-   then run `apps link <app-id> <source-directory> --expected-version 0` to resume that same container.
-   If a release has appeared, preserve local source separately, pull the current release into a fresh
-   directory and reapply the intended edits. The link guard compares against the same remote read
-   whose version/revision it saves; deploy still rejects a release racing after that read. Do not pull
-   missing source or create another remote app to recover a failed first release.
-2. Scaffold a new app locally, or edit the pulled source. Run `apps build` and automated
-   `apps verify` before new remote creation. Missing browser tooling or failed checks blocks delivery;
-   printed URLs and `--no-browser` are not passing verification. Install browser tooling with
-   `npm exec --yes --package agent-browser@latest -- agent-browser install`; if needed run
-   `npx --yes --package @notis_ai/cli@latest --package agent-browser@latest -- notis apps verify`.
-3. Reconcile `apps list --json` and the exact intended name/slug, edit permission and personal/team
-   scope. Default to personal only when no team was requested. Reuse a matching editable identity;
-   stop on ambiguous matches or conflicting identity/scope. Create only when none exists, using
-   `apps create "<exact app name>" .` (or `--team-id <verified team ID>`). Read back the same ID.
-   A failed first release leaves a container: reuse it, never duplicate or automatically delete it.
-4. Compare existing app-owned schemas. Create only necessary missing databases against that exact
-   app ID. Change existing schemas by verified database ID and ownership, and only with backward-
-   compatible changes before release. Read back each change. Breaking changes need separate coordination.
-   Ordinary note/record edits and existing resource editors remain immediate.
-5. Run `apps deploy` against the same linked app. It builds, verifies a frozen source/artifact
-   snapshot with stubs, then sends that snapshot to the backend. `--skip-build` accepts only unchanged,
-   valid output and still verifies. Do not bypass the backend or create implicitly on deploy.
-6. Read back the exact installed app ID, integer version and Portal URL with `apps list --json`.
-   Run `apps verify --mode live` and open the installed app in the actual Portal for surface proof.
-   A live harness check alone does not prove the deployed bundle rendered in Portal.
-7. Report **failed before activation**, **deployed but unverified**, or **outcome unknown** accurately.
-   Never blindly replay an uncertain create/deploy response; reconcile its exact identity/version first.
-   `apps publish --confirm-ready` is **Publish to Store**, separately approved and listing-gated.
-   Workspace delivery is **Update app**, with no Store screenshot/readiness requirement.
+A create/edit request normally authorizes updating that app after checks pass,
+**unless user or repository policy requires explicit deployment consent**.
+Preserve authorization already given. Read-only, preview-only, and no-deploy
+instructions stop at local source, build, and stub verification: no remote
+resource mutation, app activation, or live verification. Store publication always
+needs separate explicit approval. Do not deploy just to obtain visual proof when
+deployment is not authorized; report that the host check remains unverified.
 
-### Restore historical source as a new release
+## Update an app
 
-Pull the current release into a fresh checkout first. Retrieve historical source into a different
-folder (`apps pull <id> <historical-dir> --source-version <n>`). Replace source in the current checkout
-without replacing its `.notis` profile/app link or deployment base. Update `package.json`'s
-`notisAppVersion`, check compatibility with current resources, build, verify and deploy as a new
-release. Preserve app/database/skill IDs. Never decrement the deployment counter, rewrite snapshots,
-or claim to undo user data or external actions.
+1. **Check identity.** Inspect the effective CLI profile and `apps list --json`.
+   Preserve local edits, then pull the exact editable app ID and intended
+   personal/team scope. Keep its profile-scoped link, current version, and revision.
+   Never silently advance a stale checkout or create a duplicate to avoid a conflict.
+2. **Build and inspect.** Edit the source, increment `notisAppVersion`, and update
+   `CHANGELOG.md`. Run `apps build` and automated `apps verify`, then do the
+   [visual check](design.md#look-at-the-result). For a new app, complete these
+   local checks before creating remote resources.
+3. **Prepare only missing resources.** For an existing app, retain its identity.
+   For a new app, reconcile the exact canonical name, edit permission, and scope
+   against `apps list --json`; reuse one matching editable identity, stop on
+   ambiguity, or create only when none exists. Use `apps create "<display title>"
+   <dir>` (with a verified `--team-id` for team scope), and read back the same ID.
+   Create only necessary missing databases against that app. Verify ownership
+   and database IDs before changing schemas; read back changes. Breaking changes
+   require separate coordination. Never mutate user data merely to test the UI.
+4. **Update Workspace.** Run `apps deploy` against that linked app. It builds and
+   verifies a frozen source/artifact snapshot before activation. `--skip-build`
+   accepts only unchanged valid output and still verifies. Use the supported
+   backend path; do not bypass checks or write directly to storage.
+5. **Verify delivery.** Read back the app ID, integer version, and Portal URL with
+   `apps list --json`. Run `apps verify --mode live`, then open the released app
+   inside Notis and inspect the affected screen and main interaction. Confirm the
+   intended bundle/version, not just the existence of an app with the same name.
+   A successful live harness check alone is not visual proof inside Notis.
+6. **Report accurately.** Give the app link and a brief description of what changed
+   and what was verified. Distinguish local-only, deployed and verified, deployed
+   but unverified, failed before activation, and outcome unknown. If create/deploy
+   has an uncertain outcome, reconcile its exact identity/version before retrying.
 
-## Workflow
+## What the checks prove
 
-Follow the Release-only delivery steps in this guide, subject to the entrypoint’s user/repository policy precedence. Use `apps scaffolds list` to discover public Store starting
-points, `apps init` to scaffold locally, and `apps pull` for existing source. App file operations go
-through the CLI, never raw storage/database writes. Run all Notis commands through NPX.
+`build` validates the package, enforces design rules, and refreshes its embedded
+SDK. Automated `verify` checks every route at desktop (1280px) and phone (390px)
+widths, render errors, runtime calls, nested boxes, small text, lingering loading
+placeholders, and horizontal overflow. It uses a temporary server and browser;
+printed URLs or `--no-browser` are not passing verification. If tooling is missing,
+install it with `npm exec --yes --package agent-browser@latest -- agent-browser install`.
 
-## Testing
+Stub verification does not establish real account data, permissions, host layout,
+or visual quality. Live verification exercises the authenticated runtime but still
+uses the harness. The final installed-app check establishes the result inside Notis.
+If that surface cannot be inspected, say so rather than claim it passed. No extra
+approval round is needed for an already-authorized check.
 
-Build and automated stub verification precede release. `verify` and `screenshot` start temporary,
-explicit test servers only: no folder discovery, watchers, Desktop registration, persistent roots,
-consumer leases or Workspace mounting. They close server/browser resources at completion or interruption.
-Build also enforces the design bar and refreshes the app's embedded SDK copy. Automated verification
-checks every route at desktop (1280px) and phone (390px) widths, including nested boxes, text below
-12px, lingering loading placeholders and horizontal overflow. Standalone verification writes a
-local diagnostic report; deploy always verifies its own frozen snapshot, with no stamp or environment bypass.
-After release, verify live runtime integration and open the installed bundle in Portal. Source edits
-and Desktop restarts cannot change the running version.
+`apps screenshot` supports declared scenarios and stub fixtures, including
+`theme: 'dark'`; `--raw` gives uncomposited captures. Store listing screenshots are
+not required for an ordinary Workspace update.
 
-### Screenshots
+## Special cases — read only when relevant
 
-`apps screenshot` supports declared screenshot scenarios and stub fixtures. A scenario can set
-`theme: 'dark'`; use `--raw` for uncomposited captures. Store screenshots and listing readiness
-are required only for Publish to Store, never for Update app.
+### Unreleased container or stale checkout
 
-### Headless harness verification
+An unreleased container has no source to pull. Recover its original local source,
+or scaffold only if it cannot be recovered; verify the exact ID and scope and use
+`apps link <app-id> <dir> --expected-version 0`. Reuse the container after a failed
+first release; do not duplicate or automatically delete it. If another release
+has appeared, pull it into a fresh directory and reapply the intended edits without
+replacing its deployment base. Link/deploy guards must reject races and conflicts.
 
-Run `npx --package @notis_ai/cli@latest -- notis apps verify` after `npx --package @notis_ai/cli@latest -- notis apps build`. Use `--mode live` after deploy to exercise the real `/portal_views/runtime_query` with the CLI JWT instead of stub data; live mode also fails a route whose runtime calls all errored, which a well-behaved error state would otherwise hide. In a hosted sandbox, put `agent-browser` on the verification process's `PATH` with the combined-package command above. `--no-browser` only prints URLs for manual triage and does not satisfy the automated deployment gate.
+### Restore an older source
 
-#### What the harness catches that `npx --package @notis_ai/cli@latest -- notis apps build` does not
+Pull the current release into a fresh checkout and the historical source into a
+separate folder (`apps pull <id> <dir> --source-version <n>`). Replace source without
+replacing the current `.notis` link/base, then check and deploy as a new release.
+Preserve app/database/skill IDs. Never decrement versions or imply that source
+restoration undoes user data or external actions.
 
-- Hooks that mount but throw on first read (`useTool` called with the wrong tool name or argument shape, accessing nested props that are undefined).
-- Runtime database queries whose slug is not declared by the app, and collection routes that never query their configured collection database. Declared databases may also support automations or agent workflows, so ordinary routes do not need to query every app database.
-- Tool names referenced by hooks but missing from `notis.config.ts -> tools`.
-- Suspense / async boundaries that never resolve because a runtime stub returned the wrong shape.
-- Render-time exceptions that the portal would surface as the `View crashed` error boundary.
+### Release history and Store publication
 
-#### What the harness does not catch
+Keep all release history in root `CHANGELOG.md`, newest first, with headings
+`## [Release title] - YYYY-MM-DD` (or `{PR_MERGE_DATE}` while unpublished). Do not add
+`versionNotes` to the config. App Details reads deployed history; the Store reads
+its published snapshot. Local edits must not change the published listing.
 
-- Bugs that only manifest with real backend data (auth-scoped filters, RLS, malformed prod records). For those, swap the stub runtime for a real one that posts to `/portal_views/runtime_query` with a JWT.
-- Pixel-level visual regressions beyond the automated design checks (the harness does flag nested boxes, sub-12px text, lingering loading placeholders, and horizontal overflow at 390px). For anything else, use `agent-browser screenshot` + a baseline compare.
-- Bugs that depend on the portal's shadow-DOM stylesheet wrapping. The harness mounts in light DOM, so global Tailwind/shadcn classes work normally; portal-specific theme tokens injected as inline styles are not present.
+`apps deploy` updates Workspace only. Use `apps publish --confirm-ready` only after
+the user explicitly approves the current App Details and Store listing. Deploy the
+exact approved source first. Respect listing completeness, visibility, version,
+and pending-review guards. A public submission includes editable source, Store
+assets, source-declared database schemas, and only explicitly opted-in starter
+rows. Do not hand-edit `notis-listing.json` or strip files to pass review; fix the
+source, redeploy, and resubmit. To start from a Store app, use `apps init --from
+<slug>`; `apps pull` is for an accessible installed app, not a Store listing clone.
