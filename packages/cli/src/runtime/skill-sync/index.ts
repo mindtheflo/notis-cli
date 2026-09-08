@@ -80,6 +80,8 @@ function withoutBaseSkillState(state: NotisSyncState): NotisSyncState {
 }
 
 export interface MaterializeCloudSkillsResult {
+  /** Cloud skills verified present in the final scoped disk scan. */
+  materializedSkillNames: string[];
   pulled: number;
   downloaded: number;
   deleted: number;
@@ -89,6 +91,8 @@ export interface MaterializeCloudSkillsResult {
 }
 
 export interface MaterializeCloudSkillsOptions {
+  /** Server-verified Notis identity, when Desktop's auth subject differs. */
+  canonicalUserId?: string;
   /** Re-link only these cloud skills without removing or adopting other links. */
   relinkSkillNames?: readonly string[];
 }
@@ -293,6 +297,7 @@ async function writePulledSkillsToScopedMirror(
     "downloadSkillBundle" | "writeCloudSkillToDisk"
   >,
   failures: SkillSyncFailure[] = [],
+  writtenSkillNames: Set<string> = new Set(),
 ): Promise<number> {
   const localSkillMap = toSkillMap(localSkills);
   const warnSkillSync = (message: string, error: unknown): void => {
@@ -314,6 +319,7 @@ async function writePulledSkillsToScopedMirror(
       })
     ) {
       downloaded += 1;
+      writtenSkillNames.add(cloudSkill.name);
     } else {
       failures.push({ name: cloudSkill.name, error: "Skill content could not be downloaded or written; sync will retry" });
     }
@@ -367,13 +373,14 @@ export async function materializeCloudSkillsForLocalShell(
     );
   }
 
-  const syncPaths = getSkillSyncPathsForUser(authUserId);
+  const syncPaths = getSkillSyncPathsForUser(options.canonicalUserId?.trim() || authUserId);
   const pullResponse = await deps.pullSkills(serverUrl, jwt);
   assertSkillsPullAuthorized(pullResponse);
   const previousState = await deps.readSyncState(syncPaths);
 
   const localSkills = await deps.scanLocalSkills(syncPaths);
   const failedDownloads: SkillSyncFailure[] = [];
+  const writtenSkillNames = new Set<string>();
   const downloaded = await writePulledSkillsToScopedMirror(
     pullResponse,
     localSkills,
@@ -381,6 +388,7 @@ export async function materializeCloudSkillsForLocalShell(
     syncPaths,
     deps,
     failedDownloads,
+    writtenSkillNames,
   );
   const finalLocalSkills = await deps.scanLocalSkills(syncPaths);
   const lastSyncedAt = pullResponse.last_synced_at || new Date().toISOString();
@@ -409,12 +417,31 @@ export async function materializeCloudSkillsForLocalShell(
   }
   for (const failure of failedDownloads) delete verifiedLinks[failure.name];
 
-  await deps.writeSyncState(
-    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks, new Set(failedDownloads.map(item => item.name))),
-    syncPaths,
+  const materializedState = buildSyncState(
+    pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks,
+    new Set(failedDownloads.map(item => item.name)),
   );
+  // Pull-only refresh is not an upload acknowledgement. Keep content baselines
+  // unless we actually wrote cloud content, and retain cloud-missing entries so
+  // the next two-way sync can delete them instead of uploading them as new.
+  for (const [name, entry] of Object.entries(materializedState.skills)) {
+    if (writtenSkillNames.has(name)) continue;
+    const previous = previousState.skills[name];
+    if (previous) {
+      entry.folderHash = previous.folderHash;
+      entry.cloudContentHash = previous.cloudContentHash;
+    } else {
+      delete materializedState.skills[name];
+    }
+  }
+  materializedState.skills = { ...previousState.skills, ...materializedState.skills };
+  await deps.writeSyncState(materializedState, syncPaths);
 
   return {
+    materializedSkillNames: pullResponse.skills
+      .filter((skill) => finalLocalSkills.some((local) => local.name === skill.name)
+        && !failedDownloads.some((failure) => failure.name === skill.name))
+      .map((skill) => skill.name),
     pulled: pullResponse.skills.length,
     downloaded,
     deleted: 0,
