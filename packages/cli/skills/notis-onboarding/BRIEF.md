@@ -48,12 +48,12 @@ The fields onboarding collects, wherever it runs. Both the conversational
 onboarding assistant and the CLI brief reference this partial so the two paths
 can never quietly collect different things.
 
-All of these land through `LOCAL_NOTIS_SAVE_USER_SETTINGS`: `full_name` on the
+All of these land through `LOCAL_NOTIS_SAVE_USER_SETTINGS`: `first_name` on the
 user row, the rest merged into the `settings` blob.
 
 | Field | Setting key | What it is for |
 |---|---|---|
-| First name | `full_name` | How Notis addresses the user. Deduce from the email before asking. |
+| First name | `first_name` | How Notis addresses the user. Ask for their given name; preserve compound names and do not infer it from an email address. |
 | Occupation / role | `position` | Tailors examples and suggestions. |
 | Language | `language` | The language Notis replies in. |
 | Time zone | `timezone` | Anchors every scheduled and time-relative request. Ask; never guess silently. |
@@ -63,8 +63,9 @@ Rules that hold on every surface:
 
 * Ask one question at a time. A wall of questions reads as a form, and people
   abandon forms.
-* Skip anything already known or confidently deducible, and say what you deduced
-  rather than asking the user to confirm a blank.
+* For first name, skip only when already saved or provided by the user. Never
+  deduce a name. For other fields, skip known or confidently deducible values
+  and say what you deduced rather than asking the user to confirm a blank.
 * Save as soon as you have the basics rather than batching to the end — a user who
   drops out halfway should not lose what they already told you.
 
@@ -74,7 +75,7 @@ what you inferred, and let the user correct you. Then save:
 
 ```bash
 npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_SAVE_USER_SETTINGS \
-  --arguments '{"full_name":"...","position":"...","language":"...","timezone":"..."}'
+  --arguments '{"first_name":"...","position":"...","language":"...","timezone":"..."}'
 ```
 
 ## 2. Connect one app, then immediately read from it

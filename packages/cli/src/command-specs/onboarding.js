@@ -157,7 +157,7 @@ async function authenticatedResult(ctx) {
   }
 
   if (onboardingComplete) {
-    const name = state?.settings?.full_name;
+    const name = state?.settings?.first_name;
     const setupSummary = renderAgentSetup(base.agent_setup);
     return ctx.output.emitSuccess({
       command: 'start',

@@ -3682,7 +3682,7 @@ test('start withholds the onboarding brief from an account that is already set u
       res.end(JSON.stringify({
         status: 'success',
         onboarding_complete: true,
-        settings: { full_name: 'Florian', timezone: 'Europe/Paris' },
+        settings: { first_name: 'Florian', timezone: 'Europe/Paris' },
         missing_settings: [],
       }));
       return;
@@ -3739,7 +3739,7 @@ test('start still serves the brief to an account that has not onboarded', async 
         status: 'success',
         onboarding_complete: false,
         settings: { email: 'new@example.com' },
-        missing_settings: ['full_name', 'position', 'language', 'timezone', 'attribution'],
+        missing_settings: ['first_name', 'position', 'language', 'timezone', 'attribution'],
       }));
       return;
     }
@@ -3781,7 +3781,7 @@ test('start still serves the brief to an account that has not onboarded', async 
     assert.equal(payload.data.brief, '# New user onboarding brief');
     // The agent is told exactly which questions are still worth asking.
     assert.deepEqual(payload.data.missing_settings,
-      ['full_name', 'position', 'language', 'timezone', 'attribution']);
+      ['first_name', 'position', 'language', 'timezone', 'attribution']);
     assert.equal(payload.data.agent_setup[0].agent, 'codex');
     assert.match(
       readFileSync(join(agentHome, '.codex', 'AGENTS.md'), 'utf-8'),
