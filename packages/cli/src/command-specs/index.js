@@ -1,3 +1,4 @@
+import { reportsCommandSpecs } from './reports.js';
 import { appsCommandSpecs } from './apps.js';
 import { toolsCommandSpecs } from './tools.js';
 import { metaCommandSpecs } from './meta.js';
@@ -11,6 +12,7 @@ import { agentsCommandSpecs } from './agents.js';
 import { skillsCommandSpecs } from './skills.js';
 
 export const GROUP_SUMMARIES = {
+  reports: 'Build and save independent SDK reports into app database records.',
   apps: 'Develop, deploy, and submit Notis Apps.',
   agents: 'Install Notis context into local coding agents.',
   handover: 'Hand the branch you are on to a Notis agent, hosted or your own Codex/Claude.',
@@ -28,6 +30,7 @@ export const COMMAND_SPECS = [
   ...agentsCommandSpecs,
   ...skillsCommandSpecs,
   ...appsCommandSpecs,
+  ...reportsCommandSpecs,
   ...handoverCommandSpecs,
   ...toolsCommandSpecs,
   ...diagnosticCommandSpecs,

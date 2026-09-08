@@ -14,10 +14,12 @@
  */
 
 import type { NotisAppConfig } from './config';
+import { notisTailwindContent } from './tailwind';
 
 export function notisViteConfig(appConfig: NotisAppConfig) {
   return {
     plugins: [
+      notisTailwindContent(),
       // @vitejs/plugin-react is added by the consumer's vite.config.ts
       // or auto-detected. We provide the config shape only.
     ],

@@ -19,6 +19,7 @@ already installs `ShortcutProvider`; app code should not add a second provider.
 | `useCollectionInteractions(opts)` | `(opts) => CollectionInteractionController` | Keyboard navigation, active-row state, range/toggle selection, marquee selection, and action dispatch for collection UIs |
 | `useShortcuts(definitions, opts?)` | `(definitions, opts?) => void` | Register scoped keyboard shortcuts. Editable targets are ignored unless explicitly allowed; use `ShortcutHints` to display them |
 | `MarkdownEditor` | `(NotisMarkdownEditorProps) => ReactElement` | Use the host editor with app-owned persistence, stable `resourceKey`, revision-aware `onSave`, and optional `onUploadFile` returning a durable URL |
+| `useAgentContext()` / `NotisCommentBoundary` / `NotisCommentBox` | generic context API and optional UI | App-defined pills, icons, context, attachments and nearby comments; see [Context sharing](context.md) |
 | `NotisSelectionBoundary` | `(NotisSelectionBoundaryProps) => ReactElement` | Attach structured, explicitly untrusted app/resource/selection context to selected content and copy operations |
 | `SelectionCheckbox` / `SelectionMarquee` | components | Standard selection controls backed by `useCollectionInteractions` |
 | `MultiSelectActionBar` | component | Standard bulk actions with pending/disabled state and shortcut support |

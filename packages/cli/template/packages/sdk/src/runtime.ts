@@ -1,3 +1,4 @@
+import type { AgentContextContent, AgentContextItem, AgentContextSource } from './agentContext';
 /**
  * NotisRuntime is the bridge between app code running in the browser and the
  * Notis platform. The portal owns the runtime and injects it through
@@ -197,7 +198,8 @@ export type ContextAttributeValue = string | number | boolean | null;
  * app/view provenance onto this value before it reaches chat, so apps only
  * describe their own resource rather than impersonating another surface.
  */
-export interface ContextResource {
+export interface ContextResource extends AgentContextContent {
+  additionalContext?: Record<string, unknown>;
   id: string;
   kind: string;
   label: string;
@@ -211,7 +213,8 @@ export interface ContextResource {
 }
 
 /** A quote copied from an app, kept separate from the user's prompt. */
-export interface ContextSelection {
+export interface ContextSelection extends AgentContextContent {
+  source?: AgentContextSource;
   id: string;
   text: string;
   resource?: ContextResource | null;
@@ -371,10 +374,14 @@ export interface NotisRuntime {
   ui?: NotisRuntimeUI;
 
   /** Publish or clear the focused resource inside the current app view. */
+  contextSource?: AgentContextSource;
   publishActiveResource?(resource: ContextResource | null): void;
 
   /** Remember a copied quote so the host can recover it across iframe paste. */
   captureContextSelection?(selection: ContextSelection): void;
+  addContext?(item: AgentContextItem): Promise<boolean>;
+  updateContext?(item: AgentContextItem): Promise<boolean>;
+  removeContext?(id: string): Promise<boolean>;
 
   /**
    * Subscribe to changes on an app-owned database. Returns an unsubscribe.

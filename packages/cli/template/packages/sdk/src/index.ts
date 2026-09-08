@@ -154,3 +154,8 @@ export { Skeleton, ViewSkeleton } from './components/Skeleton';
 
 export { useLongPressSelection } from './hooks/useLongPressSelection';
 export { isInteractionElementVisible } from './interactions/visibility';
+
+export type { AgentContextContent, AgentContextItem, ContextAttachment } from './agentContext';
+export { useAgentContext } from './hooks/useAgentContext';
+export { NotisCommentBoundary, NotisCommentBox } from './components/NotisCommentBoundary';
+export type { NotisCommentBoundaryProps, NotisCommentBoxProps } from './components/NotisCommentBoundary';

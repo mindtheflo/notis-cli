@@ -786,7 +786,7 @@ async function appsVerifyHandler(ctx) {
     });
 
     if (keepOpen) {
-      process.stderr.write(`[notis apps verify] harness open at ${baseUrl}. Press Ctrl-C to stop.\n`);
+      process.stderr.write(`[notis apps verify] harness open at ${urls[0]?.url || baseUrl}. Press Ctrl-C to stop.\n`);
       await new Promise(() => {});
     }
 

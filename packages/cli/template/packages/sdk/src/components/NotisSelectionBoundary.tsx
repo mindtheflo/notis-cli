@@ -1,5 +1,5 @@
 import type { CSSProperties, ClipboardEvent, ReactNode } from 'react';
-import { useCallback } from 'react';
+import React, { useCallback } from 'react';
 import { useNotisRuntime } from '../provider';
 import type { ContextResource, ContextSelection } from '../runtime';
 
@@ -31,10 +31,13 @@ export function NotisSelectionBoundary({
 }: NotisSelectionBoundaryProps) {
   const runtime = useNotisRuntime();
   const onCopy = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
-    const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? '';
+    const target = event.target as Element | null;
+    if (target?.closest?.('input,textarea,[contenteditable="true"]')) return;
+    const scope = event.currentTarget.getRootNode() as ShadowRoot & { getSelection?: () => Selection | null };
+    const selection = scope?.getSelection?.() || window.getSelection();
+    const text = selection?.toString() ?? '';
     if (
-      !text
+      !text.trim()
       || !selection
       || !event.currentTarget.contains(selection.anchorNode)
       || !event.currentTarget.contains(selection.focusNode)
@@ -42,7 +45,8 @@ export function NotisSelectionBoundary({
 
     const payload: ContextSelection = {
       id: selectionId(),
-      text: text.slice(0, 12_000),
+      text,
+      ...(runtime?.contextSource ? { source: runtime.contextSource } : {}),
       ...(resource ? { resource: { ...resource, snapshot: undefined } } : {}),
     };
     event.clipboardData.setData('text/plain', text);

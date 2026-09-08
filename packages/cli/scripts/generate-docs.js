@@ -53,6 +53,7 @@ function specsFor(prefix) {
 
 function renderReadme() {
   const appSpecs = specsFor('apps');
+  const reportSpecs = specsFor('reports');
   const agentSpecs = specsFor('agents');
   const skillSpecs = specsFor('skills');
   const handoverSpecs = specsFor('handover');
@@ -145,6 +146,16 @@ ${skillSpecs.map(renderCommandBlock).join('\n')}
 
 ${appSpecs.map(renderCommandBlock).join('\n')}
 
+## Reports
+
+Reports save independent SDK documents into app-owned database records. They do not deploy an app or change shared app routes.
+
+Choose the owning database first and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
+
+To revise, read the current document and recover its source from the short-lived \`report_source_url\`. Pass \`--document-id\` and the freshly read \`--expected-revision\`; add \`--attach\` only to replace the body of an existing non-view record. Read back the saved record and inspect its native URL. See the product \`notis-reports\` skill for the full authoring contract.
+
+${reportSpecs.map(renderCommandBlock).join('\n')}
+
 ## Hand-over
 
 Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. \`--route\` picks the agent: the hosted Notis agent, or the user's own Codex/Claude Code in the cloud sandbox or on their Mac. \`--branch-mode same\` makes the agent commit onto your branch; the default cuts a new branch from it.
@@ -179,6 +190,7 @@ npm test
 
 function renderAppsSkillDoc() {
   const appSpecs = specsFor('apps');
+  const reportSpecs = specsFor('reports');
   const doctorSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'doctor');
 
   return `# Notis CLI — App Development Workflow
@@ -209,9 +221,13 @@ For source restoration, pull the current release into a fresh checkout and histo
 another folder. Replace source while retaining the current profile/app link and deployment base,
 change the package release label, check resource compatibility and deploy as a new release.
 
+## Reports
+
+For a record-owned report, use \`reports init → build → verify/preview → save\` instead of the app deployment workflow above. Author exactly one route, select an existing app-owned database, and supply a readable context file. Revisions preserve the record ID and require its freshly read revision. See the product \`notis-reports\` skill for source recovery, ownership and readback. These commands do not deploy the owning app or publish a Store listing.
+
 ## Commands
 
-${[doctorSpec, ...appSpecs].map(renderCommandBlock).join('\n').trimEnd()}
+${[doctorSpec, ...appSpecs, ...reportSpecs].map(renderCommandBlock).join('\n').trimEnd()}
 `;
 }
 

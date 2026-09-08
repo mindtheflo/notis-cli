@@ -1,10 +1,10 @@
 ---
 name: notis-apps
-description: Design and package Notis apps. Use when users want an app that groups databases, routes, documents, automations, and skills into one installable Notis product.
+description: Design and package Notis apps, or inspect their live views and resources. Use when users want an installable Notis app or need rendered content, charts, or filters that ordinary data tools do not provide.
 feature_flag: store
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_INSTALL_APP"]
-mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/troubleshooting.md"]
+mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/troubleshooting.md", "references/reading.md", "references/context.md"]
 ---
 
 # Notis Apps
@@ -12,6 +12,14 @@ mcp_references: ["references/release.md", "references/architecture.md", "referen
 Build apps that feel native to Notis: compact, readable, responsive, and useful.
 Use Vite + React, `@notis/sdk`, and the existing scaffold components. Use the Notis
 CLI for app operations: `npx --package @notis_ai/cli@latest -- notis ...`.
+
+## Read existing apps and resources
+
+Use ordinary data tools for straightforward reads. When the task needs a live
+render, chart, filter, or visual inspection, follow [Read Notis web content](references/reading.md).
+It covers apps, views, reports, HTML and file documents without requiring the
+user to open Portal or Desktop. Use the agent's available browser capability;
+this is not an app build, deployment, or Portal editing-context workflow.
 
 ## Build → inspect → fix → deliver
 
@@ -49,3 +57,14 @@ For every app UI create/edit task, read both [Design](references/design.md) and
 
 The CLI distributes this skill and its references from the canonical product
 source. Do not maintain competing copies.
+
+## Shared views, independent reports and feedback
+
+Use a shared app view when many records should share one implementation. Use
+`notis-reports` when an app-owned record needs its own independently authored
+SDK presentation. A report is not a new app, and changing it must not deploy or
+replace shared app routes. The agent chooses live data versus captured results.
+
+Share selected text, comments, loaded resources or app-defined annotations through
+[generic context pills](references/context.md). Apps own annotation storage and
+presentation; the chat owns unsent context drafts. Passive context is not execution approval.
