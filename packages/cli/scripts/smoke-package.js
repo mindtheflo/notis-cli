@@ -58,11 +58,11 @@ if (!existsSync(tarballPath)) {
 const sandbox = mkdtempSync(join(tmpdir(), 'notis-cli-smoke-'));
 try {
   // 2) Install the tarball in isolation (pulls commander etc. too).
-  run('npm', ['install', '--no-audit', '--no-fund', '--silent', tarballPath], { cwd: sandbox });
+  run('npm', ['install', '--engine-strict', '--no-audit', '--no-fund', '--silent', tarballPath], { cwd: sandbox });
   const installedRoot = join(sandbox, 'node_modules', ...packageName.split('/'));
 
   // 3) Runtime files that MUST ship (their absence caused the 0.2.2 boot crash).
-  for (const rel of ['bin/notis.js', 'config/notis_app_boundary_rules.json']) {
+  for (const rel of ['bin/notis.js', 'bin/check-runtime.js', 'config/notis_app_boundary_rules.json']) {
     if (!existsSync(join(installedRoot, rel))) {
       fail(`published package is missing ${rel} (add it to package.json "files")`);
     }

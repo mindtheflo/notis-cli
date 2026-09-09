@@ -1682,7 +1682,7 @@ function normalizeScaffoldPackageScripts(pkg) {
     return;
   }
   // The linked SDK exports TypeScript. Vite's bundled config loader externalizes
-  // that import to Node, which cannot load it on supported Node 18/20 runtimes.
+  // that import to Node; the minimum supported Node 22.12 lacks native TS loading.
   // Normalize only canonical commands; never parse or rewrite custom shell code.
   for (const [name, command] of Object.entries(scripts)) {
     if (typeof command === 'string' && /^(vite|vite build|vite preview)$/.test(command.trim())) {

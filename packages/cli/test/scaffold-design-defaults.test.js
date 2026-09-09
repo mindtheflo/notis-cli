@@ -37,5 +37,8 @@ test('the scaffold ships the flat primitives and the loading contract', () => {
   for (const className of ['.list-row', '.list-row-selected', '.notis-app-split', '.notis-app-pane-list', '.notis-app-pane-detail']) {
     assert.ok(styles.includes(className), `${className} is defined in the SDK styles`);
   }
-  assert.doesNotMatch(styles, /\.notis-app-surface \{[^}]*border/);
+  const surface = styles.match(/\.notis-app-surface\s*\{([^}]*)\}/)?.[1];
+  assert.ok(surface, 'the flat surface rule is present');
+  // Plain CSS includes border-radius; rounding is not a visible border.
+  assert.doesNotMatch(surface, /(?:^|;)\s*(?:border(?:-(?!radius\b)[a-z-]+)?|box-shadow)\s*:/);
 });

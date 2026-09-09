@@ -447,7 +447,15 @@ async function debugEntitlementOverrideHandler(ctx) {
   });
 }
 
-function buildTraceCostSql(reference) {
+export function langfuseTraceIdCandidates(reference) {
+  const value = String(reference);
+  const compact = value.replaceAll('-', '').toLowerCase();
+  const providerId = /^[0-9a-f]{32}$/.test(compact) && !/^0+$/.test(compact)
+    ? compact : createHash('sha256').update(value).digest('hex').slice(0, 32);
+  return [...new Set([providerId, value])];
+}
+
+export function buildTraceCostSql(reference) {
   const literal = sqlLiteral(reference);
   return `
 SELECT jsonb_build_object(
@@ -466,6 +474,8 @@ SELECT jsonb_build_object(
 FROM public.interactions AS i
 WHERE i.id::text = ${literal}
    OR to_jsonb(i)->>'trace_id' = ${literal}
+   OR replace(i.id::text, '-', '') = lower(${literal})
+   OR replace(to_jsonb(i)->>'trace_id', '-', '') = lower(${literal})
 ORDER BY i.created_at ASC;`;
 }
 
@@ -581,7 +591,10 @@ async function debugTraceCostHandler(ctx) {
     refund_basis: refundableEstimate === null
       ? 'Requires confirmed Notis bug evidence and an explicit bug-attributable cost. Misunderstandings and service limitations are not goodwill bugs.'
       : 'Capped at the lower of recorded provider cost and the explicitly attributed true-bug amount.',
-    interactions,
+    interactions: interactions.map((item) => ({
+      ...item,
+      langfuse_trace_id_candidates: langfuseTraceIdCandidates(item.trace_id || item.id),
+    })),
     trace_file: traceDiagnostics,
   };
   return ctx.output.emitSuccess({

@@ -18,7 +18,17 @@ export function notisTailwindContent() {
     enforce: 'pre' as const,
     configResolved(config: { root: string }) { root = config.root; },
     transform(source: string, id: string) {
-      if (!id.split('?')[0].endsWith('.css') || !/@tailwind\s/.test(source)) return null;
+      const stylesheet = id.split('?')[0];
+      if (!stylesheet.endsWith('.css')) return null;
+      // Tailwind 4 discovers dependency sources through CSS, not config.content.
+      // Keep the author's imports, configuration and PostCSS pipeline untouched.
+      if (/@import\s+(?:url\(\s*)?(['"])tailwindcss(?:\/[^'"]*)?\1/.test(source)) {
+        const sdkSource = dirname(fileURLToPath(import.meta.url));
+        const relativeSource = './' + relative(dirname(stylesheet), sdkSource).replaceAll('\\', '/');
+        const directive = `@source ${JSON.stringify(relativeSource)};`;
+        return source.includes(directive) ? null : { code: `${source}\n${directive}\n`, map: null };
+      }
+      if (!/@tailwind\s/.test(source)) return null;
       const explicit = source.match(/@config\s+(['"])(.*?)\1\s*;/);
       const config = explicit
         ? resolve(dirname(id.split('?')[0]), explicit[2])

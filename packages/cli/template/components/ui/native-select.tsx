@@ -10,7 +10,7 @@ const NativeSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttribu
     <span className={cn('relative inline-flex', className)}>
       <select
         ref={ref}
-        className="h-9 w-full appearance-none rounded-md bg-muted pl-3 pr-8 text-sm text-foreground outline-none transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="h-9 w-full appearance-none rounded-md bg-muted pl-3 pr-8 text-sm text-foreground outline-hidden transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         {...props}
       >
         {children}

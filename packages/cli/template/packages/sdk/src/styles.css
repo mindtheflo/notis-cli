@@ -8,13 +8,11 @@
  * The portal injects the live Notis theme variables at render time.
  */
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
+/* Framework-neutral styles: the app owns its Tailwind entry point. This file
+ * is also consumed in shadow roots and by apps on older Tailwind versions. */
 @layer base {
   * {
-    @apply border-border;
+    border-color: hsl(var(--border));
   }
   [data-notis-app-root] {
     color: hsl(var(--foreground));
@@ -25,42 +23,78 @@
 
 @layer components {
   .notis-app-shell {
-    @apply mx-auto w-full max-w-[var(--portal-page-max-width)] px-4 py-6 md:px-4 md:py-8;
+    margin-inline: auto;
+    width: 100%;
+    max-width: var(--portal-page-max-width);
+    padding: 1.5rem 1rem;
   }
 
-  /* Flat panel. No border, no shadow: the design bar allows a single hairline
-   * between sections and nothing around items. */
+  /* Flat panel: no border or shadow around items. */
   .notis-app-surface {
-    @apply rounded-2xl bg-muted text-card-foreground;
+    border-radius: 1rem;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--card-foreground));
   }
 
-  /* List rows: hover and selection are carried by background tint only. Rows
-   * read as tinted panels on mobile and as transparent rows on desktop. */
   .list-row {
-    @apply rounded-xl bg-muted px-4 py-3 transition-colors lg:bg-transparent lg:hover:bg-muted/60;
+    border-radius: 0.75rem;
+    background-color: hsl(var(--muted));
+    padding: 0.75rem 1rem;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .list-row-selected {
-    @apply bg-primary/[0.06] lg:bg-primary/[0.06] lg:hover:bg-primary/[0.06];
+    background-color: hsl(var(--primary) / 0.06);
   }
 
-  /* Split (list + detail) pages are full-bleed: use these instead of
-   * .notis-app-shell. The list pane is tinted and carries the one allowed
-   * hairline; the detail pane sits on the plain background. */
+  /* Split pages are full-bleed; only the list pane carries a hairline. */
   .notis-app-split {
-    @apply flex h-full min-h-0 w-full max-w-none flex-col lg:flex-row;
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    width: 100%;
+    max-width: none;
+    flex-direction: column;
   }
 
   .notis-app-pane-list {
-    @apply w-full shrink-0 bg-muted/40 lg:w-80 lg:border-r lg:border-border xl:w-96;
+    width: 100%;
+    flex-shrink: 0;
+    background-color: hsl(var(--muted) / 0.4);
   }
 
   .notis-app-pane-detail {
-    @apply min-w-0 flex-1 bg-background;
+    min-width: 0;
+    flex: 1 1 0%;
+    background-color: hsl(var(--background));
   }
 
   .notis-app-section {
-    @apply p-5 md:p-6;
+    padding: 1.25rem;
+  }
+
+  @media (min-width: 768px) {
+    .notis-app-shell { padding-block: 2rem; }
+    .notis-app-section { padding: 1.5rem; }
+  }
+
+  @media (min-width: 1024px) {
+    .list-row { background-color: transparent; }
+    .list-row:hover { background-color: hsl(var(--muted) / 0.6); }
+    .list-row-selected,
+    .list-row-selected:hover { background-color: hsl(var(--primary) / 0.06); }
+    .notis-app-split { flex-direction: row; }
+    .notis-app-pane-list {
+      width: 20rem;
+      border-right-width: 1px;
+      border-right-color: hsl(var(--border));
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .notis-app-pane-list { width: 24rem; }
   }
 }
 

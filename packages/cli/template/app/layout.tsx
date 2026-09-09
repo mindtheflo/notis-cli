@@ -1,6 +1,6 @@
-import '@notis/sdk/styles.css';
 import { ShortcutProvider } from '@notis/sdk/interactions';
 import './globals.css';
+import '@notis/sdk/styles.css';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   // NotisProvider supplies this in the product host. Keeping the shell-level

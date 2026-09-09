@@ -4,6 +4,8 @@ Agent-first Notis CLI for apps and generic tool execution.
 
 ## Install
 
+Requires Node.js 22.12.0 or newer (Node 24 LTS recommended). Update Node.js before installing or running the CLI; the CLI never upgrades your host runtime.
+
 Use the Notis CLI through NPX; do not rely on an installed `notis` command. Run `notis login` once to authorize a scoped, revocable OAuth credential in the browser — that is how the CLI signs in everywhere, including on a machine that also runs Notis Desktop.
 
 After local login, the CLI idempotently adds static Notis guidance to detected Codex and Claude Code user instruction files without changing their hooks. Run `notis agents install` when you explicitly want memory hooks that load the user's profile at session start, recall only new relevant memories before prompts, and save completed turns as automatic cross-session context. Codex then asks you to review and trust those hooks once in `/hooks`.
