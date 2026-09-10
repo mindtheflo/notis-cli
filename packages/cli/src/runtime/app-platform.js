@@ -126,12 +126,12 @@ export function resolveBuiltBundleDir(projectDir) {
 
 function normalizeShadowScopedCss(css) {
   return css
-    // Tailwind preflight emits `html,:host` in v3. Inside a shadow tree we want
-    // the shadow host itself to carry those defaults.
-    .replace(/html\s*,\s*:host\s*\{/g, ':host{')
-    .replace(/:root\s*,\s*:host\s*\{/g, ':host{')
-    .replace(/:root\s*\{/g, ':host{')
-    .replace(/html\s*\{/g, ':host{')
+    // Keep defaults on both the Portal shadow host and the app root used
+    // by the standalone harness. Removing :root erases Tailwind v4 theme
+    // variables in previews, collapsing spacing, type sizes and controls.
+    .replace(/(?:html|:root)\s*,\s*:host\s*\{/g, '[data-notis-app-root],:host{')
+    .replace(/:root\s*\{/g, '[data-notis-app-root],:host{')
+    .replace(/html\s*\{/g, '[data-notis-app-root],:host{')
     // Shadow trees do not contain a body element. Route those defaults to the
     // app root contract instead so authors still get the expected reset.
     .replace(/body\s*\{/g, '[data-notis-app-root]{');

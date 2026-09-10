@@ -1817,7 +1817,7 @@ test('buildArtifact rewrites Tailwind-style global selectors into shadow-safe bu
       name: 'shadow-css-test-app',
       private: true,
       scripts: {
-        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','html,:host{line-height:1.5}:root{--radius:8px}body{margin:0}');"`,
+        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','html,:host{line-height:1.5}:root{--radius:8px}@layer theme{:root,:host{--spacing:.25rem}}body{margin:0}');"`,
       },
     }),
   );
@@ -1836,7 +1836,7 @@ export default defineNotisApp({
   await buildArtifact(projectDir);
 
   const css = readFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), 'utf-8');
-  assert.equal(css, ':host{line-height:1.5}:host{--radius:8px}[data-notis-app-root]{margin:0}');
+  assert.equal(css, '[data-notis-app-root],:host{line-height:1.5}[data-notis-app-root],:host{--radius:8px}@layer theme{[data-notis-app-root],:host{--spacing:.25rem}}[data-notis-app-root]{margin:0}');
 });
 
 test('buildArtifact rejects source CSS that escapes the app surface', async () => {
