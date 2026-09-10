@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { createServer, request } from 'node:http';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -673,6 +674,40 @@ test('loopback receiver validates Host and state, sends no-referrer HTML, and co
       accepted.body,
       /https:\/\/portal\.notis\.test\/desktop-quick-login\?redirect=%2Fmanage/,
     );
+    const script = accepted.body.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(script);
+    for (const [userAgent, path] of [
+      ['Mozilla/5.0 (X11; Linux x86_64)', null],
+      ['Mozilla/5.0 (Windows NT 10.0; Win64; x64)', '/win32/x64/notis-x64.exe'],
+      ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', '/darwin/x64/notis-x64.dmg'],
+    ]) {
+      const elements = new Map();
+      const opened = [];
+      const document = {
+        getElementById(id) {
+          if (!elements.has(id)) elements.set(id, {
+            hidden: id === 'desktop-ready-view',
+            addEventListener(event, callback) { this[event] = callback; },
+          });
+          return elements.get(id);
+        },
+      };
+      runInNewContext(script, {
+        navigator: { userAgent },
+        document,
+        window: { open: (url) => opened.push(url) },
+      });
+      await elements.get('download-desktop').click();
+      assert.equal(opened.length, 1);
+      if (path) {
+        assert.ok(opened[0].endsWith(path), opened[0]);
+        assert.equal(elements.get('desktop-ready-view').hidden, false);
+      } else {
+        assert.equal(opened[0], 'https://notis.ai/channels/desktop-app/#download');
+        assert.equal(elements.get('connected-view').hidden, false);
+        assert.equal(elements.get('desktop-ready-view').hidden, true);
+      }
+    }
     assert.doesNotMatch(accepted.body, /oauth-code|expected-state/);
     const repeated = await httpGet(`${receiver.redirectUri}?code=again&state=expected-state`);
     assert.equal(repeated.status, 410);

@@ -407,7 +407,7 @@ function connectedCallbackHtml({ portalOrigin }) {
           <button class="button button-primary" id="download-desktop" type="button">Download Notis Desktop</button>
           <a class="button" href="${escapeHtml(webAppUrl)}">Open Web App</a>
         </div>
-        <p class="helper">The CLI stays connected even if you continue in the web app.</p>
+        <p class="helper">Desktop is available for macOS and Windows. The CLI stays connected even if you continue in the web app.</p>
       </section>
       <section class="next-step" id="desktop-ready-view" aria-labelledby="desktop-ready-title" hidden>
         <div class="status"><span class="status-dot"></span> Download started</div>
@@ -433,7 +433,6 @@ function connectedCallbackHtml({ portalOrigin }) {
         const resolveDownload = async () => {
           const ua = navigator.userAgent || '';
           if (/Windows/i.test(ua)) return downloads.base + '/win32/x64/notis-x64.exe';
-          if (/Linux/i.test(ua) && !/Android/i.test(ua)) return downloads.base + '/linux/x64/notis-linux-x64.zip';
           if (/Macintosh|Mac OS X/i.test(ua)) {
             let architecture = '';
             try {
@@ -450,6 +449,7 @@ function connectedCallbackHtml({ portalOrigin }) {
         const startDownload = async () => {
           const downloadUrl = await resolveDownload();
           window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+          if (downloadUrl === downloads.fallback) return;
           connectedView.hidden = true;
           readyView.hidden = false;
           document.title = 'Quick login to Notis Desktop';
