@@ -1,7 +1,6 @@
 ---
 name: notis-cli
 description: Use when agents should work through the Notis CLI, especially to develop Notis apps locally or to access Notis, Composio, or MCP tools they do not currently have loaded directly.
-feature_flag: cli_access
 mcp_resource: true
 mcp_tool_patterns: []
 mcp_references: ["references/app-delivery.md", "references/tool-examples.md", "references/native-databases.md", "references/troubleshooting.md"]
