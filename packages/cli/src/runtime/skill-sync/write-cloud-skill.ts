@@ -1,21 +1,21 @@
-import type { CloudSkill } from './types';
+import type { CloudSkill, SkillWriteOutcome } from './types';
 
 interface WriteCloudSkillDependencies {
   downloadSkillBundle: (bundleUrl: string) => Promise<Buffer>;
-  writeCloudSkillToDisk: (skill: CloudSkill, bundleBytes?: Buffer) => Promise<boolean>;
+  writeCloudSkillToDisk: (skill: CloudSkill, bundleBytes?: Buffer) => Promise<SkillWriteOutcome | boolean>;
   onWarning?: (message: string, error: unknown) => void;
 }
 
 export async function writeCloudSkillWithBundleFallback(
   skill: CloudSkill,
   dependencies: WriteCloudSkillDependencies,
-): Promise<boolean> {
+): Promise<SkillWriteOutcome | boolean> {
   if (skill.skill_source_url) {
     try {
       const bundleBytes = await dependencies.downloadSkillBundle(skill.skill_source_url);
       const wroteBundleToDisk = await dependencies.writeCloudSkillToDisk(skill, bundleBytes);
       if (wroteBundleToDisk) {
-        return true;
+        return wroteBundleToDisk;
       }
 
       dependencies.onWarning?.(

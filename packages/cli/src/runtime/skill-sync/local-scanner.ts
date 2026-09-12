@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { promisify } from "util";
 
-import type { CloudSkill, LocalSkill, NotisSyncState } from "./types";
+import type { CloudSkill, LocalSkill, NotisSyncState, SkillWriteOutcome } from "./types";
 
 const HOME_DIR = os.homedir();
 const execFileAsync = promisify(execFile);
@@ -860,7 +860,7 @@ async function createZipFromDirectory(directoryPath: string): Promise<string> {
 async function extractZipToDirectory(
   zipPath: string,
   destinationDir: string,
-): Promise<void> {
+): Promise<string[]> {
   const extractRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "notis-skill-extract-"),
   );
@@ -889,8 +889,53 @@ async function extractZipToDirectory(
     await fs.rm(destinationDir, { recursive: true, force: true });
     await fs.mkdir(path.dirname(destinationDir), { recursive: true });
     await fs.cp(sourceDir, destinationDir, { recursive: true });
+    return await listRelativeFiles(destinationDir);
   } finally {
     await fs.rm(extractRoot, { recursive: true, force: true });
+  }
+}
+
+async function listRelativeFiles(dirPath: string): Promise<string[]> {
+  try {
+    const files = await listFilesRecursive(dirPath);
+    return files.map((filePath) => toPosixRelativePath(dirPath, filePath)).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function toPosixRelativePath(rootDir: string, filePath: string): string {
+  return path.relative(rootDir, filePath).split(path.sep).join("/");
+}
+
+/**
+ * Carry local-only files across a cloud write. A skill that writes while it runs
+ * (a run ledger under its own folder) would otherwise lose that work every time the
+ * cloud content changed, because the write replaces the whole directory.
+ *
+ * Selective, not a blanket merge:
+ * - a path the incoming content provides always wins;
+ * - a path the previous write applied and the cloud has now dropped stays deleted,
+ *   so upstream removals still propagate;
+ * - anything else is local and is kept.
+ *
+ * With no record of the previous write (state written before this existed) nothing
+ * can be attributed to the cloud, so local files are kept rather than destroyed.
+ */
+async function preserveUnmanagedFiles(
+  existingDir: string,
+  stagingDir: string,
+  previouslyApplied?: readonly string[],
+): Promise<void> {
+  const managed = previouslyApplied ? new Set(previouslyApplied) : null;
+  for (const existingFile of await listFilesRecursive(existingDir)) {
+    const relativePath = toPosixRelativePath(existingDir, existingFile);
+    if (managed?.has(relativePath)) continue;
+    const stagedPath = path.join(stagingDir, ...relativePath.split("/"));
+    if (await pathExists(stagedPath)) continue;
+    await fs.mkdir(path.dirname(stagedPath), { recursive: true });
+    await fs.copyFile(existingFile, stagedPath);
   }
 }
 
@@ -906,6 +951,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
 async function replaceSkillDirectoryAtomically(
   skillDir: string,
   populateDir: (stagingDir: string) => Promise<void>,
+  preserve?: { previouslyApplied?: readonly string[] },
 ): Promise<void> {
   const parentDir = path.dirname(skillDir);
   const skillName = path.basename(skillDir);
@@ -925,6 +971,10 @@ async function replaceSkillDirectoryAtomically(
 
   try {
     await populateDir(stagingDir);
+
+    if (preserve && (await pathExists(skillDir))) {
+      await preserveUnmanagedFiles(skillDir, stagingDir, preserve.previouslyApplied);
+    }
 
     if (await pathExists(skillDir)) {
       await fs.rename(skillDir, backupDir);
@@ -986,11 +1036,13 @@ export async function writeCloudSkillToDisk(
   skill: CloudSkill,
   bundleBytes?: Buffer,
   paths: SkillSyncPaths = DEFAULT_SYNC_PATHS,
-): Promise<boolean> {
+  options: { previouslyApplied?: readonly string[] } = {},
+): Promise<SkillWriteOutcome | false> {
   const skillDir = path.join(
     paths.skillsDir,
     safeName(skill.name, paths.skillsDir),
   );
+  const preserve = { previouslyApplied: options.previouslyApplied };
 
   if (bundleBytes?.length) {
     const bundlePath = path.join(
@@ -999,8 +1051,11 @@ export async function writeCloudSkillToDisk(
     );
     try {
       await fs.writeFile(bundlePath, bundleBytes);
-      await extractZipToDirectory(bundlePath, skillDir);
-      return true;
+      let appliedFiles: string[] = [];
+      await replaceSkillDirectoryAtomically(skillDir, async (stagingDir) => {
+        appliedFiles = await extractZipToDirectory(bundlePath, stagingDir);
+      }, preserve);
+      return { written: true, appliedFiles };
     } finally {
       await fs.rm(bundlePath, { force: true });
     }
@@ -1019,6 +1074,7 @@ export async function writeCloudSkillToDisk(
         `Synced bundle for "${skill.name}" is missing SKILL.md or SKILLS.md`,
       );
     }
+    const appliedFiles: string[] = [];
     await replaceSkillDirectoryAtomically(skillDir, async (stagingDir) => {
       for (const bundleFile of skill.bundle_files || []) {
         const filePath = resolveSkillBundleFilePath(
@@ -1030,9 +1086,10 @@ export async function writeCloudSkillToDisk(
           filePath,
           Buffer.from(bundleFile.content_b64, "base64"),
         );
+        appliedFiles.push(toPosixRelativePath(stagingDir, filePath));
       }
-    });
-    return true;
+    }, preserve);
+    return { written: true, appliedFiles: appliedFiles.sort() };
   }
 
   await replaceSkillDirectoryAtomically(skillDir, async (stagingDir) => {
@@ -1041,6 +1098,6 @@ export async function writeCloudSkillToDisk(
       skill.skill_md ?? "",
       "utf8",
     );
-  });
-  return true;
+  }, preserve);
+  return { written: true, appliedFiles: ["SKILL.md"] };
 }

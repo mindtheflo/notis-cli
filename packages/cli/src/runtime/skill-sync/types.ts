@@ -14,6 +14,10 @@ export interface SyncedSkill {
   cloudUpdatedAt?: string;
   /** Content accepted on disk; independent of server-specific folder hash formats. */
   cloudContentHash?: string;
+  /** Relative paths the last successful write put in this folder. Anything else in
+   * the folder was created locally (a running skill's output) and survives the next
+   * cloud write; anything listed here that the cloud later drops is deleted. */
+  appliedFiles?: string[];
   /** `skill_folder_hash` of the cloud revision a successful write actually applied.
    * The server may compute that hash with a different construction than the local
    * folder hash (app-published skills do), so only cloud-to-cloud comparison tells
@@ -26,6 +30,13 @@ export interface NotisSyncState {
   version: 1;
   lastSyncedAt: string | null;
   skills: Record<string, SyncedSkill>;
+}
+
+/** A successful write, plus the paths it put on disk so the next one can tell
+ * cloud-managed files apart from whatever ran inside the folder since. */
+export interface SkillWriteOutcome {
+  written: true;
+  appliedFiles: string[];
 }
 
 export interface LocalSkill {
