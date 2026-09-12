@@ -54,8 +54,10 @@ export interface CloudSkill {
   skill_source_url?: string | null;
   bundle_files?: BundleFile[] | null;
   bundle_hydration_failed?: boolean | null;
-  /** Set when the skill's content is owned by an installed Notis app. Its folder is
-   * republished by the app, never by a local push. */
+  /** Set when the skill's content is owned by a Notis app. Its folder is republished
+   * by the app, never by a local push. `app_owned` is what the server sends; the raw
+   * association id stays server-side. */
+  app_owned?: boolean | null;
   owner_app_id?: string | null;
   source: string;
   status: string;

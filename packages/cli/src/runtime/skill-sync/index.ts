@@ -671,7 +671,7 @@ export async function runSkillSync(
     previousState,
     cloudCuratedSkillNames,
     new Set(pullResponse.skills.map((skill) => skill.name)),
-    new Set(pullResponse.skills.filter((skill) => skill.owner_app_id).map((skill) => skill.name)),
+    new Set(pullResponse.skills.filter((skill) => skill.app_owned || skill.owner_app_id).map((skill) => skill.name)),
   );
 
   const failedPushes: SkillSyncFailure[] = [];
