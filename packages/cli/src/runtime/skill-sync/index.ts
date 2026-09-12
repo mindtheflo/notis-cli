@@ -32,7 +32,7 @@ import {
   syncSymlinks,
   type DeletedAgentSymlink,
 } from "./symlink-manager";
-import { getPushCandidates } from "./sync-plan";
+import { getPushCandidates, selectCloudSkillsToApply } from "./sync-plan";
 import { writeCloudSkillWithBundleFallback } from "./write-cloud-skill";
 export { fetchSyncSettings } from './cloud-client';
 
@@ -179,6 +179,24 @@ export function shouldWriteCloudSkill(
   if (previous?.folderHash === localSkill.folderHash
     && previous.cloudContentHash === cloudContentHash(cloudSkill)) return false;
 
+  // Without a stored content baseline (skills served through a signed source URL keep
+  // none, because that URL changes on every pull) the only other signal is
+  // `skill_folder_hash`, which the server does NOT always compute the way the local
+  // folder hash is computed. An app-published skill hashes its bundle entries, so that
+  // value can never equal the hash of the extracted directory, and comparing the two
+  // replaced the folder on every sync tick, deleting whatever a running skill had
+  // written inside it. Compare cloud against cloud instead: rewrite when the cloud
+  // revision we last applied has actually moved.
+  if (previous
+    && previous.cloudContentHash === undefined
+    && previous.cloudId === cloudSkill.id
+    && previous.appliedCloudFolderHash !== undefined
+    && previous.appliedCloudFolderHash === cloudHash
+    && previous.cloudUpdatedAt === cloudSkill.updated_at
+    && previous.folderHash === localSkill.folderHash) {
+    return false;
+  }
+
   if (cloudSkill.source === "curated") {
     return cloudHash ? cloudHash !== localSkill.folderHash : true;
   }
@@ -192,17 +210,42 @@ export function shouldWriteCloudSkill(
   );
 }
 
+type AppliedCloudRevisions = Record<string, string | undefined>;
+
+/**
+ * The cloud revision each folder's last successful write applied: this run's revision
+ * for the skills we just wrote, the previously recorded one otherwise. A failed write
+ * records nothing, so the next sync retries it.
+ */
+function collectAppliedCloudRevisions(
+  pullResponse: SyncPullResponse,
+  previousState: NotisSyncState,
+  writtenSkillNames: ReadonlySet<string>,
+): AppliedCloudRevisions {
+  const applied: AppliedCloudRevisions = {};
+  for (const skill of selectCloudSkillsToApply(pullResponse.skills)) {
+    applied[skill.name] = writtenSkillNames.has(skill.name)
+      ? skill.skill_folder_hash || ""
+      : previousState.skills[skill.name]?.appliedCloudFolderHash;
+  }
+  return applied;
+}
+
 function buildSyncState(
   pullResponse: SyncPullResponse,
   localSkills: LocalSkill[],
   lastSyncedAt: string | null,
   verifiedAgentLinks: Record<string, Partial<AgentTargets>> = {},
   failedContentNames: ReadonlySet<string> = new Set(),
+  appliedRevisions: AppliedCloudRevisions = {},
 ): NotisSyncState {
   const localSkillMap = toSkillMap(localSkills);
+  // The same row selection the writer used, so the state describes the revision that
+  // is actually on disk rather than whichever duplicate row the server listed last.
   const skills = Object.fromEntries(
-    pullResponse.skills.map((skill) => {
+    selectCloudSkillsToApply(pullResponse.skills).map((skill) => {
       const localSkill = localSkillMap.get(skill.name);
+      const appliedCloudFolderHash = appliedRevisions[skill.name];
       return [
         skill.name,
         {
@@ -213,6 +256,7 @@ function buildSyncState(
           cloudUpdatedAt: skill.updated_at,
           ...(!failedContentNames.has(skill.name) && !skill.skill_source_url
             ? { cloudContentHash: cloudContentHash(skill) } : {}),
+          ...(appliedCloudFolderHash !== undefined ? { appliedCloudFolderHash } : {}),
           syncedAt: lastSyncedAt || new Date().toISOString(),
         },
       ];
@@ -305,7 +349,7 @@ async function writePulledSkillsToScopedMirror(
   };
 
   let downloaded = 0;
-  for (const cloudSkill of pullResponse.skills) {
+  for (const cloudSkill of selectCloudSkillsToApply(pullResponse.skills)) {
     if (!shouldWriteCloudSkill(cloudSkill, localSkillMap, previousState)) {
       continue;
     }
@@ -420,6 +464,7 @@ export async function materializeCloudSkillsForLocalShell(
   const materializedState = buildSyncState(
     pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks,
     new Set(failedDownloads.map(item => item.name)),
+    collectAppliedCloudRevisions(pullResponse, previousState, writtenSkillNames),
   );
   // Pull-only refresh is not an upload acknowledgement. Keep content baselines
   // unless we actually wrote cloud content, and retain cloud-missing entries so
@@ -626,6 +671,7 @@ export async function runSkillSync(
     previousState,
     cloudCuratedSkillNames,
     new Set(pullResponse.skills.map((skill) => skill.name)),
+    new Set(pullResponse.skills.filter((skill) => skill.owner_app_id).map((skill) => skill.name)),
   );
 
   const failedPushes: SkillSyncFailure[] = [];
@@ -654,6 +700,7 @@ export async function runSkillSync(
   }
 
   const failedDownloads: SkillSyncFailure[] = [];
+  const writtenSkillNames = new Set<string>();
   const downloaded = await writePulledSkillsToScopedMirror(
     pullResponse,
     localSkills,
@@ -661,6 +708,7 @@ export async function runSkillSync(
     syncPaths,
     deps,
     failedDownloads,
+    writtenSkillNames,
   );
 
   const finalLocalSkills = (await deps.scanLocalSkills(syncPaths))
@@ -674,7 +722,14 @@ export async function runSkillSync(
   const lastSyncedAt = pullResponse.last_synced_at || new Date().toISOString();
 
   await deps.writeSyncState(
-    buildSyncState(pullResponse, finalLocalSkills, lastSyncedAt, verifiedLinks, new Set(failedDownloads.map(item => item.name))),
+    buildSyncState(
+      pullResponse,
+      finalLocalSkills,
+      lastSyncedAt,
+      verifiedLinks,
+      new Set(failedDownloads.map(item => item.name)),
+      collectAppliedCloudRevisions(pullResponse, previousState, writtenSkillNames),
+    ),
     syncPaths,
   );
 

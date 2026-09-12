@@ -14,6 +14,11 @@ export interface SyncedSkill {
   cloudUpdatedAt?: string;
   /** Content accepted on disk; independent of server-specific folder hash formats. */
   cloudContentHash?: string;
+  /** `skill_folder_hash` of the cloud revision a successful write actually applied.
+   * The server may compute that hash with a different construction than the local
+   * folder hash (app-published skills do), so only cloud-to-cloud comparison tells
+   * "the cloud moved" apart from "the two sides hash differently". */
+  appliedCloudFolderHash?: string;
   syncedAt: string;
 }
 
@@ -49,6 +54,9 @@ export interface CloudSkill {
   skill_source_url?: string | null;
   bundle_files?: BundleFile[] | null;
   bundle_hydration_failed?: boolean | null;
+  /** Set when the skill's content is owned by an installed Notis app. Its folder is
+   * republished by the app, never by a local push. */
+  owner_app_id?: string | null;
   source: string;
   status: string;
 }
