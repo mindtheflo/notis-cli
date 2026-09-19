@@ -8,6 +8,27 @@
  * The portal injects the live Notis theme variables at render time.
  */
 
+/* Top-layer surfaces must remain distinct from the app's flat content panels. */
+dialog.notis-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  box-sizing: border-box;
+  width: min(28rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 1.25rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.2);
+}
+
+dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+.notis-dialog-title { margin: 0; font-size: 1rem; font-weight: 600; line-height: 1.5; }
+.notis-dialog-description { margin: 0.5rem 0 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; line-height: 1.5; }
+
 /* Framework-neutral styles: the app owns its Tailwind entry point. This file
  * is also consumed in shadow roots and by apps on older Tailwind versions. */
 @layer base {

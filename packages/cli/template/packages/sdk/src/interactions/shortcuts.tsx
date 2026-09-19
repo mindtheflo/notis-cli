@@ -215,6 +215,14 @@ function consumeShortcut(event: KeyboardEvent, definition: ShortcutDefinition): 
   void definition.onTrigger(event);
 }
 
+// Native dialogs make the background inert, but document capture listeners still
+// receive their keyboard events. Leave those events to the dialog and its controls.
+function isDialogEvent(event: KeyboardEvent): boolean {
+  return event.composedPath().some((target) =>
+    target instanceof HTMLElement && target.matches('dialog.notis-dialog[open]'),
+  );
+}
+
 export function ShortcutProvider({ children }: { children: ReactNode }) {
   const parentRegistry = useContext(ShortcutContext);
   if (parentRegistry) return <>{children}</>;
@@ -280,7 +288,7 @@ function registerFallbackShortcut(input: Omit<ShortcutRegistration, 'id' | 'orde
       registrations,
       nextId: 1,
       dispatch: (event) => {
-        if (event.defaultPrevented) return;
+        if (event.defaultPrevented || isDialogEvent(event)) return;
         const editable = isEditableShortcutEvent(event);
         const token = chordToken(eventChord(event));
         for (const registration of applicableRegistrations(registrations.values())) {
@@ -370,6 +378,7 @@ function ShortcutProviderRoot({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isDialogEvent(event)) return;
       const editable = isEditableShortcutEvent(event);
       if (!editable && !event.repeat && event.key === '?' && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();

@@ -23,6 +23,7 @@ already installs `ShortcutProvider`; app code should not add a second provider.
 | `NotisSelectionBoundary` | `(NotisSelectionBoundaryProps) => ReactElement` | Attach structured, explicitly untrusted app/resource/selection context to selected content and copy operations |
 | `SelectionCheckbox` / `SelectionMarquee` | components | Standard selection controls backed by `useCollectionInteractions` |
 | `MultiSelectActionBar` | component | Standard bulk actions with pending/disabled state and shortcut support |
+| `Dialog` | `{ open, onClose, title, description?, role?, children }` | Themed native modal with top-layer stacking, focus handling and background shortcut isolation. Use `role="alertdialog"` for destructive confirmation; put the safe action first. |
 
 Import headless collection action types and helpers from
 `@notis/sdk/interactions`. Keep an open detail view synchronized with

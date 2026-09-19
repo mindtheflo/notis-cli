@@ -15,7 +15,7 @@
 - Let Notis own navigation, folder trees, and search. Use `PageHeading`,
   `NativeSelect`, `.list-row`, and `useTopBarSearch` instead of duplicating chrome.
 - Prefer inline optimistic edits for simple changes, with rollback on failure.
-  Use a dialog for multi-field edits or destructive confirmation.
+  Use SDK `Dialog` for multi-field edits or destructive confirmation; keep its actions app-owned.
 
 Build enforces the existing design rules and reports violations by file/line.
 Use those diagnostics to fix specific problems; passing them does not establish

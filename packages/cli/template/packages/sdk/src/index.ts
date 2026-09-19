@@ -72,6 +72,8 @@ export {
 } from './documents';
 
 // Multi-select components
+export { Dialog } from './components/Dialog';
+export type { DialogProps } from './components/Dialog';
 export { MultiSelectActionBar } from './components/MultiSelectActionBar';
 export { MultiSelectCheckbox, MultiSelectCheckbox as SelectionCheckbox } from './components/MultiSelectCheckbox';
 export { MultiSelectDragOverlay, MultiSelectDragOverlay as SelectionMarquee } from './components/MultiSelectDragOverlay';
