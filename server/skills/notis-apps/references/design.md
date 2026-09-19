@@ -21,6 +21,19 @@ Build enforces the existing design rules and reports violations by file/line.
 Use those diagnostics to fix specific problems; passing them does not establish
 that the design is good. See [troubleshooting](troubleshooting.md) when needed.
 
+### Controls and side panels
+
+- **Keep controls with what they control.** Filters, counts, and Create belong
+  above the list; record actions belong inside the detail panel. Only controls
+  that affect both panes belong above both.
+- **Align sibling panes.** Start the list and detail panel at the same height,
+  with consistent header spacing and control sizes.
+- **Keep secondary actions quiet.** Put occasional destructive actions in an
+  overflow menu, retaining their confirmation step.
+
+For example, a ticket view has two side-by-side panes: **Tickets / New ticket →
+filters → list**, and **ticket ID / actions / close → details**.
+
 ### Look at the result
 
 Run build and verification, then inspect screenshots of the affected view at a
