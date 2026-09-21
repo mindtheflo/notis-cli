@@ -80,7 +80,7 @@ function resolveHarnessReactVersion(projectDir) {
   const candidates = [
     join(projectDir, 'node_modules', '@notis', 'sdk', 'package.json'),
     join(REPO_ROOT, 'packages', 'sdk', 'package.json'),
-    join(CLI_ROOT, 'template', 'packages', 'sdk', 'package.json'),
+    join(CLI_ROOT, 'dist', 'sdk', 'package.json'),
   ];
   for (const candidate of candidates) {
     const pkg = readJsonFile(candidate);

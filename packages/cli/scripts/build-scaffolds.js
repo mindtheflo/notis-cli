@@ -19,6 +19,18 @@ process.stdout.write(`Copied app design rules to ${designRulesTarget}\n`);
 const distDir = join(cliRoot, 'dist');
 const outputBaseSkillsDir = join(distDir, 'base-skills');
 
+// The canonical SDK is bundled at build time, never hand-mirrored in templates.
+const sdkSource = join(repoRoot, 'packages', 'sdk');
+const sdkTarget = join(distDir, 'sdk');
+if (!existsSync(join(sdkSource, 'package.json'))) {
+  throw new Error(`Canonical SDK source not found at ${sdkSource}`);
+}
+rmSync(sdkTarget, { recursive: true, force: true });
+mkdirSync(sdkTarget, { recursive: true });
+cpSync(join(sdkSource, 'src'), join(sdkTarget, 'src'), { recursive: true });
+cpSync(join(sdkSource, 'package.json'), join(sdkTarget, 'package.json'));
+
+
 // The CLI is the distribution owner for the three system skills. Copy from
 // server/skills, the product source of truth, so npm never ships hand-maintained
 // duplicates or a partial skill folder.

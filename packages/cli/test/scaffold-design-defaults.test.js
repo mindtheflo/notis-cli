@@ -33,7 +33,7 @@ test('the scaffold ships the flat primitives and the loading contract', () => {
     assert.ok(readFileSync(join(templateDir, file), 'utf-8').length > 0, `${file} is part of the scaffold`);
   }
 
-  const styles = readFileSync(join(templateDir, 'packages', 'sdk', 'src', 'styles.css'), 'utf-8');
+  const styles = readFileSync(join(cliRoot, 'dist', 'sdk', 'src', 'styles.css'), 'utf-8');
   for (const className of ['.list-row', '.list-row-selected', '.notis-app-split', '.notis-app-pane-list', '.notis-app-pane-detail']) {
     assert.ok(styles.includes(className), `${className} is defined in the SDK styles`);
   }

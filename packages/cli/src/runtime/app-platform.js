@@ -27,7 +27,7 @@ const BUNDLE_DIR = join(OUTPUT_DIR, 'bundle');
 const MANIFEST_FILE = join(OUTPUT_DIR, 'manifest.json');
 const METADATA_DIR = 'metadata';
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const TEMPLATE_SDK_DIR = join(CLI_ROOT, 'template', 'packages', 'sdk');
+const TEMPLATE_SDK_DIR = join(CLI_ROOT, 'dist', 'sdk');
 export const NOTIS_APP_CATEGORIES = [
   'Productivity',
   'Sales & Marketing',
@@ -1847,7 +1847,7 @@ function listFilesRecursive(dir, base = dir, results = []) {
 /**
  * Keep an app's embedded `packages/sdk` copy identical to the SDK this CLI
  * ships. The copy is a mirror by contract (the parity test in the CLI keeps
- * the template in step with packages/sdk), so an app never edits it; before
+ * the bundled artifact generated from packages/sdk), so an app never edits it; before
  * this sync existed every app silently ran whatever SDK snapshot it was
  * scaffolded with and never received hook or style updates.
  *

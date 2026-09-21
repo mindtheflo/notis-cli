@@ -30,93 +30,91 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 .notis-dialog-description { margin: 0.5rem 0 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; line-height: 1.5; }
 
 /* Framework-neutral styles: the app owns its Tailwind entry point. This file
- * is also consumed in shadow roots and by apps on older Tailwind versions. */
-@layer base {
-  * {
-    border-color: hsl(var(--border));
-  }
-  [data-notis-app-root] {
-    color: hsl(var(--foreground));
-    display: block;
-    min-height: 100%;
+ * is also consumed in shadow roots and by apps on older Tailwind versions.
+ * Keep rules outside Tailwind-owned @layer blocks: Vite processes this import
+ * separately from the app stylesheet, so Tailwind 3 has no matching directives. */
+* {
+  border-color: hsl(var(--border));
+}
+[data-notis-app-root] {
+  color: hsl(var(--foreground));
+  display: block;
+  min-height: 100%;
+}
+
+.notis-app-shell {
+  margin-inline: auto;
+  width: 100%;
+  max-width: var(--portal-page-max-width);
+  padding: 1.5rem 1rem;
+}
+
+/* Flat panel: no border or shadow around items. */
+.notis-app-surface {
+  border-radius: 1rem;
+  background-color: hsl(var(--muted));
+  color: hsl(var(--card-foreground));
+}
+
+.list-row {
+  border-radius: 0.75rem;
+  background-color: hsl(var(--muted));
+  padding: 0.75rem 1rem;
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.list-row-selected {
+  background-color: hsl(var(--primary) / 0.06);
+}
+
+/* Split pages are full-bleed; only the list pane carries a hairline. */
+.notis-app-split {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  flex-direction: column;
+}
+
+.notis-app-pane-list {
+  width: 100%;
+  flex-shrink: 0;
+  background-color: hsl(var(--muted) / 0.4);
+}
+
+.notis-app-pane-detail {
+  min-width: 0;
+  flex: 1 1 0%;
+  background-color: hsl(var(--background));
+}
+
+.notis-app-section {
+  padding: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  .notis-app-shell { padding-block: 2rem; }
+  .notis-app-section { padding: 1.5rem; }
+}
+
+@media (min-width: 1024px) {
+  .list-row { background-color: transparent; }
+  .list-row:hover { background-color: hsl(var(--muted) / 0.6); }
+  .list-row-selected,
+  .list-row-selected:hover { background-color: hsl(var(--primary) / 0.06); }
+  .notis-app-split { flex-direction: row; }
+  .notis-app-pane-list {
+    width: 20rem;
+    border-right-width: 1px;
+    border-right-color: hsl(var(--border));
   }
 }
 
-@layer components {
-  .notis-app-shell {
-    margin-inline: auto;
-    width: 100%;
-    max-width: var(--portal-page-max-width);
-    padding: 1.5rem 1rem;
-  }
-
-  /* Flat panel: no border or shadow around items. */
-  .notis-app-surface {
-    border-radius: 1rem;
-    background-color: hsl(var(--muted));
-    color: hsl(var(--card-foreground));
-  }
-
-  .list-row {
-    border-radius: 0.75rem;
-    background-color: hsl(var(--muted));
-    padding: 0.75rem 1rem;
-    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
-    transition-duration: 150ms;
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .list-row-selected {
-    background-color: hsl(var(--primary) / 0.06);
-  }
-
-  /* Split pages are full-bleed; only the list pane carries a hairline. */
-  .notis-app-split {
-    display: flex;
-    height: 100%;
-    min-height: 0;
-    width: 100%;
-    max-width: none;
-    flex-direction: column;
-  }
-
-  .notis-app-pane-list {
-    width: 100%;
-    flex-shrink: 0;
-    background-color: hsl(var(--muted) / 0.4);
-  }
-
-  .notis-app-pane-detail {
-    min-width: 0;
-    flex: 1 1 0%;
-    background-color: hsl(var(--background));
-  }
-
-  .notis-app-section {
-    padding: 1.25rem;
-  }
-
-  @media (min-width: 768px) {
-    .notis-app-shell { padding-block: 2rem; }
-    .notis-app-section { padding: 1.5rem; }
-  }
-
-  @media (min-width: 1024px) {
-    .list-row { background-color: transparent; }
-    .list-row:hover { background-color: hsl(var(--muted) / 0.6); }
-    .list-row-selected,
-    .list-row-selected:hover { background-color: hsl(var(--primary) / 0.06); }
-    .notis-app-split { flex-direction: row; }
-    .notis-app-pane-list {
-      width: 20rem;
-      border-right-width: 1px;
-      border-right-color: hsl(var(--border));
-    }
-  }
-
-  @media (min-width: 1280px) {
-    .notis-app-pane-list { width: 24rem; }
-  }
+@media (min-width: 1280px) {
+  .notis-app-pane-list { width: 24rem; }
 }
 
 /*

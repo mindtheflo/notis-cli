@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(cliRoot, '../..');
 const canonicalSdkRoot = join(repoRoot, 'packages', 'sdk');
-const templateSdkRoot = join(cliRoot, 'template', 'packages', 'sdk');
+const templateSdkRoot = join(cliRoot, 'dist', 'sdk');
 const canonicalSdkAvailable = existsSync(canonicalSdkRoot);
 const monorepoOnly = canonicalSdkAvailable
   ? false
@@ -28,7 +28,7 @@ test('the app scaffold ships the complete canonical SDK source', { skip: monorep
   assert.deepEqual(
     templateFiles,
     canonicalFiles,
-    'SDK source files drifted; mirror packages/sdk/src into packages/cli/template/packages/sdk/src.',
+    'SDK source files drifted; rebuild the CLI artifact from packages/sdk/src.',
   );
 
   for (const file of canonicalFiles) {
@@ -44,6 +44,6 @@ test('the app scaffold SDK package metadata matches the canonical package', { sk
   assert.equal(
     readFileSync(join(templateSdkRoot, 'package.json'), 'utf8'),
     readFileSync(join(canonicalSdkRoot, 'package.json'), 'utf8'),
-    'SDK package metadata drifted; mirror packages/sdk/package.json into the app scaffold.',
+    'SDK package metadata drifted; rebuild the CLI artifact from packages/sdk/package.json.',
   );
 });

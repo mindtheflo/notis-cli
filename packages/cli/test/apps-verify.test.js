@@ -793,5 +793,5 @@ test('a build refreshes stale embedded SDK before freezing source provenance', a
   const release = prepareAppRelease(projectDir);
   t.after(() => release.close());
   assert.deepEqual(Buffer.from(release.sourceFiles['packages/sdk/src/index.ts'], 'base64'),
-    readFileSync(join(cliRoot, 'template/packages/sdk/src/index.ts')));
+    readFileSync(join(cliRoot, 'dist/sdk/src/index.ts')));
 });

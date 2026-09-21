@@ -58,7 +58,8 @@ async function discoverSupabaseSqlTool(runtime) {
 
 export function unwrapToolExecutionPayload(payload) {
   return (
-    payload?.data?.results?.[0]?.response?.data
+    payload?.data?.data?.results?.[0]?.response?.data
+    ?? payload?.data?.results?.[0]?.response?.data
     ?? payload?.results?.[0]?.response?.data
     ?? payload?.data?.result
     ?? payload?.result
@@ -74,30 +75,30 @@ function parseJsonCandidate(value) {
     return JSON.parse(trimmed);
   } catch {
     const boundaryEnd = trimmed.lastIndexOf('</untrusted-data');
-    const boundaryStart = boundaryEnd >= 0
-      ? trimmed.lastIndexOf('<untrusted-data', boundaryEnd)
-      : -1;
-    const contentStart = boundaryStart >= 0 ? trimmed.indexOf('>', boundaryStart) + 1 : -1;
-    if (contentStart > 0 && boundaryEnd > contentStart) {
+    const boundaryName = boundaryEnd >= 0
+      ? trimmed.slice(boundaryEnd + 2, trimmed.indexOf('>', boundaryEnd)) : null;
+    const opening = boundaryName ? `<${boundaryName}>` : null;
+    for (let boundaryStart = opening ? trimmed.indexOf(opening) : -1;
+      boundaryStart >= 0 && boundaryStart < boundaryEnd;
+      boundaryStart = trimmed.indexOf(opening, boundaryStart + opening.length)) {
+      const contentStart = boundaryStart + opening.length;
       // Supabase MCP sometimes returns the prose envelope with literal "\\n"
       // separators. Strip those only at the boundary: globally replacing them
       // corrupts valid escaped newlines inside JSON string values.
       const inner = trimmed
         .slice(contentStart, boundaryEnd)
         .trim()
-        .replace(/^(?:\\r?\\n)+/, '')
-        .replace(/(?:\\r?\\n)+$/, '')
+        .replace(/^(?:(?:\\r)?\\n)+/, '')
+        .replace(/(?:(?:\\r)?\\n)+$/, '')
         .trim();
       try {
         return JSON.parse(inner);
-      } catch (error) {
-        const nested = parseJsonCandidate(inner);
-        if (nested !== null) return nested;
-        throw usageError(
-          `Supabase diagnostic rows were not valid JSON: ${error instanceof Error ? error.message : String(error)}; prefix=${JSON.stringify(inner.slice(0, 100))}`,
-        );
+      } catch {
+        // The provider also mentions this marker in its introductory prose.
+        // Try its actual opening, never a nested tool result's different marker.
       }
     }
+    if (boundaryEnd >= 0) throw usageError('Supabase diagnostic rows were not valid JSON.');
     const arrayMatch = trimmed.match(/(\[[\s\S]*\])/);
     if (arrayMatch) {
       try {
