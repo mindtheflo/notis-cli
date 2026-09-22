@@ -331,96 +331,82 @@ Examples:
 
 ## Reports
 
-Reports save independent SDK documents into app-owned database records. They do not deploy an app or change shared app routes.
+Reports save standalone live SDK documents without an app or database. They do not deploy an app or change shared app routes.
 
-Choose the owning database first and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
+Use the standalone report build profile and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
 
-To revise, read the current document and recover its source from the short-lived `report_source_url`. Pass `--document-id` and the freshly read `--expected-revision`; add `--attach` only to replace the body of an existing non-view record. Read back the saved record and inspect its native URL. See the product `notis-reports` skill for the full authoring contract.
+To revise, read the current document and recover its source from the short-lived `report_source_url`. Pass `--document-id` and the freshly read `--expected-revision`. Read back the saved record and inspect its native URL. See the product `notis-reports` skill for the full authoring contract.
 
 ### `npx --package @notis_ai/cli@latest -- notis reports init <name> [dir]`
 
-Init a record-owned SDK report locally.
+Init a standalone live SDK report.
 
-When to use: Author an independent report without deploying its owning app.
-
-Options:
-- `--from <slug>` — Start from a published Store app listed by `notis apps scaffolds list`. Downloads its source from the public app registry.
+When to use: Author a private standalone document using the shared view runtime; no app or database is required.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis apps scaffolds list`
-- `npx --package @notis_ai/cli@latest -- notis reports init "Mind the Flo"`
-- `npx --package @notis_ai/cli@latest -- notis reports init "My CRM" --from databases`
-- `npx --package @notis_ai/cli@latest -- notis reports init "My App" ~/code/my-app`
+- `npx --package @notis_ai/cli@latest -- notis reports init "Weekly report" ./weekly-report`
 
 ### `npx --package @notis_ai/cli@latest -- notis reports build [dir]`
 
-Build a record-owned SDK report locally.
+Build a standalone live SDK report.
 
-When to use: Author an independent report without deploying its owning app.
+When to use: Author a private standalone document using the shared view runtime; no app or database is required.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports build`
-- `npx --package @notis_ai/cli@latest -- notis reports build ./my-app`
+- `npx --package @notis_ai/cli@latest -- notis reports build ./weekly-report`
 
 ### `npx --package @notis_ai/cli@latest -- notis reports verify [dir]`
 
-Verify a record-owned SDK report locally.
+Verify a standalone live SDK report.
 
-When to use: Author an independent report without deploying its owning app.
+When to use: Author a private standalone document using the shared view runtime; no app or database is required.
 
 Options:
 - `--routes <slugs>` — Comma-separated route slugs. Default: every route in manifest.
 - `--port <n>` — Loopback port. Default: auto-pick.
 - `--skip-build` — Skip notis apps build; reuse existing .notis/output/.
 - `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.
-- `--listing` — Ignored for reports; saving a report does not publish a Store listing.
 - `--no-browser` — Start the harness server and print URLs; do not drive agent-browser.
 - `--keep-open` — Leave server + browser session running after report (for manual triage).
+- `--document-id <id>` — Saved report for live verification.
+- `--expected-revision <revision>` — Saved report revision for live verification.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports verify`
-- `npx --package @notis_ai/cli@latest -- notis reports verify --routes notes`
-- `npx --package @notis_ai/cli@latest -- notis reports verify --mode live`
-- `npx --package @notis_ai/cli@latest -- notis reports verify --no-browser  # start the harness, drive agent-browser yourself`
+- `npx --package @notis_ai/cli@latest -- notis reports verify ./weekly-report`
 
 ### `npx --package @notis_ai/cli@latest -- notis reports preview [dir]`
 
-Preview a record-owned SDK report locally. Keeps the preview server and browser session open.
+Preview a standalone live SDK report.
 
-When to use: Author an independent report without deploying its owning app.
+When to use: Author a private standalone document using the shared view runtime; no app or database is required.
 
 Options:
 - `--routes <slugs>` — Comma-separated route slugs. Default: every route in manifest.
 - `--port <n>` — Loopback port. Default: auto-pick.
 - `--skip-build` — Skip notis apps build; reuse existing .notis/output/.
 - `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.
-- `--listing` — Ignored for reports; saving a report does not publish a Store listing.
 - `--no-browser` — Start the harness server and print URLs; do not drive agent-browser.
 - `--keep-open` — Leave server + browser session running after report (for manual triage).
+- `--document-id <id>` — Saved report for live verification.
+- `--expected-revision <revision>` — Saved report revision for live verification.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports preview`
-- `npx --package @notis_ai/cli@latest -- notis reports preview --routes notes`
-- `npx --package @notis_ai/cli@latest -- notis reports preview --mode live`
-- `npx --package @notis_ai/cli@latest -- notis reports preview --no-browser  # start the harness, drive agent-browser yourself`
+- `npx --package @notis_ai/cli@latest -- notis reports preview ./weekly-report`
 
 ### `npx --package @notis_ai/cli@latest -- notis reports save [dir]`
 
-Build, verify and save a report into an app-owned database record.
+Build, verify and save a standalone live report document.
 
-When to use: Persist an independently authored report, not an app release.
+When to use: Persist an independently owned report, not an app release.
 
 Options:
-- `--database-id <id>` — Required. Owning app database.
-- `--document-id <id>` — Existing record to update or attach to.
-- `--attach` — Attach to an existing non-view record.
-- `--expected-revision <revision>` — Fresh view revision (0 for a record without a view).
-- `--title <title>` — Required, including updates. Record title.
+- `--document-id <id>` — Existing report document to update.
+- `--expected-revision <revision>` — Current saved report revision; required for updates.
+- `--title <title>` — Required, including updates. Document title.
 - `--context-file <file>` — Required. UTF-8 readable report content and structure.
-- `--properties-file <file>` — JSON database property values keyed by name.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports save ./weekly-report --database-id <id> --title "Weekly review" --context-file ./context.md`
+- `npx --package @notis_ai/cli@latest -- notis reports save ./weekly-report --title "Weekly review" --context-file ./context.md`
 
 
 ## Hand-over

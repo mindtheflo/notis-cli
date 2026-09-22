@@ -164,6 +164,7 @@ function buildHarnessDescriptor({ state, manifest, appConfig, route, scenario = 
   );
 
   return {
+    ...(state.resource ? { resource: state.resource } : {}),
     app: {
       id: state.appId || 'harness-app',
       slug: state.slug,

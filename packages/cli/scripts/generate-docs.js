@@ -150,11 +150,11 @@ ${appSpecs.map(renderCommandBlock).join('\n')}
 
 ## Reports
 
-Reports save independent SDK documents into app-owned database records. They do not deploy an app or change shared app routes.
+Reports save standalone live SDK documents without an app or database. They do not deploy an app or change shared app routes.
 
-Choose the owning database first and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
+Use the standalone report build profile and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
 
-To revise, read the current document and recover its source from the short-lived \`report_source_url\`. Pass \`--document-id\` and the freshly read \`--expected-revision\`; add \`--attach\` only to replace the body of an existing non-view record. Read back the saved record and inspect its native URL. See the product \`notis-reports\` skill for the full authoring contract.
+To revise, read the current document and recover its source from the short-lived \`report_source_url\`. Pass \`--document-id\` and the freshly read \`--expected-revision\`. Read back the saved record and inspect its native URL. See the product \`notis-reports\` skill for the full authoring contract.
 
 ${reportSpecs.map(renderCommandBlock).join('\n')}
 
@@ -225,7 +225,7 @@ change the package release label, check resource compatibility and deploy as a n
 
 ## Reports
 
-For a record-owned report, use \`reports init → build → verify/preview → save\` instead of the app deployment workflow above. Author exactly one route, select an existing app-owned database, and supply a readable context file. Revisions preserve the record ID and require its freshly read revision. See the product \`notis-reports\` skill for source recovery, ownership and readback. These commands do not deploy the owning app or publish a Store listing.
+For a standalone live report, use \`reports init → build → verify/preview → save\` instead of the app deployment workflow above. Author exactly one route with kind: report, declare its tools, and supply a readable context file. No installed app or database is required. Revisions preserve the record ID and require its freshly read revision. See the product \`notis-reports\` skill for source recovery, ownership and readback. These commands do not deploy an app or publish a Store listing.
 
 ## Commands
 

@@ -139,6 +139,7 @@ export type {
   NotisMarkdownEditorSavePayload,
   NotisMarkdownEditorSaveResult,
   NotisRuntime,
+  RuntimeResource,
   NotisRuntimeContext,
   NotisRuntimeUI,
   QueryFilter,

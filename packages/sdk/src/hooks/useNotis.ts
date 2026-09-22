@@ -1,9 +1,10 @@
 'use client';
 
 import { useNotisRuntime } from '../provider';
-import type { AppDescriptor, CollectionItemDetail, DatabaseDescriptor, RouteDescriptor } from '../runtime';
+import type { RuntimeResource, AppDescriptor, CollectionItemDetail, DatabaseDescriptor, RouteDescriptor } from '../runtime';
 
 interface NotisContext {
+  resource: RuntimeResource | null;
   /** App metadata (id, name, icon, description). Null before runtime loads. */
   app: AppDescriptor | null;
   /** Current route descriptor. Null before runtime loads. */
@@ -27,6 +28,7 @@ export function useNotis(): NotisContext {
   const runtime = useNotisRuntime();
 
   return {
+    resource: runtime?.resource ?? null,
     app: runtime?.app ?? null,
     route: runtime?.route ?? null,
     databases: runtime?.databases ?? [],

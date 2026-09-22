@@ -276,6 +276,9 @@ function assertHarnessResult(result, route, databaseSlugs, mode = 'stub', capabi
     });
   }
   if (mode === 'live') {
+    if (runtimeCalls.some(call => call?.ok == null)) {
+      assertions.push({ ok: false, code: 'runtime_calls_pending', message: 'Live verification ended before every started runtime call settled.' });
+    }
     // In live mode an app that catches every failed call and renders its error
     // state still mounts cleanly, so the render assertions above all pass. Only
     // the recorded outcomes reveal that nothing real came back.
@@ -379,7 +382,7 @@ async function appsListHandler(ctx) {
   });
 }
 
-async function appsInitHandler(ctx) {
+export async function appsInitHandler(ctx) {
   const projectDir = ctx.args.dir
     ? resolveProjectDir(ctx.args.dir)
     : defaultAppProjectDir(slugify(ctx.args.name));
@@ -504,7 +507,7 @@ async function appsCreateHandler(ctx) {
   });
 }
 
-async function appsBuildHandler(ctx) {
+export async function appsBuildHandler(ctx) {
   const projectDir = resolveProjectDir(ctx.args.dir || '.');
   const problems = detectProjectProblems(projectDir);
   if (problems.length) {
@@ -563,13 +566,15 @@ async function closeHarnessResources(sessionNames, testServer, rawOutputDir = nu
   }
 }
 
-async function appsVerifyHandler(ctx) {
+export async function appsVerifyHandler(ctx) {
   const projectDir = resolveProjectDir(ctx.args.dir || '.');
   const problems = detectProjectProblems(projectDir);
   if (problems.length) {
     throw usageError(`Project has problems:\n${problems.map((p) => `  - ${p}`).join('\n')}`);
   }
 
+  const appConfig = await loadAppConfig(projectDir);
+  const isReport = appConfig.kind === 'report';
   const mode = ctx.options.mode || 'stub';
   if (!['stub', 'live'].includes(mode)) {
     throw usageError('--mode must be either "stub" or "live".');
@@ -586,8 +591,10 @@ async function appsVerifyHandler(ctx) {
     if (!ctx.runtime.jwt) {
       throw usageError('Live verify mode requires CLI auth. Run notis login and retry.');
     }
-    linkedState = readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime));
-    if (!linkedState?.app_id) {
+    if (isReport) {
+      if (!ctx.options.documentId || !/^\d+$/.test(String(ctx.options.expectedRevision ?? ''))) throw usageError('Live report verification requires --document-id and --expected-revision of the saved report.');
+    } else linkedState = readLinkedState(projectDir, linkedStateProfileKey(ctx.runtime));
+    if (!isReport && !linkedState?.app_id) {
       throw usageError('Live verify mode requires a linked app. Run `notis apps link <app-id> .` first.');
     }
   }
@@ -599,8 +606,7 @@ async function appsVerifyHandler(ctx) {
   }
 
   const manifest = readManifest(projectDir);
-  const appConfig = await loadAppConfig(projectDir);
-  const listing = inspectListingReadiness(projectDir, appConfig);
+  const listing = isReport ? { ready: true, errors: [], warnings: [] } : inspectListingReadiness(projectDir, appConfig);
   // Store readiness is a publish concern, not a render concern. Verify reports
   // it so the gaps stay visible while the app is still being built; only
   // --listing (and `apps publish`) turn it back into a hard gate.
@@ -609,7 +615,7 @@ async function appsVerifyHandler(ctx) {
   }
   const listingWarnings = [
     ...[...listing.errors, ...listing.warnings].map((message) => `Store readiness: ${message}`),
-    ...findUnknownScreenshotScenarios(projectDir, resolveListingScreenshots(projectDir, appConfig)),
+    ...(isReport ? [] : findUnknownScreenshotScenarios(projectDir, resolveListingScreenshots(projectDir, appConfig))),
   ];
   const routes = routeSelection(manifest, parseRouteSlugs(ctx.options.routes));
   const port = parsePort(ctx.options.port) || await getAvailablePort();
@@ -635,6 +641,7 @@ async function appsVerifyHandler(ctx) {
         slug: appSlug,
         projectDir,
         appId: linkedState?.app_id || 'harness-app',
+        resource: isReport ? { kind: 'report', id: ctx.options.documentId || 'preview', revision: Number(ctx.options.expectedRevision || 0) } : undefined,
       }],
       port,
       harness: {
@@ -708,7 +715,8 @@ async function appsVerifyHandler(ctx) {
         const result = await runHarnessRoute({
           url,
           sessionName: browserSessionName,
-          timeoutMs: Number.parseInt(ctx.globalOptions.timeoutMs || '', 10) || 10_000,
+          timeoutMs: Number.parseInt(ctx.globalOptions.timeoutMs || '', 10) || (mode === 'live' ? 90_000 : 10_000),
+          waitForRuntime: mode === 'live',
           snapshotPath,
         });
         const assertions = assertHarnessResult(
@@ -766,11 +774,7 @@ async function appsVerifyHandler(ctx) {
       },
       summary,
       results,
-      listing: {
-        ready: listing.ready,
-        gated: ctx.options.listing === true,
-        problems: listing.errors,
-      },
+      ...(!isReport ? { listing: { ready: listing.ready, gated: ctx.options.listing === true, problems: listing.errors } } : {}),
     };
 
     if (!keepOpen) await cleanup();

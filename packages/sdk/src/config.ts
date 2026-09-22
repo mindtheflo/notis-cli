@@ -196,6 +196,10 @@ export interface NotisAppToolBinding {
 }
 
 export interface NotisAppConfig {
+  /** Standalone reports share the view engine without app installation. */
+  kind?: 'app' | 'report';
+  /** Existing data sources, never owned or materialized by a report. */
+  databaseAccess?: Array<{ id: string; access: 'read' | 'write' }>;
   /** URL-safe app slug. Existing apps may still use a display name here. */
   name: string;
   /** Human display title, Raycast-style. Falls back to `name`. */

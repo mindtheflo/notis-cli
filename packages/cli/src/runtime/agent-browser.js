@@ -228,6 +228,7 @@ export async function runHarnessRoute({
   timeoutMs = 10_000,
   snapshotPath = null,
   designViewports = DEFAULT_DESIGN_VIEWPORTS,
+  waitForRuntime = false,
 }) {
   const opened = await runAgentBrowser(['--session', sessionName, 'open', url], {
     timeoutMs: Math.min(Math.max(timeoutMs, 5000), 30_000),
@@ -244,17 +245,21 @@ export async function runHarnessRoute({
   }
 
   const deadline = Date.now() + timeoutMs;
+  let readySince = null;
   while (Date.now() < deadline) {
     const lastRead = await readHarness(sessionName, 5000);
     if (!lastRead.ok) {
+      readySince = null;
       await delay(250);
       continue;
     }
     const harness = lastRead.harness;
-    if (harness?.mounted || (Array.isArray(harness?.errors) && harness.errors.length > 0)) {
-      await delay(250);
-      break;
-    }
+    if (Array.isArray(harness?.errors) && harness.errors.length > 0) break;
+    const pending = (harness?.runtimeCalls || []).some(call => call?.ok == null);
+    if (harness?.mounted && (!waitForRuntime || !pending)) {
+      readySince ??= Date.now();
+      if (Date.now() - readySince >= 250) break;
+    } else readySince = null;
     await delay(250);
   }
 
@@ -283,8 +288,8 @@ export async function runHarnessRoute({
     }
   }
 
-  const timedOut = !harness.mounted && Date.now() >= deadline;
   const runtimeCalls = Array.isArray(harness.runtimeCalls) ? harness.runtimeCalls : [];
+  const timedOut = (!harness.mounted || (waitForRuntime && runtimeCalls.some(call => call?.ok == null))) && Date.now() >= deadline;
 
   // Design assertions only mean something on a mounted route. Loading
   // placeholders are excused while a runtime call is still in flight.

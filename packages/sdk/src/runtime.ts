@@ -364,7 +364,20 @@ export interface CloudComputerFacts {
   cli_auth: { gh: CloudComputerCliAuthFacts };
 }
 
+export interface RuntimeResource {
+  kind: 'app' | 'report';
+  /** Host-provided adoption eligibility, never report-authored authority. */
+  analytics_eligible?: boolean;
+  id: string;
+  revision: number;
+  name?: string;
+  icon?: string | null;
+  description?: string | null;
+}
+
 export interface NotisRuntime {
+  /** Authenticated runtime identity; app below is presentation metadata only. */
+  resource?: RuntimeResource;
   /** Optional host-scoped in-memory read cache. Older hosts remain supported. */
   queryClient?: NotisQueryClient;
   app: AppDescriptor;

@@ -207,8 +207,8 @@
     }
 
     async function runtimeQuery(body) {
-      if (!apiBase || !jwt || !descriptor.app || !descriptor.app.id) {
-        throw new Error('live harness mode requires apiBase, jwt, and app id');
+      if (!apiBase || !jwt || !(descriptor.resource?.kind === 'report' ? descriptor.resource.id : descriptor.app?.id)) {
+        throw new Error('live harness mode requires apiBase, jwt, and runtime resource identity');
       }
       const response = await fetch(`${String(apiBase).replace(/\/$/, '')}/portal_views/runtime_query`, {
         method: 'POST',
@@ -217,7 +217,9 @@
           Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
-          app_id: descriptor.app.id,
+          ...(descriptor.resource?.kind === 'report'
+            ? { document_id: descriptor.resource.id, revision: descriptor.resource.revision }
+            : { app_id: descriptor.app.id }),
           route_slug: descriptor.route && descriptor.route.slug,
           ...body,
         }),
@@ -230,7 +232,10 @@
       if (!payload) {
         throw new Error(snippet ? `Runtime response was not JSON: ${snippet}` : 'Runtime response was empty');
       }
-      if (payload.status === 'error' || payload.error) {
+      if (payload.status === 'error' || payload.error || (descriptor.resource?.kind === 'report' && (
+        ['error', 'failed', 'failure'].includes(String(payload.status || '').trim().toLowerCase())
+        || payload.ok === false || payload.success === false || payload.successful === false
+      ))) {
         throw new Error(payload.message || payload.error || 'Runtime request failed');
       }
       return payload;
@@ -238,6 +243,7 @@
 
     function stubRuntime() {
       return {
+        resource: descriptor.resource,
         app: descriptor.app,
         route: descriptor.route,
         context: descriptor.context || {},
@@ -287,6 +293,7 @@
         request: async (path, options) => tracked(
           record('request', { path, options }),
           async () => {
+            if (descriptor.resource?.kind === 'report') throw new Error('Reports access data through declared tools.');
             if (fixtures && fixtures.requests && Object.prototype.hasOwnProperty.call(fixtures.requests, path)) {
               return structuredClone(fixtures.requests[path]);
             }
@@ -349,6 +356,7 @@
         request: async (path, options) => tracked(
           record('request', { path, options }),
           async () => {
+            if (descriptor.resource?.kind === 'report') throw new Error('Reports access data through declared tools.');
             const response = await fetch(`${String(apiBase).replace(/\/$/, '')}${path}`, {
               method: (options && options.method) || 'GET',
               headers: {

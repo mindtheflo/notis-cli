@@ -795,3 +795,15 @@ test('a build refreshes stale embedded SDK before freezing source provenance', a
   assert.deepEqual(Buffer.from(release.sourceFiles['packages/sdk/src/index.ts'], 'base64'),
     readFileSync(join(cliRoot, 'dist/sdk/src/index.ts')));
 });
+
+
+test('live verification fails closed when a mounted route still has a pending read', async () => {
+  const projectDir = await buildAppProject();
+  const mockBin = writeMockAgentBrowser({ mounted: true, renderStarted: true, errors: [],
+    runtimeCalls: [{ op: 'callTool', args: { name: 'LOCAL_NOTIS_DATABASE_QUERY', arguments: { database_slug: 'items' } }, ok: null }] });
+  const result = runCli(['apps', 'verify', projectDir, '--skip-build', '--mode', 'live', '--timeout-ms', '600', '--json'], liveVerifyEnv(projectDir, mockBin));
+  assert.notEqual(result.status, 0, result.stdout);
+  const payload = JSON.parse(result.stdout);
+  assert.ok(payload.data.results[0].assertions.some(item => item.code === 'runtime_calls_pending'));
+  assert.equal(payload.data.results[0].timed_out, true);
+});

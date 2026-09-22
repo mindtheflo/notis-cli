@@ -286,13 +286,14 @@ export function detectProjectWarnings(projectDir, appConfig = null) {
     appConfig?.capabilities?.workspaceDatabases === 'read';
   if (
     appConfig
+    && appConfig.kind !== 'report'
     && !readsWorkspaceDatabases
     && (!Array.isArray(appConfig.databases) || appConfig.databases.length === 0)
   ) {
     warnings.push('No database references declared in notis.config.ts.');
   }
 
-  if (appConfig) {
+  if (appConfig && appConfig.kind !== 'report') {
     try {
       const listing = inspectListingReadiness(projectDir, appConfig);
       warnings.push(...listing.errors, ...listing.warnings);
@@ -812,6 +813,29 @@ export function generateManifest(appConfig, projectDir) {
     }
     return entry;
   });
+
+  if (appConfig.kind === 'report') {
+    if (routes.length !== 1 || routes[0].collection || routes[0].resourceDeepLinks) {
+      throw usageError('Reports require one standalone route, without app collections or resource deep links.');
+    }
+    if (['databases', 'skills', 'automations', 'onboarding', 'tagline', 'categories', 'author', 'screenshots'].some(key => {
+      const value = appConfig[key];
+      return Array.isArray(value) ? value.length > 0 : Boolean(value);
+    })) throw usageError('Reports cannot own databases, skills, automations or Store metadata.');
+    if (Object.values(appConfig.capabilities || {}).some(value => value !== 'read')) {
+      throw usageError('Reports support read capabilities only; shell grants require an installed app.');
+    }
+    const databaseAccess = appConfig.databaseAccess || [];
+    if (!Array.isArray(databaseAccess) || databaseAccess.some(entry =>
+      !entry || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.id || '') ||
+      !['read', 'write'].includes(entry.access)
+    )) throw usageError('databaseAccess entries require an existing database UUID and read/write access.');
+    return { kind: 'report', version: 1, spec_version: 4,
+      routes: routes.map(route => ({ ...route, default: true, tool_access: { base: { tools: appConfig.tools || [] } } })),
+      bundle: { js: 'bundle/app.js', css: 'bundle/app.css' },
+      tools: appConfig.tools || [], tool_bindings: normalizeAppToolBindings(appConfig.toolBindings),
+      capabilities: normalizeAppCapabilities(appConfig.capabilities), database_access: databaseAccess };
+  }
 
   // Database entries may be a bare slug (structure only) or an object opting
   // into shipping rows to installers. Normalize to the manifest's snake_case.
