@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { contentCapturePlan, MEASURE_SCREENSHOT_CONTENT_SCRIPT, SAFE_VIEWPORT_HEIGHT_SCRIPT } from './screenshot-framing.js';
 
 export const HIDE_HARNESS_STATUS_SCRIPT =
   "(() => { const el = document.getElementById('harness-status'); if (el) el.style.opacity = '0'; return true; })()";
@@ -322,18 +323,18 @@ export async function runHarnessRoute({
 
 /**
  * Open a harness route, wait for it to mount, then capture a PNG screenshot of
- * the rendered app. Output is always exactly `width` x `height` physical
- * pixels (default 2000x1250, the 16:10 the listing validator expects), but the
- * CSS viewport is fitted to the rendered content height: short pages render
- * larger (no dead whitespace below the app), tall pages get more room before
- * cropping. The deviceScaleFactor maps the fitted CSS viewport back onto the
- * fixed output frame. Used by `notis apps screenshot`.
+ * the rendered app. Raw captures retain exact requested pixel dimensions.
+ * Framed captures can select the complete bounded app or a width-fitted first
+ * screen; the Store compositor normalizes them to the final listing size.
+ * Device scaling keeps text sharp at that size without changing app styles.
+ * Used by `notis apps screenshot`.
  */
 export async function captureHarnessScreenshot({
   url,
   sessionName,
   screenshotPath,
   focusSelector = null,
+  frameContent = false,
   width = 2000,
   height = 1250,
   timeoutMs = 15_000,
@@ -433,13 +434,50 @@ export async function captureHarnessScreenshot({
 
   // Let the route settle (async data, resize transitions) before the capture.
   await delay(500);
+
+  let contentBounds = null;
+  if (frameContent && !focusSelector) {
+    const measured = await runAgentBrowser(
+      ['--session', sessionName, '--json', 'eval', MEASURE_SCREENSHOT_CONTENT_SCRIPT],
+      { timeoutMs: 5000 },
+    );
+    if (measured.exitCode === 0) {
+      try {
+        const bounds = parseHarnessFromEval(measured.stdout);
+        if (bounds?.selector === '[data-notis-screenshot-content]'
+          && Number.isFinite(bounds.width) && bounds.width > 0
+          && Number.isFinite(bounds.height) && bounds.height > 0) {
+          contentBounds = bounds;
+        }
+      } catch { /* Keep the complete viewport if layout measurement is unavailable. */ }
+    }
+  }
+  let captureFocus = focusSelector || contentBounds?.selector || null;
+  if (contentBounds && scaledViewport) {
+    const plan = contentCapturePlan(contentBounds, framing || initial, width, height);
+    if (await setViewport(sessionName, plan.width, plan.height, plan.scale)) {
+      await delay(300);
+      if (!plan.focus) {
+        const safeHeight = await evalNumber(sessionName, SAFE_VIEWPORT_HEIGHT_SCRIPT, plan.height);
+        if (safeHeight < plan.height && await setViewport(sessionName, plan.width, safeHeight, plan.scale)) {
+          plan.height = safeHeight;
+        }
+      }
+      captureFocus = plan.focus ? contentBounds.selector : null;
+      framing = {
+        ...(framing || {}), ...plan, content_bounds: contentBounds,
+        capture_mode: plan.focus ? 'content' : 'width-fit-viewport',
+      };
+      await delay(300);
+    }
+  }
   const designResult = await evalDesignAssertions(sessionName, { viewport: 'capture' });
   const design = Array.isArray(designResult) ? designResult : [];
 
   mkdirSync(dirname(screenshotPath), { recursive: true });
   const screenshotArgs = ['--session', sessionName, 'screenshot'];
-  if (focusSelector) {
-    screenshotArgs.push(focusSelector);
+  if (captureFocus) {
+    screenshotArgs.push(captureFocus);
   }
   screenshotArgs.push(screenshotPath, '--screenshot-format', 'png');
   const shot = await runAgentBrowser(screenshotArgs, { timeoutMs: 15_000 });
@@ -451,7 +489,13 @@ export async function captureHarnessScreenshot({
   // capture came out wrong (e.g. the browser ignored the scale factor),
   // recapture once at a plain fixed viewport.
   const dimensions = pngDimensions(screenshotPath);
-  if (!focusSelector && framing && (!dimensions || dimensions.width !== width || dimensions.height !== height)) {
+  const expectedDimensions = framing?.capture_mode === 'width-fit-viewport'
+    ? { width: Math.round(framing.width * framing.scale), height: Math.round(framing.height * framing.scale) }
+    : { width, height };
+  // Fractional browser scaling can round one pixel either way. Framed output
+  // is normalized by the compositor; raw captures still require exact pixels.
+  const tolerance = frameContent ? 1 : 0;
+  if (!captureFocus && framing && (!dimensions || Math.abs(dimensions.width - expectedDimensions.width) > tolerance || Math.abs(dimensions.height - expectedDimensions.height) > tolerance)) {
     await setViewport(sessionName, width, height);
     await delay(300);
     const retry = await runAgentBrowser(
@@ -464,10 +508,11 @@ export async function captureHarnessScreenshot({
     framing = null;
   }
 
-  if (focusSelector) {
+  if (captureFocus) {
     framing = {
       ...(framing || {}),
-      focus_selector: focusSelector,
+      focus_selector: captureFocus,
+      content_bounds: contentBounds,
       source_dimensions: dimensions,
     };
   }

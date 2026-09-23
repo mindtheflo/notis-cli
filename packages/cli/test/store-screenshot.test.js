@@ -31,6 +31,30 @@ test('Store screenshot accent is explicit or stable from the app name', () => {
   );
 });
 
+test('narrow and wide captures keep their aspect ratio inside the available frame', () => {
+  const portrait = storeScreenshotLayout(2000, 1250, 0.8);
+  assert.equal(portrait.cardHeight, 1100);
+  assert.equal(portrait.cardWidth, 880);
+  const wide = storeScreenshotLayout(2000, 1250, 2);
+  assert.equal(wide.cardWidth, 1760);
+  assert.equal(wide.cardHeight, 880);
+});
+
+test('focused tall captures retain top and bottom content instead of centre-cropping', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'notis-store-tall-'));
+  const inputPath = join(dir, 'capture.png');
+  const outputPath = join(dir, 'listing.png');
+  await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000"><rect width="800" height="500" fill="#ff0000"/><rect y="500" width="800" height="500" fill="#0000ff"/></svg>')).png().toFile(inputPath);
+  const { card } = await composeStoreScreenshot({ inputPath, outputPath, focused: true });
+  const pixel = async (y) => sharp(outputPath).extract({ left: card.left + Math.floor(card.width / 2), top: y, width: 1, height: 1 }).raw().toBuffer();
+  const top = await pixel(card.top + 5);
+  const bottom = await pixel(card.top + card.height - 6);
+  assert.ok(top[0] > 240 && top[2] < 10);
+  assert.ok(bottom[2] > 240 && bottom[0] < 10);
+  assert.equal(card.width, 880);
+  assert.equal(card.height, 1100);
+});
+
 test('compositor writes a compact exact-size PNG without redrawing source UI', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'notis-store-screenshot-'));
   const inputPath = join(dir, 'capture.png');

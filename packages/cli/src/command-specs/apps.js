@@ -935,6 +935,7 @@ async function appsScreenshotHandler(ctx) {
         sessionName: captureSessionName,
         screenshotPath: browserScreenshotPath,
         focusSelector: ctx.options.raw ? null : focus,
+        frameContent: !ctx.options.raw,
         width,
         height,
         timeoutMs: Number.parseInt(ctx.globalOptions.timeoutMs || '', 10) || 15_000,
@@ -949,7 +950,7 @@ async function appsScreenshotHandler(ctx) {
             height,
             accent: appConfig.accent,
             seed: appConfig.name || manifest.app?.name || appSlug,
-            focused: Boolean(focus),
+            focused: Boolean(result.framing?.focus_selector),
             theme: theme || 'light',
           });
         } catch (error) {

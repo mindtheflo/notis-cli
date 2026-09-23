@@ -81,7 +81,9 @@ Before submitting or updating a Store listing:
    fixture selector. Use fictional screenshot fixtures and an explicit, idempotent
    onboarding demo-data option. If starter rows are needed in the install snapshot,
    publish only from an isolated, verified fictional dataset; never replace or
-   delete the owner's real data to prepare a submission.
+   delete the owner's real data to prepare a submission. When the user asks for
+   examples to come with the app, include them in that verified install snapshot:
+   screenshot fixtures or an optional onboarding seed step do not satisfy this.
 3. Bundle the full dependency closure of every app/automation skill, including
    referenced helpers and resources. Remove private account-specific defaults;
    resolve the installer's databases, connections, repository, timezone and
@@ -97,6 +99,10 @@ Before submitting or updating a Store listing:
    route and its interactions with fictional data, including empty/error states.
    Record exact identities, versions, results and run-created resource cleanup;
    never use owner records as writable test fixtures.
+   For bundled starter-data claims, install the actual published listing into an
+   empty test account and read back its rows before onboarding or any manual data
+   writes. Confirm the installed listing version and remapped relations; do not
+   substitute an editable-source deployment for this Store-install test.
 6. Inspect the final submitted snapshot and media after packaging. Record the
    privacy audit and verification against that exact source version. Any unknown
    provenance, missing dependency, untested onboarding or suspected personal data

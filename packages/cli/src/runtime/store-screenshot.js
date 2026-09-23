@@ -38,15 +38,17 @@ export function resolveStoreScreenshotAccent(accent, seed = 'notis-app') {
   return ACCENT_NAMES[stableHash(seed) % ACCENT_NAMES.length];
 }
 
-export function storeScreenshotLayout(width = 2000, height = 1250) {
+export function storeScreenshotLayout(width = 2000, height = 1250, contentAspect = STORE_SCREENSHOT_ASPECT) {
+  const aspect = Number.isFinite(contentAspect) && contentAspect > 0
+    ? contentAspect : STORE_SCREENSHOT_ASPECT;
   const horizontalInset = Math.max(48, Math.round(width * 0.06));
   const verticalInset = Math.max(40, Math.round(height * 0.06));
   let cardWidth = width - horizontalInset * 2;
-  let cardHeight = Math.round(cardWidth / STORE_SCREENSHOT_ASPECT);
+  let cardHeight = Math.round(cardWidth / aspect);
   const maximumCardHeight = height - verticalInset * 2;
   if (cardHeight > maximumCardHeight) {
     cardHeight = maximumCardHeight;
-    cardWidth = Math.round(cardHeight * STORE_SCREENSHOT_ASPECT);
+    cardWidth = Math.round(cardHeight * aspect);
   }
   const cardLeft = Math.round((width - cardWidth) / 2);
   const cardTop = Math.round((height - cardHeight) / 2) - Math.round(height * 0.008);
@@ -80,7 +82,7 @@ function roundedRectSvg(width, height, radius, { fill = '#ffffff', stroke = null
 
 /**
  * Composite a truthful browser capture into the deterministic Store frame.
- * The source pixels are only resized/cropped; the app UI is never redrawn.
+ * Fit the complete source pixels; never crop controls or redraw the app UI.
  */
 export async function composeStoreScreenshot({
   inputPath,
@@ -94,13 +96,14 @@ export async function composeStoreScreenshot({
 }) {
   const sharp = await loadSharp();
   const resolvedTheme = theme === 'dark' ? 'dark' : 'light';
-  const layout = storeScreenshotLayout(width, height);
+  const source = await sharp(inputPath).metadata();
+  const layout = storeScreenshotLayout(width, height, source.width / source.height);
   const resolvedAccent = resolveStoreScreenshotAccent(accent, seed);
 
   const roundedCapture = await sharp(inputPath)
     .resize(layout.cardWidth, layout.cardHeight, {
-      fit: 'cover',
-      position: focused ? 'top' : 'centre',
+      fit: 'contain',
+      background: resolvedTheme === 'dark' ? '#09090b' : '#ffffff',
     })
     .composite([{
       input: roundedRectSvg(layout.cardWidth, layout.cardHeight, layout.radius),
