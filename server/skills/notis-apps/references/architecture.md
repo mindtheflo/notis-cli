@@ -7,8 +7,11 @@ All Notis apps are built using the Notis CLI, either locally in a repo workspace
 - the portal renders it as a React component inside the portal's React tree
 
 Use standard React pages in `app/`, not Next.js or a custom server. The host
-chooses a trusted shadow root or an isolated Store frame; do not create your own
-iframe, query Portal-owned DOM, or install a window-global runtime. The host owns
+uses one React/Shadow DOM runtime for authored apps, Store installations,
+duplicates and SDK reports. Do not create your own iframe, query Portal-owned
+DOM, or install a window-global runtime. Shadow DOM isolates styles, not
+JavaScript or credentials: loaded bundles share the Portal browser context.
+The host owns
 theme injection and authentication. App code uses SDK hooks and the final tool
 names discovered through the CLI, declared in `notis.config.ts` and enforced by
 the backend. Runtime permissions stay least-authority; releasing an app does not

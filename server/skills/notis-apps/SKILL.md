@@ -46,6 +46,8 @@ For every app UI create/edit task, read both [Design](references/design.md) and
   no-deploy, and explicit-consent requirements. Store publication is separate.
 - Preserve the exact app identity, account/team scope, permissions, and user data.
   Reconcile an uncertain release instead of blindly retrying it.
+- Before Store submission, complete the [publication privacy and portability gate](references/release.md#publication-privacy-and-portability-gate).
+  Public examples must be fictional; never publish the owner's workspace data.
 - Use SDK hooks and declared tools. Let Notis own its sidebar, search, runtime,
   and rendering boundary; do not query host DOM or recreate that chrome in the app.
 

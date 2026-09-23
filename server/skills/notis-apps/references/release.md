@@ -65,6 +65,44 @@ not required for an ordinary Workspace update.
 
 ## Special cases — read only when relevant
 
+### Publication privacy and portability gate
+
+Before submitting or updating a Store listing:
+
+1. Inventory the exact public source archive, listing text/media, database schemas,
+   starter rows, bundled skills (including scripts/references), and automation
+   prompts/configuration. Review their actual contents, not just filenames or
+   a passing secret scan. Exclude personal records, transcripts, health/journal
+   history, customer details, private repository/account identifiers, credentials,
+   local paths, run logs, and private links. Do not merely replace a person's name
+   in otherwise real data. Rebuild examples from wholly fictional scenarios.
+2. Keep live owner databases structure-only (`seedDocuments` absent or false).
+   Opting in seeds the database's live rows, including folders: it is not a
+   fixture selector. Use fictional screenshot fixtures and an explicit, idempotent
+   onboarding demo-data option. If starter rows are needed in the install snapshot,
+   publish only from an isolated, verified fictional dataset; never replace or
+   delete the owner's real data to prepare a submission.
+3. Bundle the full dependency closure of every app/automation skill, including
+   referenced helpers and resources. Remove private account-specific defaults;
+   resolve the installer's databases, connections, repository, timezone and
+   delivery choices at runtime. Preserve existing owner's schedules and data.
+4. Declare a source-owned onboarding skill. It must work through available MCP
+   tools or the Notis CLI in any agent harness, without requiring Notis Manager,
+   vendor-specific delegation tools, hidden local files, or publisher access.
+   Discover tools and inspect schemas before calls; reconcile existing resources
+   before creating them. Obtain installer choices before enabling automation or
+   external actions. Installing examples must not activate external deliveries.
+5. Test onboarding as an independent harness-native proof agent using an account
+   isolated from the publisher, then rerun to prove no duplicates. Exercise each
+   route and its interactions with fictional data, including empty/error states.
+   Record exact identities, versions, results and run-created resource cleanup;
+   never use owner records as writable test fixtures.
+6. Inspect the final submitted snapshot and media after packaging. Record the
+   privacy audit and verification against that exact source version. Any unknown
+   provenance, missing dependency, untested onboarding or suspected personal data
+   blocks submission until resolved. Never equate submission with review approval
+   or Store publication.
+
 ### Unreleased container or stale checkout
 
 An unreleased container has no source to pull. Recover its original local source,
