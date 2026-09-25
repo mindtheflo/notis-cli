@@ -368,6 +368,8 @@ export interface RuntimeResource {
   kind: 'app' | 'report';
   /** Host-provided adoption eligibility, never report-authored authority. */
   analytics_eligible?: boolean;
+  /** Host-derived report family for adoption analytics, e.g. skill review reports. */
+  report_kind?: 'skill_review' | 'custom';
   id: string;
   revision: number;
   name?: string;

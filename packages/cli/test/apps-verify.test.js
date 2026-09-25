@@ -691,6 +691,7 @@ for (const outcome of ['success', 'socket-reset', 'partial-response', 'verificat
     }
     if (outcome === 'stale-build') writeFileSync(join(projectDir, 'app', 'page.tsx'), 'changed after build');
     const requests = [];
+    const reviewLink = { skill_id: 'skill-1', skill: 'weekly-report', review_url: 'https://notis.ai/documents/review-1', review_document_id: 'review-1' };
     let deployChild;
     const server = createServer(async (req,res) => {
       const chunks = [];
@@ -703,7 +704,7 @@ for (const outcome of ['success', 'socket-reset', 'partial-response', 'verificat
         res.write('{"version":8'); res.socket.destroy(); return;
       }
       res.writeHead(200, {'content-type':'application/json'});
-      res.end(JSON.stringify({ app_id:'app-release',version:8,updated_at:'committed-revision' }));
+      res.end(JSON.stringify({ app_id:'app-release',version:8,updated_at:'committed-revision', skill_reviews: [reviewLink] }));
     });
     await new Promise(resolvePromise => server.listen(0,'127.0.0.1',resolvePromise));
     t.after(() => new Promise(resolvePromise => server.close(resolvePromise)));
@@ -732,6 +733,8 @@ for (const outcome of ['success', 'socket-reset', 'partial-response', 'verificat
       const linked=readLinkedState(projectDir,appLinkedStateProfileKey({apiBase,userId:'release-user'}));
       assert.equal(linked.version,8);
       assert.equal(linked.expected_updated_at,'committed-revision');
+      // Review links for the skills this release changed reach the deploying agent.
+      assert.deepEqual(JSON.parse(result.stdout).data.skill_reviews, [reviewLink]);
     } else {
       assert.notEqual(result.status,0,result.stdout);
       assert.equal(requests.length, beforeUploadInterrupted || ['stale-build','verification-failure','design-violation-with-forged-stamp','design-eval-error','design-malformed','design-viewport-error','missing-browser','browser-close-failure'].includes(outcome) ? 0 : 1);

@@ -1257,15 +1257,22 @@ async function appsDeployHandler(ctx) {
     try { release.close(); }
     catch { warnings.push('The app was updated, but the temporary release directory needs local cleanup.'); }
 
+    // One review report per skill this release changed; share the link when the user should review it.
+    const skillReviews = (Array.isArray(result.payload.skill_reviews) ? result.payload.skill_reviews : [])
+      .filter((review) => review && typeof review.review_url === 'string');
     return ctx.output.emitSuccess({
       command: ctx.spec.command_path.join(' '),
       data: {
         app_id: appId,
         version: deployedVersion,
         idempotency_key: idempotencyKey,
+        ...(skillReviews.length ? { skill_reviews: skillReviews } : {}),
       },
       warnings,
-      humanSummary: `Deployed to app ${appId} (version ${deployedVersion})`,
+      humanSummary: [
+        `Deployed to app ${appId} (version ${deployedVersion})`,
+        ...skillReviews.map((review) => `Review ${review.skill} changes: ${review.review_url}`),
+      ].join('\n'),
       meta: { mutating: true, idempotency_key: idempotencyKey },
     });
   } finally {
