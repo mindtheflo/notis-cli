@@ -3,18 +3,13 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { contentCapturePlan, MEASURE_SCREENSHOT_CONTENT_SCRIPT, SAFE_VIEWPORT_HEIGHT_SCRIPT } from './screenshot-framing.js';
 
-export const HIDE_HARNESS_STATUS_SCRIPT =
-  "(() => { const el = document.getElementById('harness-status'); if (el) el.style.opacity = '0'; return true; })()";
-
 /**
- * Prepare the mounted harness page for a listing capture: remove the debug
- * banner and the layout the harness adds around the app (top padding for the
- * banner, 100vh min-height) so content height can be measured and framed
- * without artificial whitespace.
+ * Prepare the mounted harness page for a listing capture: remove the 100vh
+ * min-height the harness adds around the app so content height can be
+ * measured and framed without artificial whitespace.
  */
 const PREPARE_CAPTURE_SCRIPT =
-  "(() => { const s = document.getElementById('harness-status'); if (s) s.style.display = 'none';" +
-  " const r = document.getElementById('root'); if (r) { r.style.paddingTop = '0'; r.style.minHeight = '0'; }" +
+  "(() => { const r = document.getElementById('root'); if (r) r.style.minHeight = '0';" +
   " document.body.style.minHeight = '0'; document.documentElement.style.minHeight = '0'; return true; })()";
 
 const FONTS_STATUS_SCRIPT =
@@ -583,7 +578,7 @@ export const DESIGN_ASSERTIONS_SCRIPT = `(() => {
   };
   const all = Array.from(root.querySelectorAll('*'));
   for (const el of all) {
-    if (el.id === 'harness-status' || !visible(el) || isControl(el)) continue;
+    if (!visible(el) || isControl(el)) continue;
     if (isBox(el)) {
       let p = el.parentElement; let depth = 0;
       while (p && p !== root && depth < 6) { if (!isControl(p) && isBox(p)) { push('nested_border_box', el); break; } p = p.parentElement; depth += 1; }
@@ -600,7 +595,7 @@ export const DESIGN_ASSERTIONS_SCRIPT = `(() => {
     const text = (node.textContent || '').trim();
     if (!text) continue;
     const el = node.parentElement;
-    if (!el || el.closest('#harness-status') || !visible(el)) continue;
+    if (!el || !visible(el)) continue;
     const size = parseFloat(getComputedStyle(el).fontSize);
     if (size > 0 && size < 12) push('text_below_12px', el, { font_size: size });
     if (/^Loading(\\.{3}|\\u2026)?(\\s|$)/.test(text)) push('loading_placeholder_after_mount', el);

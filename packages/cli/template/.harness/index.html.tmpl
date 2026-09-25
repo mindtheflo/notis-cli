@@ -93,12 +93,10 @@
       color: hsl(var(--foreground));
       -webkit-font-smoothing: antialiased;
     }
-    #harness-status { position: fixed; top: 0; left: 0; right: 0; padding: 4px 8px; font-size: 11px; background: #111; color: #0f0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; z-index: 9999; }
-    #root { padding-top: 24px; min-height: 100vh; }
+    #root { min-height: 100vh; }
   </style>
 </head>
 <body>
-  <div id="harness-status">harness: booting</div>
   <div id="root" data-notis-app-root></div>
   <script type="module">
     const routeExport = {{ROUTE_EXPORT}};
@@ -134,10 +132,9 @@
       return Object.prototype.hasOwnProperty.call(tools, name) ? tools[name] : undefined;
     }
 
-    const status = document.getElementById('harness-status');
-    const setStatus = (msg, color = '#0f0') => {
-      status.textContent = `harness: ${msg}`;
-      status.style.color = color;
+    // Boot progress goes to the console so the rendered page stays identical to the app.
+    const setStatus = (msg, failed = false) => {
+      (failed ? console.error : console.info)(`[notis harness] ${msg}`);
     };
 
     window.__harness = {
@@ -416,13 +413,13 @@
           window.__harness.mounted = true;
           const errors = window.__harness.errors.length;
           const calls = window.__harness.runtimeCalls.length;
-          setStatus(`mounted (errors=${errors}, runtimeCalls=${calls})`, errors ? '#f55' : '#0f0');
+          setStatus(`mounted (errors=${errors}, runtimeCalls=${calls})`, errors > 0);
         } catch (error) {
           window.__harness.errors.push({
             type: 'scenario',
             message: error && error.message ? error.message : String(error),
           });
-          setStatus(`scenario failed: ${error && error.message ? error.message : String(error)}`, '#f55');
+          setStatus(`scenario failed: ${error && error.message ? error.message : String(error)}`, true);
         }
       }));
     } catch (error) {
@@ -431,7 +428,7 @@
         message: error && error.message ? error.message : String(error),
         stack: error && error.stack,
       });
-      setStatus(`boot failed: ${error && error.message ? error.message : String(error)}`, '#f55');
+      setStatus(`boot failed: ${error && error.message ? error.message : String(error)}`, true);
     }
   </script>
 </body>

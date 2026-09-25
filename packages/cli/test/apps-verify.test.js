@@ -15,7 +15,6 @@ import { spawn, spawnSync } from 'node:child_process';
 
 import { buildArtifact, computeArtifactHash, prepareAppRelease, readLinkedState, appLinkedStateProfileKey } from '../src/runtime/app-platform.js';
 import { startAppTestServer } from '../src/runtime/app-test-server.js';
-import { HIDE_HARNESS_STATUS_SCRIPT } from '../src/runtime/agent-browser.js';
 import { getAvailablePort } from '../src/runtime/ports.js';
 
 const cliRoot = resolve(import.meta.dirname, '..');
@@ -271,11 +270,6 @@ test('a screenshot scenario overrides the file-level tool fixtures', async (t) =
   const base = await (await fetch(`http://127.0.0.1:${port}/a/verify-app/harness?route=home`)).text();
   assert.match(base, /"demo-entry"/);
   assert.match(base, /"state":"connected"/);
-});
-
-test('screenshot capture hides the harness banner without removing its compositor layer', () => {
-  assert.match(HIDE_HARNESS_STATUS_SCRIPT, /opacity = '0'/);
-  assert.doesNotMatch(HIDE_HARNESS_STATUS_SCRIPT, /display = 'none'/);
 });
 
 test('apps verify aggregates a passing mocked harness result', async () => {
