@@ -513,7 +513,9 @@ export function useCollectionInteractions<T>(
     const extendDown = filterShortcutKeys(keyboard.extendNext, (key) => !key.toLowerCase().endsWith('arrowright'));
     const extendLeft = filterShortcutKeys(keyboard.extendPrevious, (key) => key.toLowerCase().endsWith('arrowleft'));
     const extendUp = filterShortcutKeys(keyboard.extendPrevious, (key) => !key.toLowerCase().endsWith('arrowleft'));
-    add('collection.clear', 'Clear selection', keyboard.clear, clear);
+    // An empty collection has nothing to dismiss. Let the enclosing surface
+    // own Escape (for example Desktop's final Inbox navigation layer).
+    add('collection.clear', 'Clear selection', selectedIds.size > 0 ? keyboard.clear : false, clear);
     add('collection.select-all', 'Select all visible items', selectionMode === 'none' ? false : keyboard.selectAll, selectAll);
     add('collection.toggle', 'Toggle active item', selectionMode === 'none' ? false : keyboard.toggle, () => {
       const id = activeIdRef.current ?? anchorIdRef.current;
@@ -534,7 +536,7 @@ export function useCollectionInteractions<T>(
       if (id) activate(id);
     });
     return definitions;
-  }, [activate, clear, keyboard, moveActive, selectAll, selectionMode, toggle]);
+  }, [activate, clear, keyboard, moveActive, selectAll, selectedIds.size, selectionMode, toggle]);
   const isAvailable = useCallback(() => isInteractionElementVisible(containerRef.current), []);
   useEffect(() => {
     const owner = shortcutCollectionOwnerRef.current!;
