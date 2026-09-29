@@ -12,6 +12,7 @@ const NOTIS_DATABASE_CORE_NAMES = new Set([
   'get_document',
   'list_databases',
   'upsert_database',
+  'delete_database',
 ]);
 
 function isNotisDatabaseCoreName(coreName) {

@@ -163,11 +163,22 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
   }
 }
 
+// Interpreter caches a script run leaves beside itself are not skill content: they
+// must neither mark a skill as changed nor ship in its bundle (app bundling applies
+// the same rule).
+const IGNORED_SKILL_DIRECTORIES = new Set(["__pycache__", ".pytest_cache"]);
+
+function isIgnoredSkillEntry(entry: Dirent): boolean {
+  if (entry.name === ".DS_Store") return true;
+  if (entry.isDirectory()) return IGNORED_SKILL_DIRECTORIES.has(entry.name);
+  return /\.py[co]$/i.test(entry.name);
+}
+
 async function listFilesRecursive(dirPath: string): Promise<string[]> {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      if (entry.name === ".DS_Store") {
+      if (isIgnoredSkillEntry(entry)) {
         return [];
       }
 
@@ -839,22 +850,35 @@ async function createZipFromDirectory(directoryPath: string): Promise<string> {
     os.tmpdir(),
     `notis-skill-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`,
   );
-  const parentDir = path.dirname(directoryPath);
   const directoryName = path.basename(directoryPath);
+  // Zip a copy holding exactly the files the folder hash covers, so ignored
+  // caches never ship.
+  const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), "notis-skill-bundle-"));
+  try {
+    const stagedDir = path.join(stagingRoot, directoryName);
+    for (const filePath of await listFilesRecursive(directoryPath)) {
+      const target = path.join(stagedDir, path.relative(directoryPath, filePath));
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(filePath, target);
+    }
+    await fs.mkdir(stagedDir, { recursive: true });
 
-  if (process.platform === "win32") {
-    await execFileAsync("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      `Compress-Archive -Path '${directoryPath.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
-    ]);
+    if (process.platform === "win32") {
+      await execFileAsync("powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        `Compress-Archive -Path '${stagedDir.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
+      ]);
+      return zipPath;
+    }
+
+    await execFileAsync("zip", ["-qry", zipPath, directoryName], {
+      cwd: stagingRoot,
+    });
     return zipPath;
+  } finally {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
   }
-
-  await execFileAsync("zip", ["-qry", zipPath, directoryName], {
-    cwd: parentDir,
-  });
-  return zipPath;
 }
 
 async function extractZipToDirectory(

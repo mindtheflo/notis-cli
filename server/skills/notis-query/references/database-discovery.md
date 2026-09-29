@@ -57,3 +57,14 @@ Example relation update:
   ]
 }
 ```
+
+### Deleting databases
+
+Use `LOCAL_NOTIS_DATABASE_DELETE_DATABASE` only when the user asked for a database
+to be removed: it permanently deletes the database and every row, and cannot be
+undone. Pass the exact `database_id` from `LOCAL_NOTIS_DATABASE_LIST_DATABASES`.
+The tool refuses while another database has a relation property pointing to it or
+an automation is triggered by it, and lists them; remove those first (delete the
+relation property with `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE`, action `remove`).
+It also refuses a database its app declares, because the app recreates it empty the
+next time it loads: remove it from the app's databases and deploy, or delete the app.

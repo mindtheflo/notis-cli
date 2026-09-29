@@ -97,14 +97,16 @@ Before submitting or updating a Store listing:
 5. Test onboarding as an independent harness-native proof agent using an account
    isolated from the publisher, then rerun to prove no duplicates. Exercise each
    route and its interactions with fictional data, including empty/error states.
-   Record exact identities, versions, results and run-created resource cleanup;
-   never use owner records as writable test fixtures.
+   Record exact identities, versions, results and run-created resource cleanup in
+   a private Notis document owned by the app, never only in local files; never use
+   owner records as writable test fixtures.
    For bundled starter-data claims, install the actual published listing into an
    empty test account and read back its rows before onboarding or any manual data
    writes. Confirm the installed listing version and remapped relations; do not
    substitute an editable-source deployment for this Store-install test.
 6. Inspect the final submitted snapshot and media after packaging. Record the
-   privacy audit and verification against that exact source version. Any unknown
+   privacy audit and verification against that exact source version in the same
+   private Notis document. Any unknown
    provenance, missing dependency, untested onboarding or suspected personal data
    blocks submission until resolved. Never equate submission with review approval
    or Store publication.

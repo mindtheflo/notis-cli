@@ -6,6 +6,7 @@ Native Notis databases are accessed through the generic tool workflow, not a fir
 - `LOCAL_NOTIS_DATABASE_GET_DATABASE` -- inspect read-only metadata and schema detail
 - `LOCAL_NOTIS_DATABASE_QUERY` -- query documents from a database
 - `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` -- create or update a database schema. Every database belongs to a Notis app: creation requires the owning app's slug or id in the `app` argument (create the app first with `LOCAL_NOTIS_CREATE_APP` if needed)
+- `LOCAL_NOTIS_DATABASE_DELETE_DATABASE` -- permanently delete a database and all its rows by `database_id`. It is refused for a database its app declares, and while another database relates to it or an automation is triggered by it; the error says what to remove first
 
 Example workflow before building an app:
 
