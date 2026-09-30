@@ -864,6 +864,30 @@ async function createZipFromDirectory(directoryPath: string): Promise<string> {
     await fs.mkdir(stagedDir, { recursive: true });
 
     if (process.platform === "win32") {
+      // Windows PowerShell's Compress-Archive writes entry names with
+      // backslashes, which unzip on the cloud computer as literal file names
+      // ("cached\\SKILL.md"). bsdtar, shipped in System32 since Windows 10
+      // 1803, writes the forward slashes the zip format requires. Use the
+      // system copy explicitly: on a Git Bash PATH, "tar" resolves to GNU tar,
+      // which cannot write zip archives.
+      const systemTar = path.join(
+        process.env.SystemRoot || "C:\\Windows",
+        "System32",
+        "tar.exe",
+      );
+      if (await pathExists(systemTar)) {
+        await execFileAsync(systemTar, [
+          "-c",
+          "--format",
+          "zip",
+          "-f",
+          zipPath,
+          "-C",
+          stagingRoot,
+          directoryName,
+        ]);
+        return zipPath;
+      }
       await execFileAsync("powershell.exe", [
         "-NoProfile",
         "-Command",
