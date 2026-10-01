@@ -10,6 +10,7 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
+import { isInteractionElementVisible } from './visibility';
 
 export type ShortcutScope = 'app' | 'route' | 'collection' | 'detail' | 'modal';
 
@@ -215,6 +216,25 @@ function consumeShortcut(event: KeyboardEvent, definition: ShortcutDefinition): 
   void definition.onTrigger(event);
 }
 
+// Apps built before collections stopped binding Escape to an empty selection
+// still register it, which swallows Escape for nothing. With collection items
+// rendered and none selected, leave Escape to the enclosing surface (the Portal
+// closes its frontmost layer, then returns to Inbox).
+function isEmptyCollectionClear(shortcut: ShortcutDefinition, ownerDocument: Document, event: KeyboardEvent): boolean {
+  if (event.key !== 'Escape' || shortcut.id !== 'collection.clear') return false;
+  const items = collectionItems(ownerDocument).filter((item) => isInteractionElementVisible(item as HTMLElement));
+  return items.length > 0 && !items.some((item) => item.getAttribute('aria-selected') === 'true');
+}
+
+/** App views render in open shadow roots, which document queries do not enter. */
+function collectionItems(root: Document | ShadowRoot): Element[] {
+  const items = Array.from(root.querySelectorAll('[data-notis-collection-item-id], [data-notis-row-id]'));
+  for (const element of Array.from(root.querySelectorAll('*'))) {
+    if (element.shadowRoot) items.push(...collectionItems(element.shadowRoot));
+  }
+  return items;
+}
+
 // Native dialogs make the background inert, but document capture listeners still
 // receive their keyboard events. Leave those events to the dialog and its controls.
 function isDialogEvent(event: KeyboardEvent): boolean {
@@ -293,7 +313,8 @@ function registerFallbackShortcut(input: Omit<ShortcutRegistration, 'id' | 'orde
         const token = chordToken(eventChord(event));
         for (const registration of applicableRegistrations(registrations.values())) {
           for (const shortcut of registration.getShortcuts()) {
-            if (shortcut.enabled === false || (editable && !shortcut.allowInEditable) || (event.repeat && !shortcut.allowRepeat)) continue;
+            if (shortcut.enabled === false || (editable && !shortcut.allowInEditable) || (event.repeat && !shortcut.allowRepeat)
+              || isEmptyCollectionClear(shortcut, ownerDocument, event)) continue;
             const match = parseShortcut(shortcut).some(
               (candidate) => candidate.sequence.length === 1 && chordToken(candidate.sequence[0]!) === token,
             );
@@ -407,6 +428,7 @@ function ShortcutProviderRoot({ children }: { children: ReactNode }) {
           .filter((shortcut) => shortcut.enabled !== false)
           .filter((shortcut) => !editable || shortcut.allowInEditable)
           .filter((shortcut) => !event.repeat || shortcut.allowRepeat)
+          .filter((shortcut) => !isEmptyCollectionClear(shortcut, document, event))
           .flatMap(parseShortcut);
         if (candidates.length === 0) continue;
 
