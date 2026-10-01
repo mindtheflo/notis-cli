@@ -43,9 +43,8 @@ export interface UseHandoverResult {
  * feedback button should let the user write in their own words.
  *
  * Pass `skill` to bind the work to a skill declared in `notis.config.ts`; the
- * host rejects a key the app does not declare. `autoSend` is accepted for
- * forward compatibility; today's hosts always return `drafted` and let the
- * user press send.
+ * host rejects a key the app does not declare. `autoSend` submits the prepared
+ * message on an active user gesture; background calls still open a draft.
  */
 export function useHandover(): UseHandoverResult {
   const runtime = useNotisRuntime();

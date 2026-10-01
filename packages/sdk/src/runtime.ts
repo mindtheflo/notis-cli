@@ -310,9 +310,8 @@ export interface HandoverPayload {
    */
   skill?: string;
   /**
-   * Accepted for forward compatibility. The portal never submits a composer on
-   * the user's behalf today, so every handover resolves `drafted`; `sent` is
-   * reserved for a host that can genuinely dispatch the run.
+   * Submit on an active user gesture when the host supports immediate handover;
+   * background calls still open an editable draft.
    */
   autoSend?: boolean;
 }
