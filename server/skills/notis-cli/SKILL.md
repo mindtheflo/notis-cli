@@ -2,8 +2,8 @@
 name: notis-cli
 description: Use when agents should work through the Notis CLI, especially to develop Notis apps locally or to access Notis, Composio, or MCP tools they do not currently have loaded directly.
 mcp_resource: true
-mcp_tool_patterns: []
-mcp_references: ["references/app-delivery.md", "references/tool-examples.md", "references/native-databases.md", "references/troubleshooting.md"]
+mcp_tool_patterns: ["LOCAL_NOTIS_GET_INTELLIGENCE_POLICY"]
+mcp_references: ["references/app-delivery.md", "references/tool-examples.md", "references/native-databases.md", "references/troubleshooting.md", "references/intelligence.md"]
 ---
 
 # Notis CLI Skill
@@ -137,3 +137,18 @@ also rewrites these links to their published URIs.
 - [Toolkit mental model](references/tool-examples.md)
 - [Native database access](references/native-databases.md)
 - [Supporting commands](references/troubleshooting.md)
+
+## Intelligence for skills and delegated work
+
+Skills request `low`, `medium`, or `high`, never a fixed model name. Discover the
+read-only `LOCAL_NOTIS_GET_INTELLIGENCE_POLICY` tool to obtain the shared `contract`
+and current mapping
+for `notis`, `codex`, or `claude_code` and the requested `level`. Resolve model and
+reasoning effort together at the start of each job; validate the selected options
+with the executing harness. Explicit invocation overrides win. A fixed-model
+harness may inherit and disclose that the level was not applied; an automated
+launcher needing an exact selection stops before side effects if policy is unavailable.
+Repository and installed skills consume that same response; neither needs a
+checkout-relative document. Record actual execution receipts, not the level name, as model provenance. Media
+engines remain separate capabilities selected by their tools. See
+[the intelligence contract](references/intelligence.md) for cross-environment details.
