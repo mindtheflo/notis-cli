@@ -196,7 +196,8 @@ export function isEditableShortcutEvent(event: Event): boolean {
       return true;
     }
     if (tag === 'A' && target.hasAttribute('href')) return true;
-    return ['button', 'link', 'menuitem', 'switch', 'tab'].includes(
+    // A focused separator (a resizable edge) owns its arrow keys.
+    return ['button', 'link', 'menuitem', 'separator', 'switch', 'tab'].includes(
       target.getAttribute('role') || '',
     );
   });
