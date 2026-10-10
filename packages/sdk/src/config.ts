@@ -1,3 +1,7 @@
+export { defineSpace, defineSpaces } from './space';
+export type { SpaceDefinition, SpacesWorkspace, SpaceActionTemplate, SpaceResourceReference, SpaceDatabaseCreate } from './space';
+export type { SpaceViewParam, SpaceViewParamType, SpaceShows, SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
+
 /**
  * Configuration utilities for notis.config.ts.
  *
@@ -86,28 +90,6 @@ export interface NotisAppAuthor {
   name: string;
   handle?: string;
   url?: string;
-}
-
-export interface NotisAppSkillConfig {
-  /** Stable source-owned key used by other app declarations. */
-  key: string;
-  /**
-   * Path to the skill, relative to notis.config.ts. Either a Markdown file
-   * (`./skills/onboarding.md`) or a directory holding SKILL.md plus its
-   * supporting files (`./skills/onboarding/`), which are packaged on deploy
-   * and materialized next to SKILL.md in the sandbox.
-   */
-  path: string;
-  /** User-facing name used for the installed skill. */
-  name: string;
-  description?: string;
-}
-
-export interface NotisAppOnboardingConfig {
-  /** Key of a skill declared in `skills`. */
-  skill: string;
-  /** Editable message placed in Notis when onboarding is opened. */
-  prompt: string;
 }
 
 export interface NotisAppScreenshotConfig {
@@ -245,10 +227,6 @@ export interface NotisAppConfig {
   tools?: string[];
   /** Optional execution bindings for provider-generated tool names. */
   toolBindings?: NotisAppToolBinding[];
-  /** Skills shipped from this app's source tree. */
-  skills?: NotisAppSkillConfig[];
-  /** Optional onboarding entrypoint exposed from the app sidebar. */
-  onboarding?: NotisAppOnboardingConfig;
 }
 
 /**

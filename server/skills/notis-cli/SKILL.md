@@ -1,6 +1,6 @@
 ---
 name: notis-cli
-description: Use when agents should work through the Notis CLI, especially to develop Notis apps locally or to access Notis, Composio, or MCP tools they do not currently have loaded directly.
+description: Use when agents should work through the Notis CLI, especially to develop Notis Spaces locally or to access Notis, Composio, or MCP tools they do not currently have loaded directly.
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_GET_INTELLIGENCE_POLICY"]
 mcp_references: ["references/app-delivery.md", "references/tool-examples.md", "references/native-databases.md", "references/troubleshooting.md", "references/intelligence.md"]
@@ -12,13 +12,13 @@ Use this skill when the user wants work done through the Notis CLI.
 
 This skill covers two main CLI workflows:
 
-1. Developing Notis apps locally.
+1. Developing Notis Spaces (views, their source and linked Skills) locally.
 2. Accessing Notis, Composio, and MCP tools through the CLI.
 ## When to use this skill
 
 Activate this skill when:
 
-- the user wants to init, develop, build, verify, link, pull, or deploy a Notis app through the CLI
+- the user wants to init, pull, build, verify, preview, deploy or promote a Notis Space through the CLI
 - the current agent does not have the tool it needs in its direct tool list
 - the user wants direct MCP access through Notis
 - the user wants to use an integration-backed capability through Notis rather than a first-class local tool
@@ -133,7 +133,7 @@ For hosted MCP, fetch the matching `notis://docs/notis-cli/references/<file>.md`
 with resources/read or the available Notis resource-fetch tool; the root resource
 also rewrites these links to their published URIs.
 
-- [App delivery](references/app-delivery.md)
+- [Space delivery](references/app-delivery.md)
 - [Toolkit mental model](references/tool-examples.md)
 - [Native database access](references/native-databases.md)
 - [Supporting commands](references/troubleshooting.md)

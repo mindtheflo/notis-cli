@@ -1,6 +1,6 @@
 # @notis_ai/cli
 
-Agent-first Notis CLI for apps and generic tool execution.
+Agent-first Notis CLI for Spaces, Skills and generic tool execution.
 
 ## Install
 
@@ -18,7 +18,7 @@ For CI, hosted agents, or internal scripts, pass a non-persisted token with `NOT
 npx --package @notis_ai/cli@latest -- notis --help
 npx --package @notis_ai/cli@latest -- notis login
 npx --package @notis_ai/cli@latest -- notis doctor
-npx --package @notis_ai/cli@latest -- notis apps list
+npx --package @notis_ai/cli@latest -- notis spaces list
 npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"
 ```
 
@@ -127,6 +127,98 @@ Examples:
 
 ## Skills
 
+### `npx --package @notis_ai/cli@latest -- notis skills list`
+
+List every Skill you can see, with its kind, editability and Space links.
+
+When to use: Find a Skill and its exact edit target before reading or editing it, or see what a Space and its sub-Spaces list. Links to Spaces you cannot open are omitted; an unavailable link gives no access.
+
+Options:
+- `--space <id>` — Only Skills listed by this Space and, by default, its sub-Spaces.
+- `--no-child-spaces` — With --space: direct links of that Space only.
+- `--include-disabled` — Include Skills you disabled.
+- `--after <cursor>` — Continue from the next cursor of the previous page.
+- `--limit <n>` — Page size between 1 and 100 (default 50).
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis skills list`
+- `npx --package @notis_ai/cli@latest -- notis skills list --space <space-id> --no-child-spaces --json`
+
+### `npx --package @notis_ai/cli@latest -- notis skills create <file>`
+
+Create a native Skill, standalone or linked to an editable Space.
+
+When to use: Create complete instructions or files without provider installation. Choose an optional Space destination, dry-run, and keep the exact request key on retry.
+
+Options:
+- `--request-id <key>` — Stable creation intent key; reuse after an uncertain reply.
+- `--dry-run` — Validate without creating an identity or uploading files.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis skills create ./skill.json --request-id create-1 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis skills settings read <skill-id>`
+
+Read a native Skill personal enablement, agent targets and settings revision.
+
+When to use: Inspect direct-owner preferences without changing shared instructions or Space access.
+
+Examples:
+
+### `npx --package @notis_ai/cli@latest -- notis skills settings update <file>`
+
+Update personal native Skill settings with a current revision and stable retry key.
+
+When to use: Enable or disable your agents without changing a shared Skill definition or another Space.
+
+Options:
+- `--request-id <key>` — Stable settings intent; reuse after a lost reply.
+- `--dry-run` — Validate current ownership and revision without changing settings.
+
+Examples:
+
+### `npx --package @notis_ai/cli@latest -- notis skills read [skill-id]`
+
+Inspect a native Skill through direct ownership or an editable Space link.
+
+When to use: Read the exact target and content version before editing. A Space target uses its current Editor authority, never a personal fallback.
+
+Options:
+- `--files` — Include every verified supporting file as base64.
+- `--target <json>` — Exact {skill_id} or {space_id,binding_id} read target; do not combine with a Skill ID.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis skills read <skill-id> --files`
+- `npx --package @notis_ai/cli@latest -- notis skills read --target '{"space_id":"<id>","binding_id":"<binding>"}' --files`
+
+### `npx --package @notis_ai/cli@latest -- notis skills update <file>`
+
+Edit a native Skill through its direct or Space target, preserving its ID and supporting files.
+
+When to use: Use the target/version from skills list or skills read, dry-run, then reuse the same request key and bytes to save or recover a lost reply. The same edit file works for a standalone or a Space target; an optional links key changes where the Skill is listed in the same transaction.
+
+Options:
+- `--request-id <key>` — Stable edit intent key; reuse after lost replies.
+- `--dry-run` — Check current access, content and revisions without uploading or saving.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis skills update ./skill-edit.json --request-id edit-1 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis skills links <skill-id>`
+
+Add, remove or move a Skill between Spaces; the Skill keeps its ID.
+
+When to use: Change where a Skill is listed without editing its content. A move is one add plus one remove in one transaction. You must be an Editor of every Space you touch and able to edit the Skill; removing its last available link keeps it as your own standalone Skill.
+
+Options:
+- `--add <json>` — JSON array of {space_id, space_revision, alias?} links to add; alias defaults to the Skill name.
+- `--remove <json>` — JSON array of {binding_id, binding_revision} links to remove, from skills list.
+- `--request-id <key>` — Stable intent key; reuse it unchanged when retrying this change.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis skills links <skill-id> --add '[{"space_id":"<space-id>","space_revision":3}]' --request-id link-1`
+- `npx --package @notis_ai/cli@latest -- notis skills links <skill-id> --add '[{"space_id":"<to-space-id>","space_revision":3}]' --remove '[{"binding_id":"<binding-id>","binding_revision":2}]' --request-id move-1`
+
 ### `npx --package @notis_ai/cli@latest -- notis skills sync`
 
 Synchronize account skills and keep the three Notis base skills current.
@@ -141,7 +233,388 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis skills sync --json`
 
 
-## Apps
+## Spaces
+
+Build, verify and publish Space views, their linked Skills and resources. The product `notis-apps` skill owns the workflow and the consequences of links, moves and the bin.
+
+### `npx --package @notis_ai/cli@latest -- notis spaces screenshot <url>`
+
+Capture a full-height PNG of a live view with your current access.
+
+When to use: Check the actual deployed view; writes are blocked and current access is checked again before any output is saved.
+
+Options:
+- `--width <pixels>` — 1440 (default) or 390.
+- `--output-dir <path>` — New output directory; defaults to a unique .notis/renders directory. Existing files are never overwritten.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces screenshot <view-link> --width 390`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces init <name> [dir]`
+
+Scaffold an editable collection view with first-party record components.
+
+When to use: Start a local Space collection source for an existing linked database. Does not create or deploy remote resources.
+
+Options:
+- `--database-key <key>` — Portable key of the database this Space links.
+- `--path <path>` — Descriptive view path; defaults to records.
+- `--title-property <id>` — Canonical title/number property ID, or the title column (default).
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces init Notes ./notes --database-key notes --path notes`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces navigation bind <space-id>`
+
+Bind a named destination for the next source publication without granting target access.
+
+When to use: Connect a portable navigation alias to an existing Space or exact record before building and publishing.
+
+Options:
+- `--alias <name>` — Declared portable navigation alias.
+- `--target <json>` — Exact {space_id,document_id?}, or null to remove the draft binding.
+- `--revision <number>` — Current source Space metadata revision.
+- `--dry-run` — Check current source/target access and revision without changing anything.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces navigation bind <space-id> --alias history --target '{"space_id":"<history-id>"}' --revision 2 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces resources name <space-id> <binding-id>`
+
+Give an included resource a portable alias before the first source revision.
+
+When to use: Prepare staged resources for source authoring without replacing their IDs, scope or owners.
+
+Options:
+- `--alias <name>` — Stable lowercase alias to use in source.
+- `--revision <number>` — Current Space metadata revision.
+- `--dry-run` — Check naming, current access and revision without changing metadata.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces resources name <space-id> <binding-id> --alias weekly-report --revision 0 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces pull <space-id> [dir]`
+
+Pull one editable Space source snapshot, its resource list and its Skill folders into an empty directory.
+
+When to use: Edit a Space you can administer: the source, its links (resources.json) and every editable linked Skill (skills/<alias>/) arrive together, with a local lock file so a later deploy sends only what you changed.
+
+Options:
+- `--revision <number>` — Exact published source revision; defaults to the current one.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces pull <space-id> ./space-source`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces verify [dir]`
+
+Render one frozen Space with offline fixtures and validate its current action authorizations.
+
+When to use: Check immutable build bytes and authoring compatibility without executing actions or publishing.
+
+Options:
+- `--space <key>` — Exact source key from the workspace index.
+- `--space-id <id>` — Exact existing destination Space.
+- `--reuse-grants <json>` — Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.
+- `--reuse-grants-only` — Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces verify . --space overview --space-id <space-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces preview [dir]`
+
+Seal a checked unpublished revision of the same Space and return its authenticated preview link.
+
+When to use: Review a checked candidate using current Editor access without changing live source or cloning the Space.
+
+Options:
+- `--space <key>` — Exact source key from the workspace index.
+- `--space-id <id>` — Exact existing destination Space.
+- `--reuse-grants <json>` — Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.
+- `--reuse-grants-only` — Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Validate without uploading or publishing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces preview . --space overview --space-id <space-id> --request-id release-1`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces deploy [dir]`
+
+Publish one built Space with a retry-safe, independent source revision.
+
+When to use: Update only the selected existing Space; this does not publish to the Store or change siblings.
+
+Options:
+- `--space <key>` — Exact source key from the workspace index.
+- `--space-id <id>` — Exact existing destination Space.
+- `--reuse-grants <json>` — Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.
+- `--reuse-grants-only` — Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Validate without uploading or publishing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces deploy . --space overview --space-id <space-id> --request-id release-1`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces promote <release-id> [dir]`
+
+Publish the exact sealed Space revision, with its pending Skill and link changes, after current permission and concurrency checks.
+
+When to use: Finish a reviewed preview without rebuilding or substituting a different candidate. The Skill edits, new Skills and list changes the preview carried go live in the same transaction.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces promote <release-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces abandon <release-id>`
+
+Close an unpublished Space preview without changing its live source, Skills or links, or deleting action history.
+
+When to use: Stop using a candidate while preserving live source and completed effects.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces abandon <release-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces list`
+
+List Spaces currently available to your account.
+
+When to use: Discover accessible Spaces without exposing an issuer-wide resource catalogue.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces list`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces get <space-id>`
+
+Read one accessible Space and its scoped resources.
+
+When to use: Inspect the current published revision and named capabilities before executing.
+
+Options:
+- `--record <record-key>` — Fixed record context, when this is a record-scoped Space.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces get <space-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces action <space-id> <action-id>`
+
+Execute a declared action using its saved authorization.
+
+When to use: Use Space capabilities as the actual actor, with the saved issuer connection and payer.
+
+Options:
+- `--revision <number>` — Exact published source revision.
+- `--preview-release <id>` — Exact sealed candidate ID; requires current Editor access.
+- `--schema-revision <number>` — Native schema revision; required for native row writes.
+- `--inputs <json>` — Declared action input values; defaults to {}.
+- `--record <record-key>` — Fixed record context, when this is a record-scoped Space.
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Validate current access and action inputs without executing or billing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces action <space-id> refresh --revision 1 --inputs '{}' --request-id refresh-1 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces viewer-read <space-id> <operation>`
+
+Run one declared viewer read as yourself.
+
+When to use: Check what an explorer Space shows you: the databases or Skills you can open, with your own access and never an issuer grant.
+
+Options:
+- `--revision <number>` — Exact published source revision.
+- `--preview-release <id>` — Exact sealed candidate ID; requires current Editor access.
+- `--input <json>` — Read input, e.g. {"database_id":"<id>"}; defaults to {}.
+- `--record <record-key>` — Fixed record context, when this is a record-scoped Space.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces viewer-read <space-id> list_databases --revision 3`
+- `npx --package @notis_ai/cli@latest -- notis spaces viewer-read <space-id> query_database --revision 3 --input '{"database_id":"<id>","request":{"page_size":20}}'`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces grants list <space-id>`
+
+Inspect authorization records for a Space you can edit.
+
+When to use: Inspect issuers and exact constraints without exposing connection secrets.
+
+Options:
+- `--record <record-key>` — Fixed record context, when this is a record-scoped Space.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces grants list <space-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces grants create <space-id>`
+
+Authorize an exact template using your current connection.
+
+When to use: Create a Space-bound authorization; the server resolves the signed-in issuer connection.
+
+Options:
+- `--template <file>` — Canonical action template JSON file.
+- `--record <record-key>` — Fixed record context, when this is a record-scoped Space.
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Validate the template and Editor access without creating a grant.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces grants create <space-id> --template action.json --request-id grant-1 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces grants revoke <grant-id>`
+
+Revoke one saved Space authorization.
+
+When to use: Stop future dispatches for an authorization you issued or can administer.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces grants revoke <grant-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store list`
+
+List Space Store listings you can see.
+
+When to use: Find Space templates published to your team or approved for everyone, and your own listings.
+
+Options:
+- `--channel <team|public>` — Only one channel.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store list --channel team`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store get <listing-id>`
+
+Read one Store listing with its versions and your installs.
+
+When to use: Check what a listing contains, its review state and whether your copies have an update.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store get <listing-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store installs`
+
+List the Spaces you installed from the Store.
+
+When to use: See which installed copies have an update or conflicts to resolve.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store installs`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id>`
+
+Publish a Space and its sub-Spaces as the next Store version.
+
+When to use: Share a Space as an installable template: team listings publish at once, public ones wait for review.
+
+Options:
+- `--channel <team|public>` — Where to publish.
+- `--metadata <json>` — Listing name, tagline, description, category, icon, accent.
+- `--starter <json>` — Starter row IDs per database ({"<database-id>":["<record-key>"]}).
+- `--notes <text>` — Release notes for this version.
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Show the package counts and review diff without publishing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id> --channel team --request-id publish-1 --dry-run`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store install <listing-id>`
+
+Install a Store listing as your own independent copy.
+
+When to use: Add a published Space template to your account; your copy keeps your changes on later updates.
+
+Options:
+- `--name <name>` — Name of the installed top Space.
+- `--parent <space-id>` — Install under one of your Spaces.
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Show what the copy contains without installing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store install <listing-id> --request-id install-1`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id>`
+
+Update an installed copy, keeping your changes, or resolve its conflicts.
+
+When to use: Take a newer Store version: unchanged parts update, your edits stay, and parts both sides changed become conflicts you resolve.
+
+Options:
+- `--resolve <json>` — Per conflict key: "keep_mine" or "take_theirs".
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+- `--dry-run` — Show the three-way plan without changing anything.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id> --request-id update-1 --dry-run`
+- `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id> --resolve '{"skill:<key>":"keep_mine"}' --request-id resolve-1`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces store unpublish <listing-id>`
+
+Stop new installs of a Store listing.
+
+When to use: Withdraw a listing: existing copies keep working and a version waiting for review is withdrawn.
+
+Options:
+- `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store unpublish <listing-id> --request-id unpublish-1`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces build [dir]`
+
+Build one independent Space and save its frozen source/artifact snapshot.
+
+When to use: Prepare a selected Space for verification without publishing it or changing siblings.
+
+Options:
+- `--space <key>` — Exact source key from the workspace Space index.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces build . --space overview`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces inspect [dir]`
+
+Inspect one local Space definition and its declared capabilities.
+
+When to use: Read the selected source definition without loading sibling definitions or account resources.
+
+Options:
+- `--space <key>` — Exact source key from the workspace Space index.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces inspect . --space overview`
+
+
+## Views
+
+### `npx --package @notis_ai/cli@latest -- notis views find`
+
+Find the views you can open for a record, database, view link, Space or search.
+
+When to use: Get fresh view-qualified links and declared URL parameters before citing or opening a view.
+
+Options:
+- `--record-key <id>` — Find views that show this exact native record.
+- `--database-id <id>` — Find views over this database.
+- `--url <url>` — Resolve this view link and its current parameters.
+- `--space-id <id>` — Describe this Space view.
+- `--query <text>` — Search accessible view names, descriptions and readable context.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis views find --record-key <record-key>`
+- `npx --package @notis_ai/cli@latest -- notis views find --url <view-link>`
+- `npx --package @notis_ai/cli@latest -- notis views find --query inbox`
+
+### `npx --package @notis_ai/cli@latest -- notis views render <url>`
+
+Render a live view as Markdown and a full-height PNG with your current access.
+
+When to use: Check the actual deployed view; writes are blocked and current access is checked again before any output is saved.
+
+Options:
+- `--outputs <kinds>` — Comma-separated markdown,screenshot (default both).
+- `--width <pixels>` — 1440 (default) or 390.
+- `--output-dir <path>` — New output directory; defaults to a unique .notis/renders directory. Existing files are never overwritten.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis views render <view-link> --outputs markdown,screenshot`
+
+
+## Legacy Apps
+
+For accounts not yet moved to Spaces. A legacy App cannot declare Skills; Skills are linked to Spaces.
 
 ### `npx --package @notis_ai/cli@latest -- notis apps list`
 
@@ -329,85 +802,11 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis apps doctor ./my-app`
 
 
-## Reports
+## Reports and saved HTML
 
-Reports save standalone live SDK documents without an app or database. They do not deploy an app or change shared app routes.
+Create independently authored reports as Space views with the product `notis-reports` and `notis-apps` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link. Preserved database report rows open through their main view.
 
-Use the standalone report build profile and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
-
-To revise, read the current document and recover its source from the short-lived `report_source_url`. Pass `--document-id` and the freshly read `--expected-revision`. Read back the saved record and inspect its native URL. See the product `notis-reports` skill for the full authoring contract.
-
-### `npx --package @notis_ai/cli@latest -- notis reports init <name> [dir]`
-
-Init a standalone live SDK report.
-
-When to use: Author a private standalone document using the shared view runtime; no app or database is required.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports init "Weekly report" ./weekly-report`
-
-### `npx --package @notis_ai/cli@latest -- notis reports build [dir]`
-
-Build a standalone live SDK report.
-
-When to use: Author a private standalone document using the shared view runtime; no app or database is required.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports build ./weekly-report`
-
-### `npx --package @notis_ai/cli@latest -- notis reports verify [dir]`
-
-Verify a standalone live SDK report.
-
-When to use: Author a private standalone document using the shared view runtime; no app or database is required.
-
-Options:
-- `--routes <slugs>` — Comma-separated route slugs. Default: every route in manifest.
-- `--port <n>` — Loopback port. Default: auto-pick.
-- `--skip-build` — Skip notis apps build; reuse existing .notis/output/.
-- `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.
-- `--no-browser` — Start the harness server and print URLs; do not drive agent-browser.
-- `--keep-open` — Leave server + browser session running after report (for manual triage).
-- `--document-id <id>` — Saved report for live verification.
-- `--expected-revision <revision>` — Saved report revision for live verification.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports verify ./weekly-report`
-
-### `npx --package @notis_ai/cli@latest -- notis reports preview [dir]`
-
-Preview a standalone live SDK report.
-
-When to use: Author a private standalone document using the shared view runtime; no app or database is required.
-
-Options:
-- `--routes <slugs>` — Comma-separated route slugs. Default: every route in manifest.
-- `--port <n>` — Loopback port. Default: auto-pick.
-- `--skip-build` — Skip notis apps build; reuse existing .notis/output/.
-- `--mode <mode>` — stub | live. Default stub. Live posts to /portal_views/runtime_query with the CLI JWT and fails routes whose runtime calls all errored.
-- `--no-browser` — Start the harness server and print URLs; do not drive agent-browser.
-- `--keep-open` — Leave server + browser session running after report (for manual triage).
-- `--document-id <id>` — Saved report for live verification.
-- `--expected-revision <revision>` — Saved report revision for live verification.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports preview ./weekly-report`
-
-### `npx --package @notis_ai/cli@latest -- notis reports save [dir]`
-
-Build, verify and save a standalone live report document.
-
-When to use: Persist an independently owned report, not an app release.
-
-Options:
-- `--document-id <id>` — Existing report document to update.
-- `--expected-revision <revision>` — Current saved report revision; required for updates.
-- `--title <title>` — Required, including updates. Document title.
-- `--context-file <file>` — Required. UTF-8 readable report content and structure.
-
-Examples:
-- `npx --package @notis_ai/cli@latest -- notis reports save ./weekly-report --title "Weekly review" --context-file ./context.md`
-
+For plain HTML, use the installed HTML Space and its linked saving Skill. Its generic file upload is attached to an existing native record with a separate revision-checked write; a raw download URL is not a saved page link.
 
 ## Hand-over
 

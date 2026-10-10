@@ -131,9 +131,11 @@ function runAgentBrowser(args, { timeoutMs = 30_000 } = {}) {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let hardStop;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
+      hardStop = setTimeout(() => child.kill('SIGKILL'), 2000);
     }, timeoutMs);
 
     child.stdout.on('data', (chunk) => {
@@ -143,7 +145,7 @@ function runAgentBrowser(args, { timeoutMs = 30_000 } = {}) {
       stderr += chunk.toString();
     });
     child.on('error', (error) => {
-      clearTimeout(timer);
+      clearTimeout(timer); clearTimeout(hardStop);
       resolvePromise({
         exitCode: 1,
         stdout,
@@ -152,7 +154,7 @@ function runAgentBrowser(args, { timeoutMs = 30_000 } = {}) {
       });
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clearTimeout(timer); clearTimeout(hardStop);
       resolvePromise({
         exitCode: timedOut ? 124 : (code ?? 1),
         stdout,
@@ -225,10 +227,17 @@ export async function runHarnessRoute({
   snapshotPath = null,
   designViewports = DEFAULT_DESIGN_VIEWPORTS,
   waitForRuntime = false,
+  signal,
 }) {
+  const cancelled = () => ({ mounted: false, renderStarted: false, runtimeCalls: [],
+    errors: [{ phase: 'browser', message: 'Verification cancelled.' }], snapshotPath: null, tool_error: null });
+  if (signal?.aborted) return cancelled();
   const opened = await runAgentBrowser(['--session', sessionName, 'open', url], {
     timeoutMs: Math.min(Math.max(timeoutMs, 5000), 30_000),
   });
+  // Let an in-flight open settle before the owner closes its browser. Closing
+  // concurrently with open can leave a newly launched browser behind.
+  if (signal?.aborted) return cancelled();
   if (opened.exitCode !== 0) {
     return {
       mounted: false,
@@ -242,7 +251,7 @@ export async function runHarnessRoute({
 
   const deadline = Date.now() + timeoutMs;
   let readySince = null;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !signal?.aborted) {
     const lastRead = await readHarness(sessionName, 5000);
     if (!lastRead.ok) {
       readySince = null;
@@ -258,6 +267,8 @@ export async function runHarnessRoute({
     } else readySince = null;
     await delay(250);
   }
+
+  if (signal?.aborted) return cancelled();
 
   const finalRead = await readHarness(sessionName, 5000);
   if (!finalRead.ok) {
@@ -525,10 +536,22 @@ export async function captureHarnessScreenshot({
 }
 
 export async function closeAgentBrowserSession(sessionName) {
-  const result = await runAgentBrowser(['--session', sessionName, 'close'], {
-    timeoutMs: 5000,
-  });
-  return result.exitCode === 0;
+  return (await closeAgentBrowserSessionResult(sessionName)).ok;
+}
+
+export async function closeAgentBrowserSessionResult(sessionName) {
+  const started = Date.now();
+  // agent-browser waits up to 30s for CDP Browser.close and then up to 5s
+  // for its owned Chrome process. Do not kill the client at the start of the
+  // provider's shutdown grace period and lose its actual close acknowledgement.
+  const result = await runAgentBrowser(['--session', sessionName, '--json', 'close'], { timeoutMs: 40_000 });
+  let acknowledged = false;
+  try {
+    const reply = parseAgentBrowserJson(result.stdout);
+    acknowledged = reply?.success === true && reply?.data?.closed === true;
+  } catch { /* Missing acknowledgement is a failed cleanup, never a pass. */ }
+  return { ok: result.exitCode === 0 && acknowledged, exit_code: result.exitCode,
+    timed_out: Boolean(result.timedOut), duration_ms: Date.now() - started };
 }
 
 // ---------------------------------------------------------------------------

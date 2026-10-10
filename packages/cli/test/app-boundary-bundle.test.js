@@ -1,15 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { copyBoundaryRules, BOUNDARY_RULES_RELATIVE_PATH } from '../scripts/copy-boundary-rules.js';
-import { RULES_PATH_CANDIDATES, resolveRulesPath } from '../src/runtime/app-boundary-validator.js';
+import { collectArtifactBoundaryViolations, collectProjectBoundaryViolations, RULES_PATH_CANDIDATES, resolveRulesPath } from '../src/runtime/app-boundary-validator.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(testDir, '..');
 const repoRoot = resolve(cliRoot, '../..');
+
+test('retired SDK host names have no source-boundary exception', t => {
+  const project = mkdtempSync(join(tmpdir(), 'notis-sdk-host-boundary-'));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  const sdk = join(project, 'packages/sdk/src'); mkdirSync(sdk, { recursive: true });
+  writeFileSync(join(sdk, 'isolatedHost.tsx'), 'document.body.remove();');
+  assert.ok(collectProjectBoundaryViolations(project).some(value => value.includes('isolatedHost.tsx')));
+  assert.ok(collectArtifactBoundaryViolations({ 'app.js': 'document.body.remove();' }).length > 0);
+});
 
 test('copyBoundaryRules bundles the server boundary rules into the package', () => {
   const target = copyBoundaryRules({ repoRoot, cliRoot });

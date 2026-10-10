@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
@@ -18,7 +18,8 @@ const CLI = new URL('../bin/notis.js', import.meta.url).pathname;
 const ROUTES = ['notis', 'auto', 'codex_cloud', 'claude_cloud', 'codex_local', 'claude_local'];
 
 function git(cwd, ...args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8',
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull } });
   assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -70,11 +71,20 @@ async function withStubServer(handler, run) {
  * event loop would stop it ever answering the CLI's request.
  */
 function runCli(args, { cwd, apiBase }) {
+  const fixtureHome = join(cwd, '..', 'cli-home');
+  mkdirSync(fixtureHome, { recursive: true });
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [CLI, ...args, '--api-base', apiBase], {
       cwd,
       env: {
         ...process.env,
+        // The actual CLI repairs base skills on startup. Its fictional account
+        // must not contend with Desktop or touch the real user's skill roots.
+        HOME: fixtureHome,
+        USERPROFILE: fixtureHome,
+        NOTIS_CLI_CONFIG_FILE: join(fixtureHome, '.notis', 'config.json'),
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: devNull,
         NOTIS_JWT: 'test-token',
         NOTIS_OUTPUT: 'json',
         NOTIS_NON_INTERACTIVE: '1',

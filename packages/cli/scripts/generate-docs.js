@@ -53,7 +53,8 @@ function specsFor(prefix) {
 
 function renderReadme() {
   const appSpecs = specsFor('apps');
-  const reportSpecs = specsFor('reports');
+  const spaceSpecs = specsFor('spaces');
+  const viewSpecs = specsFor('views');
   const agentSpecs = specsFor('agents');
   const skillSpecs = specsFor('skills');
   const handoverSpecs = specsFor('handover');
@@ -67,7 +68,7 @@ function renderReadme() {
 
   return `# @notis_ai/cli
 
-Agent-first Notis CLI for apps and generic tool execution.
+Agent-first Notis CLI for Spaces, Skills and generic tool execution.
 
 ## Install
 
@@ -85,7 +86,7 @@ For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NO
 npx --package @notis_ai/cli@latest -- notis --help
 npx --package @notis_ai/cli@latest -- notis login
 npx --package @notis_ai/cli@latest -- notis doctor
-npx --package @notis_ai/cli@latest -- notis apps list
+npx --package @notis_ai/cli@latest -- notis spaces list
 npx --package @notis_ai/cli@latest -- notis tools search "list Notis databases"
 \`\`\`
 
@@ -144,19 +145,27 @@ ${agentSpecs.map(renderCommandBlock).join('\n')}
 
 ${skillSpecs.map(renderCommandBlock).join('\n')}
 
-## Apps
+## Spaces
+
+Build, verify and publish Space views, their linked Skills and resources. The product \`notis-apps\` skill owns the workflow and the consequences of links, moves and the bin.
+
+${spaceSpecs.map(renderCommandBlock).join('\n')}
+
+## Views
+
+${viewSpecs.map(renderCommandBlock).join('\n')}
+
+## Legacy Apps
+
+For accounts not yet moved to Spaces. A legacy App cannot declare Skills; Skills are linked to Spaces.
 
 ${appSpecs.map(renderCommandBlock).join('\n')}
 
-## Reports
+## Reports and saved HTML
 
-Reports save standalone live SDK documents without an app or database. They do not deploy an app or change shared app routes.
+Create independently authored reports as Space views with the product \`notis-reports\` and \`notis-apps\` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link. Preserved database report rows open through their main view.
 
-Use the standalone report build profile and author exactly one SDK route. Keep readable content in a separate context file. Build, verify, inspect the preview, then save. Save rebuilds and stub-verifies a frozen artifact before persistence; local verification does not prove that live data loaded in the saved report.
-
-To revise, read the current document and recover its source from the short-lived \`report_source_url\`. Pass \`--document-id\` and the freshly read \`--expected-revision\`. Read back the saved record and inspect its native URL. See the product \`notis-reports\` skill for the full authoring contract.
-
-${reportSpecs.map(renderCommandBlock).join('\n')}
+For plain HTML, use the installed HTML Space and its linked saving Skill. Its generic file upload is attached to an existing native record with a separate revision-checked write; a raw download URL is not a saved page link.
 
 ## Hand-over
 
@@ -191,45 +200,37 @@ npm test
 }
 
 function renderAppsSkillDoc() {
-  const appSpecs = specsFor('apps');
-  const reportSpecs = specsFor('reports');
+  const spaceSpecs = specsFor('spaces');
+  const viewSpecs = specsFor('views');
   const doctorSpec = COMMAND_SPECS.find((spec) => spec.command_path.join(' ') === 'doctor');
 
-  return `# Notis CLI — App Development Workflow
+  return `# Notis CLI: Space Development Workflow
 
-When running outside the Notis container, use the \`notis\` CLI to work with Notis Apps locally.
+When running outside the Notis container, use the \`notis\` CLI to build Notis Spaces locally. Space views are
+Vite + React source using \`@notis/sdk\`. The product \`notis-apps\` skill and its release guide own the workflow;
+this file lists the commands generated from the CLI's own help.
 
-Notis apps are Vite + React projects using \`@notis/sdk\`. Workspace runs released versions only.
-Local and cloud create/edit requests authorize Workspace delivery after checks; explicit read-only,
-preview-only or no-deploy requests stop at local artifacts without remote mutation. Store publication
-requires separate approval.
+Create and edit requests authorize delivery to the installed Space after checks; explicit read-only, preview-only
+or no-deploy requests stop at local artifacts without remote mutation. Store publication requires separate approval.
 
 ## Core workflow
 
-1. Preserve local edits; pull the exact existing released app and current deployment base. For an
-   unreleased container, recover original source (or scaffold locally if unrecoverable), reconcile
-   its exact ID/current version/edit permission/scope and run apps link <app-id> <source-directory>
-   --expected-version 0. If a release has appeared, preserve local source separately and pull/reapply
-   on that current release. Never pull missing source or create another remote recovery app.
-2. Build and automatically verify before new remote creation. Browser tooling is required.
-3. Reconcile exact profile/app identity and personal/team scope. Create only if absent; never duplicate
-   a failed first-release container. Prepare only necessary backward-compatible resource changes.
-4. Deploy the same linked app. Deploy builds, verifies a frozen snapshot, then uploads those bytes.
-   \`--skip-build\` still verifies and rejects stale output. No Store media requirement applies.
-5. Read back the exact installed ID/version/Portal URL, run live verification, and open the installed
-   app in Portal. Report unknown or deployed-but-unverified outcomes; never blindly redeploy.
+1. \`spaces pull\` the exact existing Space (source, resource list, Skill folders and lock file), or \`spaces init\`
+   a new collection view.
+2. \`spaces build\` and \`spaces verify\` the selected source with fictional fixtures.
+3. \`spaces deploy\`, or \`spaces preview\` then \`spaces promote\`, within the user's authorization. Changed Skill
+   folders and resource links commit with the source release.
+4. Read back the published revision, then \`views find\` and \`views render\` its live view link.
 
-For source restoration, pull the current release into a fresh checkout and historical source into
-another folder. Replace source while retaining the current profile/app link and deployment base,
-change the package release label, check resource compatibility and deploy as a new release.
+\`notis apps\` is the legacy App group for accounts not yet moved to Spaces; a legacy App cannot declare Skills.
 
-## Reports
+## Reports and HTML
 
-For a standalone live report, use \`reports init → build → verify/preview → save\` instead of the app deployment workflow above. Author exactly one route with kind: report, declare its tools, and supply a readable context file. No installed app or database is required. Revisions preserve the record ID and require its freshly read revision. See the product \`notis-reports\` skill for source recovery, ownership and readback. These commands do not deploy an app or publish a Store listing.
+New reports are independent Space views. Existing database report payloads render inside their database's main view. Use the installed HTML Space's saving Skill for self-contained HTML. See the canonical product guidance for build, revision, native file and view-link rules.
 
 ## Commands
 
-${[doctorSpec, ...appSpecs, ...reportSpecs].map(renderCommandBlock).join('\n').trimEnd()}
+${[doctorSpec, ...spaceSpecs, ...viewSpecs].map(renderCommandBlock).join('\n').trimEnd()}
 `;
 }
 

@@ -8,7 +8,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants as fsConstants, copyFileSync, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { closeSync, constants as fsConstants, copyFileSync, cpSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -19,6 +19,8 @@ import { usageError } from './errors.js';
 import { acquireScaffoldSource, loadScaffoldCatalog } from './app-registry-scaffolds.js';
 import { validateArtifactBoundary, validateProjectBoundary, validateProjectDesign } from './app-boundary-validator.js';
 import { CHANGELOG_MERGE_DATE, readAppChangelog } from './app-changelog.js';
+import { HOST_ONLY_SDK_FILES, RETIRED_SDK_FILES } from './retired-sdk-files.js';
+import { assertSourceRoot } from './source-root.js';
 
 const NOTIS_DIR = '.notis';
 const STATE_FILE = join(NOTIS_DIR, 'state.json');
@@ -40,6 +42,7 @@ const SOURCE_COPY_EXCLUDES = new Set([
   'node_modules',
   '.notis',
   '.git',
+  '.context',
   'dist',
   'tsconfig.tsbuildinfo',
   '.DS_Store',
@@ -67,11 +70,6 @@ const PULL_LOCK_POLL_MS = 25;
 const STATE_WRITE_LOCK_TIMEOUT_MS = 5_000;
 const STATE_WRITE_LOCK_STALE_MS = 2_000;
 const stateWriteLockWait = new Int32Array(new SharedArrayBuffer(4));
-// A directory-declared skill ships every supporting file to the sandbox, so it
-// needs a ceiling of its own. Kept well above the 512 KB SKILL.md limit so a
-// handful of scripts always fits, and far below the bundle machinery's own
-// limits so an accidental asset dump fails on the client with a clear message.
-export const MAX_APP_SKILL_BUNDLE_BYTES = 5 * 1024 * 1024;
 let appConfigImportNonce = 0;
 
 // ---------------------------------------------------------------------------
@@ -165,8 +163,16 @@ function normalizeBundleStylesheets(projectDir) {
 function stripNotisSdkImports(source) {
   return source
     .replace(/import\s+type\s+[\s\S]*?from\s+['"][^'"]*['"]\s*;?/g, '')
-    .replace(/import\s*{[\s\S]*?\bdefineNotisApp\b[\s\S]*?}\s+from\s+['"]@notis\/sdk\/config['"]\s*;?/g, '')
-    .replace(/defineNotisApp\s*\(/g, '(');
+    .replace(/import\s*{([^}]+)}\s+from\s+['"]@notis\/sdk\/config['"]\s*;?/g, (_statement, names) => {
+      const declarations = [];
+      for (const imported of names.split(',').map(value => value.trim()).filter(Boolean)) {
+        if (imported.startsWith('type ')) continue;
+        const match = imported.match(/^(defineNotisApp|defineSpace|defineSpaces)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+        if (!match) throw usageError(`Unsupported configuration helper: ${imported}`);
+        declarations.push(`const ${match[2] || match[1]} = (value) => value;`);
+      }
+      return declarations.join('\n');
+    });
 }
 
 function transpileTsConfigSource(source, configPath) {
@@ -176,24 +182,19 @@ function transpileTsConfigSource(source, configPath) {
   // so removing the import and replacing the call with a parens-wrapped
   // expression preserves the config value without ever resolving the SDK.
   const stripped = stripNotisSdkImports(source);
-  const requireFromConfig = createRequire(`file://${configPath}`);
   try {
-    const ts = requireFromConfig('typescript');
-    const transpiled = ts.transpileModule(stripped, {
-      compilerOptions: {
-        module: ts.ModuleKind.ESNext,
-        target: ts.ScriptTarget.ES2020,
-      },
-      fileName: configPath,
-    });
-    return transpiled.outputText;
-  } catch {
-    return stripped;
+    const { transformSync } = createRequire(import.meta.url)('esbuild');
+    return transformSync(stripped, { loader: 'ts', format: 'esm', target: 'es2020', sourcefile: configPath }).code;
+  } catch (error) {
+    throw usageError(`Failed to parse ${configPath}: ${error.message}`);
   }
 }
 
-export async function loadAppConfig(projectDir) {
-  const configPaths = ['notis.config.ts', 'notis.config.js', 'notis.config.mjs'];
+export async function loadAppConfig(projectDir, { file = null } = {}) {
+  const configPaths = file ? [file] : ['notis.config.ts', 'notis.config.js', 'notis.config.mjs'];
+  if (file && (!Object.hasOwn(collectSourceFiles(projectDir), file) || !/\.(?:ts|js|mjs)$/.test(file))) {
+    throw usageError('Choose an existing configuration file inside this source project.');
+  }
   let configPath = null;
 
   for (const name of configPaths) {
@@ -208,12 +209,13 @@ export async function loadAppConfig(projectDir) {
     throw usageError('No notis.config.ts found in project directory.');
   }
 
-  // For .js/.mjs files, import directly. For .ts, we need transpilation.
-  if (configPath.endsWith('.ts')) {
+  // Identity config helpers work for every extension without asking Node to
+  // execute raw TypeScript from an embedded SDK package.
+  {
     const source = readFileSync(configPath, 'utf-8');
-    const jsSource = transpileTsConfigSource(source, configPath);
+    const jsSource = configPath.endsWith('.ts') ? transpileTsConfigSource(source, configPath) : stripNotisSdkImports(source);
 
-    const tmpPath = join(dirname(configPath), '._notis_config_tmp.mjs');
+    const tmpPath = join(dirname(configPath), `._notis_config_${randomUUID()}.mjs`);
     mkdirSync(dirname(tmpPath), { recursive: true });
     writeFileSync(tmpPath, jsSource);
     try {
@@ -235,8 +237,6 @@ export async function loadAppConfig(projectDir) {
     }
   }
 
-  const mod = await import(`file://${configPath}`);
-  return mod.default || mod;
 }
 
 // ---------------------------------------------------------------------------
@@ -796,6 +796,13 @@ export async function prepareArtifactBuild(projectDir, { enforceDesign = true, l
  * Generate the manifest from app config and build output.
  */
 export function generateManifest(appConfig, projectDir) {
+  if (['skills', 'onboarding'].some(key => {
+    const value = appConfig[key];
+    return Array.isArray(value) ? value.length > 0 : Boolean(value);
+  })) {
+    throw usageError('Apps no longer package Skills or onboarding. Put each Skill in skills/<alias>/ of a '
+      + 'Space source and deploy it with notis spaces deploy.');
+  }
   const routes = resolveConfiguredRoutes(appConfig, projectDir).map((route) => {
     const entry = {
       path: route.path,
@@ -818,10 +825,10 @@ export function generateManifest(appConfig, projectDir) {
     if (routes.length !== 1 || routes[0].collection || routes[0].resourceDeepLinks) {
       throw usageError('Reports require one standalone route, without app collections or resource deep links.');
     }
-    if (['databases', 'skills', 'automations', 'onboarding', 'tagline', 'categories', 'author', 'screenshots'].some(key => {
+    if (['databases', 'automations', 'tagline', 'categories', 'author', 'screenshots'].some(key => {
       const value = appConfig[key];
       return Array.isArray(value) ? value.length > 0 : Boolean(value);
-    })) throw usageError('Reports cannot own databases, skills, automations or Store metadata.');
+    })) throw usageError('Reports cannot own databases, automations or Store metadata.');
     if (Object.values(appConfig.capabilities || {}).some(value => value !== 'read')) {
       throw usageError('Reports support read capabilities only; shell grants require an installed app.');
     }
@@ -849,12 +856,6 @@ export function generateManifest(appConfig, projectDir) {
   const metadata = { screenshots: resolveListingScreenshots(projectDir, appConfig) };
   const appSlug = safeKebab(appConfig.name);
   const displayTitle = appConfig.title || appConfig.displayName || appConfig.name;
-  const skills = (Array.isArray(appConfig.skills) ? appConfig.skills : []).map((skill) => ({
-    key: skill.key,
-    path: normalizeAppSkillManifestPath(skill.path),
-    name: skill.name,
-    description: skill.description || null,
-  }));
   const listingMedia = {
     screenshots: metadata.screenshots.map((screenshot) => ({
       path: screenshot.path,
@@ -926,8 +927,6 @@ export function generateManifest(appConfig, projectDir) {
     capabilities: normalizeAppCapabilities(appConfig.capabilities),
     tools: appConfig.tools || [],
     tool_bindings: normalizeAppToolBindings(appConfig.toolBindings),
-    skills,
-    onboarding: appConfig.onboarding || null,
   };
 }
 
@@ -982,135 +981,19 @@ export function normalizeAppCapabilities(capabilities) {
 }
 
 /**
- * Manifest form of a declared skill path: no leading `./`, no trailing slash.
- * A directory declaration is the same string as the source-tree prefix the
- * server matches the uploaded source files against.
- */
-export function normalizeAppSkillManifestPath(sourcePath) {
-  return String(sourcePath || '').replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
-}
-
-/**
- * Every packageable file under a declared skill directory, relative to that
- * directory, in stable order. Excludes match `readSourceFiles` so the files a
- * dev session sends inline are exactly the ones a deploy uploads as source.
- */
-function readAppSkillDirectoryFiles(skillDir) {
-  const entries = [];
-
-  function walk(dir, prefix) {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (shouldExcludeSourceEntry(entry.name) || entry.isSymbolicLink()) {
-        continue;
-      }
-      const fullPath = join(dir, entry.name);
-      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        walk(fullPath, relPath);
-      } else if (entry.isFile()) {
-        entries.push({ path: relPath, absolutePath: fullPath });
-      }
-    }
-  }
-
-  walk(skillDir, '');
-  // Byte order, not locale order: the server sorts the same file set the same
-  // way before hashing it, so a dev session and a deploy agree on the hash.
-  return entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-}
-
-export function resolveConfiguredAppSkills(appConfig, projectDir) {
-  const configured = Array.isArray(appConfig.skills) ? appConfig.skills : [];
-  const projectRoot = resolve(projectDir);
-  const realProjectRoot = realpathSync(projectRoot);
-  const seenKeys = new Set();
-
-  return configured.map((skill, index) => {
-    const key = typeof skill?.key === 'string' ? skill.key.trim() : '';
-    const sourcePath = typeof skill?.path === 'string' ? skill.path.trim() : '';
-    const name = typeof skill?.name === 'string' ? skill.name.trim() : '';
-    if (!key || !sourcePath || !name) {
-      throw usageError(`skills[${index}] must define non-empty key, path, and name values.`);
-    }
-    if (seenKeys.has(key)) {
-      throw usageError(`Duplicate app skill key: ${key}`);
-    }
-    seenKeys.add(key);
-
-    const absolutePath = resolve(projectRoot, sourcePath);
-    const relativePath = relative(projectRoot, absolutePath).replace(/\\/g, '/');
-    if (!relativePath || relativePath.startsWith('../') || relativePath === '..') {
-      throw usageError(`App skill path must stay inside the project: ${sourcePath}`);
-    }
-    if (!existsSync(absolutePath)) {
-      throw usageError(`App skill entrypoint not found: ${sourcePath}`);
-    }
-    if (lstatSync(absolutePath).isSymbolicLink()) {
-      throw usageError(`App skill entrypoint cannot be a symbolic link: ${sourcePath}`);
-    }
-    const realAbsolutePath = realpathSync(absolutePath);
-    const realRelativePath = relative(realProjectRoot, realAbsolutePath).replace(/\\/g, '/');
-    if (!realRelativePath || realRelativePath.startsWith('../') || realRelativePath === '..') {
-      throw usageError(`App skill path must stay inside the project after resolving links: ${sourcePath}`);
-    }
-
-    const description = typeof skill.description === 'string' ? skill.description.trim() : null;
-    const stats = statSync(absolutePath);
-    if (stats.isDirectory()) {
-      const entries = readAppSkillDirectoryFiles(absolutePath);
-      if (!entries.some((entry) => entry.path === 'SKILL.md')) {
-        throw usageError(`App skill directory must contain SKILL.md: ${sourcePath}`);
-      }
-      const bundleFiles = entries.map((entry) => ({
-        path: entry.path,
-        content: readFileSync(entry.absolutePath),
-      }));
-      const totalBytes = bundleFiles.reduce((total, entry) => total + entry.content.length, 0);
-      if (totalBytes > MAX_APP_SKILL_BUNDLE_BYTES) {
-        throw usageError(
-          `App skill "${key}" bundles ${totalBytes} bytes, above the ${MAX_APP_SKILL_BUNDLE_BYTES} byte limit.`,
-        );
-      }
-      const skillMd = bundleFiles.find((entry) => entry.path === 'SKILL.md');
-      return {
-        key,
-        path: relativePath,
-        name,
-        description,
-        skill_md: skillMd.content.toString('utf8'),
-        bundle_files: bundleFiles.map((entry) => ({
-          path: entry.path,
-          content_b64: entry.content.toString('base64'),
-        })),
-      };
-    }
-    if (!stats.isFile()) {
-      throw usageError(`App skill entrypoint not found: ${sourcePath}`);
-    }
-
-    return {
-      key,
-      path: relativePath,
-      name,
-      description,
-      skill_md: readFileSync(absolutePath, 'utf8'),
-    };
-  });
-}
-
-/**
  * Build the app bundle: generate entry file, run `vite build`, package into .notis/output/.
  */
-export async function buildArtifact(projectDir, { stdio = 'inherit' } = {}) {
-  projectDir = realpathSync(projectDir);
+export async function buildArtifact(projectDir, { stdio = 'inherit', prepare = prepareArtifactBuild,
+  finalize = null, executable = true, includeMetadata = true, refreshSdk = true, runBuild = runProjectScript } = {}) {
+  projectDir = realpathSync(assertSourceRoot(projectDir));
   const workspace = withAppReleaseWorkspace(projectDir, (identity) => {
     rmSync('build-receipt.json', { force: true });
     return identity;
   }, { create: true });
   // SDK refresh is intentional source preparation, before the immutable build receipt.
-  syncEmbeddedSdk(projectDir);
+  if (refreshSdk) syncEmbeddedSdk(projectDir);
   const sourceHash = appFilesDigest(collectSourceFiles(projectDir));
-  await prepareArtifactBuild(projectDir);
+  await prepare(projectDir);
 
   // Historical source must round-trip byte-for-byte. Supply the compatible
   // config loader at execution for the old canonical script, without editing
@@ -1119,24 +1002,22 @@ export async function buildArtifact(projectDir, { stdio = 'inherit' } = {}) {
   const args = String(pkg.scripts?.build || '').trim() === 'vite build'
     ? ['--configLoader', 'runner']
     : [];
-  await runProjectScript({
-    projectDir,
-    scriptName: 'build',
-    args,
-    stdio,
-  });
+  // runBuild defaults to the PATH npm script. A confined caller supplies a pinned runner instead.
+  if (executable) await runBuild({ projectDir, scriptName: 'build', args, stdio });
 
   withAppReleaseWorkspace(projectDir, () => {}, { expected: workspace });
 
   // Verify the canonical `.notis/output/bundle` packaging contract.
   const builtBundleDir = resolveBuiltBundleDir(projectDir);
-  if (!builtBundleDir) {
+  if (executable && !builtBundleDir) {
     throw usageError(
       'Vite build did not produce app.js in .notis/output/bundle. Check your vite.config.ts.',
     );
   }
   normalizeBundleStylesheets(projectDir);
-  copyMetadataAssets(projectDir);
+  if (includeMetadata) copyMetadataAssets(projectDir);
+  if (finalize) await finalize(projectDir);
+  withAppReleaseWorkspace(projectDir, () => {}, { expected: workspace });
 
   validateArtifactBoundary(readArtifactFiles(projectDir));
 
@@ -1844,6 +1725,9 @@ function ensureScaffoldLocalSdk(projectDir, pkg) {
 
   const localSdkDir = join(projectDir, 'packages', 'sdk');
   if (existsSync(join(localSdkDir, 'package.json'))) {
+    // Registry scaffolds may already contain an older complete SDK mirror.
+    // Apply the same exact-owned-file retirement as an ordinary build refresh.
+    syncEmbeddedSdk(projectDir);
     return;
   }
   if (!existsSync(join(TEMPLATE_SDK_DIR, 'package.json'))) {
@@ -1851,7 +1735,8 @@ function ensureScaffoldLocalSdk(projectDir, pkg) {
   }
 
   mkdirSync(dirname(localSdkDir), { recursive: true });
-  cpSync(TEMPLATE_SDK_DIR, localSdkDir, { recursive: true, dereference: true });
+  cpSync(TEMPLATE_SDK_DIR, localSdkDir, { recursive: true, dereference: true,
+    filter: (source) => !HOST_ONLY_SDK_FILES.includes(relative(TEMPLATE_SDK_DIR, source).split(sep).join('/')) });
 }
 
 function listFilesRecursive(dir, base = dir, results = []) {
@@ -1869,17 +1754,20 @@ function listFilesRecursive(dir, base = dir, results = []) {
 }
 
 /**
- * Keep an app's embedded `packages/sdk` copy identical to the SDK this CLI
- * ships. The copy is a mirror by contract (the parity test in the CLI keeps
+ * Keep an app's embedded public SDK identical to the SDK this CLI ships,
+ * excluding host-only mounting code. The copy is a mirror by contract (the parity test in the CLI keeps
  * the bundled artifact generated from packages/sdk), so an app never edits it; before
  * this sync existed every app silently ran whatever SDK snapshot it was
  * scaffolded with and never received hook or style updates.
  *
  * Files that exist locally but not in the template are left alone with a
- * warning so a deliberate local addition is never destroyed.
+ * warning so a deliberate local addition is never destroyed. The refresh owns
+ * only packages/sdk/{package.json,tsconfig.json,src/<template files>} and the
+ * exact retired copies of a real source; a folder without a source marker
+ * (the Notis repository's own packages/sdk, for one) is refused untouched.
  */
-export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPLATE_SDK_DIR } = {}) {
-  const canonicalProjectDir = realpathSync(projectDir);
+export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPLATE_SDK_DIR, retiredFiles = RETIRED_SDK_FILES } = {}) {
+  const canonicalProjectDir = realpathSync(assertSourceRoot(projectDir));
   const canonicalTemplateDir = resolve(templateSdkDir);
   if (!existsSync(join(canonicalTemplateDir, 'package.json'))) {
     return { updated: false, reason: 'no-template-sdk' };
@@ -1888,7 +1776,8 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
   const previousIdentity = capturePullTargetIdentity(previousCwd);
   const projectIdentity = capturePullTargetIdentity(canonicalProjectDir);
   const templateFiles = listFilesRecursive(canonicalTemplateDir).filter(
-    (relPath) => relPath === 'package.json' || relPath === 'tsconfig.json' || relPath.startsWith('src/'),
+    (relPath) => !HOST_ONLY_SDK_FILES.includes(relPath)
+      && (relPath === 'package.json' || relPath === 'tsconfig.json' || relPath.startsWith('src/')),
   );
   const changed = [];
   let foreign = [];
@@ -1940,6 +1829,43 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
     return true;
   }
 
+  function retireFile(segments, digests) {
+    if (segments.length > 1) return inDirectory(segments[0], () => retireFile(segments.slice(1), digests));
+    const name = segments[0];
+    let before;
+    try { before = lstatSync(name, { bigint: true }); }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+    if (!before.isFile() || before.isSymbolicLink()) throw usageError(`Refusing an unsafe retired SDK target: ${name}`);
+    const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const bytes = readStablePinnedFile(descriptor, before, `Retired SDK file ${name}`);
+      if (!digests.includes(createHash('sha256').update(bytes).digest('hex'))) return false;
+      // Capture the exact directory entry before removing anything. A newly
+      // created replacement at the original path is never overwritten.
+      const temporary = `.notis-sdk-retired-${randomUUID()}`;
+      renameSync(name, temporary);
+      try {
+        const captured = lstatSync(temporary, { bigint: true });
+        if (captured.dev !== before.dev || captured.ino !== before.ino) {
+          throw usageError(`SDK file changed during retirement: ${name}`);
+        }
+        const capturedDescriptor = openSync(temporary, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+        try {
+          if (!readStablePinnedFile(capturedDescriptor, captured, `Retired SDK file ${name}`).equals(bytes)) {
+            throw usageError(`SDK file changed during retirement: ${name}`);
+          }
+        } finally { closeSync(capturedDescriptor); }
+        unlinkSync(temporary);
+      } catch (error) {
+        // O_EXCL hard-link restoration preserves an independently-created
+        // replacement as well as the captured local bytes.
+        try { linkSync(temporary, name); unlinkSync(temporary); } catch { /* Retain the captured file for reconciliation. */ }
+        throw error;
+      }
+      return true;
+    } finally { closeSync(descriptor); }
+  }
+
   try {
     process.chdir(canonicalProjectDir);
     assertPullTargetIdentity('.', projectIdentity);
@@ -1958,6 +1884,9 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
         if (mirrorFile(relPath.split('/'), source)) changed.push(relPath);
       }
       const templateSet = new Set(templateFiles);
+      for (const [relPath, digests] of Object.entries(retiredFiles)) {
+        if (!templateSet.has(relPath) && retireFile(relPath.split('/'), digests) === true) changed.push(relPath);
+      }
       foreign = listFilesRecursive('.').filter((relPath) => relPath.startsWith('src/') && !templateSet.has(relPath));
       return null;
     }));
@@ -2205,6 +2134,7 @@ function shouldExcludeSourceEntry(name) {
     SOURCE_COPY_EXCLUDES_CASEFOLDED.has(casefolded)
     || casefolded.startsWith('.notis-app-pull-')
     || casefolded.startsWith('.notis-app-scaffold-')
+    || casefolded.startsWith('._notis_config_')
     || casefolded.startsWith('.env')
     || casefolded.endsWith('.pyc')
     || casefolded.endsWith('.pyo')
@@ -2341,7 +2271,8 @@ function parsePaxPath(data) {
 }
 
 function extractTarGz(buffer, targetDir) {
-  const tar = gunzipSync(buffer);
+  // Source snapshots allow 256 MiB of files plus bounded tar/PAX metadata.
+  const tar = gunzipSync(buffer, { maxOutputLength: 320 * 1024 * 1024 });
   let offset = 0;
   let pendingPaxPath = null;
   const extractedPaths = new Map();
@@ -2619,6 +2550,9 @@ async function pullAppSourceUnlocked({
   force = false,
   profileKey = null,
   expectedUpdatedAt = null,
+  downloadSource = null,
+  sourceKind = 'app',
+  sourceLink = null,
 }, assertLockOwnership, assertParentIdentity, initialTargetIdentity) {
   assertLockOwnership();
   assertParentIdentity();
@@ -2629,18 +2563,25 @@ async function pullAppSourceUnlocked({
     }
   }
 
-  const params = new URLSearchParams({ app_id: appId, version: String(version || 'latest') });
-  const response = await fetch(`${apiBase.replace(/\/$/, '')}/portal_apps/source?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${jwt}` },
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw usageError(typeof data?.error === 'string' ? data.error : `Failed to pull app source (${response.status}).`);
+  let archiveBuffer, pulledVersion;
+  if (downloadSource) {
+    const source = await downloadSource();
+    archiveBuffer = source.archiveBuffer;
+    pulledVersion = source.revision;
+  } else {
+    const params = new URLSearchParams({ app_id: appId, version: String(version || 'latest') });
+    const response = await fetch(`${apiBase.replace(/\/$/, '')}/portal_apps/source?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw usageError(typeof data?.error === 'string' ? data.error : `Failed to pull app source (${response.status}).`);
+    }
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const versionMatch = /-v(\d+)\.tar\.gz/i.exec(contentDisposition);
+    pulledVersion = versionMatch ? Number.parseInt(versionMatch[1], 10) : null;
+    archiveBuffer = Buffer.from(await response.arrayBuffer());
   }
-
-  const contentDisposition = response.headers.get('content-disposition') || '';
-  const versionMatch = /-v(\d+)\.tar\.gz/i.exec(contentDisposition);
-  const pulledVersion = versionMatch ? Number.parseInt(versionMatch[1], 10) : null;
   const requestedVersion = String(version || 'latest') === 'latest'
     ? null
     : Number.parseInt(String(version), 10);
@@ -2659,7 +2600,6 @@ async function pullAppSourceUnlocked({
     );
   }
   const linkedVersion = pulledVersion;
-  const archiveBuffer = Buffer.from(await response.arrayBuffer());
   assertParentIdentity();
   assertLockOwnership();
 
@@ -2730,8 +2670,9 @@ async function pullAppSourceUnlocked({
       throw usageError('The app source archive did not contain any editable source files.');
     }
 
-    const previousStatePath = join(targetRoot, STATE_FILE);
-    const backupStatePath = join(backupDir, STATE_FILE);
+    const stateFile = sourceKind === 'space' ? join(NOTIS_DIR, 'space-source.json') : STATE_FILE;
+    const previousStatePath = join(targetRoot, stateFile);
+    const backupStatePath = join(backupDir, stateFile);
     const hadPreviousState = existsSync(previousStatePath);
     if (hadPreviousState) {
       mkdirSync(dirname(backupStatePath), { recursive: true });
@@ -2781,12 +2722,22 @@ async function pullAppSourceUnlocked({
       }
       assertPullTargetIdentity(targetDir, activeTargetIdentity);
       assertLockOwnership();
-      writeLinkedState(targetRoot, {
-        app_id: appId,
-        ...(Number.isFinite(linkedVersion) ? { version: linkedVersion } : {}),
-        ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
-        linked_at: new Date().toISOString(),
-      }, profileKey);
+      if (sourceKind === 'space') {
+        withAppReleaseWorkspace(targetRoot, () => {
+          const temporary = `.space-source-${randomUUID()}.json`;
+          try {
+            writeFileSync(temporary, JSON.stringify({ ...sourceLink, revision: linkedVersion }), { flag: 'wx', mode: 0o600 });
+            renameSync(temporary, 'space-source.json');
+          } finally { rmSync(temporary, { force: true }); }
+        }, { create: true });
+      } else {
+        writeLinkedState(targetRoot, {
+          app_id: appId,
+          ...(Number.isFinite(linkedVersion) ? { version: linkedVersion } : {}),
+          ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
+          linked_at: new Date().toISOString(),
+        }, profileKey);
+      }
       assertPullTargetIdentity(targetDir, activeTargetIdentity);
       assertLockOwnership();
     } catch (error) {
@@ -2928,6 +2879,180 @@ function withAppReleaseWorkspace(projectDir, operation, { create = false, expect
   }
 }
 
+function freezePinnedArtifactSnapshot(workspace, files, sourceFiles) {
+  for (const [source, entries] of [[true, sourceFiles], [false, files]]) {
+    for (const [path, encoded] of Object.entries(entries)) {
+      const segments = path.split('/');
+      if (!path || path.includes('\\') || path.includes('\0') || segments.some(part => !part || part === '.' || part === '..')
+        || (source && segments.some(part => ['.notis', '.context', '.git', 'node_modules'].includes(part) || part.startsWith('.env')))
+        || typeof encoded !== 'string') throw usageError('Unsafe frozen source or artifact path.');
+    }
+  }
+  // Nest under the source project so imports resolve its installed dependencies.
+  // Every staging write is relative to pinned directories, never a replaced parent path.
+  const frozenName = mkdtempSync('release-');
+  const frozenIdentity = capturePullTargetIdentity(frozenName);
+  const frozenDir = join(workspace.projectDir, NOTIS_DIR, frozenName);
+  let closed = false;
+  const close = () => {
+    process.removeListener('exit', close);
+    if (closed) return;
+    withAppReleaseWorkspace(workspace.projectDir, () => {
+      assertPullTargetIdentity(frozenName, frozenIdentity);
+      rmSync(frozenName, { recursive: true, force: true });
+    }, { expected: workspace });
+    closed = true;
+  };
+  function writeEntry(segments, content) {
+    const name = segments[0];
+    if (segments.length === 1) {
+      writeFileSync(name, content, { flag: 'wx' });
+      return;
+    }
+    const parentIdentity = capturePullTargetIdentity('.');
+    let identity = capturePullTargetIdentity(name);
+    if (!identity.exists) {
+      mkdirSync(name);
+      identity = capturePullTargetIdentity(name);
+    }
+    process.chdir(name);
+    try {
+      assertPullTargetIdentity('.', identity);
+      writeEntry(segments.slice(1), content);
+    } finally {
+      process.chdir('..');
+      assertPullTargetIdentity('.', parentIdentity);
+    }
+  }
+  try {
+    process.chdir(frozenName);
+    try {
+      assertPullTargetIdentity('.', frozenIdentity);
+      for (const [path, encoded] of Object.entries(sourceFiles)) {
+        writeEntry(path.split('/'), Buffer.from(encoded, 'base64'));
+      }
+      for (const [path, encoded] of Object.entries(files)) {
+        writeEntry([NOTIS_DIR, 'output', ...path.split('/')], Buffer.from(encoded, 'base64'));
+      }
+    } finally {
+      process.chdir('..');
+      assertPullTargetIdentity('.', workspace.notisIdentity);
+    }
+    const manifest = files['manifest.json'] ? JSON.parse(Buffer.from(files['manifest.json'], 'base64').toString('utf8')) : null;
+    process.once('exit', close);
+    return { projectDir: frozenDir, files, sourceFiles, manifest, close };
+  } catch (error) {
+    try { close(); } catch { /* Retain owned staging if its parent identity changed. */ }
+    throw error;
+  }
+}
+
+/** Freeze a selected source slice using the same pinned-directory writer as releases. */
+export function freezeSourceWorkspace(projectDir, sourceFiles) {
+  return withAppReleaseWorkspace(projectDir, workspace => freezePinnedArtifactSnapshot(workspace, {}, sourceFiles), { create: true });
+}
+
+function selectedBuildName(key) {
+  if (typeof key !== 'string' || !/^[a-z][a-z0-9_-]{0,99}$/.test(key)) throw usageError('Choose a valid selected build key.');
+  return `space-build-${key}.json`;
+}
+
+/** Immutable bytes, not another authoring project or installed dependency tree. */
+export function saveSelectedBuild(projectDir, key, release) {
+  return withAppReleaseWorkspace(projectDir, () => {
+    const name = selectedBuildName(key), temporary = `.${name}-${randomUUID()}`;
+    const snapshot = { version: 1, key, files: release.files, sourceFiles: release.sourceFiles,
+      source_hash: appFilesDigest(release.sourceFiles), artifact_hash: appFilesDigest(release.files) };
+    try {
+      writeFileSync(temporary, JSON.stringify(snapshot), { flag: 'wx', mode: 0o600 });
+      renameSync(temporary, name);
+    } finally { rmSync(temporary, { force: true }); }
+    return join(projectDir, NOTIS_DIR, name);
+  }, { create: true });
+}
+
+export function prepareSelectedBuild(projectDir, key, sourceFiles) {
+  return withAppReleaseWorkspace(projectDir, workspace => {
+    const name = selectedBuildName(key);
+    let before;
+    try { before = lstatSync(name, { bigint: true }); } catch (error) {
+      if (error.code === 'ENOENT') throw usageError('Selected Space build is missing or stale. Build it again.');
+      throw error;
+    }
+    if (!before.isFile() || before.isSymbolicLink()) throw usageError('Unsafe selected build receipt.');
+    const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    let snapshot;
+    try { snapshot = JSON.parse(readStablePinnedFile(descriptor, before, 'Selected build receipt').toString('utf8')); }
+    finally { closeSync(descriptor); }
+    if (snapshot.version !== 1 || snapshot.key !== key || !snapshot.files || !snapshot.sourceFiles
+      || snapshot.source_hash !== appFilesDigest(sourceFiles) || snapshot.source_hash !== appFilesDigest(snapshot.sourceFiles)
+      || snapshot.artifact_hash !== appFilesDigest(snapshot.files)) throw usageError('Selected Space build is missing or stale. Build it again.');
+    validateArtifactBoundary(Object.fromEntries(Object.entries(snapshot.files).map(([path, encoded]) => [path, Buffer.from(encoded, 'base64')])));
+    return freezePinnedArtifactSnapshot(workspace, snapshot.files, snapshot.sourceFiles);
+  });
+}
+
+/** A diagnostic, never an approval stamp or a replacement for exact-byte checks. */
+export function saveSpaceVerification(projectDir, diagnostic) {
+  return withAppReleaseWorkspace(projectDir, (workspace) => {
+    const name = `space-verification-${randomUUID()}.json`;
+    writeFileSync(name, JSON.stringify(diagnostic, null, 2), { flag: 'wx', mode: 0o600 });
+    return join(workspace.projectDir, '.notis', name);
+  });
+}
+
+/** Retain the original CAS after an uncertain publish response, across CLI exits. */
+export function spacePublicationIntent(projectDir, identity, create = null) {
+  const name = `space-publish-${createHash('sha256').update(JSON.stringify(identity)).digest('hex')}.json`;
+  return withAppReleaseWorkspace(projectDir, () => {
+    if (create) {
+      const temporary = `.${name}-${randomUUID()}`;
+      try {
+        writeFileSync(temporary, JSON.stringify(create), { flag: 'wx', mode: 0o600 });
+        try { linkSync(temporary, name); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+      } finally { rmSync(temporary, { force: true }); }
+    }
+    let before;
+    try { before = lstatSync(name, { bigint: true }); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    if (!before.isFile() || before.isSymbolicLink()) throw usageError('Unsafe Space publication receipt.');
+    const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try { return JSON.parse(readStablePinnedFile(descriptor, before, 'Space publication receipt').toString('utf8')); }
+    finally { closeSync(descriptor); }
+  });
+}
+
+function spaceStateFileName(name) {
+  if (typeof name !== 'string' || !/^[a-z][a-z0-9-]*\.json$/.test(name)) throw usageError('Unsafe local Space state file name.');
+  return name;
+}
+
+/** Read one local-only JSON state file under the pinned .notis directory; null when absent. */
+export function readSpaceStateFile(projectDir, name) {
+  spaceStateFileName(name);
+  if (!existsSync(join(resolve(projectDir), NOTIS_DIR))) return null;
+  return withAppReleaseWorkspace(projectDir, () => {
+    let before;
+    try { before = lstatSync(name, { bigint: true }); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    if (!before.isFile() || before.isSymbolicLink()) throw usageError(`Unsafe local Space state file: ${name}.`);
+    const descriptor = openSync(name, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try { return JSON.parse(readStablePinnedFile(descriptor, before, `Space state file ${name}`).toString('utf8')); }
+    finally { closeSync(descriptor); }
+  });
+}
+
+/** Replace one local-only JSON state file atomically inside the pinned .notis directory. */
+export function writeSpaceStateFile(projectDir, name, value) {
+  spaceStateFileName(name);
+  return withAppReleaseWorkspace(projectDir, (workspace) => {
+    const temporary = `.${name}-${randomUUID()}`;
+    try {
+      writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+      renameSync(temporary, name);
+    } finally { rmSync(temporary, { force: true }); }
+    return join(workspace.projectDir, NOTIS_DIR, name);
+  }, { create: true });
+}
+
 /** Capture one checked build. Verification and upload must use these same bytes. */
 export function prepareAppRelease(projectDir) {
   let release;
@@ -2948,64 +3073,7 @@ export function prepareAppRelease(projectDir) {
       if (receipt?.source_hash !== appFilesDigest(sourceFiles) || receipt?.artifact_hash !== appFilesDigest(files)) {
         throw usageError('Build output is missing or stale. Run notis apps build before deploying.');
       }
-      // Nest under the source project so imports resolve its installed dependencies.
-      // Every staging write is relative to pinned directories, never a replaced parent path.
-      const frozenName = mkdtempSync('release-');
-      const frozenIdentity = capturePullTargetIdentity(frozenName);
-      const frozenDir = join(workspace.projectDir, NOTIS_DIR, frozenName);
-      let closed = false;
-      const close = () => {
-        process.removeListener('exit', close);
-        if (closed) return;
-        withAppReleaseWorkspace(workspace.projectDir, () => {
-          assertPullTargetIdentity(frozenName, frozenIdentity);
-          rmSync(frozenName, { recursive: true, force: true });
-        }, { expected: workspace });
-        closed = true;
-      };
-      function writeEntry(segments, content) {
-        const name = segments[0];
-        if (segments.length === 1) {
-          writeFileSync(name, content, { flag: 'wx' });
-          return;
-        }
-        const parentIdentity = capturePullTargetIdentity('.');
-        let identity = capturePullTargetIdentity(name);
-        if (!identity.exists) {
-          mkdirSync(name);
-          identity = capturePullTargetIdentity(name);
-        }
-        process.chdir(name);
-        try {
-          assertPullTargetIdentity('.', identity);
-          writeEntry(segments.slice(1), content);
-        } finally {
-          process.chdir('..');
-          assertPullTargetIdentity('.', parentIdentity);
-        }
-      }
-      try {
-        process.chdir(frozenName);
-        try {
-          assertPullTargetIdentity('.', frozenIdentity);
-          for (const [path, encoded] of Object.entries(sourceFiles)) {
-            writeEntry(path.split('/'), Buffer.from(encoded, 'base64'));
-          }
-          for (const [path, encoded] of Object.entries(files)) {
-            writeEntry([NOTIS_DIR, 'output', ...path.split('/')], Buffer.from(encoded, 'base64'));
-          }
-        } finally {
-          process.chdir('..');
-          assertPullTargetIdentity('.', workspace.notisIdentity);
-        }
-        const manifest = JSON.parse(Buffer.from(files['manifest.json'], 'base64').toString('utf8'));
-        process.once('exit', close);
-        release = { projectDir: frozenDir, files, sourceFiles, manifest, close };
-        return release;
-      } catch (error) {
-        try { close(); } catch { /* Retain owned staging if its parent identity changed. */ }
-        throw error;
-      }
+      return release = freezePinnedArtifactSnapshot(workspace, files, sourceFiles);
     });
   } catch (error) {
     try { release?.close(); } catch { /* Parent replacement retains staging, never follows it. */ }

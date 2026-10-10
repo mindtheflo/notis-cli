@@ -5,8 +5,21 @@ export interface AgentTargets {
   codex: boolean;
 }
 
+export interface NativeSkillReference {
+  kind: 'native_standalone_skill';
+  skill_id: string;
+  access_revision: number;
+  version: { revision: number; digest: string };
+}
+
 export interface SyncedSkill {
   cloudId: string;
+  nativeReference?: NativeSkillReference;
+  nativeDisplayName?: string;
+  nativeScope?: string;
+  nativeSettingsRevision?: number;
+  /** Retain managed provenance even when its cloud access is removed. */
+  nativeUnavailable?: boolean;
   folderHash: string;
   agentTargets: AgentTargets;
   /** Actual readable managed links, never inferred from desired targets. */
@@ -20,7 +33,7 @@ export interface SyncedSkill {
   appliedFiles?: string[];
   /** `skill_folder_hash` of the cloud revision a successful write actually applied.
    * The server may compute that hash with a different construction than the local
-   * folder hash (app-published skills do), so only cloud-to-cloud comparison tells
+   * folder hash (bundle-entry hashes do), so only cloud-to-cloud comparison tells
    * "the cloud moved" apart from "the two sides hash differently". */
   appliedCloudFolderHash?: string;
   syncedAt: string;
@@ -30,6 +43,8 @@ export interface NotisSyncState {
   version: 1;
   lastSyncedAt: string | null;
   skills: Record<string, SyncedSkill>;
+  /** Historical folder aliases are provenance, never authority or write pins. */
+  nativeHistory?: Record<string, { names: string[] }>;
 }
 
 /** A successful write, plus the paths it put on disk so the next one can tell
@@ -47,6 +62,12 @@ export interface LocalSkill {
   directoryPath: string;
   sourceUrl?: string;
   bundleFiles?: BundleFile[];
+  cloudId?: string;
+  nativeReference?: NativeSkillReference;
+  displayName?: string;
+  nativeScope?: string;
+  nativeFilesCurrent?: boolean;
+  nativeBaseFolderHash?: string;
 }
 
 export interface BundleFile {
@@ -65,16 +86,18 @@ export interface CloudSkill {
   skill_source_url?: string | null;
   bundle_files?: BundleFile[] | null;
   bundle_hydration_failed?: boolean | null;
-  /** Set when the skill's content is owned by a Notis app. Its folder is republished
-   * by the app, never by a local push. `app_owned` is what the server sends; the raw
-   * association id stays server-side. */
-  app_owned?: boolean | null;
-  owner_app_id?: string | null;
   source: string;
   status: string;
+  native_reference?: NativeSkillReference;
+  display_name?: string;
+  native_scope?: string;
+  native_settings?: { revision: number; enabled: boolean; agent_targets: AgentTargets; updated_at: string };
 }
 
 export interface SyncSettings {
+  skill_sync_protocol?: number;
+  sync_scope?: string;
+  sync_namespace?: string | null;
   agent_targets_conditional_updates?: boolean;
   /** Server-verified canonical Notis account id used to scope local mirrors. */
   user_id?: string;
@@ -94,6 +117,9 @@ export interface EntitlementAccessDetail {
 }
 
 export interface SyncPullResponse {
+  skill_sync_protocol?: number;
+  sync_scope?: string;
+  sync_namespace?: string | null;
   skills: CloudSkill[];
   sync_enabled: boolean;
   last_synced_at: string | null;

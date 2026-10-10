@@ -32,15 +32,15 @@ npx --package @notis_ai/cli@latest -- notis tools exec composio-googlecalendar-l
 Dry-run a tool call:
 
 ```bash
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --dry-run --arguments '{"database_slug":"tasks"}'
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --dry-run --arguments '{"database_id":"tasks-db-id","query":{"page_size":10}}'
+npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --dry-run --arguments '{"database_id":"<tasks database id>"}'
+npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --dry-run --arguments '{"protocol":1,"target":{"space_id":"<space id>","binding":"<binding id>"},"input":{"mode":"rows","page_size":10}}'
 ```
 
 Execute a tool call:
 
 ```bash
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --arguments '{"database_slug":"tasks"}'
-npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"database_id":"tasks-db-id","query":{"page_size":10}}'
+npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --arguments '{"database_id":"<tasks database id>"}'
+npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"protocol":1,"target":{"space_id":"<space id>","binding":"<binding id>"},"input":{"mode":"rows","page_size":10}}'
 ```
 
 Connect a missing toolkit:

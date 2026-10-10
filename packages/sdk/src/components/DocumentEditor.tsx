@@ -4,6 +4,7 @@ import type { CSSProperties, ReactElement } from 'react';
 import { useNotisRuntime } from '../provider';
 import { useDocument } from '../hooks/useDocument';
 import { Markdown } from './Markdown';
+import { RecordComponentUnavailable } from './RecordComponents';
 import type { NotisDocumentEditorProps } from '../runtime';
 
 const fallbackNoticeStyle: CSSProperties = {
@@ -35,7 +36,7 @@ const fallbackTitleStyle: CSSProperties = {
  */
 function DocumentEditorFallback({ documentId, variant = 'full', className }: NotisDocumentEditorProps) {
   const runtime = useNotisRuntime();
-  const { document, loading, error } = useDocument(documentId);
+  const { document, loading, error } = useDocument(documentId ?? null);
   // Listing screenshots should show the app as it looks in the portal, so the
   // harness-only editing notice stays out of scenario captures.
   const isScreenshot = Boolean(runtime?.context?.screenshotScenario);
@@ -68,7 +69,7 @@ function DocumentEditorFallback({ documentId, variant = 'full', className }: Not
             ? 'Interactive report'
             : document.viewType === 'html'
               ? 'Interactive HTML document'
-              : 'View document'} — open it in Notis Documents for
+              : 'View document'} — open it in its Notis Space for
           the full native experience.
         </div>
       ) : (
@@ -87,7 +88,7 @@ function DocumentEditorFallback({ documentId, variant = 'full', className }: Not
  * dispatches on the document's content type (markdown -> rich text editor,
  * files -> matching viewer, views -> their trusted native Documents surface).
  * Outside the portal this falls back to a read-only preview or an explicit
- * open-in-Documents notice for native views.
+ * open-in-Space notice for native views.
  *
  * ```tsx
  * <DocumentEditor documentId={entry.id} variant="body" className="min-h-[320px]" />
@@ -99,5 +100,7 @@ export function DocumentEditor(props: NotisDocumentEditorProps): ReactElement {
   if (HostEditor) {
     return <HostEditor {...props} />;
   }
+  // A Space must never fall back to the legacy account-wide document reader.
+  if (runtime?.resource?.kind === 'space' || props.recordKey) return <RecordComponentUnavailable className={props.className} />;
   return <DocumentEditorFallback {...props} />;
 }

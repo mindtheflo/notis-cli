@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useNotisRuntime } from '../provider';
 import { createQueryClient, queryKey } from '../queryCache';
+import { spaceQueryKey } from '../space';
+import { localizeQueryError } from '../queryErrors';
 
 export interface UseQueryOptions {
   /** Required acknowledgement: only idempotent reads may run on mount or prefetch. */
@@ -26,7 +28,7 @@ export function useQuery<T>(key: readonly unknown[], read: () => Promise<T>, opt
   // Older hosts deliberately get a hook-local cache: no cross-runtime/account reuse.
   const fallback = useMemo(() => createQueryClient(), [runtime]);
   const client = runtime?.queryClient ?? fallback;
-  const cacheKey = queryKey(key);
+  const cacheKey = queryKey(spaceQueryKey(runtime, key));
   const enabled = Boolean(runtime) && options.enabled !== false && options.readOnly === true;
   const readRef = useRef(read);
   useLayoutEffect(() => { readRef.current = read; });
@@ -45,12 +47,13 @@ export function useQuery<T>(key: readonly unknown[], read: () => Promise<T>, opt
     client.invalidate(cacheKey);
     await fetch().catch(() => {});
   }, [cacheKey, client, enabled, fetch]);
+  const error = useMemo(() => localizeQueryError(snapshot.error, runtime?.context?.locale), [snapshot.error, runtime?.context?.locale]);
   return {
     data: enabled ? snapshot.data : undefined,
     hasData: enabled && snapshot.hasData,
     loading: enabled && !snapshot.hasData && !snapshot.error,
     isFetching: enabled && snapshot.isFetching,
-    error: enabled ? snapshot.error : null,
+    error: enabled ? error : null,
     refetch,
   };
 }
@@ -62,10 +65,10 @@ export function useQueryClient(): {
 } {
   const runtime = useNotisRuntime();
   return useMemo(() => ({
-    invalidate: (key?: readonly unknown[]) => runtime?.queryClient?.invalidate(key ? queryKey(key) : undefined),
+    invalidate: (key?: readonly unknown[]) => runtime?.queryClient?.invalidate(key ? queryKey(spaceQueryKey(runtime, key)) : undefined),
     prefetch: <T,>(key: readonly unknown[], read: () => Promise<T>, options: UseQueryOptions) => {
       if (!runtime?.queryClient || options.enabled === false || options.readOnly !== true) return Promise.resolve(undefined);
-      return runtime.queryClient.prefetch(queryKey(key), read, { staleTimeMs: options.staleTimeMs });
+      return runtime.queryClient.prefetch(queryKey(spaceQueryKey(runtime, key)), read, { staleTimeMs: options.staleTimeMs });
     },
   }), [runtime]);
 }

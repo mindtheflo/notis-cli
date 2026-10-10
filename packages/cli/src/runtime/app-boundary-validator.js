@@ -3,6 +3,7 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { usageError } from './errors.js';
+import { maskSerializedJsonData } from './app-data-literals.js';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
@@ -136,7 +137,7 @@ function validateTextFile(relPath, content) {
     return applyRules(content, rules.css, relPath);
   }
   if (extension === '.js' || extension === '.jsx' || extension === '.ts' || extension === '.tsx') {
-    return applyRules(content, rules.javascript, relPath);
+    return applyRules(maskSerializedJsonData(content, extension), rules.javascript, relPath);
   }
   return [];
 }
@@ -311,7 +312,9 @@ export function collectDesignViolationsForFile(relPath, content, config = getCom
   if (!matchesAny(normalized, config.include)) return [];
   if (matchesAny(normalized, config.exclude)) return [];
 
-  const lines = content.split('\n');
+  const checked = ['.js', '.jsx', '.ts', '.tsx'].includes(extname(normalized))
+    ? maskSerializedJsonData(content, extname(normalized)) : content;
+  const lines = checked.split('\n');
   const violations = [];
   for (const rule of config.rules) {
     if (rule.include && !matchesAny(normalized, rule.include)) continue;
@@ -319,12 +322,12 @@ export function collectDesignViolationsForFile(relPath, content, config = getCom
 
     const matches = [];
     if (rule.scope === 'file') {
-      const match = rule.regex.exec(content);
+      const match = rule.regex.exec(checked);
       if (match) matches.push(match.index);
     } else {
       rule.regex.lastIndex = 0;
       let match;
-      while ((match = rule.regex.exec(content)) !== null) {
+      while ((match = rule.regex.exec(checked)) !== null) {
         matches.push(match.index);
         if (match[0].length === 0) rule.regex.lastIndex += 1;
       }

@@ -4,6 +4,8 @@ import { useNotisRuntime } from '../provider';
 import type { RuntimeResource, AppDescriptor, CollectionItemDetail, DatabaseDescriptor, RouteDescriptor } from '../runtime';
 
 interface NotisContext {
+  /** UI selection only; it grants no access and is never a record scope. */
+  selection: string | null;
   resource: RuntimeResource | null;
   /** App metadata (id, name, icon, description). Null before runtime loads. */
   app: AppDescriptor | null;
@@ -28,6 +30,7 @@ export function useNotis(): NotisContext {
   const runtime = useNotisRuntime();
 
   return {
+    selection: runtime?.context?.selection ?? null,
     resource: runtime?.resource ?? null,
     app: runtime?.app ?? null,
     route: runtime?.route ?? null,

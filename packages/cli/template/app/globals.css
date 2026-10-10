@@ -3,6 +3,7 @@
 @config "../tailwind.config.ts";
 @source "./";
 @source "../components";
+@source "../spaces";
 @source "../lib";
 @source "../packages/sdk/src";
 

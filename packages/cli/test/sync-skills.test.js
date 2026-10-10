@@ -6,12 +6,15 @@ import test from 'node:test';
 
 import { reconcileAllSkills } from '../src/runtime/sync-skills.js';
 
-test('shared skill orchestration keeps base skills current when account sync is disabled', async () => {
+test('shared skill orchestration keeps base skills current when account sync is disabled', async (t) => {
+  const fixtureHome = mkdtempSync(join(tmpdir(), 'notis-base-skill-lock-'));
+  t.after(() => rmSync(fixtureHome, { recursive: true, force: true }));
   const calls = [];
   const result = await reconcileAllSkills({
     serverUrl: 'http://127.0.0.1:8000',
     jwt: 'header.payload.signature',
     honorSyncEnabled: true,
+    home: fixtureHome,
     userId: 'canonical-user',
     runAccountSync: async (...args) => {
       calls.push(['account', ...args]);

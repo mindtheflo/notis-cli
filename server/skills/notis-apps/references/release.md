@@ -1,145 +1,107 @@
-## Delivery
+# Delivery
 
-Workspace runs released versions only. Local and cloud agents use the same
-workflow. Run Notis commands through
-`npx --package @notis_ai/cli@latest -- notis ...`.
+Workspace runs released Space source. Use the same workflow locally and on the
+cloud computer through `npx --package @notis_ai/cli@latest -- notis`.
+A create/edit request authorizes the checked installed-Space update unless the
+user or applicable policy says preview-only/no-deploy. Store publication is a
+separate action. Preserve exact identity and prior authorization.
 
-A create/edit request normally authorizes updating that app after checks pass,
-**unless user or repository policy requires explicit deployment consent**.
-Preserve authorization already given. Read-only, preview-only, and no-deploy
-instructions stop at local source, build, and stub verification: no remote
-resource mutation, app activation, or live verification. Store publication always
-needs separate explicit approval. Do not deploy just to obtain visual proof when
-deployment is not authorized; report that the host check remains unverified.
+## Update one Space
 
-## Update an app
+1. **Read identity.** Check the active account/endpoint and `spaces get <space-id>`.
+   Pull the exact editable source with `spaces pull <space-id> <dir>`. Keep
+   `.notis/space-lock.json`, resources, source key and current revisions. Never
+   silently advance a stale checkout or create a duplicate to avoid a conflict.
+2. **Build.** Edit the selected definition, its view and linked Skill files.
+   Update `CHANGELOG.md`. Run `spaces build <dir> --space <key>`; it freezes source
+   and artifact bytes and validates the view contract and design.
+3. **Verify.** Run `spaces verify <dir> --space <key> --space-id <space-id>`.
+   This checks current action authorizations and renders explicit fictional
+   fixtures at 390px and 1440px with the shared read-only renderer. Provide exact
+   action/list/body/record fixtures. A denied read, write-on-load or failed width
+   is a failure, not a passing empty page. Inspect both locales and intended states.
+4. **Publish source.** Use `spaces deploy <dir> --space <key> --space-id <space-id>
+   --request-id <stable-id>`. Or `spaces preview` seals a candidate, and
+   `spaces promote <release-id> <dir>` publishes that exact candidate. Preview
+   authoring never silently gains live record-edit authority. Deployment updates
+   the selected Space, not siblings or the Store.
+5. **Read back.** Confirm published source revision and link with `spaces get` or
+   `views find --space-id`. Run `views render <view-link>` and inspect Markdown
+   plus the full-height screenshot. Check the affected interaction in the actual
+   Portal/required Desktop surface, in EN/FR at 390px and 1440px. Fixture success
+   does not prove data, access, collaboration or Site revocation.
+6. **Report.** Return the canonical view link and the exact completed boundary:
+   local-only, deployed/verified, deployed/unverified, failed-before-publication,
+   or outcome-unknown. After an uncertain response, read the same release/request
+   identity before retrying. Never bypass source checks with direct Storage writes.
 
-1. **Check identity.** Inspect the effective CLI profile and `apps list --json`.
-   Preserve local edits, then pull the exact editable app ID and intended
-   personal/team scope. Keep its profile-scoped link, current version, and revision.
-   Never silently advance a stale checkout or create a duplicate to avoid a conflict.
-2. **Build and inspect.** Edit the source, increment `notisAppVersion`, and update
-   `CHANGELOG.md`. Run `apps build` and automated `apps verify`, then do the
-   [visual check](design.md#look-at-the-result). For a new app, complete these
-   local checks before creating remote resources.
-3. **Prepare only missing resources.** For an existing app, retain its identity.
-   For a new app, reconcile the exact canonical name, edit permission, and scope
-   against `apps list --json`; reuse one matching editable identity, stop on
-   ambiguity, or create only when none exists. Use `apps create "<display title>"
-   <dir>` (with a verified `--team-id` for team scope), and read back the same ID.
-   Create only necessary missing databases against that app. Verify ownership
-   and database IDs before changing schemas; read back changes. Breaking changes
-   require separate coordination. Never mutate user data merely to test the UI.
-4. **Update Workspace.** Run `apps deploy` against that linked app. It builds and
-   verifies a frozen source/artifact snapshot before activation. `--skip-build`
-   accepts only unchanged valid output and still verifies. Use the supported
-   backend path; do not bypass checks or write directly to storage.
-5. **Verify delivery.** Read back the app ID, integer version, and Portal URL with
-   `apps list --json`. Run `apps verify --mode live`, then open the released app
-   inside Notis and inspect the affected screen and main interaction. Confirm the
-   intended bundle/version, not just the existence of an app with the same name.
-   A successful live harness check alone is not visual proof inside Notis.
-6. **Report accurately.** Give the app link and a brief description of what changed
-   and what was verified. Distinguish local-only, deployed and verified, deployed
-   but unverified, failed before activation, and outcome unknown. If create/deploy
-   has an uncertain outcome, reconcile its exact identity/version before retrying.
+## Create without duplicates
+
+Start locally with `spaces init`, then build. Discover/list existing Spaces before
+creating the intended remote identity with `LOCAL_NOTIS_MANAGE_SPACE`. Use a stable
+UUID and reconcile an uncertain creation. Read back its revision and resources,
+then verify/deploy with `--space-id`. A source-created database is committed with
+its main view in that publication; no separate provisional database is necessary.
 
 ## What the checks prove
 
-`build` validates the package, enforces design rules, and refreshes its embedded
-SDK. Automated `verify` checks every route at desktop (1280px) and phone (390px)
-widths, render errors, runtime calls, nested boxes, small text, lingering loading
-placeholders, and horizontal overflow. It uses a temporary server and browser;
-printed URLs or `--no-browser` are not passing verification. If tooling is missing,
-install it with `npm exec --yes --package agent-browser@latest -- agent-browser install`.
+| Check | Proves | Does not prove |
+| --- | --- | --- |
+| Build | Current selected source/artifact and schema syntax | Runtime data or access |
+| Verify | Frozen fixture rendering and current declarations/authorizations | Live record values, publication, sharing or visual quality |
+| Live render | Read-only current view data, Markdown and full-height image | Mutation behavior or collaborative editing |
+| Installed interaction | The specific checked host behavior and data readback | Store installation or production release |
 
-Stub verification does not establish real account data, permissions, host layout,
-or visual quality. Live verification exercises the authenticated runtime but still
-uses the harness. The final installed-app check establishes the result inside Notis.
-If that surface cannot be inspected, say so rather than claim it passed. No extra
-approval round is needed for an already-authorized check.
+`notis spaces screenshot <view-link> --width 390` captures an already deployed
+view. `notis views render` saves Markdown and/or PNG with a new output path; read
+the artifact, not only the command's success message. Missing output is not proof.
 
-`apps screenshot` supports declared scenarios and stub fixtures, including
-`theme: 'dark'`; `--raw` gives uncomposited captures. Store listing screenshots are
-not required for an ordinary Workspace update.
+## Skills, resources and concurrent edits
 
-## Special cases — read only when relevant
+Pulled Skill folders, `resources.json` and source share one release transaction.
+Only changed content is sent; unrelated remote edits stay intact. A conflict
+publishes nothing: pull fresh source into a new directory, merge the intended
+change and preserve the new lock. Stale source/record/binding revisions must not
+be replaced with guessed current values merely to force a write.
 
-### Publication privacy and portability gate
+To restore older source, pull current identity and the desired historical
+revision separately. Reapply the old content against the current lock and publish
+a new revision. Source restoration does not revert user data or provider effects.
 
-Before submitting or updating a Store listing:
+## Publication privacy and portability gate
 
-1. Inventory the exact public source archive, listing text/media, database schemas,
-   starter rows, bundled skills (including scripts/references), and automation
-   prompts/configuration. Review their actual contents, not just filenames or
-   a passing secret scan. Exclude personal records, transcripts, health/journal
-   history, customer details, private repository/account identifiers, credentials,
-   local paths, run logs, and private links. Do not merely replace a person's name
-   in otherwise real data. Rebuild examples from wholly fictional scenarios.
-2. Keep live owner databases structure-only (`seedDocuments` absent or false).
-   Opting in seeds the database's live rows, including folders: it is not a
-   fixture selector. Use fictional screenshot fixtures and an explicit, idempotent
-   onboarding demo-data option. If starter rows are needed in the install snapshot,
-   publish only from an isolated, verified fictional dataset; never replace or
-   delete the owner's real data to prepare a submission. When the user asks for
-   examples to come with the app, include them in that verified install snapshot:
-   screenshot fixtures or an optional onboarding seed step do not satisfy this.
-3. Bundle the full dependency closure of every app/automation skill, including
-   referenced helpers and resources. Remove private account-specific defaults;
-   resolve the installer's databases, connections, repository, timezone and
-   delivery choices at runtime. Preserve existing owner's schedules and data.
-4. Declare a source-owned onboarding skill. It must work through available MCP
-   tools or the Notis CLI in any agent harness, without requiring Notis Manager,
-   vendor-specific delegation tools, hidden local files, or publisher access.
-   Discover tools and inspect schemas before calls; reconcile existing resources
-   before creating them. Obtain installer choices before enabling automation or
-   external actions. Installing examples must not activate external deliveries.
-5. Test onboarding as an independent harness-native proof agent using an account
-   isolated from the publisher, then rerun to prove no duplicates. Exercise each
-   route and its interactions with fictional data, including empty/error states.
-   Record exact identities, versions, results and run-created resource cleanup in
-   a private Notis document owned by the app, never only in local files; never use
-   owner records as writable test fixtures.
-   For bundled starter-data claims, install the actual published listing into an
-   empty test account and read back its rows before onboarding or any manual data
-   writes. Confirm the installed listing version and remapped relations; do not
-   substitute an editable-source deployment for this Store-install test.
-6. Inspect the final submitted snapshot and media after packaging. Record the
-   privacy audit and verification against that exact source version in the same
-   private Notis document. Any unknown
-   provenance, missing dependency, untested onboarding or suspected personal data
-   blocks submission until resolved. Never equate submission with review approval
-   or Store publication.
+Before an explicitly authorized Store publication:
 
-### Unreleased container or stale checkout
+1. Review the complete snapshot: source, listing, media, schema, selected starter
+   rows, linked Skills/helpers and automations. Exclude personal data, account
+   identifiers, credentials, local paths and private run logs. Use wholly fictional
+   fixtures; redacting a name from real private content is insufficient.
+2. Keep databases structure-only unless the user requested packaged examples.
+   Store `--starter` is an explicit set of record keys per database, not a fixture
+   selector. Never populate it from private notes, leads, history or folders.
+3. Package the full dependency closure. Resolve the installer's own resources and
+   connections; never keep publisher defaults. Preserve existing schedules and
+   local customizations. Installation must not activate external deliveries.
+4. Link a Set up Skill when setup is needed. It must work through native tools or
+   the CLI in any harness, reconcile existing resources and be safe to rerun.
+5. Use an independent isolated installer proof: install the exact listing version,
+   verify remapped main views/relations and any claimed starter rows before setup,
+   run setup twice, exercise fictional views and clean only run-created resources.
+   Record exact identities, versions, results and cleanup in a private Notis
+   record owned by the Space, never only in local files.
+6. Run `spaces store publish <space-id> --dry-run` and review its diff. Execute
+   only the authorized channel/publication, then read back the listing version
+   and review state. Record the privacy audit and verification against that exact
+   source revision in the same private record. Submission is not review approval
+   or public availability.
 
-An unreleased container has no source to pull. Recover its original local source,
-or scaffold only if it cannot be recovered; verify the exact ID and scope and use
-`apps link <app-id> <dir> --expected-version 0`. Reuse the container after a failed
-first release; do not duplicate or automatically delete it. If another release
-has appeared, pull it into a fresh directory and reapply the intended edits without
-replacing its deployment base. Link/deploy guards must reject races and conflicts.
+`spaces store update <install-id> --dry-run` exposes a three-way update plan.
+Resolve each explicit conflict with `keep_mine` or `take_theirs`; retain unrelated
+local changes. Store publication and installed source deployment remain separate.
 
-### Restore an older source
+## Release history
 
-Pull the current release into a fresh checkout and the historical source into a
-separate folder (`apps pull <id> <dir> --source-version <n>`). Replace source without
-replacing the current `.notis` link/base, then check and deploy as a new release.
-Preserve app/database/skill IDs. Never decrement versions or imply that source
-restoration undoes user data or external actions.
-
-### Release history and Store publication
-
-Keep all release history in root `CHANGELOG.md`, newest first, with headings
-`## [Release title] - YYYY-MM-DD` (or `{PR_MERGE_DATE}` while unpublished). Do not add
-`versionNotes` to the config. App Details reads deployed history; the Store reads
-its published snapshot. Local edits must not change the published listing.
-
-`apps deploy` updates Workspace only. Use `apps publish --confirm-ready` only after
-the user explicitly approves the current App Details and Store listing. Deploy the
-exact approved source first. Respect listing completeness, visibility, version,
-and pending-review guards. A public submission includes editable source, Store
-assets, source-declared database schemas, and only explicitly opted-in starter
-rows. Do not hand-edit `notis-listing.json` or strip files to pass review; fix the
-source, redeploy, and resubmit. To start from a Store app, use `apps init --from
-<slug>`; `apps pull` is for an accessible installed app, not a Store listing clone.
+Keep `CHANGELOG.md` newest first, with `## [Release title] - YYYY-MM-DD` headings
+(or `{PR_MERGE_DATE}` before the release date is known). Source history belongs to
+that Space; changing its local changelog does not change an already published
+Store snapshot. Use the verified source revision, not the changelog title, as proof.

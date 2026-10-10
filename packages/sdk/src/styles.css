@@ -31,91 +31,115 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 
 /* Framework-neutral styles: the app owns its Tailwind entry point. This file
  * is also consumed in shadow roots and by apps on older Tailwind versions.
- * Keep rules outside Tailwind-owned @layer blocks: Vite processes this import
- * separately from the app stylesheet, so Tailwind 3 has no matching directives. */
-* {
-  border-color: hsl(var(--border));
-}
-[data-notis-app-root] {
-  color: hsl(var(--foreground));
-  display: block;
-  min-height: 100%;
-}
+ * The shell rules live in the native sublayer `components.notis-sdk`, so a
+ * page's Tailwind utilities (p-4, border-red-500) still win over them.
+ * The list-row spacing contract below is the one exception. Never
+ * use a bare Tailwind-owned `@layer base` / `@layer components` block: Vite
+ * processes this import separately from the app stylesheet, and Tailwind 3
+ * rejects those blocks without matching `@tailwind` directives.
+ *
+ * Tailwind 4: the statement below repeats its full layer order, including the
+ * `properties` layer it declares first for its --tw-* fallback reset, so the
+ * order holds whichever stylesheet loads first and the shell rules win over
+ * preflight and the app's base defaults.
+ * Tailwind 3: preflight, components and utilities are unlayered and beat every
+ * layered rule, so its preflight (`button` and list resets, `*` border colour)
+ * wins over these shell rules; utilities still win too. A Tailwind 3 app that
+ * puts a shell class on a `button`, `ul` or `ol` restates the background and
+ * padding it needs. */
+@layer properties, theme, base, components, utilities;
 
-.notis-app-shell {
-  margin-inline: auto;
-  width: 100%;
-  max-width: var(--portal-page-max-width);
-  padding: 1.5rem 1rem;
-}
+@layer components.notis-sdk {
+  * {
+    border-color: hsl(var(--border));
+  }
+  [data-notis-app-root] {
+    color: hsl(var(--foreground));
+    display: block;
+    min-height: 100%;
+  }
 
-/* Flat panel: no border or shadow around items. */
-.notis-app-surface {
-  border-radius: 1rem;
-  background-color: hsl(var(--muted));
-  color: hsl(var(--card-foreground));
-}
+  .notis-app-shell {
+    margin-inline: auto;
+    width: 100%;
+    max-width: var(--portal-page-max-width);
+    padding: 1.5rem 1rem;
+  }
 
-.list-row {
-  border-radius: 0.75rem;
-  background-color: hsl(var(--muted));
-  padding: 0.75rem 1rem;
-  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
-  transition-duration: 150ms;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-}
+  /* Flat panel: no border or shadow around items. */
+  .notis-app-surface {
+    border-radius: 1rem;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--card-foreground));
+  }
 
-.list-row-selected {
-  background-color: hsl(var(--primary) / 0.06);
-}
+  .list-row {
+    border-radius: 0.75rem;
+    background-color: hsl(var(--muted));
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
 
-/* Split pages are full-bleed; only the list pane carries a hairline. */
-.notis-app-split {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  width: 100%;
-  max-width: none;
-  flex-direction: column;
-}
+  .list-row-selected {
+    background-color: hsl(var(--primary) / 0.06);
+  }
 
-.notis-app-pane-list {
-  width: 100%;
-  flex-shrink: 0;
-  background-color: hsl(var(--muted) / 0.4);
-}
+  /* Split pages are full-bleed; only the list pane carries a hairline. */
+  .notis-app-split {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    width: 100%;
+    max-width: none;
+    flex-direction: column;
+  }
 
-.notis-app-pane-detail {
-  min-width: 0;
-  flex: 1 1 0%;
-  background-color: hsl(var(--background));
-}
-
-.notis-app-section {
-  padding: 1.25rem;
-}
-
-@media (min-width: 768px) {
-  .notis-app-shell { padding-block: 2rem; }
-  .notis-app-section { padding: 1.5rem; }
-}
-
-@media (min-width: 1024px) {
-  .list-row { background-color: transparent; }
-  .list-row:hover { background-color: hsl(var(--muted) / 0.6); }
-  .list-row-selected,
-  .list-row-selected:hover { background-color: hsl(var(--primary) / 0.06); }
-  .notis-app-split { flex-direction: row; }
   .notis-app-pane-list {
-    width: 20rem;
-    border-right-width: 1px;
-    border-right-color: hsl(var(--border));
+    width: 100%;
+    flex-shrink: 0;
+    background-color: hsl(var(--muted) / 0.4);
+  }
+
+  .notis-app-pane-detail {
+    min-width: 0;
+    flex: 1 1 0%;
+    background-color: hsl(var(--background));
+  }
+
+  .notis-app-section {
+    padding: 1.25rem;
+  }
+
+  @media (min-width: 768px) {
+    .notis-app-shell { padding-block: 2rem; }
+    .notis-app-section { padding: 1.5rem; }
+  }
+
+  @media (min-width: 1024px) {
+    .list-row { background-color: transparent; }
+    .list-row:hover { background-color: hsl(var(--muted) / 0.6); }
+    .list-row-selected,
+    .list-row-selected:hover { background-color: hsl(var(--primary) / 0.06); }
+    .notis-app-split { flex-direction: row; }
+    .notis-app-pane-list {
+      width: 20rem;
+      border-right-width: 1px;
+      border-right-color: hsl(var(--border));
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .notis-app-pane-list { width: 24rem; }
   }
 }
 
-@media (min-width: 1280px) {
-  .notis-app-pane-list { width: 24rem; }
-}
+/* A list row owns its 16px side gutter and 12px vertical rhythm, as in the
+ * Portal and pre-Space Apps. Keep only this spacing outside the utility layers:
+ * Tailwind 3 utilities are unlayered, so a second class specificity preserves
+ * it regardless of stylesheet order. Deliberate inline/important overrides still
+ * work. Shell/section/layout utilities and row colours remain overridable above. */
+.list-row.list-row { padding: 0.75rem 1rem; }
 
 /*
  * Markdown value-type rendering (see the `Markdown` component). Plain CSS on

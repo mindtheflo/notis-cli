@@ -8,8 +8,9 @@ import type { AgentContextContent, AgentContextItem, AgentContextSource } from '
  * (useTool, useNotis, etc.) which read from the NotisProvider context.
  */
 
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { NotisQueryClient } from './queryCache';
+import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport } from './space';
 
 // ---------------------------------------------------------------------------
 // Database types
@@ -77,6 +78,8 @@ export type DocumentContentType = 'markdown' | 'file' | 'view';
 
 export interface DocumentRecord {
   id: string;
+  recordKey?: string;
+  revision?: number;
   title: string;
   properties: Record<string, unknown>;
   url?: string | null;
@@ -176,6 +179,14 @@ export interface QueryFilter {
 }
 
 export interface NotisRuntimeContext {
+  /** Host UI language. */
+  locale?: 'en' | 'fr';
+  /** Untrusted UI selection, separate from the host's fixed record authority. */
+  selection?: string | null;
+  /** Raw URL query values; `useViewParams()` keeps only the declared, valid ones. */
+  params?: Record<string, string> | null;
+  /** Trusted anonymous record-Site pin; no credentials or physical native target. */
+  siteRecord?: { recordKey: string; param: string; params: Record<string, string | number | boolean> } | null;
   collectionItem?: CollectionItemDetail | null;
   /** App-owned resource requested through the route's `?resource=<id>` link. */
   resourceId?: string | null;
@@ -230,14 +241,111 @@ export interface ContextSelection extends AgentContextContent {
  * file -> matching viewer/editor), so this contract stays stable as new
  * content types ship.
  */
-export interface NotisDocumentEditorProps {
-  documentId: string;
+export interface NotisRecordProps {
+  /** Stable native record key, authorized through this Space's declared databases. */
+  recordKey: string;
+  className?: string;
+}
+
+export type NotisDocumentEditorProps = ({ recordKey: string; documentId?: never } | {
+  /** Legacy Apps only. Spaces use recordKey. */
+  documentId: string; recordKey?: never;
+}) & {
   /** 'full' renders icon/title/cover above the content; 'body' renders content only. */
   variant?: 'full' | 'body';
+  /** Show the database properties above the body (default true). */
+  showProperties?: boolean;
   readOnly?: boolean;
   className?: string;
   onDirtyChange?: (dirty: boolean) => void;
   onSavingChange?: (saving: boolean) => void;
+}
+
+export interface NotisRecordPropertiesProps extends NotisRecordProps {
+  readOnly?: boolean;
+  onSavingChange?: (saving: boolean) => void;
+}
+
+/** Inline HTML is useful for declared Site read actions; recordKey loads a signed-in record. */
+export type NotisHtmlFrameProps = ({ recordKey: string; html?: never } | { html: string; recordKey?: never }) & {
+  title?: string;
+  className?: string;
+};
+export interface NotisReportFrameProps extends NotisRecordProps {}
+export interface NotisShareControlProps extends NotisRecordProps {}
+
+/** One breadcrumb before the record title; the title is always the last crumb. */
+export interface NotisDocumentPageCrumb {
+  label: string;
+  onSelect?: () => void;
+}
+
+/** An extra entry in the page's '...' menu, after the host's own entries. */
+export interface NotisDocumentPageMenuItem {
+  label: string;
+  onSelect: () => void;
+  destructive?: boolean;
+  disabled?: boolean;
+}
+
+/**
+ * The host-bound parts of one document page. They share one editor session and one save queue,
+ * so a Space can arrange them (for example the properties in a right column) without a second editor.
+ */
+export interface NotisDocumentPageParts {
+  /** Breadcrumb, Saving or Saved status, actions, Share and the '...' menu. */
+  Toolbar: ComponentType;
+  /** Cover, icon and title. */
+  Header: ComponentType;
+  /** Editable or Read only, type, database, created and updated, with the Configure panel toggle. */
+  Meta: ComponentType;
+  /** The record's properties, saved automatically with the title, icon and cover. */
+  Properties: ComponentType;
+  /** The collaborative body (or the matching viewer for files, HTML and reports). */
+  Body: ComponentType;
+}
+
+/**
+ * The full page for one record that is the main content of a Space view (a note, a document):
+ * the same page Beta's document page showed, inside the Space. Every edit (title, icon, cover,
+ * properties, body) goes through the host's single save queue and live collaboration.
+ */
+export interface NotisDocumentPageProps extends NotisRecordProps {
+  /** Crumbs before the record title, usually a way back to the list. `false` hides the breadcrumb. */
+  breadcrumb?: NotisDocumentPageCrumb[] | false;
+  /** Extra toolbar buttons, before Share and the '...' menu (for example the Space's own Trash button). */
+  actions?: ReactNode;
+  /** Extra '...' menu entries (for example a destructive Delete, as Beta's page had). Plain toolbar buttons on hosts without DocumentPage. */
+  menuItems?: NotisDocumentPageMenuItem[];
+  /** Show the host Share control (a record Site). Off by default: only Spaces whose records were shared on Beta turn it on. */
+  share?: boolean;
+  /** Which header parts show. `false` hides the whole header (cover, icon and title). */
+  header?: false | { cover?: boolean; icon?: boolean; title?: boolean };
+  /** Show the meta strip (Editable or Read only, type, database, dates). Default true. */
+  meta?: boolean;
+  /** 'panel' (default): properties in the Configure panel under the meta strip. 'hidden': none. Or choose and order them by property name. */
+  properties?: 'panel' | 'hidden' | { include?: string[]; exclude?: string[]; order?: string[] };
+  /** Rendered between the properties and the body. */
+  aboveBody?: ReactNode;
+  /** Rendered under the body. */
+  belowBody?: ReactNode;
+  /** Column width: standard (900px, as Beta), wide (1200px) or full. */
+  width?: 'standard' | 'wide' | 'full';
+  readOnly?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onSavingChange?: (saving: boolean) => void;
+  /**
+   * Called after a title, icon, cover, property or body save is confirmed, so the Space can refresh its lists.
+   * On hosts without DocumentPage it is called when a save finishes, with `title` null.
+   */
+  onSaved?: (record: { recordKey: string; title: string | null }) => void;
+  /**
+   * Rearrange the page. Receives the host-bound parts; the default layout is Toolbar, Header, Meta (with
+   * Properties in its panel), Body. With a layout, Meta shows only its strip and Properties shows wherever
+   * the layout places it (once), so the record's properties are never edited from two places.
+   * aboveBody and belowBody are not drawn: place them in the layout.
+   */
+  layout?: (parts: NotisDocumentPageParts) => ReactNode;
 }
 
 export interface NotisMarkdownEditorSavePayload {
@@ -279,7 +387,14 @@ export interface NotisMarkdownEditorProps {
  */
 export interface NotisRuntimeUI {
   DocumentEditor?: ComponentType<NotisDocumentEditorProps>;
+  DocumentPage?: ComponentType<NotisDocumentPageProps>;
   MarkdownEditor?: ComponentType<NotisMarkdownEditorProps>;
+  RecordProperties?: ComponentType<NotisRecordPropertiesProps>;
+  HtmlFrame?: ComponentType<NotisHtmlFrameProps>;
+  ReportFrame?: ComponentType<NotisReportFrameProps>;
+  ShareControl?: ComponentType<NotisShareControlProps>;
+  /** Starts reading a record (and the page's code) before it opens, for example when a list row is hovered. */
+  prefetchRecord?: (recordKey: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,10 +420,12 @@ export interface HandoverPayload {
   /** Optional starter message. Omit it to open a context-only composer. */
   prompt?: string;
   /**
-   * Key of a skill declared in `notis.config.ts` -> `skills[].key`. The host
-   * rejects a key this app does not declare. Omit to hand over plain work.
+   * Alias of a Skill this Space links (`skills/<alias>/` in its source). The
+   * host rejects an alias the Space does not link. Omit to hand over plain work.
    */
   skill?: string;
+  /** Space-only selected row context; never overrides the host's access scope. */
+  record?: { binding: string; recordKey: string; readAction: string };
   /**
    * Submit on an active user gesture when the host supports immediate handover;
    * background calls still open an editable draft.
@@ -364,7 +481,7 @@ export interface CloudComputerFacts {
 }
 
 export interface RuntimeResource {
-  kind: 'app' | 'report';
+  kind: 'app' | 'report' | 'space';
   /** Host-provided adoption eligibility, never report-authored authority. */
   analytics_eligible?: boolean;
   /** Host-derived report family for adoption analytics, e.g. skill review reports. */
@@ -377,6 +494,26 @@ export interface RuntimeResource {
 }
 
 export interface NotisRuntime {
+  space?: SpaceRuntimeDescriptor;
+  callAction?<TResult = unknown>(actionId: string, inputs?: Record<string, unknown>, options?: SpaceActionOptions): Promise<TResult>;
+  documentBody?(request: SpaceDocumentBodyRequest): Promise<SpaceDocumentBodyResult>;
+  /**
+   * Space-only declared viewer read (`viewerReads`): what the signed-in viewer can open,
+   * with their own authority. Absent on Sites, anonymous links and older hosts.
+   */
+  viewerRead?<TResult = unknown>(operation: SpaceViewerReadOperation, input?: Record<string, unknown>): Promise<TResult>;
+  /**
+   * Space-only V4 list (`shows`): runs exactly the declared filter with these params as the
+   * signed-in Editor. Absent on Sites and older hosts.
+   */
+  shown?<TResult = unknown>(name: string, params?: Record<string, unknown>, options?: SpaceShownOptions): Promise<TResult>;
+  /** Space-only unsent Manager draft; distinct from legacy App activation. */
+  draftHandover?(payload: HandoverPayload): Promise<HandoverResult>;
+  /**
+   * Space-only cloud computer (`cloudComputer`): the signed-in viewer's own cloud computer after that
+   * viewer allows it. Absent on Sites, links, verification harnesses and older hosts.
+   */
+  spaceCloudComputer?: SpaceCloudComputerTransport;
   /** Authenticated runtime identity; app below is presentation metadata only. */
   resource?: RuntimeResource;
   /** Optional host-scoped in-memory read cache. Older hosts remain supported. */
@@ -403,7 +540,8 @@ export interface NotisRuntime {
    * The change notification is only a signal — it carries no rows. Consumers
    * react by refetching through the normal tool path, so app scoping,
    * permissions and billing are unchanged. Use the `useDatabaseSubscription`
-   * hook rather than calling this directly.
+   * hook rather than calling this directly. In a Space, `slug` is the database
+   * binding alias and the hook is `useNativeDocuments(alias, { subscribe: true })`.
    */
   subscribeDatabase?(
     slug: string,
@@ -436,7 +574,7 @@ export interface NotisRuntime {
    */
   cloudComputerFacts?(options?: { refresh?: boolean }): Promise<CloudComputerFacts>;
 
-  navigate?: (payload: { kind: string; [key: string]: unknown }) => void;
+  navigate?: (payload: { kind: string; [key: string]: unknown }) => void | Promise<void>;
 
   registerTopBarSearch?: (
     config:

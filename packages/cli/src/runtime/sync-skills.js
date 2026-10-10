@@ -218,7 +218,7 @@ export async function reconcileAllSkills({
       serverUrl,
       jwt,
       {},
-      { honorSyncEnabled },
+      { honorSyncEnabled, ...(home ? { syncHome: home } : {}) },
     );
     return {
       ...account,

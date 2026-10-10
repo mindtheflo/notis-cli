@@ -10,6 +10,28 @@
 export { NotisProvider, useNotisRuntime } from './provider';
 
 // Hooks
+export { useAction, useActionQuery } from './hooks/useAction';
+export { useNativeDocuments, useNativeMutation } from './hooks/useNativeDocuments';
+export type { NativeField, NativeFilter, NativeQuery, NativeInsert, NativeUpdate, NativeDelete, NativeMutationReceipt } from './nativeData';
+export type { SpaceDatabaseCreate, SpaceResourceReference } from './space';
+export type { SpaceActionTemplate, SpaceActionDescriptor, SpaceRuntimeDescriptor, SpaceActionOptions } from './space';
+export type { SpaceDocumentBodyRequest, SpaceDocumentBodyRead, SpaceDocumentBodySave, SpaceDocumentBodyResult } from './space';
+export { useNativeDocumentBody } from './hooks/useNativeDocumentBody';
+export { useViewerRead, useViewerReadAvailable, useViewerDatabases, useViewerSkills } from './hooks/useViewerReads';
+export type { UseViewerReadOptions } from './hooks/useViewerReads';
+export { useViewParams, useShown, useShownAvailable, parseViewParams } from './hooks/useViewParams';
+export type { ViewParams, ViewParamsOf, UseShownOptions } from './hooks/useViewParams';
+export { SPACE_VIEW_SPEC_VERSION } from './space';
+export type { SpaceViewParam, SpaceViewParamType, SpaceShows, SpaceShownDescriptor, SpaceShownOptions, SpaceShownResult,
+  SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
+export { SPACE_VIEWER_READ_OPERATIONS } from './space';
+export { SPACE_CLOUD_COMPUTER_OPERATIONS, spaceCloudComputerAllows } from './space';
+export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudComputerStatus, SpaceCloudComputerRelease, SpaceCloudComputerRunInput,
+  SpaceCloudComputerRunResult, SpaceCloudComputerUploadInput, SpaceCloudComputerUploadResult, SpaceCloudComputerTransport } from './space';
+export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadInput, SpaceViewerReadResult, SpaceViewerLink,
+  SpaceViewerDatabase, SpaceViewerDatabaseSchema, SpaceViewerSkill, SpaceViewerSkillPage } from './space';
+export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
+export type { SpaceActionFailureDetails } from './space';
 export { useQuery, useQueryClient } from './hooks/useQuery';
 export type { UseQueryOptions, UseQueryResult } from './hooks/useQuery';
 export { createQueryClient, createPrefetchQueue, queryKey } from './queryCache';
@@ -35,6 +57,8 @@ export { useHandover } from './hooks/useHandover';
 export type { UseHandoverResult } from './hooks/useHandover';
 export { useCloudComputer } from './hooks/useCloudComputer';
 export type { UseCloudComputerResult } from './hooks/useCloudComputer';
+export { useCloudComputerShell } from './hooks/useCloudComputerShell';
+export type { UseCloudComputerShellResult } from './hooks/useCloudComputerShell';
 export { useNotisNavigation } from './hooks/useNotisNavigation';
 export { useTopBarSearch } from './hooks/useTopBarSearch';
 export { useBackend } from './hooks/useBackend';
@@ -53,6 +77,9 @@ export {
 export { Markdown } from './components/Markdown';
 export type { MarkdownProps } from './components/Markdown';
 export { DocumentEditor } from './components/DocumentEditor';
+export { DocumentPage, DocumentPageSkeleton, usePrefetchRecord } from './components/DocumentPage';
+export { RecordProperties, HtmlFrame, ReportFrame, ShareControl } from './components/RecordComponents';
+export { RenderChartData } from './components/RenderChartData';
 export { MarkdownEditor } from './components/MarkdownEditor';
 export { NotisSelectionBoundary, NOTIS_CONTEXT_CLIPBOARD_TYPE } from './components/NotisSelectionBoundary';
 export type { NotisSelectionBoundaryProps } from './components/NotisSelectionBoundary';
@@ -135,6 +162,15 @@ export type {
   HandoverPayload,
   HandoverResult,
   NotisDocumentEditorProps,
+  NotisDocumentPageProps,
+  NotisDocumentPageCrumb,
+  NotisDocumentPageMenuItem,
+  NotisDocumentPageParts,
+  NotisRecordProps,
+  NotisRecordPropertiesProps,
+  NotisHtmlFrameProps,
+  NotisReportFrameProps,
+  NotisShareControlProps,
   NotisMarkdownEditorProps,
   NotisMarkdownEditorSavePayload,
   NotisMarkdownEditorSaveResult,

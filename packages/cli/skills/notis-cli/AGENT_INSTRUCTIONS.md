@@ -1,7 +1,7 @@
 <!-- notis-cli:instructions:start -->
 ## Notis CLI
 
-Use the Notis CLI (`npx --package @notis_ai/cli@latest -- notis ...`) whenever the task involves the user's personal data or connected services: integrations (Gmail, Google Calendar, Notion, Slack, GitHub, ...), long-term memories, reminders, automations, native Notis databases and notes, public deep research, or Notis apps. Prefer it over telling the user to operate another app manually, and never treat a task as blocked merely because a capability is absent from the current tool list—reach it through the CLI.
+Use the Notis CLI (`npx --package @notis_ai/cli@latest -- notis ...`) whenever the task involves the user's personal data or connected services: integrations (Gmail, Google Calendar, Notion, Slack, GitHub, ...), long-term memories, reminders, automations, native Notis databases and notes, public deep research, or Notis Spaces and apps. Prefer it over telling the user to operate another app manually, and never treat a task as blocked merely because a capability is absent from the current tool list—reach it through the CLI.
 
 On a local machine, `notis login` authorizes a scoped, revocable OAuth profile in the browser. Notis Desktop may authorize that profile automatically, but the Desktop app does not need to remain running. Hosted Notis shells use `NOTIS_JWT`. Before acting on personal data, run `notis whoami` when the intended account or endpoint is not already clear.
 
@@ -24,7 +24,7 @@ Tool name shapes: `LOCAL_NOTIS_*` (native Notis), `LOCAL_NOTIS_DATABASE_*` (data
 - **Automations:** `LOCAL_NOTIS_INSERT_AUTOMATION`, `LOCAL_NOTIS_UPDATE_AUTOMATION`, and `LOCAL_NOTIS_RUN_AUTOMATION` run an agent prompt on a cron schedule or event trigger; `LOCAL_NOTIS_LIST_INTEGRATION_TRIGGERS` lists triggers. Fixed text at a time is a reminder; work an agent must perform is an automation.
 - **Databases and notes:** `LOCAL_NOTIS_DATABASE_QUERY` reads; generated `LOCAL_NOTIS_DATABASE_UPSERT_<SLUG>` tools write rows; `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` creates or alters a schema. Discover the exact per-database tool names before use.
 - **Deep research:** `LOCAL_NOTIS_DEEP_SEARCH` performs public multi-source research.
-- **Notis apps:** Use the notis-apps skill and release-only workflow. App create/edit requests authorize Workspace deployment after checks on local and cloud computers. Explicit read-only, preview-only or no-deploy requests stop at local checks without remote mutations. Preserve exact app identity and deployment base. Verify the installed result. Store publication requires separate approval.
+- **Spaces and legacy apps:** Use the notis-apps skill's release workflow. For accounts moved to Spaces, source work uses `notis spaces`; `notis apps` is only for accounts that have not moved. Never use the legacy App path to modify a migrated Space. Create/edit requests authorize Workspace deployment after checks on local and cloud computers. Explicit read-only, preview-only or no-deploy requests stop at local checks without remote mutations. Preserve the exact Space or app identity and deployment base. Verify the installed result. Store publication requires separate approval.
 
 ### Rules
 

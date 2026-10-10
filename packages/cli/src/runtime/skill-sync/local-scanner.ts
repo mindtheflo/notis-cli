@@ -6,10 +6,13 @@ import os from "os";
 import path from "path";
 import { promisify } from "util";
 
-import type { CloudSkill, LocalSkill, NotisSyncState, SkillWriteOutcome } from "./types";
+import type { BundleFile, CloudSkill, LocalSkill, NotisSyncState, SkillWriteOutcome } from "./types";
+import { NATIVE_IDENTITY_FILE, assertNativePull, checkedNativeIdentity, isNativeSkill,
+  nativeFileDigest, nativeFrontmatterName, type NativeSkillIdentity } from './native-identity';
 
 const HOME_DIR = os.homedir();
 const execFileAsync = promisify(execFile);
+class NativeSkillIdentityError extends Error {}
 
 export const AGENTS_DIR = path.join(HOME_DIR, ".agents");
 export const LEGACY_AGENTS_SKILLS_DIR = path.join(AGENTS_DIR, "skills");
@@ -45,6 +48,9 @@ const EXCLUDED_TOP_LEVEL_ROOT_NAMES = new Set([
 ]);
 
 export interface SkillSyncPaths {
+  /** Explicit process-independent home for a confined sync invocation. */
+  homeDir?: string;
+  isolatedNamespace?: string;
   agentsDir: string;
   syncRoot: string;
   legacySkillsDir: string;
@@ -96,14 +102,21 @@ function sanitizePathSegment(value: string): string {
 export function getSkillSyncPathsForUser(
   authUserId: string,
   agentsDir: string = AGENTS_DIR,
+  namespace?: string | null,
+  syncHome?: string,
 ): SkillSyncPaths {
   const safeUserId = sanitizePathSegment(authUserId);
-  const resolvedAgentsDir = path.resolve(agentsDir);
-  const syncRoot = getDefaultSyncRootForAgentsDir(resolvedAgentsDir);
-  const userRoot = path.join(syncRoot, "users", safeUserId);
+  const homeDir = syncHome ? path.resolve(syncHome) : undefined;
+  const resolvedAgentsDir = homeDir ? path.join(homeDir, '.agents') : path.resolve(agentsDir);
+  const syncRoot = homeDir ? path.join(homeDir, '.notis', 'skills') : getDefaultSyncRootForAgentsDir(resolvedAgentsDir);
+  const userRoot = namespace
+    ? path.join(syncRoot, 'environments', sanitizePathSegment(namespace), 'users', safeUserId)
+    : path.join(syncRoot, "users", safeUserId);
   const legacyUserRoot = path.join(resolvedAgentsDir, "notis", "users", safeUserId);
 
   return {
+    ...(homeDir ? { homeDir } : {}),
+    ...(namespace ? { isolatedNamespace: sanitizePathSegment(namespace) } : {}),
     agentsDir: resolvedAgentsDir,
     syncRoot,
     legacySkillsDir: path.join(resolvedAgentsDir, "skills"),
@@ -174,17 +187,18 @@ function isIgnoredSkillEntry(entry: Dirent): boolean {
   return /\.py[co]$/i.test(entry.name);
 }
 
-async function listFilesRecursive(dirPath: string): Promise<string[]> {
+async function listFilesRecursive(dirPath: string, rootPath = dirPath, strictLinks = false): Promise<string[]> {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      if (isIgnoredSkillEntry(entry)) {
+      if (isIgnoredSkillEntry(entry) || (dirPath === rootPath && entry.name === NATIVE_IDENTITY_FILE)) {
         return [];
       }
 
       const fullPath = path.join(dirPath, entry.name);
+      if (strictLinks && entry.isSymbolicLink()) throw new Error('Native Skill bundles cannot contain symbolic links.');
       if (entry.isDirectory()) {
-        return listFilesRecursive(fullPath);
+        return listFilesRecursive(fullPath, rootPath, strictLinks);
       }
 
       if (entry.isFile()) {
@@ -337,17 +351,17 @@ function defaultTopLevelSkillSources(
     { label: "agents", root: paths.legacySkillsDir, priority: 2 },
     {
       label: "codex",
-      root: path.join(HOME_DIR, ".codex", "skills"),
+      root: path.join(paths.homeDir || HOME_DIR, ".codex", "skills"),
       priority: 3,
     },
     {
       label: "cursor",
-      root: path.join(HOME_DIR, ".cursor", "skills"),
+      root: path.join(paths.homeDir || HOME_DIR, ".cursor", "skills"),
       priority: 4,
     },
     {
       label: "claude",
-      root: path.join(HOME_DIR, ".claude", "skills"),
+      root: path.join(paths.homeDir || HOME_DIR, ".claude", "skills"),
       priority: 5,
     },
   );
@@ -691,6 +705,7 @@ export async function scanLocalSkills(
   await ensureCanonicalSkillsDir(paths);
 
   const sourceUrls = await readSkillLock(paths);
+  const previousState = await readSyncState(paths);
   const entries = await fs.readdir(paths.skillsDir, { withFileTypes: true });
   const skills: Array<LocalSkill | null> = await Promise.all(
     entries.map(async (entry) => {
@@ -703,7 +718,17 @@ export async function scanLocalSkills(
 
       const skillDir = path.join(paths.skillsDir, entry.name);
       const skillMdPath = path.join(skillDir, "SKILL.md");
-
+      let marker: string | null = null;
+      // Classify provenance BEFORE reading potentially unavailable content.
+      // Failure to scan a managed folder is not evidence that it is absent.
+      try { marker = await fs.readFile(path.join(skillDir, NATIVE_IDENTITY_FILE), 'utf8'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw new NativeSkillIdentityError('Native Skill provenance could not be read; existing files were retained.');
+        }
+      }
+      const knownNative = marker !== null || Boolean(previousState.skills[entry.name]?.nativeReference)
+        || Object.values(previousState.nativeHistory || {}).some(row => row.names.includes(entry.name));
       try {
         const skillMd = await fs.readFile(skillMdPath, "utf8");
         const { description } = parseFrontMatter(skillMd);
@@ -715,11 +740,27 @@ export async function scanLocalSkills(
           folderHash,
           directoryPath: skillDir,
         };
+        if (marker !== null) {
+          let identity: NativeSkillIdentity;
+          try { identity = checkedNativeIdentity(JSON.parse(marker)); }
+          catch { throw new NativeSkillIdentityError('Native Skill provenance is unreadable; do not upload it as a new Skill.'); }
+          let current = true;
+          for (const [name, expected] of Object.entries(identity.files)) {
+            try { if (nativeFileDigest(await fs.readFile(resolveSkillBundleFilePath(skillDir, name))) !== expected) current = false; }
+            catch { current = false; }
+          }
+          const editedName = nativeFrontmatterName(skillMd);
+          Object.assign(skill, { cloudId: identity.cloudId, nativeReference: identity.reference,
+            nativeScope: identity.scope, nativeBaseFolderHash: identity.folderHash, nativeFilesCurrent: current,
+            displayName: editedName && editedName !== identity.frontmatterName ? editedName : identity.displayName });
+        }
         if (sourceUrls[entry.name]) {
           skill.sourceUrl = sourceUrls[entry.name];
         }
         return skill;
-      } catch {
+      } catch (error) {
+        if (error instanceof NativeSkillIdentityError) throw error;
+        if (knownNative) throw new NativeSkillIdentityError('Native Skill files could not be read; existing files were retained.');
         return null;
       }
     }),
@@ -736,6 +777,11 @@ function normalizeSyncState(
   if (!state || state.version !== 1 || typeof state.skills !== "object") {
     return null;
   }
+  if (state.nativeHistory && (typeof state.nativeHistory !== 'object' || Array.isArray(state.nativeHistory)
+      || Object.values(state.nativeHistory).some(row => !row || !Array.isArray(row.names)
+        || row.names.some(name => typeof name !== 'string')))) {
+    throw new Error('Native Skill sync provenance is unreadable; existing files were retained.');
+  }
   const normalizeStoredAgentTargets = (
     targets: Partial<NotisSyncState["skills"][string]["agentTargets"]> | null | undefined,
   ): NotisSyncState["skills"][string]["agentTargets"] => ({
@@ -747,6 +793,7 @@ function normalizeSyncState(
 
   return {
     version: 1,
+    ...(state.nativeHistory ? { nativeHistory: state.nativeHistory } : {}),
     lastSyncedAt:
       typeof state.lastSyncedAt === "string" ? state.lastSyncedAt : null,
     skills: Object.fromEntries(
@@ -975,13 +1022,19 @@ async function preserveUnmanagedFiles(
   existingDir: string,
   stagingDir: string,
   previouslyApplied?: readonly string[],
+  strictConflicts = false,
 ): Promise<void> {
   const managed = previouslyApplied ? new Set(previouslyApplied) : null;
   for (const existingFile of await listFilesRecursive(existingDir)) {
     const relativePath = toPosixRelativePath(existingDir, existingFile);
     if (managed?.has(relativePath)) continue;
     const stagedPath = path.join(stagingDir, ...relativePath.split("/"));
-    if (await pathExists(stagedPath)) continue;
+    if (await pathExists(stagedPath)) {
+      if (strictConflicts && !(await fs.readFile(existingFile)).equals(await fs.readFile(stagedPath))) {
+        throw new Error('An incoming native Skill file conflicts with a local file. Local files were retained.');
+      }
+      continue;
+    }
     await fs.mkdir(path.dirname(stagedPath), { recursive: true });
     await fs.copyFile(existingFile, stagedPath);
   }
@@ -999,7 +1052,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
 async function replaceSkillDirectoryAtomically(
   skillDir: string,
   populateDir: (stagingDir: string) => Promise<void>,
-  preserve?: { previouslyApplied?: readonly string[] },
+  preserve?: { previouslyApplied?: readonly string[]; expectedFolderHash?: string; native?: boolean },
 ): Promise<void> {
   const parentDir = path.dirname(skillDir);
   const skillName = path.basename(skillDir);
@@ -1018,15 +1071,43 @@ async function replaceSkillDirectoryAtomically(
   let cleanupError: Error | null = null;
 
   try {
+    if (preserve?.native && preserve.expectedFolderHash === undefined) {
+      let existing = false;
+      try { await fs.lstat(skillDir); existing = true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (existing) throw new Error('Existing native Skill files need a readable baseline before replacement.');
+    }
+    if (preserve?.expectedFolderHash !== undefined
+        && (!await pathExists(skillDir) || await computeFolderHash(skillDir) !== preserve.expectedFolderHash)) {
+      throw new Error('Local Skill files changed before sync; the newer local edits were retained.');
+    }
     await populateDir(stagingDir);
 
     if (preserve && (await pathExists(skillDir))) {
-      await preserveUnmanagedFiles(skillDir, stagingDir, preserve.previouslyApplied);
+      await preserveUnmanagedFiles(skillDir, stagingDir, preserve.previouslyApplied, preserve.native);
+    }
+
+    if (preserve?.native) {
+      const markerPath = path.join(stagingDir, NATIVE_IDENTITY_FILE);
+      const marker = checkedNativeIdentity(JSON.parse(await fs.readFile(markerPath, 'utf8')));
+      marker.folderHash = await computeFolderHash(stagingDir);
+      await fs.writeFile(markerPath, JSON.stringify(marker), { mode: 0o600 });
+    }
+
+    if (preserve?.expectedFolderHash !== undefined
+        && (!await pathExists(skillDir) || await computeFolderHash(skillDir) !== preserve.expectedFolderHash)) {
+      throw new Error('Local Skill files changed during sync; the newer local edits were retained.');
     }
 
     if (await pathExists(skillDir)) {
       await fs.rename(skillDir, backupDir);
       movedExisting = true;
+      if (preserve?.native && preserve.expectedFolderHash === undefined) {
+        throw new Error('Native Skill files appeared during sync; existing files were retained.');
+      }
+      if (preserve?.expectedFolderHash !== undefined && await computeFolderHash(backupDir) !== preserve.expectedFolderHash) {
+        throw new Error('Local Skill files changed before publication; the newer local edits were retained.');
+      }
     }
 
     await fs.rename(stagingDir, skillDir);
@@ -1080,17 +1161,36 @@ export async function createSkillBundleBase64(
   }
 }
 
+export async function captureNativeSkillFiles(skill: LocalSkill): Promise<BundleFile[]> {
+  const hash = createHash('sha256');
+  const files: BundleFile[] = [];
+  for (const filePath of await listFilesRecursive(skill.directoryPath, skill.directoryPath, true)) {
+    const relative = path.relative(skill.directoryPath, filePath);
+    const bytes = await fs.readFile(filePath);
+    hash.update(relative); hash.update('\0'); hash.update(bytes); hash.update('\0');
+    files.push({ path: relative.split(path.sep).join('/'), content_b64: bytes.toString('base64') });
+  }
+  if (hash.digest('hex') !== skill.folderHash) throw new Error('Local Skill files changed before upload. Sync again with the current files.');
+  return files;
+}
+
 export async function writeCloudSkillToDisk(
   skill: CloudSkill,
   bundleBytes?: Buffer,
   paths: SkillSyncPaths = DEFAULT_SYNC_PATHS,
-  options: { previouslyApplied?: readonly string[] } = {},
+  options: { previouslyApplied?: readonly string[]; expectedFolderHash?: string } = {},
 ): Promise<SkillWriteOutcome | false> {
+  if (isNativeSkill(skill)) {
+    assertNativePull({ skills: [{ ...skill, name: 'native-' + skill.id }], skill_sync_protocol: 2, sync_scope: skill.native_scope,
+      sync_enabled: true, last_synced_at: null });
+    if (bundleBytes?.length) throw new Error('Native Skills require their verified complete file response.');
+  }
   const skillDir = path.join(
     paths.skillsDir,
     safeName(skill.name, paths.skillsDir),
   );
-  const preserve = { previouslyApplied: options.previouslyApplied };
+  const preserve = { previouslyApplied: options.previouslyApplied, expectedFolderHash: options.expectedFolderHash,
+    native: isNativeSkill(skill) };
 
   if (bundleBytes?.length) {
     const bundlePath = path.join(
@@ -1135,6 +1235,14 @@ export async function writeCloudSkillToDisk(
           Buffer.from(bundleFile.content_b64, "base64"),
         );
         appliedFiles.push(toPosixRelativePath(stagingDir, filePath));
+      }
+      if (skill.native_reference) {
+        const identity: NativeSkillIdentity = { schema: 1, cloudId: skill.id, reference: skill.native_reference,
+          displayName: skill.display_name || skill.name, frontmatterName: nativeFrontmatterName(skill.skill_md || ''),
+          scope: skill.native_scope!, folderHash: await computeFolderHash(stagingDir),
+          files: Object.fromEntries((skill.bundle_files || []).map(file => [file.path, nativeFileDigest(Buffer.from(file.content_b64, 'base64'))])) };
+        await fs.writeFile(path.join(stagingDir, NATIVE_IDENTITY_FILE), JSON.stringify(identity), { mode: 0o600 });
+        appliedFiles.push(NATIVE_IDENTITY_FILE);
       }
     }, preserve);
     return { written: true, appliedFiles: appliedFiles.sort() };

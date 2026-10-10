@@ -1,3 +1,5 @@
+import { SdkQueryError } from './queryErrors';
+
 /** In-memory read snapshots. The host owns the lifetime and authorization scope. */
 export interface QuerySnapshot<T = unknown> {
   data: T | undefined;
@@ -109,7 +111,7 @@ export function createQueryClient(options: {
       return () => { value.listeners.delete(listener); prune(); };
     },
     fetch<T>(key: string, read: () => Promise<T>, fetchOptions: QueryFetchOptions = {}) {
-      if (disposed) return Promise.reject(new Error('App query scope is no longer available.'));
+      if (disposed) return Promise.reject(new SdkQueryError('scopeUnavailable'));
       const value = entry(key);
       if (value.pending) return value.pending as Promise<T>;
       if (!fetchOptions.force && value.snapshot.hasData && value.snapshot.updatedAt > 0
@@ -121,7 +123,7 @@ export function createQueryClient(options: {
       const canCommit = () => epoch === requestEpoch && value.generation === generation && entries.get(key) === value;
       let timeout: ReturnType<typeof setTimeout>;
       const deadline = new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('This read took too long. Please retry.')), options.readTimeoutMs ?? 30_000);
+        timeout = setTimeout(() => reject(new SdkQueryError('timedOut')), options.readTimeoutMs ?? 30_000);
         // Node-based verification must not stay alive for a retired browser read.
         if (typeof timeout === 'object' && 'unref' in timeout) timeout.unref();
       });
@@ -140,7 +142,7 @@ export function createQueryClient(options: {
     prefetch<T>(key: string, read: () => Promise<T>, fetchOptions?: QueryFetchOptions) {
       const requestEpoch = epoch;
       return schedule(() => {
-        if (epoch !== requestEpoch) throw new Error('App query scope was cleared.');
+        if (epoch !== requestEpoch) throw new SdkQueryError('scopeCleared');
         return client.fetch(key, read, fetchOptions);
       });
     },

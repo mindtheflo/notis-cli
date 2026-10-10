@@ -15,11 +15,20 @@
 
 import * as vite from 'vite';
 import type { NotisAppConfig } from './config';
+import type { SpacesWorkspace } from './space';
 import { notisTailwindContent } from './tailwind';
 
 const externalReact = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'];
 
-export function notisViteConfig(appConfig: NotisAppConfig): vite.UserConfig {
+// The oldest browsers that support CSS light-dark() natively. With Vite's
+// default CSS target, Lightning CSS (Vite 8) rewrites light-dark(a, b) into
+// var(--lightningcss-light, a) var(--lightningcss-dark, b), and those
+// variables are only set by a stylesheet color-scheme rule. The Notis host
+// sets color-scheme inline, so the lowered colours resolve to nothing and
+// render transparent. Targeting these versions keeps light-dark() as written.
+export const NOTIS_CSS_TARGET = ['chrome123', 'edge123', 'firefox120', 'safari17.5'];
+
+export function notisViteConfig(appConfig: NotisAppConfig | SpacesWorkspace): vite.UserConfig {
   // Vite 8 preserves external require() calls. App bundles run in a browser
   // with an ESM import map, so bundled CommonJS dependencies must import React.
   // Older pulled apps also receive this SDK; their Vite already does this.
@@ -60,6 +69,7 @@ export function notisViteConfig(appConfig: NotisAppConfig): vite.UserConfig {
       outDir: '.notis/output/bundle',
       emptyOutDir: true,
       cssCodeSplit: false,
+      cssTarget: NOTIS_CSS_TARGET,
     },
     resolve: {
       alias: {

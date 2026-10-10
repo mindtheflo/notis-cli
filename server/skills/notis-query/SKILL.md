@@ -1,67 +1,41 @@
 ---
 name: notis-query
-description: Use when agents need to query native Notis databases with direct structured filters, sorts, and pagination through `LOCAL_NOTIS_DATABASE_QUERY`.
-feature_flag: store
+description: Discover native Notis databases and query their records with exact structured filters, current Space authority and view-qualified links.
+feature_flag: spaces
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_DATABASE_*"]
 mcp_references: ["references/database-discovery.md", "references/documents.md", "references/query.md"]
 ---
 
-# Notis Query Skill
+# Native database queries
 
-Use this skill when the user wants to search, filter, sort, or page through records in a native Notis database and the task is best handled with structured criteria instead of semantic search.
+Use structured native queries for filtering, sorting, counts, aggregates and
+pagination. Use memory for semantic discovery; use view rendering for what a page
+shows. The live tool `inputSchema` is authoritative.
 
-This skill is the single source of truth for `LOCAL_NOTIS_DATABASE_QUERY`.
+1. Discover the database and inspect its schema, property descriptions, relation
+   targets and option IDs with `LOCAL_NOTIS_DATABASE_GET_DATABASE`.
+2. Keep its exact returned native `target`, schema revision and available operations.
+   Every database lives in a Space; failed access never falls back to another owner.
+3. Use `LOCAL_NOTIS_DATABASE_QUERY` with `protocol: 1`, that `target` and direct
+   `input`. Build filters from actual field types/options. Page until the returned
+   continuation ends; one page is not the whole database.
+4. For a known record or view link, follow [Reading records](references/documents.md)
+   instead of running broad discovery. View links come from write results or
+   `LOCAL_NOTIS_FIND_VIEWS`; sensitive or stale evidence needs a fresh render.
+5. Writes use discovered native tools with current schema/record revisions and a
+   stable request ID. Dry-run first and read back the committed state. A missing
+   view link is not a failed write and does not justify repeating it.
 
-## Canonical contract source
+In authored Space code use `useShown` or declared actions, not account-wide tool
+calls. Load `notis-apps` for [Space authoring](../notis-apps/references/views.md);
+its hosted reference is `notis://docs/notis-apps/references/views.md`.
 
-For custom view runtime usage, the canonical contract is always MCP `tools/list` `inputSchema` for `LOCAL_NOTIS_DATABASE_QUERY`.
+## Guides
 
-- Use `notisView.listTools()` (or MCP `tools/list`) to read the live schema.
-- Use `notisView.callTool("LOCAL_NOTIS_DATABASE_QUERY", args)` (or MCP `tools/call`) with arguments that match that schema exactly.
-- If this skill text and `inputSchema` ever differ, follow `inputSchema`.
+- [Database discovery and creation](references/database-discovery.md)
+- [Structured native query grammar](references/query.md)
+- [Reading, updating and citing records](references/documents.md)
 
-This keeps query arguments aligned with the same tool definitions used by agent runtime and avoids maintaining duplicate schema formats.
-
-## When to use `LOCAL_NOTIS_DATABASE_QUERY`
-
-Use `LOCAL_NOTIS_DATABASE_QUERY` when:
-
-- you already know the target native database
-- the user wants structured filtering or sorting
-- you need predictable pagination over database rows
-- you need to find records before reading or updating a specific document
-- you need to find matching records before calling `LOCAL_NOTIS_DATABASE_GET_DOCUMENT` or a generated database upsert tool
-- the task should use direct database criteria instead of semantic memory search
-
-Do not use `LOCAL_NOTIS_DATABASE_QUERY` when:
-
-- the relevant database is unknown
-- semantic search over broad workspace context is better
-- the task points to one known document by `document_id` or portal URL
-
-Use these tools together:
-
-- `LOCAL_NOTIS_DATABASE_LIST_DATABASES` to discover available databases and confirm the slug
-- `LOCAL_NOTIS_DATABASE_GET_DATABASE` to inspect read-only schema detail, ordered properties, options, and relation targets
-- `LOCAL_NOTIS_DATABASE_QUERY` to find matching records
-- `LOCAL_NOTIS_DATABASE_GET_DOCUMENT` to inspect one specific matching document in full
-- generated database upsert tools to update or create records after you know the right document or relation IDs
-
-Follow the same workflow and use the exact canonical tool names available in the current runtime.
-
-Every database has one owning app; inspect its identity/schema before schema writes.
-Known document IDs/URLs use the document guide, not a broad query. For queries,
-use the query guide for exact filter/property/pagination rules; live inputSchema
-is authoritative. Dry-run writes and read back the resulting state.
-
-## Task guides
-
-Read only the guide needed for this task. Relative links resolve in the skill bundle.
-For hosted MCP, fetch the matching `notis://docs/notis-query/references/<file>.md` URI
-with resources/read or the available Notis resource-fetch tool; the root resource
-also rewrites these links to their published URIs.
-
-- [Native Database Workflow](references/database-discovery.md)
-- [Reading documents](references/documents.md)
-- [Supported execution mode](references/query.md)
+Hosted MCP exposes these references under
+`notis://docs/notis-query/references/<file>.md`; load only the relevant guide.

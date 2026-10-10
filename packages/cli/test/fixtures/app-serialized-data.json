@@ -1,0 +1,473 @@
+[
+  {
+    "name": "default serialized JSON",
+    "path": "app/arbitrary-data.ts",
+    "source": "export default \"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "compiled binding",
+    "path": "app/bundle.js",
+    "source": "var a=\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";export{a as default};",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "single quote bundle",
+    "path": "app/bundle.js",
+    "source": "var a='{\"files\":[{\"path\":\"example.md\",\"after\":\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\"notis-app-shell\\\\\">\"}]}';export{a};",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "static template bundle",
+    "path": "app/bundle.js",
+    "source": "var a=`{\"files\":[{\"path\":\"example.md\",\"after\":\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\"notis-app-shell\\\\\">\"}]}`;export{a};",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "JSON parse initializer",
+    "path": "app/page.tsx",
+    "source": "const payload=JSON.parse(\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\");export default payload;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "JSON parse export",
+    "path": "app/page.tsx",
+    "source": "export default JSON.parse(\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\");",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "nested data object",
+    "path": "app/page.tsx",
+    "source": "const dataset={report:\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\"};export default dataset;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "nested data array",
+    "path": "app/page.tsx",
+    "source": "const dataset=[\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\"];export default dataset;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "returned serialized data",
+    "path": "app/page.tsx",
+    "source": "export function data(){return \"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";}",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "source unicode positions",
+    "path": "app/page.tsx",
+    "source": "const title=\"café 😀\";\nconst data=\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";\nexport default data;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "array JSON",
+    "path": "app/data.ts",
+    "source": "export default '[\"document.body\",\"#ff0000\",\"border\"]';",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "escaped JS hex JSON",
+    "path": "app/data.js",
+    "source": "const data='\\x7b\"example\":\"document.body border #ff0000\"}';export default data;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "escaped JS unicode JSON",
+    "path": "app/data.js",
+    "source": "const data='\\u007b\"example\":\"document.body border #ff0000\"}';export default data;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "escaped JS code point JSON",
+    "path": "app/data.js",
+    "source": "const data='\\u{7b}\"example\":\"document.body border #ff0000\"}';export default data;",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "data plus real host access",
+    "path": "app/page.tsx",
+    "source": "const data=\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";\ndocument.body.remove();",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "data plus real runtime",
+    "path": "app/page.tsx",
+    "source": "const data=\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";\nwindow.__NOTIS_RUNTIME__.callTool();",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real head access",
+    "path": "app/page.tsx",
+    "source": "document.head.appendChild(node);",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real document element",
+    "path": "app/page.tsx",
+    "source": "document.documentElement.style.color=\"red\";",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real portal call",
+    "path": "app/page.tsx",
+    "source": "createPortal(children,target);",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real portal primitive",
+    "path": "app/page.tsx",
+    "source": "PortalPrimitive.Root;",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real portal import",
+    "path": "app/page.tsx",
+    "source": "import {Portal} from '@radix-ui/react-portal';",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real portal reexport",
+    "path": "app/page.tsx",
+    "source": "export * from '@radix-ui/react-portal';",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real portal require",
+    "path": "app/page.tsx",
+    "source": "const portal=require('@radix-ui/react-portal');",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real dynamic portal import",
+    "path": "app/page.tsx",
+    "source": "const portal=import('@radix-ui/react-portal');",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real selector",
+    "path": "app/page.tsx",
+    "source": "document.querySelector('[data-notis-sidebar]');",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "real selector all",
+    "path": "app/page.tsx",
+    "source": "document.querySelectorAll(`[data-notis-dialog]`);",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "JSON inside selector retained",
+    "path": "app/page.tsx",
+    "source": "const node=document.querySelector('{\"selector\":\"[data-notis-sidebar]\"}');",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "JSON inside require retained",
+    "path": "app/page.tsx",
+    "source": "const loader=require('{\"module\":\"@radix-ui/react-portal\"}');",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "JSON inside dynamic import retained",
+    "path": "app/page.tsx",
+    "source": "const loader=import('{\"module\":\"@radix-ui/react-portal\"}');",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "template expression host",
+    "path": "app/page.tsx",
+    "source": "const text=`{\"example\":\"${document.body}\"}`;",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "template nested executable",
+    "path": "app/page.tsx",
+    "source": "const text=`{\"example\":${JSON.stringify(document.head)}}`;",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "tagged template retained",
+    "path": "app/page.tsx",
+    "source": "const text=tag`{\"example\":\"document.body\"}`;",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "JSON parse tag retained",
+    "path": "app/page.tsx",
+    "source": "const text=JSON.parse`{\"example\":\"document.body\"}`;",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "eval argument retained",
+    "path": "app/page.tsx",
+    "source": "const result=eval(\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\");",
+    "boundary": true,
+    "design_ids": [
+      "no-border-box",
+      "no-side-bar",
+      "no-palette-hue",
+      "no-hex-color",
+      "no-app-shell-split"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "Function argument retained",
+    "path": "app/page.tsx",
+    "source": "const result=new Function(\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\");",
+    "boundary": true,
+    "design_ids": [
+      "no-border-box",
+      "no-side-bar",
+      "no-palette-hue",
+      "no-hex-color",
+      "no-app-shell-split"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "ordinary code string stays checked",
+    "path": "app/page.tsx",
+    "source": "const code=\"document.body\";",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "ordinary style constant stays checked",
+    "path": "app/page.tsx",
+    "source": "const style=\"border #ff0000\";",
+    "boundary": false,
+    "design_ids": [
+      "no-border-box",
+      "no-hex-color"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "JSX class string",
+    "path": "app/page.tsx",
+    "source": "export default function Page(){return <div className=\"border\"/>;}",
+    "boundary": false,
+    "design_ids": [
+      "no-border-box"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "JSX class expression",
+    "path": "app/page.tsx",
+    "source": "const Page=()=> <div className={\"border-l-4\"}/>;",
+    "boundary": false,
+    "design_ids": [
+      "no-side-bar"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "JSX inline style",
+    "path": "app/page.tsx",
+    "source": "const Page=()=> <div style={{color:\"#ff0000\"}}/>;",
+    "boundary": false,
+    "design_ids": [
+      "no-hex-color"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "JSX class template",
+    "path": "app/page.tsx",
+    "source": "const Page=()=> <div className={`border ${active?\"bg-muted\":\"bg-background\"}`}/>;",
+    "boundary": false,
+    "design_ids": [
+      "no-border-box"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "JSX structured data retained",
+    "path": "app/page.tsx",
+    "source": "const Page=()=> <div className={\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\"}/>;",
+    "boundary": true,
+    "design_ids": [
+      "no-border-box",
+      "no-side-bar",
+      "no-palette-hue",
+      "no-hex-color",
+      "no-app-shell-split"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "JSX returned structured data retained",
+    "path": "app/page.tsx",
+    "source": "const Page=()=> <div className={()=>{return \"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";}}/>;",
+    "boundary": true,
+    "design_ids": [
+      "no-border-box",
+      "no-side-bar",
+      "no-palette-hue",
+      "no-hex-color",
+      "no-app-shell-split"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "scalar JSON stays checked",
+    "path": "app/page.tsx",
+    "source": "const code='\"document.body\"';",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "invalid JSON stays checked",
+    "path": "app/page.tsx",
+    "source": "const code='{\"code\":\"document.body\", trailing}';",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "nonstandard JSON stays checked",
+    "path": "app/page.tsx",
+    "source": "const code='{\"code\":\"document.body\",\"n\":NaN}';",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "malformed program stays checked",
+    "path": "app/page.tsx",
+    "source": "const data=\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";\nconst = ;",
+    "boundary": true,
+    "design_ids": [
+      "no-border-box",
+      "no-side-bar",
+      "no-palette-hue",
+      "no-hex-color",
+      "no-app-shell-split"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "CSS boundary unchanged",
+    "path": "app/global.css",
+    "source": "html { color: var(--foreground); }",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "CSS style unchanged",
+    "path": "app/global.css",
+    "source": ".root { color: #ff0000; }",
+    "boundary": false,
+    "design_ids": [
+      "no-hex-color"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "data cannot supply allow directive",
+    "path": "app/page.tsx",
+    "source": "const data=\"{\\\"note\\\": \\\"notis-design-allow: no-border-box old historical directive with reason\\\"}\";\nconst Page=()=> <div className=\"border\"/>;",
+    "boundary": false,
+    "design_ids": [
+      "no-border-box"
+    ],
+    "any_allowed": false
+  },
+  {
+    "name": "actual allow directive preserved",
+    "path": "app/page.tsx",
+    "source": "// notis-design-allow: no-border-box priority checkbox needs a visible unchecked ring\nconst Page=()=> <div className=\"border\"/>;",
+    "boundary": false,
+    "design_ids": [
+      "no-border-box"
+    ],
+    "any_allowed": true
+  },
+  {
+    "name": "optional JSON receiver conservatively retained",
+    "path": "app/page.tsx",
+    "source": "const data = JSON?.parse(\"{\\\"history\\\": \\\"document.body\\\"}\");",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "optional JSON call conservatively retained",
+    "path": "app/page.tsx",
+    "source": "const data = JSON.parse?.(\"{\\\"history\\\": \\\"document.body\\\"}\");",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  }
+]

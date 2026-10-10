@@ -125,6 +125,8 @@ export function normalizeDocumentRecord(value: unknown): DocumentRecord {
 
   return {
     id: optionalString(record.id) ?? '',
+    recordKey: optionalString(record.recordKey) ?? optionalString(record.record_key) ?? undefined,
+    revision: typeof record.revision === 'number' ? record.revision : undefined,
     title: optionalString(record.title) ?? 'Untitled',
     url: optionalString(record.url),
     properties,

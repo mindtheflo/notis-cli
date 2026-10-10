@@ -82,10 +82,15 @@ function createMultipartFileUpload(payload, bindingMetadata, fileBindings) {
   };
 }
 
-function normalizeBackendError(status, payload, runtime) {
+export function normalizeBackendError(status, payload, runtime) {
   const backendError = payload?.error;
+  // Space errors answer {error: <stable code>, message: <readable text>}: show
+  // the text (it can name the Space involved); the code stays in details.
+  const codedMessage = typeof backendError === 'string' && /^[a-z][a-z0-9_]*$/.test(backendError)
+    && typeof payload?.message === 'string' && payload.message ? payload.message : null;
   const message =
     backendError?.message ||
+    codedMessage ||
     backendError ||
     payload?.message ||
     payload?.error ||
@@ -258,6 +263,7 @@ export async function httpRequest({
   body,
   multipart = false,
   requireAuth = true,
+  spacesProtocol,
 }) {
   // Refresh before spending the credential rather than after a rejection: the
   // rotating refresh token is shared with every other `notis` process reading
@@ -293,6 +299,7 @@ export async function httpRequest({
     'X-Notis-CLI-Version': runtime.cliVersion,
     'X-Notis-Request-Id': requestId,
   };
+  if (spacesProtocol !== undefined) headers['X-Notis-Spaces-Protocol'] = String(spacesProtocol);
   if (!multipart) {
     headers['Content-Type'] = 'application/json';
   }

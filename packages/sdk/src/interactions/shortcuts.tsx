@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -244,10 +245,10 @@ function isDialogEvent(event: KeyboardEvent): boolean {
   );
 }
 
-export function ShortcutProvider({ children }: { children: ReactNode }) {
+export function ShortcutProvider({ children, isAvailable }: { children: ReactNode; isAvailable?: () => boolean }) {
   const parentRegistry = useContext(ShortcutContext);
   if (parentRegistry) return <>{children}</>;
-  return <ShortcutProviderRoot>{children}</ShortcutProviderRoot>;
+  return <ShortcutProviderRoot isAvailable={isAvailable}>{children}</ShortcutProviderRoot>;
 }
 
 export interface ShortcutHelpEntry {
@@ -370,7 +371,7 @@ function collectShortcutHelpEntries(
   return entries;
 }
 
-function ShortcutProviderRoot({ children }: { children: ReactNode }) {
+function ShortcutProviderRoot({ children, isAvailable }: { children: ReactNode; isAvailable?: () => boolean }) {
   const registrationsRef = useRef(new Map<number, ShortcutRegistration>());
   const nextIdRef = useRef(1);
   const nextOrderRef = useRef(1);
@@ -378,11 +379,20 @@ function ShortcutProviderRoot({ children }: { children: ReactNode }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const helpOpenRef = useRef(false);
   const [, setRegistryVersion] = useState(0);
+  const availabilityRef = useRef(isAvailable);
 
   const updateHelpOpen = useCallback((open: boolean) => {
     helpOpenRef.current = open;
     setHelpOpen(open);
   }, []);
+
+  useLayoutEffect(() => {
+    availabilityRef.current = isAvailable;
+    if (isAvailable?.() === false) {
+      sequenceRef.current = { chords: [], at: 0 };
+      updateHelpOpen(false);
+    }
+  }, [isAvailable, updateHelpOpen]);
 
   const register = useCallback((input: Omit<ShortcutRegistration, 'id' | 'order'>) => {
     const id = nextIdRef.current++;
@@ -400,6 +410,10 @@ function ShortcutProviderRoot({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (availabilityRef.current?.() === false) {
+        sequenceRef.current = { chords: [], at: 0 };
+        return;
+      }
       if (event.defaultPrevented || isDialogEvent(event)) return;
       const editable = isEditableShortcutEvent(event);
       if (!editable && !event.repeat && event.key === '?' && !event.metaKey && !event.ctrlKey && !event.altKey) {

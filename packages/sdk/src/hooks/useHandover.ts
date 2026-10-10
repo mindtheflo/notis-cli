@@ -48,12 +48,13 @@ export interface UseHandoverResult {
  */
 export function useHandover(): UseHandoverResult {
   const runtime = useNotisRuntime();
+  const dispatch = runtime?.resource?.kind === 'space' ? runtime.draftHandover : runtime?.handover;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   const handover = useCallback(
     async (payload: HandoverPayload): Promise<HandoverResult> => {
-      if (!runtime?.handover) {
+      if (!dispatch) {
         throw new Error('This Notis host cannot hand work to the manager chat.');
       }
 
@@ -61,7 +62,7 @@ export function useHandover(): UseHandoverResult {
       setError(null);
 
       try {
-        return await runtime.handover(payload);
+        return await dispatch(payload);
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
         setError(e);
@@ -70,8 +71,8 @@ export function useHandover(): UseHandoverResult {
         setPending(false);
       }
     },
-    [runtime],
+    [dispatch],
   );
 
-  return { handover, pending, error, available: Boolean(runtime?.handover) };
+  return { handover, pending, error, available: Boolean(dispatch) };
 }

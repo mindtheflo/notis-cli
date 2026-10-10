@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import type {
   AgentTargets,
   LocalSkill,
@@ -6,8 +7,11 @@ import type {
   SkillSyncFailure,
   SyncPullResponse,
   SyncSettings,
+  SyncedSkill,
 } from "./types";
 import { normalizeAgentTargets } from "./types";
+import { assertNativePull, checkedNativeReference, isNativeSkill, nativeState } from './native-identity';
+import { bindNativeFolders, hasNativeFolderHistory, nativeLinkRows, nativeLocalReady, previousNativeState, retainMissingNativeState } from './native-plan';
 import {
   downloadSkillBundle,
   fetchSyncSettings,
@@ -59,6 +63,8 @@ export interface RunSkillSyncOptions {
   /** Electron's scheduled invocation honors the account preference. A manual
    * CLI sync always runs, even when automatic Desktop refresh is disabled. */
   honorSyncEnabled?: boolean;
+  /** All account paths, scanner roots and agent links use this explicit home. */
+  syncHome?: string;
 }
 
 const BASE_SKILL_NAMES = new Set(['notis-apps', 'notis-query', 'notis-cli']);
@@ -93,6 +99,8 @@ export interface MaterializeCloudSkillsResult {
 export interface MaterializeCloudSkillsOptions {
   /** Server-verified Notis identity, when Desktop's auth subject differs. */
   canonicalUserId?: string;
+  /** Previously authenticated settings must agree with the pull before I/O. */
+  syncSettings?: SyncSettings;
   /** Re-link only these cloud skills without removing or adopting other links. */
   relinkSkillNames?: readonly string[];
 }
@@ -134,6 +142,22 @@ const DEFAULT_RUN_SKILL_SYNC_DEPS: RunSkillSyncDependencies = {
   removeForeignAccountSymlinks,
   updateAgentTargets,
 };
+
+export function isolatedLinkOptions(paths: ReturnType<typeof getSkillSyncPathsForUser>) {
+  if (!paths.isolatedNamespace && !paths.homeDir) return undefined;
+  const root = paths.isolatedNamespace
+    ? join(paths.syncRoot, 'environments', paths.isolatedNamespace, 'agents') : paths.homeDir!;
+  return { agentSkillDirs: { notis: paths.skillsDir, claude_code: join(root, '.claude', 'skills'),
+    cursor: join(root, '.cursor', 'skills'), codex: join(root, '.codex', 'skills') },
+    legacyGlobalSkillsDir: join(root, '.agents', 'skills') };
+}
+
+function assertSyncEnvironment(pull: SyncPullResponse, settings: SyncSettings): void {
+  if ((pull.sync_namespace || null) !== (settings.sync_namespace || null)
+      || (settings.sync_scope !== undefined && pull.sync_scope !== settings.sync_scope)) {
+    throw new Error('Skill sync environment changed. Existing mirrors were retained.');
+  }
+}
 function toSkillMap(skills: LocalSkill[]): Map<string, LocalSkill> {
   return new Map(skills.map((skill) => [skill.name, skill]));
 }
@@ -175,6 +199,15 @@ export function shouldWriteCloudSkill(
     return true;
   }
 
+  if (isNativeSkill(cloudSkill)) {
+    if (localSkill.nativeScope && localSkill.nativeScope !== cloudSkill.native_scope) return false;
+    if (nativeLocalReady(cloudSkill, localSkill)) return false;
+    const nativePrevious = previousNativeState(previousState, cloudSkill);
+    return (localSkill.nativeFilesCurrent === true && localSkill.folderHash === localSkill.nativeBaseFolderHash)
+      || (!localSkill.nativeReference && nativePrevious?.cloudId === cloudSkill.id
+          && nativePrevious.folderHash === localSkill.folderHash);
+  }
+
   const previous = previousState.skills[skillName];
   if (previous?.folderHash === localSkill.folderHash
     && previous.cloudContentHash === cloudContentHash(cloudSkill)) return false;
@@ -182,10 +215,9 @@ export function shouldWriteCloudSkill(
   // Without a stored content baseline (skills served through a signed source URL keep
   // none, because that URL changes on every pull) the only other signal is
   // `skill_folder_hash`, which the server does NOT always compute the way the local
-  // folder hash is computed. An app-published skill hashes its bundle entries, so that
-  // value can never equal the hash of the extracted directory, and comparing the two
-  // replaced the folder on every sync tick, deleting whatever a running skill had
-  // written inside it. Compare cloud against cloud instead: rewrite when the cloud
+  // folder hash is computed. A bundle-entry hash can never equal the hash of the
+  // extracted directory, and comparing the two replaced the folder on every sync
+  // tick, deleting whatever a running skill had written inside it. Compare cloud against cloud instead: rewrite when the cloud
   // revision we last applied has actually moved.
   if (previous
     && previous.cloudContentHash === undefined
@@ -257,19 +289,29 @@ function buildSyncState(
   failedContentNames: ReadonlySet<string> = new Set(),
   appliedRevisions: AppliedCloudRevisions = {},
   appliedFiles: Record<string, string[] | undefined> = {},
+  previousState: NotisSyncState = { version: 1, lastSyncedAt: null, skills: {} },
 ): NotisSyncState {
   const localSkillMap = toSkillMap(localSkills);
   // The same row selection the writer used, so the state describes the revision that
   // is actually on disk rather than whichever duplicate row the server listed last.
-  const skills = Object.fromEntries(
-    selectCloudSkillsToApply(pullResponse.skills).map((skill) => {
+  const skills = Object.fromEntries<SyncedSkill>(
+    selectCloudSkillsToApply(pullResponse.skills).map((skill): [string, SyncedSkill] => {
       const localSkill = localSkillMap.get(skill.name);
       const appliedCloudFolderHash = appliedRevisions[skill.name];
       const appliedFileList = appliedFiles[skill.name];
+      if (isNativeSkill(skill) && !nativeLocalReady(skill, localSkill)) {
+        const previous = previousNativeState(previousState, skill);
+        return [skill.name, { ...(previous || {
+          cloudId: skill.id, folderHash: localSkill?.nativeBaseFolderHash || '',
+          agentTargets: normalizeAgentTargets(skill.agent_targets), syncedAt: lastSyncedAt || new Date().toISOString(),
+          ...(localSkill?.nativeReference ? { nativeReference: localSkill.nativeReference, nativeScope: localSkill.nativeScope } : {}),
+        }), nativeUnavailable: true, verifiedAgentLinks: {} }];
+      }
       return [
         skill.name,
         {
           cloudId: skill.id,
+          ...nativeState(skill),
           folderHash: localSkill?.folderHash || skill.skill_folder_hash || "",
           agentTargets: normalizeAgentTargets(skill.agent_targets),
           verifiedAgentLinks: skill.status === "active" ? verifiedAgentLinks[skill.name] ?? {} : {},
@@ -284,11 +326,18 @@ function buildSyncState(
     }),
   );
 
-  return {
+  for (const local of localSkills) {
+    if (!local.nativeReference || Object.values(skills).some(row => row.cloudId === local.cloudId)) continue;
+    skills[local.name] = { cloudId: local.cloudId!, nativeReference: local.nativeReference,
+      nativeScope: local.nativeScope, nativeUnavailable: true, verifiedAgentLinks: {},
+      folderHash: local.nativeBaseFolderHash || '', agentTargets: normalizeAgentTargets(),
+      syncedAt: lastSyncedAt || new Date().toISOString() };
+  }
+  return retainMissingNativeState(previousState, {
     version: 1,
     lastSyncedAt,
     skills,
-  };
+  });
 }
 
 function buildLocalSymlinkCandidates(
@@ -301,6 +350,10 @@ function buildLocalSymlinkCandidates(
   );
   const localOnlySkills = localSkills
     .filter((skill) => !cloudSkillNames.has(skill.name))
+    .filter(skill => !skill.nativeReference && !previousState.skills[skill.name]?.nativeReference
+      && !previousState.skills[skill.name]?.nativeUnavailable
+      && !hasNativeFolderHistory(previousState, skill.name)
+      && !/^native-[a-f0-9-]{36}$/.test(skill.name))
     .map((skill) => {
       const previous = previousState.skills[skill.name];
       return {
@@ -315,7 +368,7 @@ function buildLocalSymlinkCandidates(
       };
     });
 
-  return [...pullResponse.skills, ...localOnlySkills];
+  return [...nativeLinkRows(pullResponse, localSkills), ...localOnlySkills];
 }
 
 function isEmptySyncState(state: NotisSyncState): boolean {
@@ -364,6 +417,7 @@ async function writePulledSkillsToScopedMirror(
   failures: SkillSyncFailure[] = [],
   writtenSkillNames: Set<string> = new Set(),
   appliedFilesByName: Record<string, string[]> = {},
+  acknowledgedNative: ReadonlyMap<string, string> = new Map(),
 ): Promise<number> {
   const localSkillMap = toSkillMap(localSkills);
   const warnSkillSync = (message: string, error: unknown): void => {
@@ -372,7 +426,12 @@ async function writePulledSkillsToScopedMirror(
 
   let downloaded = 0;
   for (const cloudSkill of selectCloudSkillsToApply(pullResponse.skills)) {
-    if (!shouldWriteCloudSkill(cloudSkill, localSkillMap, previousState)) {
+    const local = localSkillMap.get(cloudSkill.name);
+    const acknowledged = isNativeSkill(cloudSkill) && local && acknowledgedNative.get(cloudSkill.id) === local.folderHash;
+    if (!acknowledged && !shouldWriteCloudSkill(cloudSkill, localSkillMap, previousState)) {
+      if (isNativeSkill(cloudSkill) && !nativeLocalReady(cloudSkill, local)) {
+        failures.push({ name: cloudSkill.name, error: 'Local native Skill changes were retained; resolve the version or identity conflict before using them.' });
+      }
       continue;
     }
 
@@ -382,7 +441,8 @@ async function writePulledSkillsToScopedMirror(
         deps.writeCloudSkillToDisk(skill, bundleBytes, syncPaths, {
           // What the last write put there. Everything else in the folder was
           // produced locally and survives this one.
-          previouslyApplied: previousState.skills[skill.name]?.appliedFiles,
+          previouslyApplied: previousNativeState(previousState, skill)?.appliedFiles,
+          ...(isNativeSkill(skill) && local ? { expectedFolderHash: local.folderHash } : {}),
         }),
       onWarning: warnSkillSync,
     });
@@ -403,6 +463,8 @@ async function writePulledSkillsToScopedMirror(
 function assertSkillsPullAuthorized(
   pullResponse: SyncPullResponse,
 ): void {
+  if (!Array.isArray(pullResponse.skills)) throw new Error('Skill inventory is unavailable; existing files were retained.');
+  assertNativePull(pullResponse);
   if (
     pullResponse.entitlement_access?.code === "entitlement_upgrade_required"
     && pullResponse.entitlement_access.entitlement === "skills"
@@ -445,12 +507,14 @@ export async function materializeCloudSkillsForLocalShell(
     );
   }
 
-  const syncPaths = getSkillSyncPathsForUser(options.canonicalUserId?.trim() || authUserId);
-  const pullResponse = await deps.pullSkills(serverUrl, jwt);
+  let pullResponse = await deps.pullSkills(serverUrl, jwt);
   assertSkillsPullAuthorized(pullResponse);
+  if (options.syncSettings) assertSyncEnvironment(pullResponse, options.syncSettings);
+  const syncPaths = getSkillSyncPathsForUser(options.canonicalUserId?.trim() || authUserId, undefined, pullResponse.sync_namespace);
   const previousState = await deps.readSyncState(syncPaths);
 
   const localSkills = await deps.scanLocalSkills(syncPaths);
+  pullResponse = bindNativeFolders(pullResponse, localSkills, previousState);
   const failedDownloads: SkillSyncFailure[] = [];
   const writtenSkillNames = new Set<string>();
   const appliedFilesByName: Record<string, string[]> = {};
@@ -478,9 +542,9 @@ export async function materializeCloudSkillsForLocalShell(
   }
   if (relinkSkillNames.size > 0) {
     const relinked = await deps.syncSymlinks(
-      pullResponse.skills.filter((skill) => relinkSkillNames.has(skill.name)),
+      nativeLinkRows(pullResponse, finalLocalSkills).filter((skill) => relinkSkillNames.has(skill.name)),
       syncPaths.skillsDir,
-      { removeUndesired: false },
+      { ...isolatedLinkOptions(syncPaths), removeUndesired: false },
     );
     failures.push(...(relinked.failures ?? []).filter(
       (failure) => !failedDownloads.some((download) => download.name === failure.name),
@@ -496,6 +560,7 @@ export async function materializeCloudSkillsForLocalShell(
     new Set(failedDownloads.map(item => item.name)),
     collectAppliedCloudRevisions(pullResponse, previousState, writtenSkillNames),
     collectAppliedFiles(pullResponse, previousState, appliedFilesByName),
+    previousState,
   );
   // Pull-only refresh is not an upload acknowledgement. Keep content baselines
   // unless we actually wrote cloud content, and retain cloud-missing entries so
@@ -511,17 +576,27 @@ export async function materializeCloudSkillsForLocalShell(
     }
   }
   materializedState.skills = { ...previousState.skills, ...materializedState.skills };
+  let removed = 0;
+  for (const [name, previous] of Object.entries(previousState.skills)) {
+    if (!previous.nativeReference && !previous.nativeUnavailable) continue;
+    const current = pullResponse.skills.find(skill => skill.id === previous.cloudId);
+    if (!current || !nativeLocalReady(current, finalLocalSkills.find(local => local.name === current.name))) {
+      removed += await deps.removeAllSymlinksForSkill(name, syncPaths.skillsDir, isolatedLinkOptions(syncPaths));
+    }
+  }
   await deps.writeSyncState(materializedState, syncPaths);
 
   return {
     materializedSkillNames: pullResponse.skills
       .filter((skill) => finalLocalSkills.some((local) => local.name === skill.name)
+        && (!isNativeSkill(skill) || (skill.status === 'active' && skill.agent_targets?.notis !== false
+          && nativeLocalReady(skill, finalLocalSkills.find(local => local.name === skill.name))))
         && !failedDownloads.some((failure) => failure.name === skill.name))
       .map((skill) => skill.name),
     pulled: pullResponse.skills.length,
     downloaded,
     deleted: 0,
-    removed: 0,
+    removed,
     lastSyncedAt,
     ...(failures.length ? { failedLinks: failures } : {}),
   };
@@ -546,6 +621,7 @@ async function deactivateDeletedAgentSkills(
     "detectDeletedAgentSymlinks" | "updateAgentTargets" | "pullSkills"
   >,
   failures: SkillSyncFailure[],
+  linkOptions?: ReturnType<typeof isolatedLinkOptions>,
 ): Promise<number> {
   // First sync (incl. legacy migration) has no reliable "we created this link" signal, so we
   // cannot tell a user deletion apart from a never-created link — skip detection entirely.
@@ -554,9 +630,13 @@ async function deactivateDeletedAgentSkills(
   }
 
   const deletions = await deps.detectDeletedAgentSymlinks(
-    pullResponse.skills,
+    pullResponse.skills.map(skill => {
+      const previous = isNativeSkill(skill) ? Object.entries(previousState.skills).find(([, row]) => row.cloudId === skill.id) : undefined;
+      return previous ? { ...skill, name: previous[0] } : skill;
+    }),
     previousState,
     skillsDir,
+    linkOptions,
   );
   if (deletions.length === 0) {
     return 0;
@@ -574,18 +654,24 @@ async function deactivateDeletedAgentSkills(
 
   const fresh = withoutBaseSkills(await deps.pullSkills(serverUrl, jwt));
   assertSkillsPullAuthorized(fresh);
+  assertSyncEnvironment(fresh, pullResponse);
   Object.assign(pullResponse, fresh);
   let needsRefresh = false;
   let deactivated = 0;
   for (const [skillId, { skillName, agents }] of agentsBySkill) {
     const skill = pullResponse.skills.find((item) => item.id === skillId);
     const previous = previousState.skills[skillName];
-    if (!skill?.updated_at || previous?.cloudUpdatedAt !== skill.updated_at) continue;
+    if (!skill) continue;
+    const native = isNativeSkill(skill);
+    if (native) {
+      if (!skill.native_settings || previous?.nativeSettingsRevision !== skill.native_settings.revision) continue;
+    } else if (!skill.updated_at || previous?.cloudUpdatedAt !== skill.updated_at) continue;
     const patch = Object.fromEntries([...agents].map((agent) => [agent, false]));
     try {
-      const saved = await deps.updateAgentTargets(serverUrl, jwt, skillId, patch, skill.updated_at);
+      const saved = await deps.updateAgentTargets(serverUrl, jwt, skillId, patch,
+        native ? undefined : skill.updated_at, native ? { reference: skill.native_reference!, settingsRevision: skill.native_settings!.revision } : undefined);
       if (saved.success !== true || !saved.updated_at?.trim()
-        || saved.updated_at === skill.updated_at
+        || (!native && saved.updated_at === skill.updated_at)
         || !['notis', 'claude_code', 'cursor', 'codex'].every((agent) =>
           typeof saved.agent_targets?.[agent as keyof AgentTargets] === 'boolean')
         || ![...agents].every((agent) => saved.agent_targets[agent] === false)) {
@@ -593,6 +679,7 @@ async function deactivateDeletedAgentSkills(
       }
       skill.agent_targets = saved.agent_targets;
       skill.updated_at = saved.updated_at;
+      if (native) needsRefresh = true;
       deactivated += agents.size;
     } catch (error) {
       needsRefresh = true;
@@ -603,6 +690,7 @@ async function deactivateDeletedAgentSkills(
   if (needsRefresh) {
     const refreshed = withoutBaseSkills(await deps.pullSkills(serverUrl, jwt));
     assertSkillsPullAuthorized(refreshed);
+    assertSyncEnvironment(refreshed, pullResponse);
     Object.assign(pullResponse, refreshed);
   }
   return deactivated;
@@ -633,11 +721,13 @@ export async function runSkillSync(
       "Cannot sync skills without a server-verified account identity.",
     );
   }
-  const syncPaths = getSkillSyncPathsForUser(syncUserId);
-  const foreignLinksRemoved = await deps.removeForeignAccountSymlinks(
-    syncPaths.skillsDir,
-  );
+  const syncPaths = getSkillSyncPathsForUser(syncUserId, undefined, syncSettings.sync_namespace, options.syncHome);
   if (options.honorSyncEnabled !== false && !syncSettings.sync_enabled) {
+    // Disabled sync intentionally performs no pull. Only the authenticated
+    // settings scope may remove foreign links; account mirrors stay untouched.
+    const foreignLinksRemoved = await deps.removeForeignAccountSymlinks(
+      syncPaths.skillsDir, isolatedLinkOptions(syncPaths),
+    );
     return {
       syncEnabled: false,
       pushed: 0,
@@ -655,6 +745,10 @@ export async function runSkillSync(
 
   let pullResponse = withoutBaseSkills(await deps.pullSkills(serverUrl, jwt));
   assertSkillsPullAuthorized(pullResponse);
+  assertSyncEnvironment(pullResponse, syncSettings);
+  const foreignLinksRemoved = await deps.removeForeignAccountSymlinks(
+    syncPaths.skillsDir, isolatedLinkOptions(syncPaths),
+  );
 
   const cloudCuratedSkillNames = new Set(
     pullResponse.skills
@@ -664,50 +758,63 @@ export async function runSkillSync(
   const protectedSkillNames = new Set([...cloudCuratedSkillNames, ...BASE_SKILL_NAMES]);
   const scopedState = withoutBaseSkillState(await deps.readSyncState(syncPaths));
   const assignmentFailures: SkillSyncFailure[] = [];
-  const deactivated = syncSettings.agent_targets_conditional_updates === true
+  const deactivated = !syncPaths.isolatedNamespace && syncSettings.agent_targets_conditional_updates === true
     ? await deactivateDeletedAgentSkills(
-        serverUrl, jwt, pullResponse, scopedState, scopedState, syncPaths.skillsDir, deps, assignmentFailures,
+        serverUrl, jwt, pullResponse, scopedState, scopedState, syncPaths.skillsDir, deps, assignmentFailures, isolatedLinkOptions(syncPaths),
       )
     : 0;
+  assertSyncEnvironment(pullResponse, syncSettings);
   const authUserId = decodeJwtSubject(jwt);
   let previousAuthState: NotisSyncState | null = null;
-  if (authUserId && authUserId !== syncUserId) {
-    const previousAuthPaths = getSkillSyncPathsForUser(authUserId);
+  if (!syncPaths.isolatedNamespace && authUserId && authUserId !== syncUserId) {
+    const previousAuthPaths = getSkillSyncPathsForUser(authUserId, undefined, undefined, options.syncHome);
     previousAuthState = await deps.readSyncState(previousAuthPaths);
     await deps.gatherTopLevelLocalSkills(syncPaths, {
       sourceRoots: [{ label: "previous-auth-scope", root: previousAuthPaths.skillsDir }],
       protectedSkillNames,
     });
   }
-  await deps.gatherTopLevelLocalSkills(syncPaths, {
-    protectedSkillNames,
-  });
+  if (!syncPaths.isolatedNamespace) {
+    await deps.gatherTopLevelLocalSkills(syncPaths, { protectedSkillNames });
+  }
   const localSkills = (await deps.scanLocalSkills(syncPaths))
     .filter((skill) => !BASE_SKILL_NAMES.has(skill.name));
   const previousState = withoutBaseSkillState(applyLegacyFirstRunState(
     localSkills,
     scopedState,
-    isEmptySyncState(scopedState)
+    !syncPaths.isolatedNamespace && isEmptySyncState(scopedState)
       ? (!previousAuthState || isEmptySyncState(previousAuthState)
           ? await deps.readLegacySyncState(syncPaths)
           : previousAuthState)
       : null,
   ));
+  pullResponse = bindNativeFolders(pullResponse, localSkills, previousState);
   const gatheredSymlinkResult = await deps.syncSymlinks(
     buildLocalSymlinkCandidates(pullResponse, localSkills, previousState),
     syncPaths.skillsDir,
+    isolatedLinkOptions(syncPaths),
   );
   const pushCandidates = getPushCandidates(
     localSkills,
     previousState,
     cloudCuratedSkillNames,
     new Set(pullResponse.skills.map((skill) => skill.name)),
-    new Set(pullResponse.skills.filter((skill) => skill.app_owned || skill.owner_app_id).map((skill) => skill.name)),
+    pullResponse.skills,
   );
 
   const failedPushes: SkillSyncFailure[] = [];
+  const acknowledgedNative = new Map<string, string>();
+  let writeLocalSkills = localSkills;
   if (pushCandidates.length > 0) {
     const pushResult = await deps.pushChangedSkills(serverUrl, jwt, pushCandidates);
+    for (const result of pushResult.skills || []) {
+      const saved = result as { id?: string; native_reference?: unknown };
+      const candidate = pushCandidates.find(local => local.nativeReference && local.cloudId === saved.id);
+      if (candidate && saved.native_reference) {
+        checkedNativeReference(saved.native_reference, candidate.cloudId);
+        acknowledgedNative.set(candidate.cloudId!, candidate.folderHash);
+      }
+    }
     if (Array.isArray(pushResult?.failed) && pushResult.failed.length > 0) {
       failedPushes.push(...pushResult.failed);
       console.warn(
@@ -717,6 +824,9 @@ export async function runSkillSync(
     }
     pullResponse = withoutBaseSkills(await deps.pullSkills(serverUrl, jwt));
     assertSkillsPullAuthorized(pullResponse);
+    assertSyncEnvironment(pullResponse, syncSettings);
+    writeLocalSkills = (await deps.scanLocalSkills(syncPaths)).filter(skill => !BASE_SKILL_NAMES.has(skill.name));
+    pullResponse = bindNativeFolders(pullResponse, writeLocalSkills, previousState);
   }
 
   // Delete phase: remove skills that were previously synced but are no longer in the cloud
@@ -724,8 +834,14 @@ export async function runSkillSync(
   let deleted = 0;
   for (const skillName of Object.keys(previousState.skills)) {
     if (!cloudSkillNames.has(skillName)) {
+      const previous = previousState.skills[skillName];
+      if (previous.nativeReference || previous.nativeUnavailable
+          || pullResponse.skills.some(skill => isNativeSkill(skill) && skill.id === previous.cloudId)) {
+        await deps.removeAllSymlinksForSkill(skillName, syncPaths.skillsDir, isolatedLinkOptions(syncPaths));
+        continue;
+      }
       await deps.deleteLocalSkill(skillName, syncPaths);
-      await deps.removeAllSymlinksForSkill(skillName, syncPaths.skillsDir);
+      await deps.removeAllSymlinksForSkill(skillName, syncPaths.skillsDir, isolatedLinkOptions(syncPaths));
       deleted += 1;
     }
   }
@@ -735,13 +851,14 @@ export async function runSkillSync(
   const appliedFilesByName: Record<string, string[]> = {};
   const downloaded = await writePulledSkillsToScopedMirror(
     pullResponse,
-    localSkills,
+    writeLocalSkills,
     previousState,
     syncPaths,
     deps,
     failedDownloads,
     writtenSkillNames,
     appliedFilesByName,
+    acknowledgedNative,
   );
 
   const finalLocalSkills = (await deps.scanLocalSkills(syncPaths))
@@ -749,6 +866,7 @@ export async function runSkillSync(
   const symlinkResult = await deps.syncSymlinks(
     buildLocalSymlinkCandidates(pullResponse, finalLocalSkills, previousState),
     syncPaths.skillsDir,
+    isolatedLinkOptions(syncPaths),
   );
   const verifiedLinks = { ...(symlinkResult.verifiedAgentLinks ?? {}) };
   for (const failure of failedDownloads) delete verifiedLinks[failure.name];
@@ -763,6 +881,7 @@ export async function runSkillSync(
       new Set(failedDownloads.map(item => item.name)),
       collectAppliedCloudRevisions(pullResponse, previousState, writtenSkillNames),
       collectAppliedFiles(pullResponse, previousState, appliedFilesByName),
+      previousState,
     ),
     syncPaths,
   );

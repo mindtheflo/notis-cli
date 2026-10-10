@@ -17,6 +17,8 @@ import {
 
 function createBuiltProject() {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-deploy-gate-'));
+  // A built project is a source folder: its index marks the root (source-root guard).
+  writeFileSync(join(projectDir, 'notis.config.ts'), 'export default {};\n');
   mkdirSync(join(projectDir, '.notis', 'output', 'bundle'), { recursive: true });
   writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export const app = 1;\n');
   writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '.a{}\n');

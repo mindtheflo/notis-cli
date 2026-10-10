@@ -1,5 +1,7 @@
-import { createSkillBundleBase64 } from './local-scanner';
-import type { AgentTargets, LocalSkill, SyncPullResponse, SyncPushResponse, SyncSettings } from './types';
+import { captureNativeSkillFiles, createSkillBundleBase64 } from './local-scanner';
+import { createHash } from 'node:crypto';
+import { checkedNativeReference } from './native-identity';
+import type { AgentTargets, LocalSkill, NativeSkillReference, SyncPullResponse, SyncPushResponse, SyncSettings } from './types';
 
 type JsonBody = Record<string, unknown> | undefined;
 
@@ -34,7 +36,7 @@ export async function fetchSyncSettings(serverUrl: string, jwt: string): Promise
 
 export async function pullSkills(serverUrl: string, jwt: string): Promise<SyncPullResponse> {
   return requestJson<SyncPullResponse>(`${serverUrl}/portal_skills/sync-pull`, jwt, {
-    body: {},
+    body: { skill_sync_protocol: 2 },
   });
 }
 
@@ -49,11 +51,16 @@ export async function pushChangedSkills(
     skill_md: skill.skillMd,
     source_url: skill.sourceUrl,
     folder_hash: skill.folderHash,
-    bundle_base64: await createSkillBundleBase64(skill),
+    ...(skill.nativeReference ? { bundle_files: await captureNativeSkillFiles(skill) }
+      : { bundle_base64: await createSkillBundleBase64(skill) }),
+    ...(skill.cloudId ? { cloud_id: skill.cloudId } : {}),
+    ...(skill.nativeReference ? { native_reference: skill.nativeReference, display_name: skill.displayName,
+      native_scope: skill.nativeScope } : {}),
   })));
 
   return requestJson<SyncPushResponse>(`${serverUrl}/portal_skills/sync-push`, jwt, {
     body: {
+      skill_sync_protocol: 2,
       skills: payloadSkills,
     },
   });
@@ -75,7 +82,22 @@ export async function updateAgentTargets(
   skillId: string,
   targets: Partial<AgentTargets>,
   expectedUpdatedAt?: string,
+  native?: { reference: NativeSkillReference; settingsRevision: number },
 ): Promise<{ success: boolean; agent_targets: AgentTargets; updated_at?: string }> {
+  if (native) {
+    checkedNativeReference(native.reference, skillId);
+    if (!Number.isSafeInteger(native.settingsRevision) || native.settingsRevision < 0) throw new Error('Refresh native Skill settings before changing assignments.');
+    const payload = { operation: 'update', target: { skill_id: skillId, access_revision: native.reference.access_revision },
+      revision: native.settingsRevision, patch: { agent_targets: Object.fromEntries(Object.entries(targets).sort(([a], [b]) => a.localeCompare(b))) } };
+    const requestId = 'sync-settings-' + createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const saved = await requestJson<{ receipt_id: string; skill_id: string; target: { skill_id: string }; settings: { agent_targets: AgentTargets; updated_at: string };
+      current?: { target: { skill_id: string }; settings: { agent_targets: AgentTargets; updated_at: string } } }>(`${serverUrl}/portal_skills/native-settings`, jwt,
+      { body: { ...payload, request_id: requestId } });
+    const current = saved.current || saved;
+    if (saved.skill_id !== skillId || typeof saved.receipt_id !== 'string' || !saved.receipt_id
+        || current.target?.skill_id !== skillId || !current.settings) throw new Error('Native assignment update was not confirmed.');
+    return { success: true, agent_targets: current.settings.agent_targets, updated_at: current.settings.updated_at };
+  }
   return requestJson<{ success: boolean; agent_targets: AgentTargets; updated_at?: string }>(`${serverUrl}/portal_skills/agent-targets`, jwt, {
     method: 'PATCH',
     body: {

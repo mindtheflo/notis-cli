@@ -1,63 +1,116 @@
-## SDK Hook Reference
+# SDK reference for Space views
 
-All hooks and components below are imported from `@notis/sdk`. `NotisProvider`
-already installs `ShortcutProvider`; app code should not add a second provider.
+Import hooks/components from `@notis/sdk`; configuration helpers are in
+`@notis/sdk/config`. `NotisProvider` already installs shortcut support. Use the
+scoped host runtime—source never owns an account credential or backend transport.
 
-| API | Signature | Description |
-|-----|-----------|-------------|
-| `useNotis()` | `() => { app, route, databases, collectionItem, resourceId, ready }` | App metadata, current route, selected collection item, decoded exact-resource id, ready state |
-| `useTool<TArgs, TResult>(name)` | `(name: string) => { call, loading, error }` | Call a declared tool with app-defined argument/result types. Identified reads use `call(args, { readOnly: true, dedupe: true })`; never dedupe writes. See [cached-read ownership](design.md#instant-view-loading-contract-required). |
-| `useTools()` | `() => { tools, loading }` | List available tools |
-| `useDocuments(slug, opts?)` | `(slug: string, opts?) => { documents, loading, hasData, error, refetch }` | Query an app database. Bodies are included by default. For metadata-only lists, opt into `includeContent: false`; load the opened record with `useDocument` and defer any full-body search query until needed. Metadata and full-content query caches are separate. |
-| `useNotisNavigation()` | `() => { toRoute, toDocument, toApp }` | Navigate between routes (including `toRoute(path, { resourceId })`), documents, or the app root |
-| `useTopBarSearch(opts)` | `({ value, onChange, placeholder?, onSubmit? }) => { setLoading }` | Bind the current view to the Portal-owned top-bar search input |
-| `useBackend()` | `() => { request }` | Raw backend request proxy with JWT auth |
-| `useDatabaseSubscription(slug, opts?)` | `(slug: string, opts?) => { rows, documents, loading, error, refetch, live }` | Query a database and refetch it when its rows change. `live` is false on hosts without a change feed (temporary test harness, vite preview) -- keep a manual refresh for those |
-| `useHandover()` | `() => { handover, pending, error, available }` | Open manager chat with app/resource context plus an optional starter prompt or declared skill. Omit `prompt` for a context-only composer. `available` is false on hosts with no chat -- fall back to a copyable prompt |
-| `useCloudComputer()` | `() => { facts, loading, error, refresh }` | Read-only cloud computer facts: sandbox existence/status and whether the GitHub CLI is signed in. Requires `capabilities.cloudComputer: 'read'` plus the user's approval; `facts.available === false` means answer from the app's own fallback |
-| `useActiveResource(resource)` | `(ContextResource \| null) => void` | Publish the record currently open in the app so manager handover and context menus stay grounded |
-| `useCollectionInteractions(opts)` | `(opts) => CollectionInteractionController` | Keyboard navigation, active-row state, range/toggle selection, marquee selection, and action dispatch for collection UIs |
-| `useShortcuts(definitions, opts?)` | `(definitions, opts?) => void` | Register scoped keyboard shortcuts. Editable targets are ignored unless explicitly allowed; use `ShortcutHints` to display them |
-| `MarkdownEditor` | `(NotisMarkdownEditorProps) => ReactElement` | Use the host editor with app-owned persistence, stable `resourceKey`, revision-aware `onSave`, and optional `onUploadFile` returning a durable URL |
-| `useAgentContext()` / `NotisCommentBoundary` / `NotisCommentBox` | generic context API and optional UI | App-defined pills, icons, context, attachments and nearby comments; see [Context sharing](context.md) |
-| `NotisSelectionBoundary` | `(NotisSelectionBoundaryProps) => ReactElement` | Attach structured, explicitly untrusted app/resource/selection context to selected content and copy operations |
-| `SelectionCheckbox` / `SelectionMarquee` | components | Standard selection controls backed by `useCollectionInteractions` |
-| `MultiSelectActionBar` | component | Standard bulk actions with pending/disabled state and shortcut support |
-| `Dialog` | `{ open, onClose, title, description?, role?, children }` | Themed native modal with top-layer stacking, focus handling and background shortcut isolation. Use `role="alertdialog"` for destructive confirmation; put the safe action first. |
+## Records and declared reads
 
-Import headless collection action types and helpers from
-`@notis/sdk/interactions`. Keep an open detail view synchronized with
-`useActiveResource`, and wrap its selectable content in
-`NotisSelectionBoundary` so the manager receives both the active record and the
-user's exact selection. For `MarkdownEditor`, keep `resourceKey` stable per
-record, pass the latest revision back from `onSave`, reject revision conflicts
-instead of overwriting newer data, and implement `onUploadFile` whenever the
-editor should accept media or file blocks.
-
-### App configuration additions
-
-- `toolBindings` is only for provider-generated public tool names whose upstream
-  action cannot be reconstructed. Keep the exact final public `name` in
-  `tools`, then bind it to `providerToolName`; the public name remains the
-  permission boundary.
-
-### Typed tool calls
-
-`useTool` accepts generic argument and result types. Query the database at dev time to discover actual property shapes, then keep those types in the app:
+| API | Use |
+| --- | --- |
+| `useViewParams<typeof definition>()` | `{params, invalid, missing, declared, ready}` for declared typed URL params. Unknown names are dropped; invalid values use their declared default. |
+| `useShown<Row>(name, options?)` | Execute the native list in `shows[name]` with current params. Options: `sorts`, `pageSize`, `offset`, `includeContent`; result includes `data`, `loading`, `hasData`, `error`, `refetch`. |
+| `useShownAvailable(name)` | Check whether this host exposes the declared native list. A record Site can expose only its exact server-pinned row scope. |
+| `useAction<Inputs, Result>(name)` / `useActionQuery<Result>(name, inputs)` | Call a declared action; identify read-only calls explicitly and retain request IDs/revisions for writes. Never call account-wide tools from a Space. |
+| `useNativeDocumentBody(binding, recordKey, {readAction, writeAction?, enabled?})` | Markdown body adapter. Keep drafts in the view; save with the original content, record/schema revisions and stable request ID. Rich editing normally uses `DocumentEditor`. |
+| `useNotis()` | Host resource, Space/app labels, route and ready state. Use `resource.id` for the current Space identity. |
 
 ```tsx
-type QueryTasksArgs = { database_id?: string; database_slug?: string; query: { page_size?: number } };
-interface TaskDoc {
-  title: string;
-  properties: {
-    Status: string;
-    Priority: string;
-    Due: string;
-  };
-};
-type QueryTasksResult = { documents: TaskDoc[] };
-
-const queryTasks = useTool<QueryTasksArgs, QueryTasksResult>('LOCAL_NOTIS_DATABASE_QUERY');
-const result = await queryTasks.call({ database_id: 'tasks-db-id', query: { page_size: 25 } });
-// result.documents[0].properties.Status is typed as string
+const { resource } = useNotis();
+const nav = useNotisNavigation();
+const { params } = useViewParams<typeof definition>();
+const rows = useShown<{ record_key: string; title: string | null }>('notes');
+// In the row's click handler:
+nav.toSpace(resource.id, { recordKey: row.record_key });
+// In the record branch:
+<DocumentPage recordKey={params.note} breadcrumb={[{ label: 'All notes', onSelect: () => nav.toSpace(resource.id) }]} />
 ```
+
+Keep hooks unconditional. Preserve cached content during refresh; `loading` is
+first-read state, not every fetch. Use [Design](design.md#instant-view-loading-contract-required)
+for loading/error/empty states and explicit read caching.
+
+## First-party record components
+
+| Component | Contract |
+| --- | --- |
+| `<DocumentPage recordKey>` | The full page of a record that is the view's main content (a note, a document): breadcrumb, Saving or Saved, '...' menu, cover, icon, title, meta strip, properties that save automatically, collaborative body. Slots `breadcrumb`, `actions`, `menuItems`, `aboveBody`, `belowBody`; toggles `share` (off by default), `header`, `meta`, `properties`, `width`; `onSaved`; `layout` to rearrange its parts. Pair with `DocumentPageSkeleton` and `usePrefetchRecord()`. Until the Notis CLI you build with exports it (`spaces build` replaces the Space's `packages/sdk` with the CLI's own SDK, and older ones have no `DocumentPage`, so the import fails the build), reach the same host page through `useNotisRuntime().ui?.DocumentPage` and fall back to `DocumentEditor` when it is missing, as the Notes Spaces do in `lib/document-page.tsx`. |
+| `<DocumentEditor recordKey>` | Native collaborative body, properties, images and attachments. With separate properties use `showProperties={false}`. |
+| `<RecordProperties recordKey>` | Native revision-checked property editing. |
+| `<HtmlFrame recordKey>` | Attached HTML under viewer CSP and an opaque-origin sandbox. Source cannot relax that boundary. |
+| `<ReportFrame recordKey>` | A report row's saved independent implementation in its database's current view. |
+| `<ShareControl recordKey>` | Private/shared record Site, copy link and revoke. |
+
+The published Space declares the database binding; the server rechecks record
+scope and binding revision. A Site exposes read-only body/property snapshots and
+HTML for its pinned record, including a declared non-collection record param.
+It has no upload, collaboration credential, authoring controls or sharing mutation.
+Preview source does not gain live record editing. No app-owned credentials or
+filesystem URLs belong in component props.
+
+## Navigation
+
+`useNotisNavigation()` exposes `toSpace(spaceId, {recordKey?, params?})` and
+`toNamedSpace(alias, {recordKey?, params?})`. Prefer declared portable navigation
+aliases for sibling destinations; the host resolves them under current access.
+Use declared params for view state, for example `{params: {project: key, period: 'week'}}`.
+The destination drops unknown params and authorizes referenced records. Changing
+a slug cannot change identity. Agents cite current server-returned links.
+
+## Viewer-only exploration
+
+`viewerReads: ['databases', 'skills']` permits read-only inspection of what the
+signed-in viewer already reaches. It creates no shared grant. Use
+`useViewerReadAvailable(family)`, `useViewerDatabases`, `useViewerSkills`, or
+`useViewerRead(operation, input)`. Anonymous Sites cannot use these families.
+Explicit synthetic `viewerReads` fixtures stand in for the viewer's reads offline.
+
+## The viewer's cloud computer
+
+`cloudComputer: 'shell'` (or `'read'` for facts only) lets a page run one command
+or write one file on the signed-in viewer's own cloud computer, after that viewer
+allows it in the Portal prompt. Use `useCloudComputerShell()`: check `level`, call
+`requestApproval()` when `approved` is false (either level; the facts of
+`useCloudComputer()` are read again once allowed), then, when `available` (`shell`),
+`run(command, options)` or
+`upload({ path, content, content_encoding: 'base64', mode: 0o600 })`. Never put
+secrets in a command; send them as upload content. A run is never repeated for one
+request key: pass `requestId` (run option, or `request_id` in the upload) when the
+page retries a run itself; `cloud_computer_already_ran` means it already ran. The
+approval covers only the exact code the viewer allowed, so every new release asks again. Keep a fallback (a Manager
+draft) for Sites, previews offline and viewers who do not allow it. Declare it only
+when the page's core controls run on the cloud computer.
+
+## Visual data and Markdown
+
+`<RenderChartData title columns rows>` adds a semantic table for the chart without
+a second visible table. Give it the same labels/values used by the chart. The
+renderer never guesses exact numbers from SVG/canvas geometry: a chart without
+`RenderChartData` contributes only its accessible name to the Markdown.
+
+An optional `markdown` source module exports a pure function of `{params, shown}`.
+It must describe the rendered selection and its actual data. Ordinary rendering
+extracts tables, lists, controls and visible document/HTML content automatically.
+
+## Host interactions and context
+
+- `useHandover()` exposes `{handover, available, pending, error}`. Call a declared
+  linked Skill with `handover({skill, prompt})`; fall back when no agent UI exists.
+- `useTopBarSearch` registers a host-owned search field. Do not duplicate host chrome.
+- `useActiveResource` publishes the current resource; `useAgentContext`,
+  `NotisSelectionBoundary`, `NotisCommentBoundary` and `NotisCommentBox` support
+  explicit reference context. [Context sharing](context.md) owns the contract.
+- `useCollectionInteractions`, selection components and `MultiSelectActionBar`
+  support native collection interactions. `Dialog` supplies themed top-layer
+  dialogs, focus handling and shortcut isolation.
+- `MarkdownEditor` is for a view-owned Markdown draft/persistence adapter. Native
+  documents use `DocumentEditor` so collaboration and file authority stay with Notis.
+
+## Offline fixtures
+
+Declare a `verificationFixtures` JSON source with `actions` and optional `context`,
+`shown`, `viewerReads`, `documentBodies`, `recordViews`. Cases match exact action
+inputs/list params. Record views use `{operation: 'record'|'html'|'report', record_key,
+result}`; native record snapshots require `writable: false` and no authoring target.
+Keep every fixture fictional and include every load-time read. Failed or missing
+fixtures fail verification; there is no fallback to the user's real account.

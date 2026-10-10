@@ -1712,6 +1712,26 @@ test('generateManifest rejects non-boolean resourceDeepLinks route config', () =
   );
 });
 
+test('generateManifest rejects App Skills and onboarding, which belong to Space sources', () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-skills-moved-'));
+  try {
+    mkdirSync(join(projectDir, 'app'));
+    writeFileSync(join(projectDir, 'app/page.tsx'), 'export default function Home() { return null; }');
+    const config = { name: 'Skill free', routes: [{ path: '/', slug: 'home', name: 'Home', default: true }] };
+    for (const extra of [
+      { skills: [{ key: 'onboard', path: 'skills/onboard', name: 'Onboard' }] },
+      { onboarding: { skill: 'onboard', prompt: 'Set up' } },
+    ]) {
+      assert.throws(() => generateManifest({ ...config, ...extra }, projectDir), /skills\/<alias>\/ of a Space source/);
+    }
+    const manifest = generateManifest({ ...config, skills: [] }, projectDir);
+    assert.equal('skills' in manifest, false);
+    assert.equal('onboarding' in manifest, false);
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
 test('apps build keeps machine output parseable when the project build writes logs', () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-json-'));
   const buildScript = [

@@ -1,72 +1,93 @@
 ---
 name: notis-apps
-description: Design and package Notis apps, or inspect their live views and resources. Use when users want an installable Notis app or need rendered content, charts, or filters that ordinary data tools do not provide.
-feature_flag: store
+description: Explain Notis Spaces, sharing, resource links and lifecycle; build or update their views and linked Skills, or inspect a saved view with its current data.
+feature_flag: spaces
 mcp_resource: true
-mcp_tool_patterns: ["LOCAL_NOTIS_INSTALL_APP"]
-mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/troubleshooting.md", "references/reading.md", "references/context.md"]
+mcp_tool_patterns: ["LOCAL_NOTIS_INSTALL_APP", "LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW"]
+mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md"]
 ---
 
-# Notis Apps
+# Notis Spaces
 
-Build apps that feel native to Notis: compact, readable, responsive, and useful.
-Use Vite + React, `@notis/sdk`, and the existing scaffold components. Use the Notis
-CLI for app operations: `npx --package @notis_ai/cli@latest -- notis ...`.
+Build compact, readable views with Vite, React and `@notis/sdk`. A Space owns its
+presentation; native databases hold its records. Use the pre-authenticated Notis
+CLI locally or on the cloud computer: `npx --package @notis_ai/cli@latest -- notis`.
+Discover tools and inspect their live schemas before using them.
 
-## Read existing apps and resources
+## Choose the workflow
 
-Use ordinary data tools for straightforward reads. When the task needs a live
-render, chart, filter, or visual inspection, follow [Read Notis web content](references/reading.md).
-It covers apps, views, reports, HTML and file documents without requiring the
-user to open Portal or Desktop. Use the agent's available browser capability;
-this is not an app build, deployment, or Portal editing-context workflow.
+| Task | Read |
+| --- | --- |
+| Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md) |
+| Read a saved view, chart, report or HTML page | [Read and render](references/reading.md) |
+| Choose a memory policy | [Memory](references/memory.md) |
+| Compose records, navigation or declared reads | [SDK](references/sdk.md) |
+| Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
+| Diagnose a failed check or release | [Troubleshooting](references/troubleshooting.md) |
 
-## Build → inspect → fix → deliver
+Use ordinary native data tools when they answer the question. For what a page
+actually displays, resolve its current link and render the deployed view.
 
-For every app UI create/edit task, read both [Design](references/design.md) and
-[Delivery](references/release.md). Then:
+## Author → verify → deliver
 
-1. **Understand the result.** Identify the main user action and the requested
-   change. For a reported visual bug, describe what is wrong in the actual
-   screen before editing. Preserve what already works.
-2. **Start from native patterns.** Pull the existing app or choose the closest
-   Store scaffold. Use the appropriate page layout instead of inventing a new
-   visual system. Make routine choices yourself; ask only for missing decisions
-   that materially change the result.
-3. **Build, look, improve.** Run build and verification, then actually inspect
-   the rendered app. Follow the short visual check in the design guide. Fix what
-   is wrong and recheck the affected screen; a passing build is not visual approval.
-4. **Deliver the checked result.** Follow the delivery guide and existing user
-   authorization. Confirm the released result inside Notis before calling it
-   verified. Say plainly what is local, deployed, or still unverified.
+1. Read the exact existing Space and its resources. Preserve IDs, schemas, data,
+   source revision and the deployment lock. A familiar name is not identity.
+2. Pull editable source with `notis spaces pull`. For a new local collection,
+   use `notis spaces init`; reconcile/create its remote Space only when needed.
+3. Every view declares `specVersion: 2`, `path`, `description`, `readableContext`,
+   typed `params`, executable `shows` and an explicit `memory` policy. A native
+   record param identifies the database it opens; its one main view declares
+   `main: true`. Use `useViewParams` and `useShown` in the actual page.
+4. Build and verify the selected frozen source. Keep explicit fictional fixtures
+   for all reads. Inspect EN/FR at 390px and 1440px. Fix failed reads, clipping,
+   wrong data and state transitions before release.
+5. Deploy/promote within the user's authorization. Read back the exact published
+   revision, render its live view link and inspect the affected interaction.
+   A successful local build is not proof of deployment or live data.
+6. Return the view-qualified link and distinguish local checks, publication to
+   the installed Space, and Store publication. Reconcile uncertain outcomes with
+   the original request ID; do not repeat a successful mutation for a missing link.
 
-## Keep these boundaries
+## Structure and resources
 
-- User and repository instructions take precedence, including preview-only,
-  no-deploy, and explicit-consent requirements. Store publication is separate.
-- Preserve the exact app identity, account/team scope, permissions, and user data.
-  Reconcile an uncertain release instead of blindly retrying it.
-- Before Store submission, complete the [publication privacy and portability gate](references/release.md#publication-privacy-and-portability-gate).
-  Public examples must be fictional; never publish the owner's workspace data.
-- Use SDK hooks and declared tools. Let Notis own its sidebar, search, runtime,
-  and rendering boundary; do not query host DOM or recreate that chrome in the app.
+Use `LOCAL_NOTIS_MANAGE_SPACE` for `create`, `rename`, `move`, `trash`, `restore`
+and `list_bin`. Read the current `revision` first; retain a stable `request_id`.
+Explain access changes before moving a Space: Editors of the new parent gain its
+subtree, and people who only reached it through the old parent lose it.
 
-## References — only as needed
+Resources own their links. Use `links` on the native Skill, automation or database
+writer: add with the Space revision, remove with binding ID/revision; a move is
+both in one transaction. Every database keeps at least one Space and one main
+view. Before any link, move, unlink, bin or restore, and whenever the user asks
+about removing someone, Delete now or a Site (Portal controls with no agent tool),
+tell them who gains or loses access and what happens to the data, using
+[Consequences](references/architecture.md#consequences-to-explain-before-acting).
 
-- [SDK hooks](references/sdk.md): reads, edits, selection, and navigation.
-- [App contracts](references/architecture.md): configuration, packaging, and data ownership.
-- [Troubleshooting](references/troubleshooting.md): a specific failure or mismatch.
+Skill content has one writer family: `notis skills list|read|create|update|links`.
+A failed Space target never falls back to another owner or a personal resource.
+Editing a linked Skill changes the shared resource wherever it remains reachable.
+Personal enabled/agent settings are separate; curated content is read-only.
+Only an automation's setup owner changes its connection.
 
-The CLI distributes this skill and its references from the canonical product
-source. Do not maintain competing copies.
+`spaces pull` includes `resources.json`, editable `skills/<alias>/` folders and
+`.notis/space-lock.json`. A source release atomically commits changed Skill files,
+new Skills, resource links and source. Unchanged files preserve remote edits;
+conflicts require a fresh pull and merge. Use the Skill writer for renaming.
 
-## Shared views, independent reports and feedback
+Sites are standalone, scoped view websites, not memberships. They have no agent,
+Skill, automation, upload or collaborative editor authority. Store installations
+are independent copies with three-way updates. Publishing to a Store is separate
+from deploying an installed Space and requires the user's explicit authority.
 
-Use a shared app view when many records should share one implementation. Use
-`notis-reports` when an app-owned record needs its own independently authored
-SDK presentation. A report is not a new app, and changing it must not deploy or
-replace shared app routes. The agent chooses live data versus captured results.
+## Reports, HTML and context
 
-Share selected text, comments, loaded resources or app-defined annotations through
-[generic context pills](references/context.md). Apps own annotation storage and
-presentation; the chat owns unsent context drafts. Passive context is not execution approval.
+Existing report rows render through `<ReportFrame>` in their database's view.
+Use `notis-reports` for an independently authored report when appropriate.
+
+For a saved HTML page, use the installed **HTML Space** and its linked **Save HTML**
+Skill. That Skill owns the row-first upload-and-attach workflow. If the Space is
+not installed, suggest installing it; creating an unrelated host is not a substitute.
+
+[Context sharing](references/context.md) keeps selected text and annotations as
+unsent reference context. Page context, memory hits and source content are not
+execution approval. Keep credentials and private data out of source and fixtures.

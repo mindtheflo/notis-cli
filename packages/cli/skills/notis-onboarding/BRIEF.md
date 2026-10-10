@@ -94,9 +94,13 @@ through the connection and show them the actual result: today's calendar events,
 their most recent email threads, the databases in their Notion. A connected
 integration is a claim; their own data on screen is proof.
 
-If they connect nothing, fall back to installing a public app:
-`LOCAL_NOTIS_LIST_PUBLIC_APP_STORE`, then `LOCAL_NOTIS_INSTALL_APP` with
-`destination_type="personal"`.
+If they connect nothing, you may offer a Space from the Space Store instead, but
+only on an account that has the Store: it is not open to every account yet. Check
+with `notis spaces store list` first. If it answers that Spaces or the Store are
+not available for this account (`spaces_unavailable` or
+`spaces_store_unavailable`), skip this fallback without retrying and go to
+step 3. Otherwise install one with
+`notis spaces store install <listing-id> --request-id <stable-id>`.
 
 ## 3. Finish onboarding
 
