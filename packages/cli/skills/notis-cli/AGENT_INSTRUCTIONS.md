@@ -15,7 +15,7 @@ Relevant Notis long-term memory may be injected into a turn inside `<notis_relev
 4. Execute: `notis tools exec <TOOL> --arguments '<json>'`; batch independent calls with `notis tools exec-parallel '<json-array>'`.
 5. If an integration is not connected, `notis tools link <toolkit>` prints a connection URL to give the user.
 
-Tool name shapes: `LOCAL_NOTIS_*` (native Notis), `LOCAL_NOTIS_DATABASE_*` (databases and notes), `LOCAL_MCP_*` (the user's connected MCP servers), and integration tools such as `GMAIL_*`, `NOTION_*`, and `GOOGLECALENDAR_*`.
+Tool name shapes: `LOCAL_NOTIS_*` (native Notis), `LOCAL_NOTIS_DATABASE_*` (databases and notes), `CUSTOM_*` (the user's remote MCP servers), `LOCAL_MCP_*` (MCP servers on the user's computer), and integration tools such as `GMAIL_*`, `NOTION_*`, and `GOOGLECALENDAR_*`.
 
 ### Main features
 
