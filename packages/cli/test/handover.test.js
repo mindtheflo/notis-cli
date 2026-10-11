@@ -58,12 +58,15 @@ test('handover commands are registered under their own group', () => {
   assert.ok(GROUP_SUMMARIES.handover, 'the group needs a summary for help output');
 });
 
-test('handover start declares every routing target the server accepts', () => {
+test('handover start advertises auto, notis, codex and claude, and nothing older', () => {
   const spec = COMMAND_SPECS.find((s) => s.command_path.join(' ') === 'handover start');
   const route = spec.args_schema.options.find((o) => o.flags.startsWith('--route'));
-  for (const target of ['notis', 'codex_cloud', 'claude_cloud', 'codex_local', 'claude_local', 'auto']) {
-    assert.match(route.description, new RegExp(target), `--route must document ${target}`);
+  for (const target of ['auto', 'notis', 'codex', 'claude']) {
+    assert.match(route.description, new RegExp(`\\b${target}\\b`), `--route must document ${target}`);
   }
+  // The older values still work (see handover-flow.test.js) but are never shown.
+  const shown = [route.description, spec.when_to_use, spec.output_schema, ...spec.examples].join('\n');
+  assert.doesNotMatch(shown, /codex_cloud|claude_cloud|codex_local|claude_local/);
   assert.equal(spec.mutates, true);
   assert.equal(spec.backend_call.name, 'LOCAL_NOTIS_HAND_OVER');
 });
@@ -95,7 +98,7 @@ test('handover start refuses inside a Notis-delegated run', () => {
 test('handover start validates route and branch mode before touching git', () => {
   const badRoute = runCli(['handover', 'start', 'x', '--route', 'gpt5']);
   assert.equal(badRoute.parsed.error.code, 'usage_error');
-  assert.match(badRoute.parsed.error.message, /--route must be one of/);
+  assert.match(badRoute.parsed.error.message, /--route must be one of: auto, notis, codex, claude$/);
 
   const badMode = runCli(['handover', 'start', 'x', '--branch-mode', 'sideways']);
   assert.equal(badMode.parsed.error.code, 'usage_error');

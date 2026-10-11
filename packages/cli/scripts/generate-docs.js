@@ -169,7 +169,7 @@ For plain HTML, use the installed HTML Space and its linked saving Skill. Its ge
 
 ## Hand-over
 
-Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. \`--route\` picks the agent: the hosted Notis agent, or the user's own Codex/Claude Code in the cloud sandbox or on their Mac. \`--branch-mode same\` makes the agent commit onto your branch; the default cuts a new branch from it.
+Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. By default Notis picks the agent (\`--route auto\`); \`--route notis\`, \`--route codex\` or \`--route claude\` names one instead. \`--branch-mode same\` makes the agent commit onto your branch; the default cuts a new branch from it.
 
 ${handoverSpecs.map(renderCommandBlock).join('\n')}
 

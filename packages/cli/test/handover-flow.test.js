@@ -15,7 +15,19 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 const CLI = new URL('../bin/notis.js', import.meta.url).pathname;
-const ROUTES = ['notis', 'auto', 'codex_cloud', 'claude_cloud', 'codex_local', 'claude_local'];
+// Each route the user can type, with the agent it is reported as. The first
+// four are the advertised ones; the rest are older values the CLI still
+// accepts silently and sends as typed (the server maps them).
+const ROUTES = [
+  ['auto', 'auto'],
+  ['notis', 'notis'],
+  ['codex', 'codex'],
+  ['claude', 'claude'],
+  ['codex_cloud', 'codex'],
+  ['claude_cloud', 'claude'],
+  ['codex_local', 'codex'],
+  ['claude_local', 'claude'],
+];
 
 function git(cwd, ...args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8',
@@ -143,7 +155,7 @@ test('handover start pushes the branch and forwards each routing target', async 
   try {
     const { originDir, workDir } = makeRepoWithOrigin(root);
 
-    for (const route of ROUTES) {
+    for (const [route, agent] of ROUTES) {
       // A commit per route, so each run has something new to push.
       writeFileSync(join(workDir, `${route}.txt`), `${route}\n`);
       git(workDir, 'add', '-A');
@@ -158,7 +170,7 @@ test('handover start pushes the branch and forwards each routing target', async 
       });
 
       assert.equal(result.run.parsed?.ok, true, `${route}: ${result.run.stderr}`);
-      assert.equal(result.run.parsed.data.agent_routing, route);
+      assert.equal(result.run.parsed.data.agent_routing, agent);
       assert.equal(result.run.parsed.data.branch, 'feat/auth');
 
       const call = handoverCall(result.calls);
@@ -171,6 +183,28 @@ test('handover start pushes the branch and forwards each routing target', async 
       const remoteHead = git(originDir, 'rev-parse', 'refs/heads/feat/auth');
       assert.equal(remoteHead, git(workDir, 'rev-parse', 'HEAD'), `${route}: branch not pushed`);
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('without --route the hand-over goes out as auto, so Notis picks the agent', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-handover-auto-'));
+  try {
+    const { workDir } = makeRepoWithOrigin(root);
+    writeFileSync(join(workDir, 'x.txt'), 'x\n');
+    git(workDir, 'add', '-A');
+    git(workDir, 'commit', '-q', '-m', 'work');
+
+    const result = await withStubServer(okHandover, async (apiBase, calls) => {
+      const run = await runCli(['handover', 'start', 'do the work'], { cwd: workDir, apiBase });
+      return { run, calls };
+    });
+
+    assert.equal(result.run.parsed?.ok, true, result.run.stderr);
+    assert.equal(handoverCall(result.calls).body.arguments.agent_routing, 'auto');
+    assert.equal(result.run.parsed.data.agent_routing, 'auto');
+    assert.match(result.run.parsed.human_summary, /Notis, which picks the agent/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

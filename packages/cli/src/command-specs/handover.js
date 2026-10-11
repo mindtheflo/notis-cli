@@ -2,9 +2,10 @@
  * `notis handover` -- give the branch you are on to a Notis agent.
  *
  * The coding agent already sitting in the user's terminal is the caller here.
- * It pushes the branch, then hands the task to whichever agent the user picked:
- * the hosted Notis agent, or their own Codex/Claude Code running in the Notis
- * cloud sandbox or on their Mac.
+ * It pushes the branch, then hands the task to Notis. By default (`auto`) Notis
+ * picks the agent itself; `--route notis|codex|claude` names one instead, and
+ * the server turns that into a plain sentence in the task ("Use Codex for this
+ * task."), so the user's choice wins like it does in a chat message.
  *
  * The CLI deliberately does not create the cloud workspace itself. Doing so
  * would hard-code the Conductor app's database schema and script paths into the
@@ -28,7 +29,18 @@ import { fetchToolSchema, nextIdempotencyKey, runToolCommand } from './helpers.j
 const HAND_OVER_TOOL = 'LOCAL_NOTIS_HAND_OVER';
 const SEARCH_THREADS_TOOL = 'LOCAL_NOTIS_SEARCH_CODING_AGENT_THREADS';
 
-const ROUTES = ['notis', 'auto', 'codex_cloud', 'claude_cloud', 'codex_local', 'claude_local'];
+// What --route accepts and advertises. `auto` lets Notis pick the agent.
+const ROUTES = ['auto', 'notis', 'codex', 'claude'];
+// Values from before Notis picked the agent itself. Still accepted, so scripts
+// and agents that learned them keep working, but never shown in help, examples
+// or errors. They are sent as typed; the server maps them to codex or claude.
+const LEGACY_ROUTES = new Map([
+  ['codex_cloud', 'codex'],
+  ['codex_local', 'codex'],
+  ['claude_cloud', 'claude'],
+  ['claude_local', 'claude'],
+]);
+const ROUTE_LABELS = { notis: 'Notis', codex: 'Codex', claude: 'Claude' };
 const BRANCH_MODES = ['new', 'same'];
 
 // A cloud coding agent takes minutes to start, and the hand-over POST itself
@@ -43,6 +55,17 @@ const HANDOVER_TIMEOUT_MS = 120_000;
  * that would have succeeded.
  */
 const HANDOVER_UNAVAILABLE_CODES = new Set(['usage_error', 'forbidden']);
+
+/** A legacy route as the agent it now means; anything else unchanged. */
+function normalizeRoute(route) {
+  return LEGACY_ROUTES.get(route) || route;
+}
+
+/** Who the hand-over went to, in words, for progress lines and the summary. */
+function describeRoute(route) {
+  if (route === 'auto') return 'Notis, which picks the agent';
+  return ROUTE_LABELS[route] || route;
+}
 
 /**
  * Quote a value for the command line the receiving agent is told to run.
@@ -121,8 +144,8 @@ async function handoverStartHandler(ctx) {
     throw usageError(`--branch-mode must be one of: ${BRANCH_MODES.join(', ')}`, { branchMode });
   }
 
-  const route = ctx.options.route || 'notis';
-  if (!ROUTES.includes(route)) {
+  const route = ctx.options.route || 'auto';
+  if (!ROUTES.includes(route) && !LEGACY_ROUTES.has(route)) {
     throw usageError(`--route must be one of: ${ROUTES.join(', ')}`, { route });
   }
 
@@ -223,7 +246,10 @@ async function handoverStartHandler(ctx) {
     repoSlug: ctx.options.repo || null,
   });
 
-  ctx.output.emitProgress({ phase: 'handover', message: `Handing over to ${route}` });
+  ctx.output.emitProgress({
+    phase: 'handover',
+    message: `Handing over to ${describeRoute(normalizeRoute(route))}`,
+  });
   const result = await runToolCommand({
     runtime: {
       ...ctx.runtime,
@@ -255,7 +281,9 @@ async function handoverStartHandler(ctx) {
     branch_mode: branchMode,
     head: repository.head,
     wip_commit: wipCommit,
-    agent_routing: payload.agent_routing || route,
+    // The server answers with auto, notis, codex or claude. An older server
+    // may echo a legacy value back, so map it here too.
+    agent_routing: normalizeRoute(payload.agent_routing || route),
     interaction_id: payload.interaction_id || null,
     thread_id: payload.thread_id || null,
   };
@@ -264,7 +292,7 @@ async function handoverStartHandler(ctx) {
     command: 'handover start',
     data,
     humanSummary:
-      `Handed ${data.branch} over to ${data.agent_routing} ` +
+      `Handed ${data.branch} over to ${describeRoute(data.agent_routing)} ` +
       `(${branchMode === 'same' ? 'continuing the branch' : 'new branch from it'}).`,
     hints: [
       { command: 'notis handover status', reason: 'See what the agent is doing' },
@@ -313,8 +341,8 @@ export const handoverCommandSpecs = [
     summary: 'Hand the current branch to a Notis agent and keep working.',
     when_to_use:
       'Use this when you want Notis to continue work on the branch you are on -- long refactors, ' +
-      'test fixing, or anything that should keep running after you close the laptop. Pick the agent ' +
-      'with --route.',
+      'test fixing, or anything that should keep running after you close the laptop. Notis picks ' +
+      'the agent unless you name one with --route.',
     args_schema: {
       arguments: [{ token: '<task>', description: 'What the agent should do, in plain language.' }],
       options: [
@@ -327,7 +355,7 @@ export const handoverCommandSpecs = [
         {
           flags: '--route <target>',
           description:
-            'Which agent runs it: notis (hosted, default), codex_cloud, claude_cloud, codex_local, claude_local, or auto.',
+            'Which agent runs it: auto (default, Notis picks the agent), notis, codex or claude.',
         },
         { flags: '--repo <slug>', description: 'Configured repository slug on the cloud computer, when you know it.' },
         {
@@ -338,12 +366,13 @@ export const handoverCommandSpecs = [
     },
     examples: [
       'notis handover start "fix the failing auth tests"',
-      'notis handover start "finish the migration" --branch-mode same --route codex_cloud',
-      'notis handover start "add integration tests" --route claude_cloud',
-      'notis handover start "review and clean up this branch" --route claude_local',
+      'notis handover start "finish the migration" --branch-mode same --route codex',
+      'notis handover start "add integration tests" --route claude',
+      'notis handover start "review and clean up this branch" --route notis',
     ],
     output_schema:
-      'Returns the branch, the resolved routing target, and the interaction/thread ids of the started run.',
+      'Returns the branch, the agent routing (auto when Notis picks, otherwise notis, codex or claude), ' +
+      'and the interaction/thread ids of the started run.',
     mutates: true,
     idempotent: false,
     require_auth: true,

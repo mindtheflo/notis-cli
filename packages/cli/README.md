@@ -810,25 +810,25 @@ For plain HTML, use the installed HTML Space and its linked saving Skill. Its ge
 
 ## Hand-over
 
-Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. `--route` picks the agent: the hosted Notis agent, or the user's own Codex/Claude Code in the cloud sandbox or on their Mac. `--branch-mode same` makes the agent commit onto your branch; the default cuts a new branch from it.
+Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. By default Notis picks the agent (`--route auto`); `--route notis`, `--route codex` or `--route claude` names one instead. `--branch-mode same` makes the agent commit onto your branch; the default cuts a new branch from it.
 
 ### `npx --package @notis_ai/cli@latest -- notis handover start <task>`
 
 Hand the current branch to a Notis agent and keep working.
 
-When to use: Use this when you want Notis to continue work on the branch you are on -- long refactors, test fixing, or anything that should keep running after you close the laptop. Pick the agent with --route.
+When to use: Use this when you want Notis to continue work on the branch you are on -- long refactors, test fixing, or anything that should keep running after you close the laptop. Notis picks the agent unless you name one with --route.
 
 Options:
 - `--branch-mode <mode>` — same = the agent commits onto your branch. new = the agent cuts a new branch from it (default).
-- `--route <target>` — Which agent runs it: notis (hosted, default), codex_cloud, claude_cloud, codex_local, claude_local, or auto.
+- `--route <target>` — Which agent runs it: auto (default, Notis picks the agent), notis, codex or claude.
 - `--repo <slug>` — Configured repository slug on the cloud computer, when you know it.
 - `--no-wip` — Refuse on a dirty tree instead of committing the changes first.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis handover start "fix the failing auth tests"`
-- `npx --package @notis_ai/cli@latest -- notis handover start "finish the migration" --branch-mode same --route codex_cloud`
-- `npx --package @notis_ai/cli@latest -- notis handover start "add integration tests" --route claude_cloud`
-- `npx --package @notis_ai/cli@latest -- notis handover start "review and clean up this branch" --route claude_local`
+- `npx --package @notis_ai/cli@latest -- notis handover start "finish the migration" --branch-mode same --route codex`
+- `npx --package @notis_ai/cli@latest -- notis handover start "add integration tests" --route claude`
+- `npx --package @notis_ai/cli@latest -- notis handover start "review and clean up this branch" --route notis`
 
 ### `npx --package @notis_ai/cli@latest -- notis handover status`
 
