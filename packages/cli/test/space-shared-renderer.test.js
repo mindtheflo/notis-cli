@@ -40,6 +40,26 @@ test('shared readonly DocumentEditor and HtmlFrame consume only explicit synthet
   assert.equal(result.runtimeCalls.length, 4);
 });
 
+test('a DocumentPage with the HTML viewer renders its stored HTML file, never the note editor', async () => {
+  const release = fixture(`export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);return R.createElement(runtime.ui.DocumentPage,{recordKey:'${record}',viewer:'html',share:true})}`);
+  release.manifest.resources = { notes: { kind: 'database', key: 'notes' } };
+  release.manifest.params = { note: { type: 'record', database: 'notes', main: true } };
+  release.fixturePath = 'fixtures.json';
+  // No record fixture: an editor read would be undeclared and fail verification.
+  release.sourceFiles['fixtures.json'] = b({ actions: {}, context: { params: { note: record } }, recordViews: [
+    { operation: 'html', record_key: record, result: { record_key: record, html: '<h1>Fictional saved report</h1>', title: 'Fixture' } },
+  ] });
+  const capabilities = { actions: {}, bindings: { notes: { kind: 'database' } } };
+  const result = await verifySpaceRelease(release, { capabilities, loadRenderer });
+  assert.equal(result.status, 'passed', JSON.stringify(result));
+  assert.ok(result.runtimeCalls.length > 0 && result.runtimeCalls.every(value => value.operation === 'html'));
+  const pool = renderer.createBrowserPool();
+  try {
+    const broker = createSpaceFixtureBroker({ release, capabilities, width: 390, outputs: ['markdown'] });
+    assert.match((await renderer.renderView({ broker, pool, width: 390, outputs: ['markdown'] })).markdown, /Fictional saved report/);
+  } finally { await pool.close(); }
+});
+
 test('body fixtures stay Markdown snapshots without BlockNote room initialization', async () => {
   const release = fixture(`export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);const [value,setValue]=R.useState('Waiting');R.useEffect(()=>{runtime.documentBody({operation:'read',binding:'notes',readAction:'read',recordKey:'${record}'}).then(v=>setValue(v.content_markdown))},[]);return R.createElement('h1',null,value)}`);
   const inputs = { type: 'object', required: ['request'], properties: { request: { type: 'object' } } };

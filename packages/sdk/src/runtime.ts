@@ -331,6 +331,11 @@ export interface NotisDocumentPageProps extends NotisRecordProps {
   belowBody?: ReactNode;
   /** Column width: standard (900px, as Beta), wide (1200px) or full. */
   width?: 'standard' | 'wide' | 'full';
+  /**
+   * 'html': the record's one stored `.html` file is the page. It opens full height under the toolbar,
+   * like an HTML record, without the header, meta, properties or body editor.
+   */
+  viewer?: 'html';
   readOnly?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
   onSavingChange?: (saving: boolean) => void;

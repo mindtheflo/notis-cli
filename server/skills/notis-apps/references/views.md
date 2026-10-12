@@ -127,7 +127,7 @@ because a pending main view cannot yet open one.
 ## Rendering and memory
 
 Choose [memory](memory.md) deliberately. `chrome: 'hidden'` is for full-screen
-presentations such as the HTML Space; ordinary collection views keep Portal chrome.
+presentations; ordinary collection views keep Portal chrome.
 A Space whose published view hides chrome starts hidden from each person's sidebar,
 like Skill review Spaces; it stays reachable by link and search, and each person
 can show it from the sidebar's hidden Spaces list or the Space's menu.

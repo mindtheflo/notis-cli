@@ -84,9 +84,10 @@ from deploying an installed Space and requires the user's explicit authority.
 Existing report rows render through `<ReportFrame>` in their database's view.
 Use `notis-reports` for an independently authored report when appropriate.
 
-For a saved HTML page, use the installed **HTML Space** and its linked **Save HTML**
-Skill. That Skill owns the row-first upload-and-attach workflow. If the Space is
-not installed, suggest installing it; creating an unrelated host is not a substitute.
+Saved HTML pages and reports are notes in **Notis Notes**: save them with the
+**Save HTML** Skill that comes with Notes, which owns the row-first
+upload-and-attach workflow (see `notis-reports`). If Notes is not installed,
+suggest installing it; creating an unrelated host is not a substitute.
 
 [Context sharing](references/context.md) keeps selected text and annotations as
 unsent reference context. Page context, memory hits and source content are not

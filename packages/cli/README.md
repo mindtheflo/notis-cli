@@ -804,9 +804,9 @@ Examples:
 
 ## Reports and saved HTML
 
-Create independently authored reports as Space views with the product `notis-reports` and `notis-apps` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link. Preserved database report rows open through their main view.
+Create independently authored interactive reports as Space views with the product `notis-reports` and `notis-apps` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
 
-For plain HTML, use the installed HTML Space and its linked saving Skill. Its generic file upload is attached to an existing native record with a separate revision-checked write; a raw download URL is not a saved page link.
+Save self-contained HTML pages and reports in Notis Notes with the Save HTML Skill that comes with it; pages and reports saved before Spaces open there too. Its generic file upload is attached to an existing note with a separate revision-checked write; a raw download URL is not a saved page link.
 
 ## Hand-over
 

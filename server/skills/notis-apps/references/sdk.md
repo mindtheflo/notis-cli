@@ -34,7 +34,7 @@ for loading/error/empty states and explicit read caching.
 
 | Component | Contract |
 | --- | --- |
-| `<DocumentPage recordKey>` | The full page of a record that is the view's main content (a note, a document): breadcrumb, Saving or Saved, '...' menu, cover, icon, title, meta strip, properties that save automatically, collaborative body. Slots `breadcrumb`, `actions`, `menuItems`, `aboveBody`, `belowBody`; toggles `share` (off by default), `header`, `meta`, `properties`, `width`; `onSaved`; `layout` to rearrange its parts. Pair with `DocumentPageSkeleton` and `usePrefetchRecord()`. Until the Notis CLI you build with exports it (`spaces build` replaces the Space's `packages/sdk` with the CLI's own SDK, and older ones have no `DocumentPage`, so the import fails the build), reach the same host page through `useNotisRuntime().ui?.DocumentPage` and fall back to `DocumentEditor` when it is missing, as the Notes Spaces do in `lib/document-page.tsx`. |
+| `<DocumentPage recordKey>` | The full page of a record that is the view's main content (a note, a document): breadcrumb, Saving or Saved, '...' menu, cover, icon, title, meta strip, properties that save automatically, collaborative body. Slots `breadcrumb`, `actions`, `menuItems`, `aboveBody`, `belowBody`; toggles `share` (off by default, never offered for a report record), `header`, `meta`, `properties`, `width`; `viewer: 'html'` opens a record whose one stored `.html` file is the page (such as an HTML page saved in Notis Notes) full height under the toolbar, without header, meta, properties or body editor; `onSaved`; `layout` to rearrange its parts. Pair with `DocumentPageSkeleton` and `usePrefetchRecord()`. Until the Notis CLI you build with exports it (`spaces build` replaces the Space's `packages/sdk` with the CLI's own SDK, and older ones have no `DocumentPage`, so the import fails the build), reach the same host page through `useNotisRuntime().ui?.DocumentPage` and fall back to `DocumentEditor` when it is missing, as the Notes Spaces do in `lib/document-page.tsx`. |
 | `<DocumentEditor recordKey>` | Native collaborative body, properties, images and attachments. With separate properties use `showProperties={false}`. |
 | `<RecordProperties recordKey>` | Native revision-checked property editing. |
 | `<HtmlFrame recordKey>` | Attached HTML under viewer CSP and an opaque-origin sandbox. Source cannot relax that boundary. |
@@ -44,6 +44,8 @@ for loading/error/empty states and explicit read caching.
 The published Space declares the database binding; the server rechecks record
 scope and binding revision. A Site exposes read-only body/property snapshots and
 HTML for its pinned record, including a declared non-collection record param.
+A report row (`<ReportFrame>`) cannot be shared as a Site; a report saved as an
+HTML file can.
 It has no upload, collaboration credential, authoring controls or sharing mutation.
 Preview source does not gain live record editing. No app-owned credentials or
 filesystem URLs belong in component props.

@@ -20,7 +20,7 @@ or no-deploy requests stop at local artifacts without remote mutation. Store pub
 
 ## Reports and HTML
 
-New reports are independent Space views. Existing database report payloads render inside their database's main view. Use the installed HTML Space's saving Skill for self-contained HTML. See the canonical product guidance for build, revision, native file and view-link rules.
+Interactive reports are independent Space views. Save self-contained HTML pages and reports in Notis Notes with its Save HTML Skill; pages and reports saved before Spaces open there too. See the canonical product guidance for build, revision, native file and view-link rules.
 
 ## Commands
 

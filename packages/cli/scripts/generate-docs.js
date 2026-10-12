@@ -163,9 +163,9 @@ ${appSpecs.map(renderCommandBlock).join('\n')}
 
 ## Reports and saved HTML
 
-Create independently authored reports as Space views with the product \`notis-reports\` and \`notis-apps\` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link. Preserved database report rows open through their main view.
+Create independently authored interactive reports as Space views with the product \`notis-reports\` and \`notis-apps\` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
 
-For plain HTML, use the installed HTML Space and its linked saving Skill. Its generic file upload is attached to an existing native record with a separate revision-checked write; a raw download URL is not a saved page link.
+Save self-contained HTML pages and reports in Notis Notes with the Save HTML Skill that comes with it; pages and reports saved before Spaces open there too. Its generic file upload is attached to an existing note with a separate revision-checked write; a raw download URL is not a saved page link.
 
 ## Hand-over
 
@@ -226,7 +226,7 @@ or no-deploy requests stop at local artifacts without remote mutation. Store pub
 
 ## Reports and HTML
 
-New reports are independent Space views. Existing database report payloads render inside their database's main view. Use the installed HTML Space's saving Skill for self-contained HTML. See the canonical product guidance for build, revision, native file and view-link rules.
+Interactive reports are independent Space views. Save self-contained HTML pages and reports in Notis Notes with its Save HTML Skill; pages and reports saved before Spaces open there too. See the canonical product guidance for build, revision, native file and view-link rules.
 
 ## Commands
 

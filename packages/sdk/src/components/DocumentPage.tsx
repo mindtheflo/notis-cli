@@ -3,7 +3,7 @@
 import { useCallback, useRef, type CSSProperties, type ReactElement } from 'react';
 import { useNotisRuntime } from '../provider';
 import { DocumentEditor } from './DocumentEditor';
-import { ShareControl } from './RecordComponents';
+import { HtmlFrame, ShareControl } from './RecordComponents';
 import { Skeleton } from './Skeleton';
 import type { NotisDocumentPageProps } from '../runtime';
 
@@ -69,6 +69,7 @@ export function DocumentPageSkeleton({ width = 'standard', className, label }: {
  * Shown by hosts that predate DocumentPage: the same record, with the editor these hosts already have.
  * menuItems show as plain toolbar buttons and onSaved is called when a save finishes (title null);
  * layout, header parts, meta and width options other than the column are not available there.
+ * With viewer 'html' the host's HtmlFrame replaces the editor.
  */
 function DocumentPageFallback(props: NotisDocumentPageProps) {
   const t = useCopy();
@@ -99,12 +100,13 @@ function DocumentPageFallback(props: NotisDocumentPageProps) {
         style={{ background: 'none', border: 0, padding: '4px 8px', borderRadius: 6, cursor: item.disabled ? 'default' : 'pointer', font: 'inherit', fontSize: 13,
           color: item.destructive ? 'hsl(var(--destructive))' : 'hsl(var(--muted-foreground))', opacity: item.disabled ? 0.5 : 1 }}>{item.label}</button>)}
     </div> : null}
+    {props.viewer === 'html' ? <HtmlFrame recordKey={recordKey} /> :
     <div style={{ ...columnStyle(width), padding: '24px 16px 96px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       {aboveBody}
       <DocumentEditor recordKey={recordKey} variant={props.header === false ? 'body' : 'full'} showProperties={props.properties !== 'hidden'}
         readOnly={readOnly} onDirtyChange={props.onDirtyChange} onSavingChange={savingChange} />
       {belowBody}
-    </div>
+    </div>}
   </div>;
 }
 
@@ -114,7 +116,8 @@ function DocumentPageFallback(props: NotisDocumentPageProps) {
  * automatically, and the collaborative body with presence. The host (Portal) draws it and keeps one
  * save queue for the whole record. Files open in their viewer under the header; HTML and reports show
  * only the toolbar (breadcrumb, actions, Share, '...' menu) above their frame, with no header, meta,
- * properties, aboveBody or belowBody.
+ * properties, aboveBody or belowBody. `viewer: 'html'` opens a record whose one stored `.html` file is
+ * the page (for example a note that keeps a saved HTML report) the same way.
  *
  * ```tsx
  * if (params.note) return <DocumentPage recordKey={params.note}
