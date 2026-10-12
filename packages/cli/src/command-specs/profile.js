@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { CHANNEL_SWITCH_ENV } from '../runtime/channel.js';
 import { CliError, EXIT_CODES } from '../runtime/errors.js';
 import { quoteShellArgument } from '../runtime/auth-recovery.js';
 import {
@@ -114,6 +116,44 @@ async function listHandler(ctx) {
   });
 }
 
+const SKILL_SYNC_API_BASE_PATTERN = /^https:\/\/api(?:-beta)?\.notis\.ai\/?$/;
+
+// Overrides that belong to this `profile use` run. Inherited, a NOTIS_JWT would
+// sync its own account into the agent folders under the named profile.
+const RELINK_DROPPED_ENV = ['NOTIS_JWT', 'NOTIS_API_BASE', 'NOTIS_PROFILE', CHANNEL_SWITCH_ENV];
+
+// The new default's skills take over the agent folders (Claude Code, Codex,
+// Cursor) now rather than at the next automatic sync. Detached, so the switch
+// itself stays instant; a failure waits for that next sync.
+export function relinkSkillsInBackground(name, profile, {
+  env = process.env,
+  argv = process.argv,
+  execPath = process.execPath,
+  spawnImpl = spawn,
+} = {}) {
+  // Never from a test run: a detached sync would outlive it and reach the real API.
+  if (env.NODE_ENV === 'test' || env.NODE_TEST_CONTEXT || !argv[1]) return false;
+  if (!profile?.oauth_access_token && !profile?.oauth_refresh_token) return false;
+  if (!SKILL_SYNC_API_BASE_PATTERN.test(String(profile.api_base || ''))) return false;
+  // Like the automatic sync, the relink runs as the named profile alone: its
+  // credential, its endpoint and the CLI build for its channel.
+  const childEnv = { ...env };
+  for (const key of RELINK_DROPPED_ENV) delete childEnv[key];
+  try {
+    const child = spawnImpl(
+      execPath,
+      [argv[1], 'skills', 'sync', '--json', '--profile', name],
+      { detached: true, stdio: 'ignore', env: childEnv },
+    );
+    child.on('error', () => {});
+    child.unref();
+    return true;
+  } catch {
+    // The next automatic sync relinks.
+    return false;
+  }
+}
+
 async function useHandler(ctx) {
   const requested = ctx.args.name;
   const config = loadConfig();
@@ -132,6 +172,7 @@ async function useHandler(ctx) {
   const worktreeOverride = Boolean(worktreeRuntime);
   const worktreeBlocked = Boolean(worktreeUnavailable);
   const authenticated = profileHasCredential(profile);
+  if (authenticated) relinkSkillsInBackground(requested, profile);
 
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
@@ -298,7 +339,7 @@ export const profileCommandSpecs = [
     command_path: ['profile', 'use'],
     summary: 'Switch the default profile without signing any profile out.',
     when_to_use:
-      'Use this to change which account and API subsequent commands target. Every other profile keeps its credential.',
+      'Use this to change which account and API subsequent commands target. Every other profile keeps its credential. Its skills replace the previous default\'s in the agent folders (Claude Code, Codex, Cursor) straight away.',
     args_schema: {
       arguments: [{ token: '<name>', key: 'name', description: 'Profile to make active.' }],
       options: [],

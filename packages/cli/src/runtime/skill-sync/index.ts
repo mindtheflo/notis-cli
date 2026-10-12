@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { promises as fs } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type {
   AgentTargets,
   LocalSkill,
@@ -65,6 +66,10 @@ export interface RunSkillSyncOptions {
   honorSyncEnabled?: boolean;
   /** All account paths, scanner roots and agent links use this explicit home. */
   syncHome?: string;
+  /** False when another account is the CLI default: sync this account's own
+   * folder only and leave the agent folders (Claude Code, Codex, Cursor) to the
+   * default's skills. Defaults to true. */
+  linkAgentFolders?: boolean;
 }
 
 const BASE_SKILL_NAMES = new Set(['notis-apps', 'notis-query', 'notis-cli']);
@@ -142,6 +147,58 @@ const DEFAULT_RUN_SKILL_SYNC_DEPS: RunSkillSyncDependencies = {
   removeForeignAccountSymlinks,
   updateAgentTargets,
 };
+
+// Another account is the CLI default and owns the agent folders: this account
+// syncs its own folder without linking, unlinking or adopting anything there.
+const MIRROR_ONLY_DEPS: Pick<
+  RunSkillSyncDependencies,
+  'removeForeignAccountSymlinks' | 'removeAllSymlinksForSkill' | 'syncSymlinks'
+> = {
+  removeForeignAccountSymlinks: async () => 0,
+  removeAllSymlinksForSkill: async () => 0,
+  syncSymlinks: async () => ({ linked: 0, removed: 0, skipped: 0, verifiedAgentLinks: {} }),
+};
+
+/**
+ * The account linking now owns the agent folders, so the links the other
+ * accounts on this computer last verified are gone. Forget them: otherwise that
+ * account's next linking sync would read each missing link as the user removing
+ * the skill and deactivate it.
+ */
+async function forgetOtherAccountsAgentLinks(
+  paths: ReturnType<typeof getSkillSyncPathsForUser>,
+): Promise<void> {
+  const usersDir = dirname(dirname(paths.syncStatePath));
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fs.readdir(usersDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const statePath = join(usersDir, entry.name, '.notis-sync.json');
+    if (statePath === paths.syncStatePath) continue;
+    let state: { skills?: Record<string, { verifiedAgentLinks?: unknown }> } | null = null;
+    try {
+      state = JSON.parse(await fs.readFile(statePath, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (!state || typeof state !== 'object' || !state.skills || typeof state.skills !== 'object') continue;
+    let changed = false;
+    for (const skill of Object.values(state.skills)) {
+      if (skill && typeof skill === 'object' && 'verifiedAgentLinks' in skill) {
+        delete skill.verifiedAgentLinks;
+        changed = true;
+      }
+    }
+    if (!changed) continue;
+    const temporaryPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryPath, statePath);
+  }
+}
 
 export function isolatedLinkOptions(paths: ReturnType<typeof getSkillSyncPathsForUser>) {
   if (!paths.isolatedNamespace && !paths.homeDir) return undefined;
@@ -713,9 +770,11 @@ export async function runSkillSync(
   dependencies: Partial<RunSkillSyncDependencies> = {},
   options: RunSkillSyncOptions = {},
 ): Promise<RunSkillSyncResult> {
+  const linkAgentFolders = options.linkAgentFolders !== false;
   const deps = {
     ...DEFAULT_RUN_SKILL_SYNC_DEPS,
     ...dependencies,
+    ...(linkAgentFolders ? {} : MIRROR_ONLY_DEPS),
   };
   const syncSettings: SyncSettings = await deps.fetchSyncSettings(
     serverUrl,
@@ -760,6 +819,9 @@ export async function runSkillSync(
   const foreignLinksRemoved = await deps.removeForeignAccountSymlinks(
     syncPaths.skillsDir, isolatedLinkOptions(syncPaths),
   );
+  if (linkAgentFolders && !syncPaths.isolatedNamespace) {
+    await forgetOtherAccountsAgentLinks(syncPaths);
+  }
 
   const cloudCuratedSkillNames = new Set(
     pullResponse.skills
@@ -769,7 +831,9 @@ export async function runSkillSync(
   const protectedSkillNames = new Set([...cloudCuratedSkillNames, ...BASE_SKILL_NAMES]);
   const scopedState = withoutBaseSkillState(await deps.readSyncState(syncPaths));
   const assignmentFailures: SkillSyncFailure[] = [];
-  const deactivated = !syncPaths.isolatedNamespace && syncSettings.agent_targets_conditional_updates === true
+  // A mirror-only sync has no links by design, so none of them is missing.
+  const deactivated = linkAgentFolders && !syncPaths.isolatedNamespace
+    && syncSettings.agent_targets_conditional_updates === true
     ? await deactivateDeletedAgentSkills(
         serverUrl, jwt, pullResponse, scopedState, scopedState, syncPaths.skillsDir, deps, assignmentFailures, isolatedLinkOptions(syncPaths),
       )
@@ -785,7 +849,8 @@ export async function runSkillSync(
       protectedSkillNames,
     });
   }
-  if (!syncPaths.isolatedNamespace) {
+  if (linkAgentFolders && !syncPaths.isolatedNamespace) {
+    // Skills found loose in the agent folders belong to the account linking them.
     await deps.gatherTopLevelLocalSkills(syncPaths, { protectedSkillNames });
   }
   const localSkills = (await deps.scanLocalSkills(syncPaths))

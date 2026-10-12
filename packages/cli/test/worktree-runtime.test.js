@@ -179,6 +179,8 @@ function runCliProbe(cwd, args, env = {}) {
     env: {
       PATH: process.env.PATH,
       HOME: mkdtempSync(join(tmpdir(), 'notis-cli-probe-home-')),
+      // Keeps `profile use` from starting a real background skills sync.
+      NODE_ENV: 'test',
       ...env,
     },
     encoding: 'utf8',

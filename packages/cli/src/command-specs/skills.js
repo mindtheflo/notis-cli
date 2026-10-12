@@ -1,4 +1,4 @@
-import { getJwtSubject } from '../runtime/profiles.js';
+import { getCurrentProfileName, getJwtSubject, loadConfig } from '../runtime/profiles.js';
 import { reconcileAllSkills } from '../runtime/sync-skills.js';
 import { ensureFreshOAuthCredential } from '../runtime/oauth.js';
 import { installSkillSyncService } from '../runtime/skill-sync-service.js';
@@ -82,6 +82,15 @@ async function loadSkillSyncEngine() {
   return import('../../dist/skill-sync/index.js');
 }
 
+function cliDefaultOwnsAgentFolders(runtime) {
+  if (runtime.profileSource !== 'explicit' || !runtime.profileName) return true;
+  try {
+    return runtime.profileName === getCurrentProfileName(loadConfig());
+  } catch {
+    return true;
+  }
+}
+
 export async function syncSkillsHandler(ctx, {
   refresh = ensureFreshOAuthCredential, loadEngine = loadSkillSyncEngine,
   reconcile = reconcileAllSkills, install = installSkillSyncService,
@@ -95,6 +104,9 @@ export async function syncSkillsHandler(ctx, {
     jwt: ctx.runtime.jwt,
     userId: settings.user_id || userId,
     honorSyncEnabled: Boolean(ctx.options.electronRepeat),
+    // Only the CLI default's skills go into the agent folders; another profile
+    // syncs its own folder.
+    linkAgentFolders: cliDefaultOwnsAgentFolders(ctx.runtime),
     runAccountSync: (serverUrl, jwt, dependencies, options) => runSkillSync(
       serverUrl, jwt, { ...dependencies, fetchSyncSettings: async () => settings }, options,
     ),

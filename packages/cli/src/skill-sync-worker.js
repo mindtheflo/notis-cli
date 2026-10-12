@@ -1,14 +1,23 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { resolveRuntimeProfile } from './runtime/profiles.js';
+import { getCurrentProfileName, loadConfig, resolveRuntimeProfile } from './runtime/profiles.js';
 import { ensureFreshOAuthCredential } from './runtime/oauth.js';
 import { runSkillSync, fetchSyncSettings } from '../dist/skill-sync/index.js';
 import { withSkillSyncLock } from './runtime/sync-skills.js';
 
+function currentCliProfile() {
+  try {
+    return getCurrentProfileName(loadConfig());
+  } catch {
+    return null;
+  }
+}
+
 export async function runAutomaticSkillSync({ profile, apiBase, userId }, {
   resolveRuntime = resolveRuntimeProfile, refresh = ensureFreshOAuthCredential,
   settings = fetchSyncSettings, sync = runSkillSync, lock = withSkillSyncLock,
+  currentProfile = currentCliProfile,
 } = {}) {
   const runtime = resolveRuntime({ profile }, { requireAuth: true });
   if (runtime.credentialKind !== 'oauth' || runtime.apiBase !== apiBase
@@ -18,9 +27,12 @@ export async function runAutomaticSkillSync({ profile, apiBase, userId }, {
   if (saved.user_id !== userId) throw new Error('Automatic skill sync identity mismatch');
   // Do not gather, unlink foreign accounts or write anything when opted out.
   if (!saved.sync_enabled) return { status: 'disabled' };
+  // The service stays bound to its profile; after `notis profile use` moves the
+  // default away, it keeps that account's folder in sync without linking it.
+  const linkAgentFolders = (currentProfile() ?? profile) === profile;
   const result = await lock(() => sync(runtime.apiBase, runtime.jwt, {
     fetchSyncSettings: async () => saved,
-  }, { honorSyncEnabled: true }));
+  }, { honorSyncEnabled: true, ...(linkAgentFolders ? {} : { linkAgentFolders: false }) }));
   return { status: (result.failedLinks?.length || result.failedPushes?.length) ? 'partial' : 'synced', ...result };
 }
 

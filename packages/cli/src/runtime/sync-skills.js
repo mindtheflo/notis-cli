@@ -211,14 +211,22 @@ export async function reconcileAllSkills({
   runAccountSync,
   reconcileBase = reconcileBaseSkills,
   lockOptions = {},
+  linkAgentFolders = true,
 }) {
   return withSkillSyncLock(async () => {
-    const base = reconcileBase({ userId, ...(home ? { home } : {}) });
+    // Base skills are linked from the account that owns the agent folders.
+    const base = linkAgentFolders
+      ? reconcileBase({ userId, ...(home ? { home } : {}) })
+      : { skills: [], installed: 0, linked: 0, unchanged: 0, backups: [] };
     const account = await runAccountSync(
       serverUrl,
       jwt,
       {},
-      { honorSyncEnabled, ...(home ? { syncHome: home } : {}) },
+      {
+        honorSyncEnabled,
+        ...(home ? { syncHome: home } : {}),
+        ...(linkAgentFolders ? {} : { linkAgentFolders: false }),
+      },
     );
     return {
       ...account,

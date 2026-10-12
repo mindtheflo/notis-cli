@@ -59,6 +59,16 @@ test('every local spaces command the CLI reports is accepted by the server allow
   assert.deepEqual(reported.filter((commandId) => !allowed.has(commandId)), []);
 });
 
+test('switching the default profile is reported and accepted by the server allowlist', {
+  skip: existsSync(serverAllowlist) ? false : 'the server allowlist is not part of this checkout',
+}, () => {
+  const block = readFileSync(serverAllowlist, 'utf8').match(/CLI_COMMAND_IDS = frozenset\(\s*\{([\s\S]*?)\}\s*\)/);
+  const allowed = new Set([...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+  const spec = COMMAND_SPECS.find((item) => item.command_path.join('.') === 'profile.use');
+  assert.equal(cliBackendKind(spec), 'local');
+  assert.ok(allowed.has(buildCliTelemetryPayload({ spec, runtime, result: 'success', durationMs: 1 }).command_id));
+});
+
 test('CLI telemetry duration buckets stay low-cardinality', () => {
   assert.equal(cliDurationBucket(999), 'under_1s');
   assert.equal(cliDurationBucket(1_000), '1s_to_5s');

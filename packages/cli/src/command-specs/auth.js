@@ -133,9 +133,9 @@ export const authCommandSpecs = [
   },
   {
     command_path: ['logout'],
-    summary: 'Revoke and remove the OAuth credential for one CLI profile.',
+    summary: 'Sign this computer out of one CLI profile: revoke and remove its OAuth credential.',
     when_to_use:
-      'Use this to disconnect a single account. Other profiles keep their credentials unless you pass --all-profiles.',
+      'Use this to disconnect a single account on this computer. Its sign-ins on other computers stay, and other profiles keep their credentials unless you pass --all-profiles.',
     args_schema: {
       arguments: [],
       options: [

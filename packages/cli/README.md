@@ -92,9 +92,9 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis logout`
 
-Revoke and remove the OAuth credential for one CLI profile.
+Sign this computer out of one CLI profile: revoke and remove its OAuth credential.
 
-When to use: Use this to disconnect a single account. Other profiles keep their credentials unless you pass --all-profiles.
+When to use: Use this to disconnect a single account on this computer. Its sign-ins on other computers stay, and other profiles keep their credentials unless you pass --all-profiles.
 
 Options:
 - `--all-profiles` — Clear OAuth credentials and pending authorizations from every CLI profile.
@@ -948,7 +948,7 @@ Examples:
 
 Switch the default profile without signing any profile out.
 
-When to use: Use this to change which account and API subsequent commands target. Every other profile keeps its credential.
+When to use: Use this to change which account and API subsequent commands target. Every other profile keeps its credential. Its skills replace the previous default's in the agent folders (Claude Code, Codex, Cursor) straight away.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis profile use work`

@@ -24,6 +24,7 @@ import {
 import {
   DEFAULT_CLI_OAUTH_SCOPES,
   browserOpenCommand,
+  buildAuthorizeUrl,
   createLoopbackReceiver,
   discoverCliOAuth,
   acquireListenerGlobalLock,
@@ -3956,4 +3957,75 @@ test('a remote auto hand-off never prompts during a non-interactive run', async 
   assert.equal(readCodeCalls, 0);
   assert.equal(result.agentAuthorization.hand_off, 'code');
   assert.match(result.agentAuthorization.redeem_command, /login --code <code>$/);
+});
+
+test('OAuth sign-in and refresh send this computer id and name', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-oauth-device-'));
+  const configFile = join(home, 'config.json');
+  const computerId = '9b2f7c1e-4d3a-4f6b-8a1c-2e5d7f9a0b3c';
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: 'https://api.notis.ai',
+        oauth_access_token: makeJwt('oauth-user', 1),
+        oauth_refresh_token: 'refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: future,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: 'https://mcp.notis.ai',
+        oauth_api_base: 'https://api.notis.ai',
+        oauth_resource: 'https://api.notis.ai/cli',
+        oauth_scopes: ['notis:read'],
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+  writeFileSync(join(home, 'computer.json'), JSON.stringify({
+    version: 1,
+    computer_id: computerId,
+    name: 'Studio Mac',
+  }));
+  const previousConfig = process.env.NOTIS_CLI_CONFIG_FILE;
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  try {
+    const authorizeUrl = new URL(buildAuthorizeUrl({
+      authorizationEndpoint: 'https://mcp.notis.ai/oauth/authorize',
+      clientId: 'notis_cli',
+      resource: 'https://api.notis.ai/cli',
+    }, {
+      redirectUri: 'http://127.0.0.1:53682/callback',
+      challenge: 'challenge',
+      state: 'state',
+      scopes: ['notis:read'],
+    }));
+    assert.equal(authorizeUrl.searchParams.get('device_id'), computerId);
+    assert.equal(authorizeUrl.searchParams.get('device_name'), 'Studio Mac');
+
+    let sent = null;
+    const refreshed = await refreshOAuthCredential({
+      apiBase: 'https://api.notis.ai',
+      profileName: 'default',
+      credentialKind: 'oauth',
+      oauthAccessToken: makeJwt('oauth-user', 1),
+    }, async (_url, init) => {
+      sent = init.body;
+      return new Response(JSON.stringify({
+        access_token: makeJwt('oauth-user'),
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 3600,
+        refresh_expires_in: 7200,
+        scope: 'notis:read',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    assert.equal(refreshed, true);
+    assert.equal(sent.get('device_id'), computerId);
+    assert.equal(sent.get('device_name'), 'Studio Mac');
+  } finally {
+    if (previousConfig === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
+    else process.env.NOTIS_CLI_CONFIG_FILE = previousConfig;
+  }
 });

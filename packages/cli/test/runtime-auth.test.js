@@ -308,8 +308,10 @@ function readLockConstants(source) {
 // through a lock directory on disk, so the timings have to stay internally
 // consistent for the reclaim path to be safe.
 test('the config write lock keeps staleness inside its acquisition window', () => {
+  // The lock moved from profiles.js to config-lock.js when computer.json became
+  // its second caller.
   const cliSource = readFileSync(
-    new URL('../src/runtime/profiles.js', import.meta.url),
+    new URL('../src/runtime/config-lock.js', import.meta.url),
     'utf-8',
   );
 
@@ -354,8 +356,10 @@ test('the desktop config write lock has not drifted from the CLI one', () => {
     'electron/src/notis-config-file.ts is missing: if it moved, re-point this drift check at its new home rather than deleting it',
   );
 
+  // The lock moved from profiles.js to config-lock.js when computer.json became
+  // its second caller.
   const cliSource = readFileSync(
-    new URL('../src/runtime/profiles.js', import.meta.url),
+    new URL('../src/runtime/config-lock.js', import.meta.url),
     'utf-8',
   );
   const desktopSource = readFileSync(desktopSessionPath, 'utf-8');

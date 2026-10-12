@@ -21,6 +21,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 
 import { CliError, EXIT_CODES, usageError } from './errors.js';
+import { readComputerIdentity } from './computer-identity.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
   channelFromProfile,
@@ -674,7 +675,19 @@ function storedOAuthMetadata(runtime, profile) {
   };
 }
 
-function buildAuthorizeUrl(metadata, {
+// This computer's id and name, so the server keeps one CLI sign-in per
+// computer and lists it as "Notis CLI on <computer>". Best effort: a sign-in
+// without them still works and maps to the shared legacy grant.
+function cliDeviceParams() {
+  try {
+    const identity = readComputerIdentity({ configFile: resolveConfigFile() });
+    return { device_id: identity.computerId, device_name: identity.displayName };
+  } catch {
+    return {};
+  }
+}
+
+export function buildAuthorizeUrl(metadata, {
   redirectUri,
   challenge,
   state,
@@ -689,6 +702,9 @@ function buildAuthorizeUrl(metadata, {
   url.searchParams.set('code_challenge', challenge);
   url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('state', state);
+  for (const [key, value] of Object.entries(cliDeviceParams())) {
+    url.searchParams.set(key, value);
+  }
   return url.toString();
 }
 
@@ -2473,6 +2489,7 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
           refresh_token: profile.oauth_refresh_token,
           client_id: profile.oauth_client_id,
           resource: metadata.resource,
+          ...cliDeviceParams(),
         }),
       },
       fetchImpl,

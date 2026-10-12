@@ -30,8 +30,10 @@ export function reconcileAllSkills<T extends object>(options: {
     serverUrl: string,
     jwt: string,
     dependencies: Record<string, never>,
-    options: { honorSyncEnabled: boolean },
+    options: { honorSyncEnabled: boolean; syncHome?: string; linkAgentFolders?: boolean },
   ) => Promise<T>;
   reconcileBase?: (options: { userId?: string | null; home?: string }) => BaseSkillReconcileResult;
   lockOptions?: Omit<SkillSyncLockOptions, 'home'>;
+  /** False syncs the account's own folder only; another account owns the agent folders. */
+  linkAgentFolders?: boolean;
 }): Promise<T & ReconcileAllSkillsResult>;

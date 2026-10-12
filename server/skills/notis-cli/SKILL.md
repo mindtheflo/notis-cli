@@ -38,11 +38,13 @@ The CLI bundles this `notis-cli` base skill and refreshes its canonical copy und
 
 A profile is one account paired with one API endpoint. Profiles live side by side; switching between them never signs any of them out.
 
-- `npx --package @notis_ai/cli@latest -- notis profile list` — every profile on this machine, with its endpoint, user, and whether it is signed in. The active one is marked.
-- `npx --package @notis_ai/cli@latest -- notis profile use <name>` — change which account subsequent commands run as.
-- `npx --package @notis_ai/cli@latest -- notis --profile <name> <command>` — run a single command as another account without changing the active one.
-- `npx --package @notis_ai/cli@latest -- notis login --profile <name>` — add an account. The existing profiles keep their credentials.
-- `npx --package @notis_ai/cli@latest -- notis logout` — sign out of the active profile only; pass `--all-profiles` to clear every one.
+Notis Desktop signs the CLI in for every account saved in the app, one profile each. `default` keeps its name; each added account gets a profile named after its email with `@` turned into `-` (for example `flo-mindtheflo.com`), and Beta Desktop adds `-beta`. Switching accounts in Desktop never changes the active profile. Only the active profile's skills are linked into Claude Code, Codex and Cursor; every other account's skills sync into their own folder. Signing an account out of Desktop signs it out of the CLI on this computer and removes the profile and skills Desktop made for it. If that was the active profile, the CLI switches to the account Desktop opens next; with no other signed-in Desktop account it stays signed out. Profiles made with `notis login` are never removed or picked automatically.
+
+- `npx --package @notis_ai/cli@latest -- notis profile list`: every profile on this machine, with its endpoint, user, and whether it is signed in. The active one is marked.
+- `npx --package @notis_ai/cli@latest -- notis profile use <name>`: change which account subsequent commands run as, and link that account's skills into the agent folders straight away.
+- `npx --package @notis_ai/cli@latest -- notis --profile <name> <command>`: run a single command as another account without changing the active one.
+- `npx --package @notis_ai/cli@latest -- notis login --profile <name>`: add an account. The existing profiles keep their credentials.
+- `npx --package @notis_ai/cli@latest -- notis logout`: sign this computer out of the active profile only; the account stays signed in on other computers. Pass `--all-profiles` to clear every profile on this computer.
 
 Read the profile before acting on the user's data. `notis whoami` reports the account and endpoint a command will hit; if that is not the account the user meant, switch profiles rather than proceeding.
 
