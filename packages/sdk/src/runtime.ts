@@ -447,8 +447,8 @@ export interface HandoverResult {
  * The user's cloud computer, as far as an app may see it.
  *
  * `exists` is false when the user has never had a sandbox provisioned. A
- * `status` of anything other than `'running'` means the VM is asleep; reading
- * these facts never wakes it.
+ * `status` is the last observed VM state; `freshness` and `observed_at` describe
+ * its age. Reading these facts never wakes the VM.
  */
 export interface CloudComputerSandboxFacts {
   exists: boolean;
@@ -456,6 +456,8 @@ export interface CloudComputerSandboxFacts {
   provider: string | null;
   created_at: string | null;
   updated_at: string | null;
+  observed_at?: string | null;
+  freshness?: 'fresh' | 'stale' | 'unknown';
 }
 
 /**
@@ -470,6 +472,7 @@ export interface CloudComputerCliAuthFacts {
   authenticated: boolean | null;
   account: string | null;
   checked_at: string | null;
+  freshness?: 'fresh' | 'stale' | 'unknown';
   reason: string | null;
 }
 
