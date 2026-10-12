@@ -34,9 +34,20 @@ export function nativeLocalReady(skill: CloudSkill, local?: LocalSkill): boolean
     && sameNativeReference(local.nativeReference, skill.native_reference));
 }
 
-export function nativeLinkRows(response: SyncPullResponse, locals: LocalSkill[]): CloudSkill[] {
-  return response.skills.map(skill => isNativeSkill(skill) && !nativeLocalReady(skill, locals.find(row => row.name === skill.name))
-    ? { ...skill, status: 'disabled' } : skill);
+/** A pre-native folder (no identity marker, no native state) the cloud now serves
+ * as a native Skill. It stays usable as before until its upgrade write lands. */
+export function pendingLegacyUpgrade(skill: CloudSkill, local: LocalSkill | undefined, state: NotisSyncState): boolean {
+  if (!isNativeSkill(skill) || !local || local.nativeReference || local.cloudId) return false;
+  const previous = previousNativeState(state, skill);
+  return Boolean(previous && !previous.nativeReference);
+}
+
+export function nativeLinkRows(response: SyncPullResponse, locals: LocalSkill[], state?: NotisSyncState): CloudSkill[] {
+  return response.skills.map(skill => {
+    const local = locals.find(row => row.name === skill.name);
+    return isNativeSkill(skill) && !nativeLocalReady(skill, local) && !(state && pendingLegacyUpgrade(skill, local, state))
+      ? { ...skill, status: 'disabled' } : skill;
+  });
 }
 
 export function retainMissingNativeState(previous: NotisSyncState, next: NotisSyncState): NotisSyncState {

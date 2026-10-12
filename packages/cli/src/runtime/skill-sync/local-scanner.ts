@@ -1052,7 +1052,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
 async function replaceSkillDirectoryAtomically(
   skillDir: string,
   populateDir: (stagingDir: string) => Promise<void>,
-  preserve?: { previouslyApplied?: readonly string[]; expectedFolderHash?: string; native?: boolean },
+  preserve?: { previouslyApplied?: readonly string[]; expectedFolderHash?: string; native?: boolean; legacyBaseline?: boolean },
 ): Promise<void> {
   const parentDir = path.dirname(skillDir);
   const skillName = path.basename(skillDir);
@@ -1084,7 +1084,8 @@ async function replaceSkillDirectoryAtomically(
     await populateDir(stagingDir);
 
     if (preserve && (await pathExists(skillDir))) {
-      await preserveUnmanagedFiles(skillDir, stagingDir, preserve.previouslyApplied, preserve.native);
+      await preserveUnmanagedFiles(skillDir, stagingDir, preserve.previouslyApplied,
+        preserve.native && !preserve.legacyBaseline);
     }
 
     if (preserve?.native) {
@@ -1178,7 +1179,7 @@ export async function writeCloudSkillToDisk(
   skill: CloudSkill,
   bundleBytes?: Buffer,
   paths: SkillSyncPaths = DEFAULT_SYNC_PATHS,
-  options: { previouslyApplied?: readonly string[]; expectedFolderHash?: string } = {},
+  options: { previouslyApplied?: readonly string[]; expectedFolderHash?: string; legacyBaseline?: boolean } = {},
 ): Promise<SkillWriteOutcome | false> {
   if (isNativeSkill(skill)) {
     assertNativePull({ skills: [{ ...skill, name: 'native-' + skill.id }], skill_sync_protocol: 2, sync_scope: skill.native_scope,
@@ -1190,7 +1191,9 @@ export async function writeCloudSkillToDisk(
     safeName(skill.name, paths.skillsDir),
   );
   const preserve = { previouslyApplied: options.previouslyApplied, expectedFolderHash: options.expectedFolderHash,
-    native: isNativeSkill(skill) };
+    native: isNativeSkill(skill),
+    // An unchanged legacy folder upgrading in place: shared files take the cloud version.
+    legacyBaseline: isNativeSkill(skill) && options.legacyBaseline === true && options.expectedFolderHash !== undefined };
 
   if (bundleBytes?.length) {
     const bundlePath = path.join(

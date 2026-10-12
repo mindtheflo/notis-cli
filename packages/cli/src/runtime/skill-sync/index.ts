@@ -11,7 +11,7 @@ import type {
 } from "./types";
 import { normalizeAgentTargets } from "./types";
 import { assertNativePull, checkedNativeReference, isNativeSkill, nativeState } from './native-identity';
-import { bindNativeFolders, hasNativeFolderHistory, nativeLinkRows, nativeLocalReady, previousNativeState, retainMissingNativeState } from './native-plan';
+import { bindNativeFolders, hasNativeFolderHistory, nativeLinkRows, nativeLocalReady, pendingLegacyUpgrade, previousNativeState, retainMissingNativeState } from './native-plan';
 import {
   downloadSkillBundle,
   fetchSyncSettings,
@@ -299,6 +299,11 @@ function buildSyncState(
       const localSkill = localSkillMap.get(skill.name);
       const appliedCloudFolderHash = appliedRevisions[skill.name];
       const appliedFileList = appliedFiles[skill.name];
+      if (pendingLegacyUpgrade(skill, localSkill, previousState)) {
+        // Keep the legacy baseline so the upgrade retries; never mark a usable folder unavailable.
+        const { nativeUnavailable: _unavailable, ...previous } = previousNativeState(previousState, skill)!;
+        return [skill.name, { ...previous, verifiedAgentLinks: verifiedAgentLinks[skill.name] ?? {} }];
+      }
       if (isNativeSkill(skill) && !nativeLocalReady(skill, localSkill)) {
         const previous = previousNativeState(previousState, skill);
         return [skill.name, { ...(previous || {
@@ -368,7 +373,7 @@ function buildLocalSymlinkCandidates(
       };
     });
 
-  return [...nativeLinkRows(pullResponse, localSkills), ...localOnlySkills];
+  return [...nativeLinkRows(pullResponse, localSkills, previousState), ...localOnlySkills];
 }
 
 function isEmptySyncState(state: NotisSyncState): boolean {
@@ -428,6 +433,10 @@ async function writePulledSkillsToScopedMirror(
   for (const cloudSkill of selectCloudSkillsToApply(pullResponse.skills)) {
     const local = localSkillMap.get(cloudSkill.name);
     const acknowledged = isNativeSkill(cloudSkill) && local && acknowledgedNative.get(cloudSkill.id) === local.folderHash;
+    // An unchanged pre-native folder has no applied-file record, so the files it shares
+    // with the incoming native Skill are the previous sync's output, not local edits.
+    const legacyBaseline = Boolean(local && pendingLegacyUpgrade(cloudSkill, local, previousState)
+      && previousNativeState(previousState, cloudSkill)?.folderHash === local.folderHash);
     if (!acknowledged && !shouldWriteCloudSkill(cloudSkill, localSkillMap, previousState)) {
       if (isNativeSkill(cloudSkill) && !nativeLocalReady(cloudSkill, local)) {
         failures.push({ name: cloudSkill.name, error: 'Local native Skill changes were retained; resolve the version or identity conflict before using them.' });
@@ -443,6 +452,7 @@ async function writePulledSkillsToScopedMirror(
           // produced locally and survives this one.
           previouslyApplied: previousNativeState(previousState, skill)?.appliedFiles,
           ...(isNativeSkill(skill) && local ? { expectedFolderHash: local.folderHash } : {}),
+          ...(legacyBaseline ? { legacyBaseline } : {}),
         }),
       onWarning: warnSkillSync,
     });
@@ -542,7 +552,7 @@ export async function materializeCloudSkillsForLocalShell(
   }
   if (relinkSkillNames.size > 0) {
     const relinked = await deps.syncSymlinks(
-      nativeLinkRows(pullResponse, finalLocalSkills).filter((skill) => relinkSkillNames.has(skill.name)),
+      nativeLinkRows(pullResponse, finalLocalSkills, previousState).filter((skill) => relinkSkillNames.has(skill.name)),
       syncPaths.skillsDir,
       { ...isolatedLinkOptions(syncPaths), removeUndesired: false },
     );
@@ -580,7 +590,8 @@ export async function materializeCloudSkillsForLocalShell(
   for (const [name, previous] of Object.entries(previousState.skills)) {
     if (!previous.nativeReference && !previous.nativeUnavailable) continue;
     const current = pullResponse.skills.find(skill => skill.id === previous.cloudId);
-    if (!current || !nativeLocalReady(current, finalLocalSkills.find(local => local.name === current.name))) {
+    const local = current && finalLocalSkills.find(row => row.name === current.name);
+    if (!current || (!nativeLocalReady(current, local) && !pendingLegacyUpgrade(current, local, previousState))) {
       removed += await deps.removeAllSymlinksForSkill(name, syncPaths.skillsDir, isolatedLinkOptions(syncPaths));
     }
   }
