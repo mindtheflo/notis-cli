@@ -86,7 +86,7 @@ Live tool schemas own the arguments.
   that lists them or become standalone for the person who binned the Space.
   `bin_entry_in_use` names a Space that still uses one of its records; that Space
   must move, or be deleted from the bin, first.
-- **Remove a member or leave** (Portal Share window; no agent tool): the person
+- **Remove a member or leave** (Portal Share panel, the view's top bar Share; no agent tool): the person
   loses the subtree. Their own resources that the Space uses are kept for the Space
   first. Keep a copy (on by default) gives them a private copy of the pages,
   databases with their rows and Skills they lose, with automations paused, and
@@ -94,9 +94,11 @@ Live tool schemas own the arguments.
   unavailable (see recovery below). The owner cannot be removed and hands
   ownership over before leaving.
 - **Site** (Portal; no agent tool): anyone with the link, signed out. A Space Site is
-  the Share window's "Publish as a site". One record uses its page's Share popover
-  (Create public link, then Shared publicly with Copy link and Stop sharing) or
-  "Publish this page as a site" in the Share window. Visitors reach only declared
+  the Share panel's "Publish as a site" (the view's top bar Share). One record uses
+  "Publish this page as a site" in that panel: a `DocumentPage` with `share` on is
+  listed there while it shows in its own Space's view. A `ShareControl`, or a page
+  shown in another Space's view, keeps its own Share popover (Create public link,
+  then Shared publicly with Copy link and Stop sharing). Visitors reach only declared
   actions and reads. Any paid action or read is billed to the grant issuer, not
   the visitor. The Site never exposes an agent, Skill or automation, and a record
   Site cannot reach sibling records. Turning a Site off denies the next request.

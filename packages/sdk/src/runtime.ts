@@ -317,7 +317,10 @@ export interface NotisDocumentPageProps extends NotisRecordProps {
   actions?: ReactNode;
   /** Extra '...' menu entries (for example a destructive Delete, as Beta's page had). Plain toolbar buttons on hosts without DocumentPage. */
   menuItems?: NotisDocumentPageMenuItem[];
-  /** Show the host Share control (a record Site). Off by default: only Spaces whose records were shared on Beta turn it on. */
+  /**
+   * Offer the record's Site: a row of its Space view's top bar Share panel, or a toolbar Share when the page shows in
+   * another Space's view. Off by default: only Spaces whose records were shared on Beta turn it on.
+   */
   share?: boolean;
   /** Which header parts show. `false` hides the whole header (cover, icon and title). */
   header?: false | { cover?: boolean; icon?: boolean; title?: boolean };
