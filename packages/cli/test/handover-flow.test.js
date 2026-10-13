@@ -2,7 +2,7 @@
  * End-to-end `handover start`: a real git repository with a real origin, a stub
  * /cli_tools, and the actual CLI binary. What this pins down is the contract
  * between the two halves -- that the branch really reaches origin before the
- * hand-over is sent, and that the routing target the user typed is the one that
+ * hand-over is sent, and that the agent the user named is the one that
  * arrives at the server.
  */
 
@@ -15,9 +15,10 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 const CLI = new URL('../bin/notis.js', import.meta.url).pathname;
+const THREADS_TOOL = 'LOCAL_NOTIS_CONTROL_THREADS';
 // Each route the user can type, with the agent it is reported as. The first
 // four are the advertised ones; the rest are older values the CLI still
-// accepts silently and sends as typed (the server maps them).
+// accepts silently and maps to the agent they name.
 const ROUTES = [
   ['auto', 'auto'],
   ['notis', 'notis'],
@@ -28,6 +29,17 @@ const ROUTES = [
   ['codex_local', 'codex'],
   ['claude_local', 'claude'],
 ];
+// How the thread's task names an agent: a plain sentence at its end.
+const AGENT_SENTENCES = {
+  notis: 'Use Notis for this task.',
+  codex: 'Use Codex for this task.',
+  claude: 'Use Claude for this task.',
+};
+const ANY_AGENT_SENTENCE = /Use (Notis|Codex|Claude) for this task\./;
+// Every hand-over names who runs it and how. Tests about something else pass
+// these, and the retry hints repeat them.
+const CHOICES = ['--route', 'codex', '--intelligence', 'medium', '--speed', 'normal'];
+const CHOSEN = '--route codex --intelligence medium --speed normal';
 
 function git(cwd, ...args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8',
@@ -62,6 +74,11 @@ async function withStubServer(handler, run) {
       const parsed = body ? JSON.parse(body) : {};
       calls.push({ path: req.url, body: parsed });
       const response = handler(parsed, req);
+      if (response.drop) {
+        // The connection dies before any answer, as when a network drops.
+        req.socket.destroy();
+        return;
+      }
       res.writeHead(response.status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(response.body));
     });
@@ -125,30 +142,36 @@ function runCli(args, { cwd, apiBase }) {
 // stub answers with exactly that shape -- not a wrapper around it.
 //
 // `handover start` makes two calls: a schema preflight (so it can refuse before
-// committing anything) and then the hand-over itself.
+// committing anything) and then the thread create itself.
 const SCHEMA_TOOL = 'COMPOSIO_GET_TOOL_SCHEMAS';
+const REQUEST_ID = '6f1c2e8a-4b7d-5c3e-9a1f-2d8b7e6c5a4f';
+
+const schemaResponse = {
+  status: 200,
+  body: { tools: [{ name: THREADS_TOOL, parameters: { type: 'object' } }] },
+};
 
 const okHandover = (payload) => {
   if (payload?.tool_name === SCHEMA_TOOL) {
-    return {
-      status: 200,
-      body: { tools: [{ name: 'LOCAL_NOTIS_HAND_OVER', parameters: { type: 'object' } }] },
-    };
+    return schemaResponse;
   }
   return {
     status: 200,
     body: {
-      status: 'success',
-      message: 'Handed over.',
+      status: 'accepted',
+      request_id: REQUEST_ID,
+      row_id: 'row-1',
+      thread_id: 'thread-1',
       interaction_id: 'int-1',
-      agent_routing: payload?.arguments?.agent_routing || 'notis',
+      title: payload?.arguments?.title,
+      request_key: payload?.arguments?.request_id,
     },
   };
 };
 
-/** The hand-over call, not the preflight that precedes it. */
+/** The thread create, not the preflight that precedes it. */
 const handoverCall = (calls) =>
-  calls.find((c) => c.path === '/cli_tools' && c.body.tool_name === 'LOCAL_NOTIS_HAND_OVER');
+  calls.find((c) => c.path === '/cli_tools' && c.body.tool_name === THREADS_TOOL);
 
 test('handover start pushes the branch and forwards each routing target', async () => {
   const root = mkdtempSync(join(tmpdir(), 'notis-handover-flow-'));
@@ -163,7 +186,7 @@ test('handover start pushes the branch and forwards each routing target', async 
 
       const result = await withStubServer(okHandover, async (apiBase, calls) => {
         const run = await runCli(
-          ['handover', 'start', `do the ${route} work`, '--route', route],
+          ['handover', 'start', `do the ${route} work`, '--route', route, '--intelligence', 'high', '--speed', 'normal'],
           { cwd: workDir, apiBase },
         );
         return { run, calls };
@@ -171,13 +194,35 @@ test('handover start pushes the branch and forwards each routing target', async 
 
       assert.equal(result.run.parsed?.ok, true, `${route}: ${result.run.stderr}`);
       assert.equal(result.run.parsed.data.agent_routing, agent);
+      assert.equal(result.run.parsed.data.intelligence, 'high');
+      assert.equal(result.run.parsed.data.speed, 'normal');
       assert.equal(result.run.parsed.data.branch, 'feat/auth');
+      assert.equal(result.run.parsed.data.request_id, REQUEST_ID);
+      assert.equal(result.run.parsed.data.thread_id, 'thread-1');
 
       const call = handoverCall(result.calls);
       assert.ok(call, `${route}: no hand-over call`);
-      assert.equal(call.body.tool_name, 'LOCAL_NOTIS_HAND_OVER');
-      assert.equal(call.body.arguments.agent_routing, route);
+      assert.equal(call.body.arguments.action, 'create');
+      // The intelligence and speed are thread settings. The agent is not: a
+      // named one is a sentence at the end of the task, and auto adds none and
+      // leaves that choice to Notis.
+      assert.deepEqual(call.body.arguments.settings, { mode: 'high', speed: 'normal' });
+      if (agent === 'auto') {
+        assert.doesNotMatch(call.body.arguments.instructions, ANY_AGENT_SENTENCE);
+      } else {
+        assert.ok(
+          call.body.arguments.instructions.endsWith(`\n\n${AGENT_SENTENCES[agent]}`),
+          `${route}: the task must end by naming ${agent}`,
+        );
+      }
+      assert.equal(call.body.arguments.title, `do the ${route} work`);
       assert.ok(call.body.idempotency_key, 'a mutating call must carry an idempotency key');
+      // One key names the hand-over end to end, so a retry finds the same thread.
+      assert.equal(call.body.arguments.request_id, `handover:${call.body.idempotency_key}`);
+      assert.ok(
+        result.run.parsed.hints.some((h) => h.command === `notis handover status ${REQUEST_ID}`),
+        'the way to follow the hand-over must be offered',
+      );
 
       // The branch has to exist on origin before the agent is told about it.
       const remoteHead = git(originDir, 'rev-parse', 'refs/heads/feat/auth');
@@ -188,7 +233,34 @@ test('handover start pushes the branch and forwards each routing target', async 
   }
 });
 
-test('without --route the hand-over goes out as auto, so Notis picks the agent', async () => {
+test('a missing choice stops the hand-over before anything is committed, pushed or sent', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-handover-choices-'));
+  try {
+    const { originDir, workDir } = makeRepoWithOrigin(root);
+    writeFileSync(join(workDir, 'dirty.txt'), 'unsaved\n');
+
+    const { run, calls } = await withStubServer(okHandover, async (apiBase, calls) => ({
+      run: await runCli(['handover', 'start', 'do the work', '--route', 'codex'], { cwd: workDir, apiBase }),
+      calls,
+    }));
+
+    assert.equal(run.parsed.ok, false);
+    assert.equal(run.parsed.error.code, 'usage_error');
+    assert.deepEqual(run.parsed.error.details.missing, ['--intelligence', '--speed']);
+    assert.deepEqual(calls.filter((c) => c.path === '/cli_tools'), [], 'not even the preflight runs');
+    assert.notEqual(git(workDir, 'status', '--porcelain'), '', 'the tree must be left dirty');
+    const onOrigin = spawnSync(
+      'git',
+      ['-C', originDir, 'rev-parse', '--verify', '--quiet', 'refs/heads/feat/auth'],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(onOrigin.status, 0, 'the branch must never reach origin');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('auto leaves the agent and the intelligence to Notis, and still sends the speed', async () => {
   const root = mkdtempSync(join(tmpdir(), 'notis-handover-auto-'));
   try {
     const { workDir } = makeRepoWithOrigin(root);
@@ -197,14 +269,24 @@ test('without --route the hand-over goes out as auto, so Notis picks the agent',
     git(workDir, 'commit', '-q', '-m', 'work');
 
     const result = await withStubServer(okHandover, async (apiBase, calls) => {
-      const run = await runCli(['handover', 'start', 'do the work'], { cwd: workDir, apiBase });
+      const run = await runCli(
+        ['handover', 'start', 'do the work', '--route', 'auto', '--intelligence', 'auto', '--speed', 'normal'],
+        { cwd: workDir, apiBase },
+      );
       return { run, calls };
     });
 
     assert.equal(result.run.parsed?.ok, true, result.run.stderr);
-    assert.equal(handoverCall(result.calls).body.arguments.agent_routing, 'auto');
+    const sent = handoverCall(result.calls).body.arguments;
+    assert.deepEqual(sent.settings, { auto: true, speed: 'normal' });
+    assert.doesNotMatch(sent.instructions, ANY_AGENT_SENTENCE);
     assert.equal(result.run.parsed.data.agent_routing, 'auto');
-    assert.match(result.run.parsed.human_summary, /Notis, which picks the agent/);
+    assert.equal(result.run.parsed.data.intelligence, 'auto');
+    assert.equal(result.run.parsed.data.speed, 'normal');
+    assert.match(
+      result.run.parsed.human_summary,
+      /over to Notis, which picks the agent \(Notis picks the intelligence, normal speed; new branch from it\)\./,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -219,24 +301,28 @@ test('branch mode reaches the agent as an explicit instruction', async () => {
     git(workDir, 'commit', '-q', '-m', 'work');
 
     const same = await withStubServer(okHandover, async (apiBase, calls) => {
-      await runCli(['handover', 'start', 'finish it', '--branch-mode', 'same'], { cwd: workDir, apiBase });
+      await runCli(['handover', 'start', 'finish it', '--branch-mode', 'same', ...CHOICES], { cwd: workDir, apiBase });
       return handoverCall(calls);
     });
     // Quoted: the branch is interpolated into a command line the agent runs.
-    assert.match(same.body.arguments.instruction, /--continue-branch 'feat\/auth'/);
-    assert.match(same.body.arguments.instruction, /Work ON branch feat\/auth itself/);
-    assert.match(same.body.arguments.instruction, /never force-push/);
+    assert.match(same.body.arguments.instructions, /--continue-branch 'feat\/auth'/);
+    assert.match(same.body.arguments.instructions, /Work ON branch feat\/auth itself/);
+    assert.match(same.body.arguments.instructions, /never force-push/);
 
     const fresh = await withStubServer(okHandover, async (apiBase, calls) => {
-      await runCli(['handover', 'start', 'start beside it'], { cwd: workDir, apiBase });
+      await runCli(
+        ['handover', 'start', 'start beside it', '--route', 'notis', '--intelligence', 'low', '--speed', 'flex'],
+        { cwd: workDir, apiBase },
+      );
       return handoverCall(calls);
     });
-    assert.match(fresh.body.arguments.instruction, /--base 'feat\/auth'/);
-    assert.match(fresh.body.arguments.instruction, /Cut a NEW branch/);
+    assert.match(fresh.body.arguments.instructions, /--base 'feat\/auth'/);
+    assert.match(fresh.body.arguments.instructions, /Cut a NEW branch/);
+    assert.deepEqual(fresh.body.arguments.settings, { mode: 'low', speed: 'flex' });
 
     // Both modes must tell the receiving agent not to hand the task on again.
     for (const call of [same, fresh]) {
-      assert.match(call.body.arguments.instruction, /do not run `notis handover` yourself/i);
+      assert.match(call.body.arguments.instructions, /do not run `notis handover` yourself/i);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -255,7 +341,7 @@ test('uncommitted work is committed and pushed rather than left behind', async (
     writeFileSync(join(workDir, 'README.md'), '# edited\n');
 
     const call = await withStubServer(okHandover, async (apiBase, calls) => {
-      const run = await runCli(['handover', 'start', 'keep my work'], { cwd: workDir, apiBase });
+      const run = await runCli(['handover', 'start', 'keep my work', ...CHOICES], { cwd: workDir, apiBase });
       assert.equal(run.parsed?.ok, true, run.stderr);
       assert.ok(run.parsed.data.wip_commit, 'a wip commit should be reported');
       return handoverCall(calls);
@@ -282,7 +368,7 @@ test('the automatic wip commit respects repository pre-commit hooks', async () =
     chmodSync(hook, 0o755);
 
     const { run, calls } = await withStubServer(okHandover, async (apiBase, calls) => ({
-      run: await runCli(['handover', 'start', 'sensitive task text'], { cwd: workDir, apiBase }),
+      run: await runCli(['handover', 'start', 'sensitive task text', ...CHOICES], { cwd: workDir, apiBase }),
       calls,
     }));
 
@@ -311,7 +397,7 @@ test('automatic wip refuses sensitive files even without repository hooks', asyn
     writeFileSync(join(workDir, '..secret'), 'https://user:password@host.example\n');
 
     const { run, calls } = await withStubServer(okHandover, async (apiBase, calls) => ({
-      run: await runCli(['handover', 'start', 'do it'], { cwd: workDir, apiBase }),
+      run: await runCli(['handover', 'start', 'do it', ...CHOICES], { cwd: workDir, apiBase }),
       calls,
     }));
 
@@ -339,7 +425,7 @@ test('--no-wip refuses instead of committing for you', async () => {
     writeFileSync(join(workDir, 'dirty.txt'), 'unsaved\n');
 
     const { run, calls } = await withStubServer(okHandover, async (apiBase, calls) => ({
-      run: await runCli(['handover', 'start', 'x', '--no-wip'], { cwd: workDir, apiBase }),
+      run: await runCli(['handover', 'start', 'x', '--no-wip', ...CHOICES], { cwd: workDir, apiBase }),
       calls,
     }));
 
@@ -361,21 +447,28 @@ test('a server-side refusal surfaces as a CLI error, not a false success', async
     git(workDir, 'commit', '-q', '-m', 'work');
 
     const refuse = (payload) => (payload?.tool_name === SCHEMA_TOOL
-      ? { status: 200, body: { tools: [{ name: 'LOCAL_NOTIS_HAND_OVER' }] } }
+      ? schemaResponse
       : {
         status: 200,
         body: {
           status: 'error',
-          error_code: 'handover_not_available_here',
-          message: 'Hand-over runs only from a signed-in Notis CLI or MCP client.',
+          error_code: 'thread_control_intake_conflict',
+          http_status: 409,
+          message: 'That request id was already used for different instructions.',
         },
       });
 
     const run = await withStubServer(refuse, async (apiBase) =>
-      runCli(['handover', 'start', 'x'], { cwd: workDir, apiBase }));
+      runCli(['handover', 'start', 'x', ...CHOICES], { cwd: workDir, apiBase }));
 
     assert.equal(run.parsed.ok, false);
-    assert.equal(run.parsed.error.code, 'handover_not_available_here');
+    assert.equal(run.parsed.error.code, 'thread_control_intake_conflict');
+    assert.match(run.parsed.error.message, /already used/);
+    // A refusal is final: asking again, with any key, cannot change the answer.
+    assert.ok(
+      !run.parsed.hints.some((h) => (h.command || '').includes('handover start')),
+      `a refusal must not offer a retry: ${JSON.stringify(run.parsed.hints)}`,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -393,12 +486,12 @@ test('a hostile branch name cannot inject into the command the agent runs', asyn
     git(workDir, 'commit', '-q', '-m', 'work');
 
     const call = await withStubServer(okHandover, async (apiBase, calls) => {
-      const run = await runCli(['handover', 'start', 'do it'], { cwd: workDir, apiBase });
+      const run = await runCli(['handover', 'start', 'do it', ...CHOICES], { cwd: workDir, apiBase });
       assert.equal(run.parsed?.ok, true, run.stderr);
       return handoverCall(calls);
     });
 
-    const line = call.body.arguments.instruction
+    const line = call.body.arguments.instructions
       .split('\n')
       .find((l) => l.includes('workspace.sh new'));
     // The whole ref sits inside one single-quoted argument, so the shell sees
@@ -430,7 +523,7 @@ test('a token embedded in the origin url never reaches the instruction', async (
       `https://x-access-token:${FAKE_TOKEN}@github.com/acme/widgets.git`);
 
     const call = await withStubServer(okHandover, async (apiBase, calls) => {
-      const run = await runCli(['handover', 'start', 'do it'], { cwd: workDir, apiBase });
+      const run = await runCli(['handover', 'start', 'do it', ...CHOICES], { cwd: workDir, apiBase });
       assert.equal(run.parsed?.ok, true, run.stderr);
       return handoverCall(calls);
     });
@@ -438,7 +531,7 @@ test('a token embedded in the origin url never reaches the instruction', async (
     const sent = JSON.stringify(call.body);
     assert.ok(!sent.includes(FAKE_TOKEN), 'the token must not be sent anywhere');
     assert.doesNotMatch(sent, /x-access-token/);
-    assert.match(call.body.arguments.instruction, /Repository: acme\/widgets/);
+    assert.match(call.body.arguments.instructions, /Repository: acme\/widgets/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -456,7 +549,7 @@ test('a wip commit is disclosed when the push then fails', async () => {
     rmSync(originDir, { recursive: true, force: true });
 
     const { run, calls } = await withStubServer(okHandover, async (apiBase, calls) => ({
-      run: await runCli(['handover', 'start', 'x'], { cwd: workDir, apiBase }),
+      run: await runCli(['handover', 'start', 'x', ...CHOICES], { cwd: workDir, apiBase }),
       calls,
     }));
 
@@ -490,7 +583,7 @@ test('a hand-over the account cannot make commits and pushes nothing', async () 
     });
 
     const { run, calls } = await withStubServer(gated, async (apiBase, calls) => ({
-      run: await runCli(['handover', 'start', 'x'], { cwd: workDir, apiBase }),
+      run: await runCli(['handover', 'start', 'x', ...CHOICES], { cwd: workDir, apiBase }),
       calls,
     }));
 
@@ -505,6 +598,193 @@ test('a hand-over the account cannot make commits and pushes nothing', async () 
       { encoding: 'utf8' },
     );
     assert.notEqual(onOrigin.status, 0, 'the branch must never reach origin when refused');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an unconfirmed start asks to check its status before handing it over again', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-handover-unknown-'));
+  try {
+    const { workDir } = makeRepoWithOrigin(root);
+    writeFileSync(join(workDir, 'a.txt'), 'a\n');
+    git(workDir, 'add', '-A');
+    git(workDir, 'commit', '-q', '-m', 'work');
+
+    const unknown = (payload) => (payload?.tool_name === SCHEMA_TOOL
+      ? schemaResponse
+      : {
+        status: 200,
+        body: {
+          status: 'unknown',
+          error_code: 'thread_operation_unconfirmed',
+          request_ids: [REQUEST_ID],
+          request_key: payload?.arguments?.request_id,
+        },
+      });
+
+    const { run, calls } = await withStubServer(unknown, async (apiBase, calls) => ({
+      run: await runCli(
+        [
+          'handover', 'start', 'finish it', '--branch-mode', 'same',
+          '--route', 'codex_cloud', '--intelligence', 'high', '--speed', 'priority',
+        ],
+        { cwd: workDir, apiBase },
+      ),
+      calls,
+    }));
+
+    assert.equal(run.parsed.ok, false);
+    assert.equal(run.parsed.error.code, 'handover_unconfirmed');
+    assert.match(run.parsed.error.message, /check its status/);
+    const key = handoverCall(calls).body.idempotency_key;
+    assert.equal(run.parsed.error.details.request_key, `handover:${key}`);
+    assert.deepEqual(run.parsed.error.details.request_ids, [REQUEST_ID]);
+    // The server keeps this answer under the key and replays it, so the same
+    // key can never settle it: check the request, and start a new one only if
+    // it never began.
+    const commands = run.parsed.hints.map((h) => h.command || '');
+    const status = commands.indexOf(`notis handover status ${REQUEST_ID}`);
+    // An older route value comes back as the agent it names.
+    const fresh = commands.indexOf(
+      "notis handover start 'finish it' --route codex --intelligence high --speed priority --branch-mode same",
+    );
+    assert.ok(status >= 0 && fresh > status, `status first, then a fresh start: ${JSON.stringify(commands)}`);
+    assert.ok(!commands.some((c) => c.startsWith('notis --idempotency-key')), 'the same key would replay this answer');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an uncertain failure asks to check the status first, never the same key', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-handover-5xx-'));
+  try {
+    const { workDir } = makeRepoWithOrigin(root);
+    writeFileSync(join(workDir, 'a.txt'), 'a\n');
+    git(workDir, 'add', '-A');
+    git(workDir, 'commit', '-q', '-m', 'work');
+
+    // A server error, and the cached answer for a call whose outcome is
+    // unknown: the gateway replays both to the same key.
+    const failures = [
+      { status: 502, body: { error: { code: 'bad_gateway', message: 'Upstream went away.' } } },
+      {
+        status: 409,
+        body: {
+          error: { code: 'idempotency_outcome_unknown', message: 'The call may have run.' },
+          hints: [{ reason: 'Verify the result in the connected service.' }],
+        },
+      },
+    ];
+    for (const failure of failures) {
+      const failed = await withStubServer(
+        (payload) => (payload?.tool_name === SCHEMA_TOOL ? schemaResponse : failure),
+        async (apiBase) => runCli(['handover', 'start', 'x', ...CHOICES], { cwd: workDir, apiBase }),
+      );
+      const label = failure.body.error.code;
+      assert.equal(failed.parsed.ok, false, label);
+      assert.match(failed.parsed.error.details.request_key, /^handover:/, label);
+      const commands = failed.parsed.hints.map((h) => h.command || '');
+      const status = commands.indexOf('notis handover status');
+      const fresh = commands.indexOf(`notis handover start 'x' ${CHOSEN}`);
+      assert.ok(status >= 0 && fresh > status, `${label}: status first, then a fresh start: ${JSON.stringify(commands)}`);
+      assert.ok(!commands.some((c) => c.startsWith('notis --idempotency-key')), `${label}: the same key replays it`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a start that is still running, or whose answer was lost, is retried with the same key', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-handover-inprogress-'));
+  try {
+    const { workDir } = makeRepoWithOrigin(root);
+    writeFileSync(join(workDir, 'a.txt'), 'a\n');
+    git(workDir, 'add', '-A');
+    git(workDir, 'commit', '-q', '-m', 'work');
+
+    const busy = {
+      status: 409,
+      body: {
+        error: { code: 'idempotency_in_progress', message: 'This call is still running.' },
+        hints: [{ reason: 'Retry with the same idempotency key after the in-progress call completes.' }],
+      },
+    };
+    let key = null;
+    for (const [failure, code] of [[busy, 'conflict'], [{ drop: true }, 'network_error']]) {
+      const failed = await withStubServer(
+        (payload) => (payload?.tool_name === SCHEMA_TOOL ? schemaResponse : failure),
+        async (apiBase) => runCli(['handover', 'start', 'x', ...CHOICES], { cwd: workDir, apiBase }),
+      );
+      assert.equal(failed.parsed.ok, false, code);
+      assert.equal(failed.parsed.error.code, code);
+      key = failed.parsed.error.details.request_key.slice('handover:'.length);
+      const commands = failed.parsed.hints.map((h) => h.command || '');
+      assert.ok(
+        commands.includes(`notis --idempotency-key '${key}' handover start 'x' ${CHOSEN}`),
+        `${code}: the same-key retry must be offered: ${JSON.stringify(commands)}`,
+      );
+      assert.ok(!commands.some((c) => c.startsWith('notis handover start')), `${code}: a new request could start it twice`);
+    }
+
+    // Running that retry sends the same request id, which the server answers
+    // with the thread the first attempt started.
+    const call = await withStubServer(okHandover, async (apiBase, calls) => {
+      const run = await runCli(
+        ['--idempotency-key', key, 'handover', 'start', 'x', ...CHOICES],
+        { cwd: workDir, apiBase },
+      );
+      assert.equal(run.parsed?.ok, true, run.stderr);
+      return handoverCall(calls);
+    });
+    assert.equal(call.body.idempotency_key, key);
+    assert.equal(call.body.arguments.request_id, `handover:${key}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('handover status reads one request, or the running threads', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-handover-status-'));
+  try {
+    const answer = (payload) => (payload?.arguments?.action === 'request'
+      ? {
+        status: 200,
+        body: {
+          status: 'success',
+          request_id: REQUEST_ID,
+          state: 'completed',
+          events: [
+            { id: 1, kind: 'thread_progress', body: { message: { text: 'Opened a draft PR.' } }, terminal: false },
+            { id: 2, kind: 'thread_result', body: { message: { text: 'Done: tests pass.' } }, terminal: true },
+          ],
+          has_more: false,
+        },
+      }
+      : { status: 200, body: { status: 'success', threads: [{ id: 'row-1', title: 'fix the tests' }] } });
+
+    const { one, all, calls } = await withStubServer(answer, async (apiBase, calls) => ({
+      one: await runCli(['handover', 'status', REQUEST_ID], { cwd: root, apiBase }),
+      all: await runCli(['handover', 'status'], { cwd: root, apiBase }),
+      calls,
+    }));
+
+    assert.equal(one.parsed?.ok, true, one.stderr);
+    assert.equal(one.parsed.data.state, 'completed');
+    assert.match(one.parsed.human_summary, /finished/);
+    assert.equal(all.parsed?.ok, true, all.stderr);
+    assert.deepEqual(all.parsed.data.threads, [{ id: 'row-1', title: 'fix the tests' }]);
+
+    const reads = calls.filter((c) => c.body.tool_name === THREADS_TOOL);
+    assert.deepEqual(reads.map((c) => c.body.arguments), [
+      { action: 'request', request_id: REQUEST_ID },
+      { action: 'list', filters: { activity: 'running' }, limit: 20 },
+    ]);
+    // The server asks every call to this tool for a key; reads must never
+    // share one, or the second would replay the first's cached answer.
+    const keys = reads.map((c) => c.body.idempotency_key);
+    assert.ok(keys.every(Boolean), 'each read carries a key');
+    assert.notEqual(keys[0], keys[1]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

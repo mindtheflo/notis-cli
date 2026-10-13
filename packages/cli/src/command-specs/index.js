@@ -19,7 +19,7 @@ export const GROUP_SUMMARIES = {
   spaces: 'Build independent Spaces and their declared capabilities.',
   apps: 'Develop, deploy, and submit Notis Apps.',
   agents: 'Install Notis context into local coding agents.',
-  handover: 'Hand the branch you are on to a Notis agent, hosted or your own Codex/Claude.',
+  handover: 'Hand the branch you are on to a Notis agent, hosted or Codex/Claude in the cloud.',
   tools: 'Discover and execute generic tools exposed through Notis.',
   skills: 'List, edit and link Notis Skills, and keep local-agent skills synchronized.',
   profile: 'Switch between signed-in accounts and their API endpoints.',

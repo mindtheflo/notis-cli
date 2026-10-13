@@ -169,7 +169,7 @@ Save self-contained HTML pages and reports in Notis Notes with the Save HTML Ski
 
 ## Hand-over
 
-Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. By default Notis picks the agent (\`--route auto\`); \`--route notis\`, \`--route codex\` or \`--route claude\` names one instead. \`--branch-mode same\` makes the agent commit onto your branch; the default cuts a new branch from it.
+Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. The caller chooses who runs it and how from the user's words and passes all three: \`--route\` (notis, codex or claude), \`--intelligence\` (low, medium or high) and \`--speed\` (normal, priority or flex, flex on Notis only). None has a default; \`auto\` leaves the agent or the intelligence to Notis, only when the user asks for that. \`--branch-mode same\` makes the agent commit onto your branch; the default cuts a new branch from it. The hand-over starts a Notis thread, shown in the Manager; follow it with \`notis handover status <request-id>\`. When a start cannot say whether the work began, check \`notis handover status\` before handing it over again.
 
 ${handoverSpecs.map(renderCommandBlock).join('\n')}
 

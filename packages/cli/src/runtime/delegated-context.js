@@ -5,11 +5,11 @@
  * is already running has no business handing the same work back to Notis, and
  * nothing about the loop it would create is self-limiting.
  *
- * This is the polite half of the guard. The server refuses the same call unless
- * it carries a purpose-scoped CLI/MCP OAuth token, which a delegated runtime
- * never has -- that is the half that actually holds. What this adds is a clear
- * message at the point of the mistake, instead of a permission error the agent
- * will try to work around.
+ * The guard covers the friendly command only. Agents start and steer threads
+ * on purpose through `LOCAL_NOTIS_CONTROL_THREADS`, so `notis tools exec` is
+ * not refused here and the server applies no extra check. What this adds is a
+ * clear message at the point of the common mistake: an agent running the
+ * hand-over its own instructions describe.
  */
 
 import { existsSync } from 'node:fs';
@@ -49,20 +49,4 @@ export function assertNotDelegated(commandLabel, env = process.env) {
       { message: 'If you are the agent: just do the work here, in this workspace.' },
     ],
   });
-}
-
-/**
- * Tools that hand work to a Notis agent, by canonical name.
- *
- * `notis handover` is not the only way to reach these: `notis tools exec` takes
- * any tool name, and `tools exec-parallel` takes a list of them. Guarding only
- * the friendly command would leave the escape hatch it exists to wrap.
- */
-export const HANDOVER_TOOL_NAMES = new Set(['LOCAL_NOTIS_HAND_OVER']);
-
-export function assertToolNotDelegated(toolName, env = process.env) {
-  if (!HANDOVER_TOOL_NAMES.has(String(toolName || '').toUpperCase())) {
-    return;
-  }
-  assertNotDelegated(`tools exec ${toolName}`, env);
 }

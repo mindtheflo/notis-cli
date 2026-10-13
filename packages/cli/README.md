@@ -863,39 +863,37 @@ Save self-contained HTML pages and reports in Notis Notes with the Save HTML Ski
 
 ## Hand-over
 
-Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. By default Notis picks the agent (`--route auto`); `--route notis`, `--route codex` or `--route claude` names one instead. `--branch-mode same` makes the agent commit onto your branch; the default cuts a new branch from it.
+Give the branch you are on to a Notis agent, which continues the work in a git worktree on the Notis cloud computer. The caller chooses who runs it and how from the user's words and passes all three: `--route` (notis, codex or claude), `--intelligence` (low, medium or high) and `--speed` (normal, priority or flex, flex on Notis only). None has a default; `auto` leaves the agent or the intelligence to Notis, only when the user asks for that. `--branch-mode same` makes the agent commit onto your branch; the default cuts a new branch from it. The hand-over starts a Notis thread, shown in the Manager; follow it with `notis handover status <request-id>`. When a start cannot say whether the work began, check `notis handover status` before handing it over again.
 
 ### `npx --package @notis_ai/cli@latest -- notis handover start <task>`
 
 Hand the current branch to a Notis agent and keep working.
 
-When to use: Use this when you want Notis to continue work on the branch you are on -- long refactors, test fixing, or anything that should keep running after you close the laptop. Notis picks the agent unless you name one with --route.
+When to use: Use this when you want Notis to continue work on the branch you are on -- long refactors, test fixing, or anything that should keep running after you close the laptop. Choose the agent, intelligence and speed yourself from the user's words, even loose ones ("get Claude on it", "this one is tricky", "no rush"), and pass all three; with no agent named, codex for code work. Use auto only when the user asks Notis to pick.
 
 Options:
+- `--route <agent>` — Required. Which agent runs it: notis, codex or claude, or auto only when the user asks Notis to pick.
+- `--intelligence <level>` — Required. low (quick, simple tasks), medium (most multi-step work and coding), high (hard reasoning, investigations, complex code), or auto only when the user asks Notis to pick.
+- `--speed <speed>` — Required. normal (the usual choice), priority (faster, costs more; for Codex or Claude only when the user asks for their fast mode) or flex (cheaper and slower, Notis only).
 - `--branch-mode <mode>` — same = the agent commits onto your branch. new = the agent cuts a new branch from it (default).
-- `--route <target>` — Which agent runs it: auto (default, Notis picks the agent), notis, codex or claude.
 - `--repo <slug>` — Configured repository slug on the cloud computer, when you know it.
 - `--no-wip` — Refuse on a dirty tree instead of committing the changes first.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis handover start "fix the failing auth tests"`
-- `npx --package @notis_ai/cli@latest -- notis handover start "finish the migration" --branch-mode same --route codex`
-- `npx --package @notis_ai/cli@latest -- notis handover start "add integration tests" --route claude`
-- `npx --package @notis_ai/cli@latest -- notis handover start "review and clean up this branch" --route notis`
+- `npx --package @notis_ai/cli@latest -- notis handover start "fix the failing auth tests" --route codex --intelligence medium --speed normal`
+- `npx --package @notis_ai/cli@latest -- notis handover start "finish the migration" --branch-mode same --route codex --intelligence high --speed normal`
+- `npx --package @notis_ai/cli@latest -- notis handover start "add integration tests" --route claude --intelligence medium --speed normal`
+- `npx --package @notis_ai/cli@latest -- notis handover start "review and clean up this branch" --route notis --intelligence low --speed flex`
 
-### `npx --package @notis_ai/cli@latest -- notis handover status`
+### `npx --package @notis_ai/cli@latest -- notis handover status [request-id]`
 
-Show the coding-agent threads Notis is running for you.
+Follow a hand-over, or list the work Notis is running for you.
 
-When to use: Use this after a hand-over to see whether the agent is still working.
-
-Options:
-- `--provider <provider>` — Filter to codex or claude_code.
-- `--refresh` — Force a live refresh instead of cached state.
+When to use: Use this after a hand-over. Pass the request_id `handover start` returned to read its progress and result; with no id it lists the threads still running.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis handover status`
-- `npx --package @notis_ai/cli@latest -- notis handover status --provider codex --refresh`
+- `npx --package @notis_ai/cli@latest -- notis handover status 6f1c2e8a-4b7d-5c3e-9a1f-2d8b7e6c5a4f`
 
 
 ## Generic Tools

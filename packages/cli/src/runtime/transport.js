@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { dirname } from 'node:path';
 import { CliError, EXIT_CODES } from './errors.js';
-import { delegatedContextReason } from './delegated-context.js';
 import {
   credentialIsExpired,
   getJwtExpiration,
@@ -448,10 +447,6 @@ export async function callTool({
       cwd: process.cwd(),
       agent_mode: runtime.agentMode,
       cli_version: runtime.cliVersion,
-      // Reported so the server can refuse work-handing tools from a run Notis
-      // is itself driving. Advisory -- a determined agent can unset the markers
-      // -- so the server treats it as one layer, not the whole guard.
-      ...(delegatedContextReason() ? { delegated_context: true } : {}),
       ...(runtime.debugEntitlementOverride
         ? { debug_entitlement_override: runtime.debugEntitlementOverride }
         : {}),

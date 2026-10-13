@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { assertToolNotDelegated, delegatedContextReason } from '../src/runtime/delegated-context.js';
+import { delegatedContextReason } from '../src/runtime/delegated-context.js';
 import { inspectRepository, parseRemoteUrl } from '../src/runtime/git.js';
 import { COMMAND_SPECS, GROUP_SUMMARIES } from '../src/command-specs/index.js';
 
@@ -58,17 +58,43 @@ test('handover commands are registered under their own group', () => {
   assert.ok(GROUP_SUMMARIES.handover, 'the group needs a summary for help output');
 });
 
-test('handover start advertises auto, notis, codex and claude, and nothing older', () => {
+test('handover start asks for the agent, intelligence and speed, and shows nothing older', () => {
   const spec = COMMAND_SPECS.find((s) => s.command_path.join(' ') === 'handover start');
-  const route = spec.args_schema.options.find((o) => o.flags.startsWith('--route'));
-  for (const target of ['auto', 'notis', 'codex', 'claude']) {
-    assert.match(route.description, new RegExp(`\\b${target}\\b`), `--route must document ${target}`);
+  const option = (flag) => spec.args_schema.options.find((o) => o.flags.startsWith(flag));
+  const choices = {
+    '--route': ['notis', 'codex', 'claude', 'auto'],
+    '--intelligence': ['low', 'medium', 'high', 'auto'],
+    '--speed': ['normal', 'priority', 'flex'],
+  };
+  for (const [flag, values] of Object.entries(choices)) {
+    // Required, so the caller turns the user's words into a choice instead of
+    // leaving it to the Manager.
+    assert.match(option(flag).description, /^Required\./, `${flag} must say it is required`);
+    for (const value of values) {
+      assert.match(option(flag).description, new RegExp(`\\b${value}\\b`), `${flag} must document ${value}`);
+    }
+  }
+  assert.match(option('--speed').description, /for Codex or Claude only when the user asks for their fast mode/);
+  assert.match(spec.when_to_use, /from the user's words/);
+  for (const example of spec.examples) {
+    for (const flag of Object.keys(choices)) {
+      assert.ok(example.includes(` ${flag} `), `${example} must name ${flag}`);
+    }
   }
   // The older values still work (see handover-flow.test.js) but are never shown.
-  const shown = [route.description, spec.when_to_use, spec.output_schema, ...spec.examples].join('\n');
+  const shown = [
+    ...spec.args_schema.options.map((o) => o.description), spec.when_to_use, spec.output_schema, ...spec.examples,
+  ].join('\n');
   assert.doesNotMatch(shown, /codex_cloud|claude_cloud|codex_local|claude_local/);
   assert.equal(spec.mutates, true);
-  assert.equal(spec.backend_call.name, 'LOCAL_NOTIS_HAND_OVER');
+  assert.equal(spec.backend_call.name, 'LOCAL_NOTIS_CONTROL_THREADS');
+});
+
+test('handover status reads threads through the same tool', () => {
+  const spec = COMMAND_SPECS.find((s) => s.command_path.join(' ') === 'handover status');
+  assert.equal(spec.mutates, false);
+  assert.equal(spec.backend_call.name, 'LOCAL_NOTIS_CONTROL_THREADS');
+  assert.deepEqual(spec.args_schema.arguments.map((a) => a.key), ['requestId']);
 });
 
 test('a delegated context is detected from each marker Notis sets', () => {
@@ -95,14 +121,46 @@ test('handover start refuses inside a Notis-delegated run', () => {
   }
 });
 
-test('handover start validates route and branch mode before touching git', () => {
+test('handover start validates every choice and the branch mode before touching git', () => {
   const badRoute = runCli(['handover', 'start', 'x', '--route', 'gpt5']);
   assert.equal(badRoute.parsed.error.code, 'usage_error');
-  assert.match(badRoute.parsed.error.message, /--route must be one of: auto, notis, codex, claude$/);
+  assert.match(badRoute.parsed.error.message, /--route must be one of: notis, codex, claude, auto$/);
+
+  const badIntelligence = runCli(['handover', 'start', 'x', '--intelligence', 'ultra']);
+  assert.equal(badIntelligence.parsed.error.code, 'usage_error');
+  assert.match(badIntelligence.parsed.error.message, /--intelligence must be one of: low, medium, high, auto$/);
+
+  const badSpeed = runCli(['handover', 'start', 'x', '--speed', 'turbo']);
+  assert.equal(badSpeed.parsed.error.code, 'usage_error');
+  assert.match(badSpeed.parsed.error.message, /--speed must be one of: normal, priority, flex$/);
 
   const badMode = runCli(['handover', 'start', 'x', '--branch-mode', 'sideways']);
   assert.equal(badMode.parsed.error.code, 'usage_error');
   assert.match(badMode.parsed.error.message, /--branch-mode must be one of/);
+});
+
+test('handover start makes the caller name the agent, intelligence and speed', () => {
+  const none = runCli(['handover', 'start', 'x']);
+  assert.equal(none.parsed.error.code, 'usage_error');
+  assert.deepEqual(none.parsed.error.details.missing, ['--route', '--intelligence', '--speed']);
+  // One refusal lists every missing choice with its values, and asks for the
+  // user's own words rather than a default.
+  assert.match(none.parsed.error.message, /from the user's words/);
+  assert.match(none.parsed.error.message, /--route notis\|codex\|claude\|auto/);
+  assert.match(none.parsed.error.message, /--intelligence low\|medium\|high\|auto/);
+  assert.match(none.parsed.error.message, /--speed normal\|priority\|flex/);
+
+  const some = runCli(['handover', 'start', 'x', '--route', 'codex']);
+  assert.deepEqual(some.parsed.error.details.missing, ['--intelligence', '--speed']);
+});
+
+test('flex is refused unless Notis runs it, since Codex and Claude have no flex speed', () => {
+  // auto too: Notis may pick Codex or Claude, which would then inherit flex.
+  for (const route of ['codex', 'claude', 'claude_cloud', 'auto']) {
+    const { parsed } = runCli(['handover', 'start', 'x', '--route', route, '--intelligence', 'medium', '--speed', 'flex']);
+    assert.equal(parsed.error.code, 'usage_error', route);
+    assert.match(parsed.error.message, /--speed flex runs on Notis only/, route);
+  }
 });
 
 test('remote urls parse in every form a git remote takes', () => {
@@ -177,35 +235,11 @@ test('a directory outside any repository is refused', () => {
   }
 });
 
-test('the delegated guard covers tools exec, not just the handover command', () => {
-  const env = { NOTIS_DELEGATED_CONTEXT: '1' };
-  // The friendly command and the escape hatch around it must refuse alike.
-  assert.throws(() => assertToolNotDelegated('LOCAL_NOTIS_HAND_OVER', env), (error) => {
-    assert.equal(error.code, 'handover_from_delegated_context');
-    return true;
-  });
-  // Lower-case names reach the same tool.
-  assert.throws(() => assertToolNotDelegated('local_notis_hand_over', env));
-  // Everything else a delegated agent legitimately does still works.
-  assert.doesNotThrow(() => assertToolNotDelegated('LOCAL_NOTIS_DATABASE_QUERY', env));
-  assert.doesNotThrow(() => assertToolNotDelegated('LOCAL_NOTIS_HAND_OVER', {}));
-});
-
-test('tools exec refuses the handover tool inside a delegated run', () => {
+test('tools exec stays open inside a delegated run', () => {
+  // Agents start and steer threads on purpose; only `handover start` refuses.
   const { parsed } = runCli(
-    ['tools', 'exec', 'LOCAL_NOTIS_HAND_OVER', '--arguments', '{"instruction":"x"}'],
-    { NOTIS_DELEGATED_CONTEXT: '1' },
+    ['tools', 'exec', 'LOCAL_NOTIS_CONTROL_THREADS', '--dry-run', '--arguments', '{"action":"list"}'],
+    { NOTIS_DELEGATED_CONTEXT: '1', NOTIS_API_BASE: 'http://127.0.0.1:9' },
   );
-  assert.equal(parsed.ok, false);
-  assert.equal(parsed.error.code, 'handover_from_delegated_context');
-});
-
-test('exec-parallel refuses a batch containing the handover tool', () => {
-  const calls = JSON.stringify([
-    { tool_name: 'LOCAL_NOTIS_DATABASE_QUERY', arguments: {} },
-    { tool_name: 'LOCAL_NOTIS_HAND_OVER', arguments: { instruction: 'x' } },
-  ]);
-  const { parsed } = runCli(['tools', 'exec-parallel', calls], { NOTIS_DELEGATED_CONTEXT: '1' });
-  assert.equal(parsed.ok, false);
-  assert.equal(parsed.error.code, 'handover_from_delegated_context');
+  assert.notEqual(parsed?.error?.code, 'handover_from_delegated_context');
 });
