@@ -293,6 +293,59 @@ Options:
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces resources name <space-id> <binding-id> --alias weekly-report --revision 0 --dry-run`
 
+### `npx --package @notis_ai/cli@latest -- notis spaces links list <space-id>`
+
+List the databases, Skills, automations and records linked into one Space.
+
+When to use: Find a link binding and its revision before removing it, including a link left behind by a deleted Skill.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces links list <space-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces links remove <space-id> <binding-id>`
+
+Remove one database, Skill or automation link from a Space by its binding.
+
+When to use: Unlist a resource from a Space you edit, including a link whose Skill was deleted. The resource keeps its ID; removing the last available link of a live resource keeps it as its owner's standalone resource.
+
+Options:
+- `--revision <number>` — Current binding revision from spaces links list.
+- `--request-id <key>` — Stable intent key; reuse it unchanged when retrying this removal.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces links remove <space-id> <binding-id> --revision 1 --request-id remove-link-1`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces aliases list`
+
+List the old App page links you manage and the Space each one opens.
+
+When to use: Find an old App page link that opens a binned Space (trashed: true) before repointing it.
+
+Options:
+- `--legacy-id <id>` — Old App ID the links belong to.
+- `--kind <kind>` — app (default), report or html.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces aliases list --legacy-id <app-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces aliases repoint`
+
+Point one old App page link at a live Space you edit.
+
+When to use: Repair an old App page link whose Space was binned. You must own the old App or edit the Space the link opens now, and edit the new Space; everyone who opens the link still needs their own access to it.
+
+Options:
+- `--legacy-id <id>` — Old App ID the link belongs to.
+- `--route <slug>` — Old App page route from spaces aliases list.
+- `--space <space-id>` — Live Space the old link should open.
+- `--expected-space <space-id>` — Space the link opens now; the change is refused if it moved since you listed it.
+- `--selection-param <name>` — Declared view parameter that receives the old page selection, if any.
+- `--request-id <key>` — Stable intent key; reuse it unchanged when retrying this change.
+- `--dry-run` — Check authority and the new Space without changing the link.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces aliases repoint --legacy-id <app-id> --route pages --space <space-id> --expected-space <binned-space-id> --request-id repoint-pages --dry-run`
+
 ### `npx --package @notis_ai/cli@latest -- notis spaces pull <space-id> [dir]`
 
 Pull one editable Space source snapshot, its resource list and its Skill folders into an empty directory.

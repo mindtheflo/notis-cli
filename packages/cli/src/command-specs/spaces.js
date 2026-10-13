@@ -298,6 +298,79 @@ export const spacesCommandSpecs = [
     },
   },
   {
+    command_path: ['spaces', 'links', 'list'],
+    summary: 'List the databases, Skills, automations and records linked into one Space.',
+    when_to_use: 'Find a link binding and its revision before removing it, including a link left behind by a deleted Skill.',
+    args_schema: { arguments: [idArgument], options: [] },
+    examples: ['notis spaces links list <space-id>'],
+    mutates: false, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/space-links' },
+    handler(ctx) {
+      return remote(ctx, 'space-links', { method: 'GET', query: { space_id: ctx.args.spaceId } });
+    },
+  },
+  {
+    command_path: ['spaces', 'links', 'remove'],
+    summary: 'Remove one database, Skill or automation link from a Space by its binding.',
+    when_to_use: 'Unlist a resource from a Space you edit, including a link whose Skill was deleted. The resource keeps its ID; removing the last available link of a live resource keeps it as its owner\'s standalone resource.',
+    args_schema: { arguments: [idArgument, { token: '<binding-id>', key: 'bindingId', description: 'Exact link binding ID from spaces links list.' }], options: [
+      { flags: '--revision <number>', description: 'Current binding revision from spaces links list.' },
+      { flags: '--request-id <key>', description: 'Stable intent key; reuse it unchanged when retrying this removal.' },
+    ] },
+    examples: ['notis spaces links remove <space-id> <binding-id> --revision 1 --request-id remove-link-1'],
+    mutates: true, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/space-link-remove' },
+    handler(ctx) {
+      const expected = ctx.options.revision;
+      if (typeof expected !== 'string' || !/^\d+$/.test(expected) || !Number.isSafeInteger(Number(expected))) throw usageError('Pass the link\'s current --revision from spaces links list.');
+      return remote(ctx, 'space-link-remove', { body: { space_id: ctx.args.spaceId, binding_id: ctx.args.bindingId,
+        binding_revision: Number(expected), request_id: requestId(ctx) } });
+    },
+  },
+  {
+    command_path: ['spaces', 'aliases', 'list'],
+    summary: 'List the old App page links you manage and the Space each one opens.',
+    when_to_use: 'Find an old App page link that opens a binned Space (trashed: true) before repointing it.',
+    args_schema: { arguments: [], options: [
+      { flags: '--legacy-id <id>', description: 'Old App ID the links belong to.' },
+      { flags: '--kind <kind>', description: 'app (default), report or html.' },
+    ] },
+    examples: ['notis spaces aliases list --legacy-id <app-id>'],
+    mutates: false, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/legacy-aliases' },
+    handler(ctx) {
+      if (!ctx.options.legacyId) throw usageError('Pass the old App ID with --legacy-id <id>.');
+      return remote(ctx, 'legacy-aliases', { method: 'GET', query: { kind: ctx.options.kind || 'app', legacy_id: ctx.options.legacyId } });
+    },
+  },
+  {
+    command_path: ['spaces', 'aliases', 'repoint'],
+    summary: 'Point one old App page link at a live Space you edit.',
+    when_to_use: 'Repair an old App page link whose Space was binned. You must own the old App or edit the Space the link opens now, and edit the new Space; everyone who opens the link still needs their own access to it.',
+    args_schema: { arguments: [], options: [
+      { flags: '--legacy-id <id>', description: 'Old App ID the link belongs to.' },
+      { flags: '--route <slug>', description: 'Old App page route from spaces aliases list.' },
+      { flags: '--space <space-id>', description: 'Live Space the old link should open.' },
+      { flags: '--expected-space <space-id>', description: 'Space the link opens now; the change is refused if it moved since you listed it.' },
+      { flags: '--selection-param <name>', description: 'Declared view parameter that receives the old page selection, if any.' },
+      { flags: '--request-id <key>', description: 'Stable intent key; reuse it unchanged when retrying this change.' },
+      { flags: '--dry-run', description: 'Check authority and the new Space without changing the link.' },
+    ] },
+    examples: ['notis spaces aliases repoint --legacy-id <app-id> --route pages --space <space-id> --expected-space <binned-space-id> --request-id repoint-pages --dry-run'],
+    mutates: true, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/legacy-alias' },
+    handler(ctx) {
+      if (!ctx.options.legacyId) throw usageError('Pass the old App ID with --legacy-id <id>.');
+      if (typeof ctx.options.route !== 'string') throw usageError('Pass the old App page with --route <slug>.');
+      if (!ctx.options.space) throw usageError('Pass the Space the old link should open with --space <space-id>.');
+      const body = { kind: 'app', legacy_id: ctx.options.legacyId, route_slug: ctx.options.route, space_id: ctx.options.space,
+        request_id: requestId(ctx), dry_run: Boolean(ctx.options.dryRun) };
+      if (ctx.options.expectedSpace) body.expected_space_id = ctx.options.expectedSpace;
+      if (ctx.options.selectionParam) body.selection_param = ctx.options.selectionParam;
+      return remote(ctx, 'legacy-alias', { body });
+    },
+  },
+  {
     command_path: ['spaces', 'pull'], summary: 'Pull one editable Space source snapshot, its resource list and its Skill folders into an empty directory.',
     when_to_use: `Edit a Space you can administer: the source, its links (${RESOURCES_FILE}) and every editable linked Skill (${SKILLS_DIR}/<alias>/) arrive together, with a local lock file so a later deploy sends only what you changed.`,
     args_schema: { arguments: [idArgument, { token: '[dir]', key: 'dir', description: 'New or empty destination directory (defaults to the Space ID).' }],
