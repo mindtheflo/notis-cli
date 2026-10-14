@@ -36,6 +36,8 @@ export function incrementPatchVersion(version) {
 export function computePrereleasePublishVersion({
   packageVersion,
   prereleaseTag,
+  releaseNumber,
+  latestRegistryVersion,
   runNumber,
   runAttempt,
 }) {
@@ -44,12 +46,28 @@ export function computePrereleasePublishVersion({
   if (!prereleaseTag) {
     throw new Error('prereleaseTag is required');
   }
-  if (!runNumber) {
-    throw new Error('runNumber is required for prerelease publishing');
+  const sequence = releaseNumber ?? runNumber;
+  if (!/^[1-9]\d*$/.test(String(sequence ?? ''))) {
+    throw new Error('A positive numeric releaseNumber is required for prerelease publishing');
   }
 
   const normalizedAttempt = runAttempt || '1';
-  return `${packageVersion}-${prereleaseTag}.${runNumber}.${normalizedAttempt}`;
+  if (!/^[1-9]\d*$/.test(String(normalizedAttempt))) {
+    throw new Error('A positive numeric release attempt is required');
+  }
+  let base = packageVersion.split('-')[0];
+  let next = BigInt(sequence);
+  if (latestRegistryVersion) {
+    if (compareVersions(latestRegistryVersion, base) > 0) {
+      base = latestRegistryVersion.split('-')[0];
+    }
+    const prefix = `${base}-${prereleaseTag}.`;
+    if (latestRegistryVersion.startsWith(prefix)) {
+      const previous = latestRegistryVersion.slice(prefix.length).split('.')[0];
+      if (/^\d+$/.test(previous) && BigInt(previous) >= next) next = BigInt(previous) + 1n;
+    }
+  }
+  return `${base}-${prereleaseTag}.${next}.${normalizedAttempt}`;
 }
 
 export function normalizeRegistryVersion(rawVersion) {

@@ -1,7 +1,8 @@
 # Delivery
 
-Workspace runs released Space source. Use the same workflow locally and on the
-cloud computer through `npx --package @notis_ai/cli@latest -- notis`.
+Workspace runs released Space source. Use the same workflow locally through
+`npx --package @notis_ai/cli@latest -- notis` and on the cloud computer through
+its preinstalled `notis` command, or the same `npx` form if `notis` is not found.
 A create/edit request authorizes the checked installed-Space update unless the
 user or applicable policy says preview-only/no-deploy. Store publication is a
 separate action. Preserve exact identity and prior authorization.

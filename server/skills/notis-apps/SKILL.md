@@ -11,7 +11,8 @@ mcp_references: ["references/release.md", "references/architecture.md", "referen
 
 Build compact, readable views with Vite, React and `@notis/sdk`. A Space owns its
 presentation; native databases hold its records. Use the pre-authenticated Notis
-CLI locally or on the cloud computer: `npx --package @notis_ai/cli@latest -- notis`.
+CLI: `npx --package @notis_ai/cli@latest -- notis` locally, and the preinstalled
+`notis` command on the cloud computer (the same `npx` form if `notis` is not found).
 Discover tools and inspect their live schemas before using them.
 
 ## Choose the workflow
