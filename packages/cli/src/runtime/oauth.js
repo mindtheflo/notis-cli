@@ -39,12 +39,23 @@ import {
   updateConfig,
 } from './profiles.js';
 
+// A login without --scope asks for every permission the server advertises for
+// the CLI resource, so a permission added on the server reaches the next sign-in
+// without a CLI release. This list only stands in for a server that advertises
+// none.
 export const DEFAULT_CLI_OAUTH_SCOPES = [
   'notis:read',
   'notis:write',
   'notis:connections',
   'notis:apps',
+  'notis:spaces',
 ];
+
+export function defaultCliOAuthScopes(metadata) {
+  const advertised = (metadata?.scopesSupported || [])
+    .filter((scope) => typeof scope === 'string' && scope.startsWith('notis:'));
+  return advertised.length > 0 ? [...new Set(advertised)] : DEFAULT_CLI_OAUTH_SCOPES;
+}
 const OAUTH_LOCK_DIR = join(homedir(), '.notis', 'oauth.lock');
 const DEFAULT_LOGIN_TIMEOUT_MS = 300_000;
 const DEFAULT_REFRESH_EXPIRES_IN = 30 * 24 * 60 * 60;
@@ -145,6 +156,9 @@ export async function discoverCliOAuth(apiBase, fetchImpl = fetch) {
     apiBase: normalizedApiBase,
     issuer,
     resource: protectedResource.resource,
+    scopesSupported: Array.isArray(protectedResource.scopes_supported)
+      ? protectedResource.scopes_supported
+      : [],
     clientId: protectedResource.notis_cli_client_id || 'notis_cli',
     copyPasteRedirectUri: protectedResource.notis_cli_copy_paste_redirect_uri,
     // A deployment that predates channel advertising, or a local one with no
@@ -1985,7 +1999,7 @@ export async function loginWithOAuth(
   const metadata = await discoverCliOAuth(runtime.apiBase, fetchImpl);
   const scopes = options.scope?.length
     ? [...new Set(options.scope)]
-    : DEFAULT_CLI_OAUTH_SCOPES;
+    : defaultCliOAuthScopes(metadata);
   const timeoutMs = requestedTimeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
   // A detached listener is not a terminal waiting on a prompt: nobody is held
   // up by it, and the user still has to sign up and verify an email, so its

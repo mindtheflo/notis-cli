@@ -108,7 +108,7 @@ export const authCommandSpecs = [
         { flags: '--mode <mode>', description: 'auto (default) hands the browser callback to a background listener when this command cannot wait; browser waits in-process; code shows a one-time code to copy.' },
         { flags: '--paste-code', description: 'Alias for --mode code.' },
         { flags: '--timeout-seconds <n>', description: 'Authorization lifetime in seconds (default 300 while waiting in a terminal; 1800 for detached or code hand-offs).' },
-        { flags: '--scope <scope>', description: 'OAuth permission to request (repeatable).', collect: true },
+        { flags: '--scope <scope>', description: 'OAuth permission to request (repeatable). Default: every permission Notis offers the CLI.', collect: true },
         { flags: '--code <code>', description: 'Redeem the code shown in the browser after a non-interactive login.' },
       ],
     },

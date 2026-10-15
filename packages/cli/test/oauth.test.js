@@ -868,9 +868,51 @@ test('agent login emits an authorization URL and exits without waiting for input
   assert.equal(authorizeUrl.searchParams.get('resource'), 'https://api.notis.ai');
   assert.equal(authorizeUrl.searchParams.get('redirect_uri'), 'https://app.notis.ai/cli-setup/code/bootstrap');
   assert.equal(authorizeUrl.searchParams.get('code_challenge_method'), 'S256');
+  // A server that advertises no scopes still gets every permission the CLI
+  // knows about, Spaces included.
   assert.deepEqual(
     authorizeUrl.searchParams.get('scope').split(' '),
-    ['notis:read', 'notis:write', 'notis:connections', 'notis:apps'],
+    ['notis:read', 'notis:write', 'notis:connections', 'notis:apps', 'notis:spaces'],
+  );
+});
+
+test('login without --scope asks for every permission the server advertises', async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/.well-known/oauth-protected-resource/cli')) {
+      return new Response(JSON.stringify({
+        resource: 'https://api.notis.ai',
+        authorization_servers: ['https://api.notis.ai'],
+        notis_cli_client_id: 'notis_cli',
+        notis_cli_copy_paste_redirect_uri: 'https://app.notis.ai/cli-setup/code/bootstrap',
+        // A permission added on the server after this CLI was released.
+        scopes_supported: ['notis:apps', 'notis:future', 'notis:read', 'notis:spaces', 'openid'],
+      }));
+    }
+    return new Response(JSON.stringify({
+      authorization_endpoint: 'https://api.notis.ai/oauth/authorize',
+      token_endpoint: 'https://api.notis.ai/oauth/token',
+      revocation_endpoint: 'https://api.notis.ai/oauth/revoke',
+    }));
+  };
+  const runtime = () => ({
+    agentMode: true,
+    apiBase: 'https://api.notis.ai',
+    profileName: 'default',
+    config: normalizeConfig({}),
+    config_file: join(mkdtempSync(join(tmpdir(), 'notis-oauth-')), 'config.json'),
+  });
+
+  const advertised = await loginWithOAuth(runtime(), { mode: 'code' }, null, fetchImpl);
+  assert.deepEqual(
+    new URL(advertised.agentAuthorization.authorize_url).searchParams.get('scope').split(' '),
+    ['notis:apps', 'notis:future', 'notis:read', 'notis:spaces'],
+  );
+
+  // An explicit --scope still narrows the request.
+  const narrowed = await loginWithOAuth(runtime(), { mode: 'code', scope: ['notis:read'] }, null, fetchImpl);
+  assert.equal(
+    new URL(narrowed.agentAuthorization.authorize_url).searchParams.get('scope'),
+    'notis:read',
   );
 });
 
