@@ -4,6 +4,8 @@ import { usageError } from '../runtime/errors.js';
 import {
   COMPOSIO_MULTI_EXECUTE_TOOL,
   fetchToolDiscovery,
+  fetchToolSchema,
+  fetchToolkits,
   healthCheck,
   nextIdempotencyKey,
   runToolCommand,
@@ -37,6 +39,22 @@ function discoveredToolNames(payload) {
   return [...new Set(names.filter(Boolean))];
 }
 
+function isNotisAppSupabase(value) {
+  const upper = String(value || '').toUpperCase();
+  return upper.includes('SUPABASE') && upper.includes('NOTIS_APP') && !upper.includes('WEBSITE');
+}
+
+export function selectSupabaseSqlTool(discoveredNames, toolkits = []) {
+  const discovered = discoveredNames.find((name) => (
+    isNotisAppSupabase(name) && name.toUpperCase().includes('EXECUTE_SQL')
+  ));
+  if (discovered) return discovered;
+  // Semantic search ranks Composio's generic Supabase tools above a connected
+  // custom MCP server, so derive the canonical name from the connected toolkit.
+  const toolkit = toolkits.find((entry) => entry.has_active_connection && isNotisAppSupabase(entry.id));
+  return toolkit ? `${String(toolkit.id).toUpperCase()}_EXECUTE_SQL` : null;
+}
+
 async function discoverSupabaseSqlTool(runtime) {
   const payload = await fetchToolDiscovery(
     runtime,
@@ -44,12 +62,19 @@ async function discoverSupabaseSqlTool(runtime) {
     'query',
   );
   const names = discoveredToolNames(payload);
-  const match = names.find((name) => (
-    name.toUpperCase().includes('SUPABASE')
-    && name.toUpperCase().includes('EXECUTE_SQL')
-    && name.toUpperCase().includes('NOTIS_APP')
-    && !name.toUpperCase().includes('WEBSITE')
-  ));
+  let match = selectSupabaseSqlTool(names);
+  if (!match) {
+    const candidate = selectSupabaseSqlTool([], await fetchToolkits(runtime));
+    if (candidate) {
+      try {
+        await fetchToolSchema(runtime, candidate);
+        match = candidate;
+      } catch (error) {
+        // Only an unknown tool name means the toolkit lacks it; surface outages.
+        if (error?.code !== 'usage_error' || !/not found/.test(error.message)) throw error;
+      }
+    }
+  }
   if (!match) {
     throw usageError('No connected Supabase execute-SQL capability was discovered. Run `notis tools link mcp_supabase_notis_app`.');
   }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -91,6 +91,7 @@ test('dev and hosted profiles cannot enroll a global sync job', async () => {
 test('manual sync uses refreshed OAuth and canonical account before reconciliation', async () => {
   const ctx = { runtime: runtime(), options: {}, output: { emitSuccess: value => value } };
   const response = await syncSkillsHandler(ctx, {
+    onCloudComputer: () => false,
     refresh: async value => { value.jwt = 'fresh'; },
     loadEngine: async () => ({
       fetchSyncSettings: async (_url, token) => {
@@ -107,4 +108,31 @@ test('manual sync uses refreshed OAuth and canonical account before reconciliati
     install: () => ({ status: 'installed' }),
   });
   assert.equal(response.data.automaticSync.status, 'installed');
+});
+
+test('manual sync on the cloud computer leaves the Notis-owned root alone and prunes dead links', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cloud-sync-'));
+  try {
+    const live = join(home, '.notis', 'skills', 'pptx');
+    mkdirSync(live, { recursive: true });
+    const agentDir = join(home, '.codex', 'skills');
+    mkdirSync(agentDir, { recursive: true });
+    symlinkSync('../../.notis/skills/users/owner/skills/native-x', join(agentDir, 'native-x'));
+    symlinkSync(live, join(agentDir, 'pptx'));
+    symlinkSync('/elsewhere/missing', join(agentDir, 'foreign'));
+    const ctx = { runtime: runtime(), options: {}, output: { emitSuccess: value => value } };
+    const response = await syncSkillsHandler(ctx, {
+      onCloudComputer: () => true,
+      home,
+      refresh: () => assert.fail('must not sync the account'),
+      reconcile: () => assert.fail('must not sync the account'),
+    });
+    assert.equal(response.data.cloudComputer, true);
+    assert.equal(response.data.removedStaleLinks, 1);
+    assert.equal(existsSync(join(agentDir, 'pptx')), true);
+    assert.equal(lstatSync(join(agentDir, 'foreign')).isSymbolicLink(), true);
+    assert.throws(() => lstatSync(join(agentDir, 'native-x')));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

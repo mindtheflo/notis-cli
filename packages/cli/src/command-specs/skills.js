@@ -2,8 +2,9 @@ import { getCurrentProfileName, getJwtSubject, loadConfig } from '../runtime/pro
 import { reconcileAllSkills } from '../runtime/sync-skills.js';
 import { ensureFreshOAuthCredential } from '../runtime/oauth.js';
 import { installSkillSyncService } from '../runtime/skill-sync-service.js';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { httpRequest } from '../runtime/transport.js';
 import { usageError } from '../runtime/errors.js';
 import { parseJson } from './helpers.js';
@@ -91,10 +92,54 @@ function cliDefaultOwnsAgentFolders(runtime) {
   }
 }
 
+// The cloud computer's root. Present only inside the user's Vercel sandbox.
+const CLOUD_COMPUTER_ROOT = '/vercel/sandbox';
+
+/** Remove agent-folder links into `~/.notis/skills` whose target no longer exists. */
+export function removeDanglingNotisSkillLinks(home = homedir()) {
+  const notisRoot = join(home, '.notis', 'skills');
+  let removed = 0;
+  for (const agentDir of [join(home, '.claude', 'skills'), join(home, '.codex', 'skills')]) {
+    let entries;
+    try {
+      entries = readdirSync(agentDir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const entryPath = join(agentDir, name);
+      try {
+        if (!lstatSync(entryPath).isSymbolicLink() || existsSync(entryPath)) continue;
+        const target = resolve(dirname(entryPath), readlinkSync(entryPath));
+        if (target.startsWith(`${notisRoot}/`)) {
+          unlinkSync(entryPath);
+          removed += 1;
+        }
+      } catch {
+        // A link that vanished or cannot be read is left for the next run.
+      }
+    }
+  }
+  return removed;
+}
+
 export async function syncSkillsHandler(ctx, {
   refresh = ensureFreshOAuthCredential, loadEngine = loadSkillSyncEngine,
   reconcile = reconcileAllSkills, install = installSkillSyncService,
+  onCloudComputer = () => existsSync(CLOUD_COMPUTER_ROOT), home = homedir(),
 } = {}) {
+  if (onCloudComputer()) {
+    // Notis publishes the account's Skills into ~/.notis/skills on the cloud
+    // computer and replaces that folder on every change. An account sync here
+    // would write into it and leave agent links dangling after the next change.
+    const removedStaleLinks = removeDanglingNotisSkillLinks(home);
+    return ctx.output.emitSuccess({
+      command: 'skills sync',
+      data: { syncEnabled: false, cloudComputer: true, baseSkills: [], removedStaleLinks },
+      humanSummary: 'Notis keeps Skills on the cloud computer current; nothing to sync here.',
+      renderHuman: () => 'Notis keeps Skills on the cloud computer current; nothing to sync here.',
+    });
+  }
   await refresh(ctx.runtime);
   const userId = ctx.runtime.oauthUserId || getJwtSubject(ctx.runtime.jwt);
   const { runSkillSync, fetchSyncSettings } = await loadEngine();
@@ -305,7 +350,7 @@ export const skillsCommandSpecs = [
     },
     examples: ['notis skills sync', 'notis skills sync --json'],
     output_schema:
-      'Returns account sync counts plus baseSkills, baseInstalled, baseLinked, and baseBackups.',
+      'Returns account sync counts plus baseSkills, baseInstalled, baseLinked, and baseBackups. On the cloud computer returns cloudComputer: true and removedStaleLinks instead.',
     mutates: true,
     idempotent: true,
     require_auth: true,
