@@ -78,7 +78,7 @@ Options:
 - `--mode <mode>` — auto (default) hands the browser callback to a background listener when this command cannot wait; browser waits in-process; code shows a one-time code to copy.
 - `--paste-code` — Alias for --mode code.
 - `--timeout-seconds <n>` — Authorization lifetime in seconds (default 300 while waiting in a terminal; 1800 for detached or code hand-offs).
-- `--scope <scope>` — OAuth permission to request (repeatable).
+- `--scope <scope>` — OAuth permission to request (repeatable). Default: every permission Notis offers the CLI.
 - `--code <code>` — Redeem the code shown in the browser after a non-interactive login.
 
 Examples:
