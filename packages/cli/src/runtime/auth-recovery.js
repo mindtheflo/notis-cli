@@ -49,6 +49,23 @@ export function getAuthRecovery(runtime = {}, { mode = 'expired' } = {}) {
   return { hints };
 }
 
+/**
+ * How to recover when renewing a sign-in failed but the sign-in itself is
+ * kept: try again. Never point at login, which would replace a working grant.
+ */
+export function getRetryRecovery(runtime = {}) {
+  const CLI_NPX = cliNpx(runtime);
+  const suffix = profileSuffix(runtime.profileName);
+  return {
+    hints: [
+      {
+        command: `${CLI_NPX} doctor${suffix}`,
+        reason: 'Check that Notis is reachable from this computer, then run the same command again',
+      },
+    ],
+  };
+}
+
 export function createExpiredAuthError(runtime) {
   const CLI_NPX = cliNpx(runtime || {});
   if (runtime?.credentialKind === 'worktree') {

@@ -2,10 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { channel as diagnosticsChannel } from 'node:diagnostics_channel';
 import { once } from 'node:events';
 import { createServer, request } from 'node:http';
-import { createConnection } from 'node:net';
+import { createConnection, createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { join } from 'node:path';
@@ -61,6 +72,15 @@ process.env.NOTIS_CLI_CONFIG_FILE = suiteConfigFile;
 test.after(() => {
   if (configFileBeforeSuite === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
   else process.env.NOTIS_CLI_CONFIG_FILE = configFileBeforeSuite;
+});
+// A refresh also takes ~/.notis/oauth.lock in the home folder. Point HOME at
+// the scratch folder too, so no test can hold or remove the lock that a real
+// CLI on this computer is using.
+const homeBeforeSuite = process.env.HOME;
+process.env.HOME = suiteConfigHome;
+test.after(() => {
+  if (homeBeforeSuite === undefined) delete process.env.HOME;
+  else process.env.HOME = homeBeforeSuite;
 });
 
 // The config path is process-global now that every profile lives in one file,
@@ -421,7 +441,7 @@ test('OAuth refresh routes to the grant it belongs to, not the profile api_base'
   }
 });
 
-test('OAuth refresh revokes a rotated grant when local persistence fails', async () => {
+test('OAuth refresh never revokes a renewed sign-in it could not save', async () => {
   const home = mkdtempSync(join(tmpdir(), 'notis-cli-oauth-refresh-persist-failure-'));
   const configFile = join(home, 'config.json');
   writeFileSync(configFile, JSON.stringify({
@@ -468,8 +488,17 @@ test('OAuth refresh revokes a rotated grant when local persistence fails', async
         return new Response('{}');
       }
       throw new Error(`Unexpected URL: ${url}`);
-    }));
-    assert.deepEqual(revoked, ['rotated-unpersisted-refresh']);
+    }), (error) => {
+      // Revoking the renewed sign-in would end the whole sign-in: the server
+      // forgives the previous token for a few minutes, so a retry recovers.
+      assert.equal(error.code, 'oauth_refresh_not_saved');
+      assert.equal(error.retryable, true);
+      assert.deepEqual(error.hints.map((hint) => hint.command), [
+        'npx --package @notis_ai/cli@latest -- notis doctor',
+      ]);
+      return true;
+    });
+    assert.deepEqual(revoked, []);
   } finally {
     if (previousConfig === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
     else process.env.NOTIS_CLI_CONFIG_FILE = previousConfig;
@@ -543,19 +572,38 @@ test('OAuth refresh errors keep recovery commands on the failed named profile', 
   }));
   const previousConfig = process.env.NOTIS_CLI_CONFIG_FILE;
   process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  const refreshWith = (status, payload) => refreshOAuthCredential({
+    apiBase: 'https://api.notis.ai',
+    profileName: 'work',
+    credentialKind: 'oauth',
+    oauthAccessToken: makeJwt('oauth-user', 1),
+  }, async () => new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  }));
   try {
+    // A server that cannot answer right now keeps the sign-in: the way back
+    // is to try again, never to sign in again.
     await assert.rejects(
-      refreshOAuthCredential({
-        apiBase: 'https://api.notis.ai',
-        profileName: 'work',
-        credentialKind: 'oauth',
-        oauthAccessToken: makeJwt('oauth-user', 1),
-      }, async () => new Response(JSON.stringify({ error: 'temporarily_unavailable' }), {
-        status: 503,
-        headers: { 'Content-Type': 'application/json' },
-      })),
+      refreshWith(503, { error: 'temporarily_unavailable' }),
       (error) => {
         assert.equal(error.code, 'temporarily_unavailable');
+        assert.equal(error.retryable, true);
+        assert.deepEqual(error.hints.map((hint) => hint.command), [
+          "npx --package @notis_ai/cli@latest -- notis doctor --profile 'work'",
+        ]);
+        return true;
+      },
+    );
+    assert.equal(
+      JSON.parse(readFileSync(configFile, 'utf-8')).profiles.work.oauth_refresh_token,
+      'refresh-token',
+    );
+    // A sign-in the server rejected needs a new one, on the same profile.
+    await assert.rejects(
+      refreshWith(400, { error: 'invalid_grant' }),
+      (error) => {
+        assert.equal(error.code, 'invalid_grant');
         assert.equal(
           error.hints[0].command,
           "npx --package @notis_ai/cli@latest -- notis login --profile 'work'",
@@ -571,6 +619,449 @@ test('OAuth refresh errors keep recovery commands on the failed named profile', 
     if (previousConfig === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
     else process.env.NOTIS_CLI_CONFIG_FILE = previousConfig;
   }
+});
+
+// A refresh consumes the token it presents as soon as the server reads it, so
+// the client must never abandon an answer the server may already have sent,
+// and never present the same token twice on its own (docs/no-dead-ends.md).
+
+// Runs `run` with HOME and the CLI config in a fresh scratch folder, so the
+// refresh locks it takes can never be left over from another test.
+async function inScratchHome(prefix, run) {
+  const home = mkdtempSync(join(tmpdir(), prefix));
+  const configFile = join(home, 'config.json');
+  const previous = {
+    HOME: process.env.HOME,
+    NOTIS_CLI_CONFIG_FILE: process.env.NOTIS_CLI_CONFIG_FILE,
+  };
+  process.env.HOME = home;
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  try {
+    return await run({ home, configFile });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+// A stored sign-in whose access token has expired, so it gets refreshed.
+function writeExpiredSignIn(configFile) {
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: 'https://api.notis.ai',
+        oauth_access_token: makeJwt('oauth-user', 1),
+        oauth_refresh_token: 'stored-refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: future,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: 'https://mcp.notis.ai',
+        oauth_api_base: 'https://api.notis.ai',
+        oauth_resource: 'https://api.notis.ai/cli',
+        oauth_scopes: ['notis:read'],
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+}
+
+function expiredRuntime() {
+  return {
+    apiBase: 'https://api.notis.ai',
+    profileName: 'default',
+    credentialKind: 'oauth',
+    oauthAccessToken: makeJwt('oauth-user', 1),
+  };
+}
+
+function renewedSignInBody() {
+  return JSON.stringify({
+    access_token: makeJwt('oauth-user'),
+    refresh_token: 'renewed-refresh-token',
+    expires_in: 900,
+    refresh_expires_in: 7200,
+    scope: 'notis:read',
+  });
+}
+
+function renewedSignIn() {
+  return new Response(renewedSignInBody(), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function storedRefreshToken(configFile) {
+  return JSON.parse(readFileSync(configFile, 'utf-8')).profiles.default.oauth_refresh_token;
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function settle(promise) {
+  return promise.then((value) => ({ value }), (error) => ({ error }));
+}
+
+// Lets every pending promise callback run; setImmediate is never mocked here.
+function flushPromises() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Reports a token request the way Node's fetch does: once when it is created,
+// once when it is written to the network.
+function reportTokenRequest(stage, init) {
+  const requestId = init.headers?.['X-Request-Id'] ?? '';
+  if (stage === 'created') {
+    diagnosticsChannel('undici:request:create').publish({
+      request: { headers: ['x-request-id', requestId] },
+    });
+    return;
+  }
+  diagnosticsChannel('undici:client:sendHeaders').publish({
+    request: { headers: ['x-request-id', requestId] },
+    headers: `x-request-id: ${requestId}\r\n`,
+  });
+}
+
+// Rejects the way fetch does once the caller gives up on the request.
+function abortedBy(init) {
+  return new Promise((_resolve, reject) => {
+    init.signal?.addEventListener('abort', () => {
+      reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }));
+    }, { once: true });
+  });
+}
+
+function networkFailure(code) {
+  return new TypeError('fetch failed', {
+    cause: Object.assign(new Error(code), { code }),
+  });
+}
+
+const RETRY_HINTS = ['npx --package @notis_ai/cli@latest -- notis doctor'];
+
+test('a refresh keeps an answer that a slow link takes long to deliver', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  await inScratchHome('notis-cli-oauth-slow-link-', async ({ configFile }) => {
+    writeExpiredSignIn(configFile);
+    const started = deferred();
+    const written = deferred();
+    const answered = deferred();
+    let calls = 0;
+    let reportedWritten = false;
+    const outcome = settle(refreshOAuthCredential(expiredRuntime(), async (_url, init) => {
+      calls += 1;
+      reportTokenRequest('created', init);
+      started.resolve();
+      await Promise.race([written.promise, abortedBy(init)]);
+      reportTokenRequest('written', init);
+      reportedWritten = true;
+      await Promise.race([answered.promise, abortedBy(init)]);
+      return renewedSignIn();
+    }));
+    await started.promise;
+    // Reaching the server takes 29 seconds (a VPN over a phone hotspot)...
+    t.mock.timers.tick(29_000);
+    written.resolve();
+    await flushPromises();
+    assert.equal(reportedWritten, true);
+    // ...and its answer 59 more: each phase stays within its own budget.
+    t.mock.timers.tick(59_000);
+    answered.resolve();
+    const { value, error } = await outcome;
+    assert.equal(error, undefined);
+    assert.equal(value, true);
+    assert.equal(calls, 1);
+    assert.equal(storedRefreshToken(configFile), 'renewed-refresh-token');
+  });
+});
+
+test('a refresh reads an answer that arrives just as its deadline passes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  await inScratchHome('notis-cli-oauth-deadline-', async ({ configFile }) => {
+    writeExpiredSignIn(configFile);
+    const started = deferred();
+    const outcome = settle(refreshOAuthCredential(expiredRuntime(), async (_url, init) => {
+      reportTokenRequest('created', init);
+      reportTokenRequest('written', init);
+      // The answer reaches this computer in the same instant the 60-second
+      // wait for it runs out: it is already here, so it is read.
+      const arrives = new Promise((resolve) => setTimeout(resolve, 60_000));
+      started.resolve();
+      await Promise.race([arrives, abortedBy(init)]);
+      return renewedSignIn();
+    }));
+    await started.promise;
+    t.mock.timers.tick(60_000);
+    const { value, error } = await outcome;
+    assert.equal(error, undefined);
+    assert.equal(value, true);
+    assert.equal(storedRefreshToken(configFile), 'renewed-refresh-token');
+  });
+});
+
+test('a refresh that never gets its answer keeps the sign-in and is never replayed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  await inScratchHome('notis-cli-oauth-lost-answer-', async ({ configFile }) => {
+    writeExpiredSignIn(configFile);
+    const started = deferred();
+    let tokenRequests = 0;
+    let revokes = 0;
+    let finished = false;
+    const outcome = settle(refreshOAuthCredential(expiredRuntime(), async (url, init) => {
+      if (String(url).endsWith('/oauth/revoke')) {
+        revokes += 1;
+        return new Response('{}');
+      }
+      tokenRequests += 1;
+      reportTokenRequest('created', init);
+      reportTokenRequest('written', init);
+      started.resolve();
+      return abortedBy(init);
+    })).finally(() => {
+      finished = true;
+    });
+    await started.promise;
+    t.mock.timers.tick(59_999);
+    await flushPromises();
+    assert.equal(finished, false);
+    t.mock.timers.tick(1);
+    const { error } = await outcome;
+    assert.equal(error?.code, 'oauth_refresh_outcome_unknown');
+    assert.equal(error.retryable, true);
+    assert.deepEqual(error.hints.map((hint) => hint.command), RETRY_HINTS);
+    assert.equal(tokenRequests, 1);
+    assert.equal(revokes, 0);
+    // The token it presented stays stored: the server forgives presenting it
+    // again for a few minutes, so the next command picks up the renewal.
+    assert.equal(storedRefreshToken(configFile), 'stored-refresh-token');
+  });
+});
+
+test('a refresh gives up a request still unwritten after 30 seconds', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  await inScratchHome('notis-cli-oauth-unwritten-', async ({ configFile }) => {
+    writeExpiredSignIn(configFile);
+    const started = deferred();
+    let tokenRequests = 0;
+    let finished = false;
+    const outcome = settle(refreshOAuthCredential(expiredRuntime(), async (_url, init) => {
+      tokenRequests += 1;
+      // Created, but the link never lets it be written.
+      reportTokenRequest('created', init);
+      started.resolve();
+      return abortedBy(init);
+    })).finally(() => {
+      finished = true;
+    });
+    await started.promise;
+    t.mock.timers.tick(29_999);
+    await flushPromises();
+    assert.equal(finished, false);
+    t.mock.timers.tick(1);
+    const { error } = await outcome;
+    // Nothing reached the server, so nothing was consumed: try again later.
+    assert.equal(error?.code, 'oauth_refresh_unreachable');
+    assert.equal(error.retryable, true);
+    assert.deepEqual(error.hints.map((hint) => hint.command), RETRY_HINTS);
+    assert.equal(tokenRequests, 1);
+    assert.equal(storedRefreshToken(configFile), 'stored-refresh-token');
+  });
+});
+
+test('a refresh whose connection fails after sending is never replayed', async () => {
+  await inScratchHome('notis-cli-oauth-dropped-', async ({ configFile }) => {
+    let tokenRequests = 0;
+    const attempts = [
+      // The request was written, then the connection dropped.
+      async (init) => {
+        reportTokenRequest('created', init);
+        reportTokenRequest('written', init);
+        throw networkFailure('ECONNRESET');
+      },
+      // A fetch that never reports its progress may have sent it.
+      async () => {
+        throw new TypeError('fetch failed');
+      },
+    ];
+    for (const attempt of attempts) {
+      writeExpiredSignIn(configFile);
+      tokenRequests = 0;
+      await assert.rejects(refreshOAuthCredential(expiredRuntime(), async (_url, init) => {
+        tokenRequests += 1;
+        return attempt(init);
+      }), (error) => {
+        assert.equal(error.code, 'oauth_refresh_outcome_unknown');
+        assert.equal(error.retryable, true);
+        assert.deepEqual(error.hints.map((hint) => hint.command), RETRY_HINTS);
+        return true;
+      });
+      assert.equal(tokenRequests, 1);
+      assert.equal(storedRefreshToken(configFile), 'stored-refresh-token');
+    }
+  });
+});
+
+test('a refresh retries a request that never reached the server', async () => {
+  await inScratchHome('notis-cli-oauth-unsent-', async ({ configFile }) => {
+    const firstFailures = [
+      // Created, then refused before anything was written.
+      (init) => {
+        reportTokenRequest('created', init);
+        throw networkFailure('ECONNREFUSED');
+      },
+      // Not reported at all, but the name lookup failed.
+      () => {
+        throw networkFailure('ENOTFOUND');
+      },
+    ];
+    for (const firstFailure of firstFailures) {
+      writeExpiredSignIn(configFile);
+      let tokenRequests = 0;
+      const refreshed = await refreshOAuthCredential(expiredRuntime(), async (_url, init) => {
+        tokenRequests += 1;
+        if (tokenRequests === 1) firstFailure(init);
+        reportTokenRequest('created', init);
+        reportTokenRequest('written', init);
+        return renewedSignIn();
+      }, { unsentRetryDelaysMs: [10] });
+      assert.equal(refreshed, true);
+      assert.equal(tokenRequests, 2);
+      assert.equal(storedRefreshToken(configFile), 'renewed-refresh-token');
+    }
+  });
+});
+
+test('a refresh answer without a renewed sign-in keeps the stored one', async () => {
+  await inScratchHome('notis-cli-oauth-unreadable-', async ({ configFile }) => {
+    const answers = [
+      '<html>Bad gateway</html>',
+      JSON.stringify({ access_token: makeJwt('oauth-user') }),
+    ];
+    for (const body of answers) {
+      writeExpiredSignIn(configFile);
+      await assert.rejects(
+        refreshOAuthCredential(expiredRuntime(), async () => new Response(body, { status: 200 })),
+        (error) => {
+          assert.equal(error.code, 'oauth_refresh_outcome_unknown');
+          assert.equal(error.retryable, true);
+          return true;
+        },
+      );
+      assert.equal(storedRefreshToken(configFile), 'stored-refresh-token');
+    }
+  });
+});
+
+test('a refresh keeps its lock folders fresh while the token request runs', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
+  await inScratchHome('notis-cli-oauth-lock-touch-', async ({ home, configFile }) => {
+    writeExpiredSignIn(configFile);
+    const started = deferred();
+    const answered = deferred();
+    const outcome = settle(refreshOAuthCredential(expiredRuntime(), async (_url, init) => {
+      reportTokenRequest('created', init);
+      reportTokenRequest('written', init);
+      started.resolve();
+      await Promise.race([answered.promise, abortedBy(init)]);
+      return renewedSignIn();
+    }));
+    let locks = [];
+    try {
+      await started.promise;
+      locks = [
+        join(home, '.notis', 'oauth.lock'),
+        ...readdirSync(home)
+          .filter((name) => name.includes('.login-listener.') && name.endsWith('.lock'))
+          .map((name) => join(home, name)),
+      ];
+      assert.equal(locks.length, 2);
+      // Make both look abandoned: another process would take them over.
+      const longAgo = new Date(Date.now() - 120_000);
+      for (const lock of locks) utimesSync(lock, longAgo, longAgo);
+      t.mock.timers.tick(5_000);
+      for (const lock of locks) {
+        assert.ok(statSync(lock).mtimeMs >= Date.now() - 1_000, `${lock} was not kept fresh`);
+      }
+    } finally {
+      answered.resolve();
+    }
+    const { value, error } = await outcome;
+    assert.equal(error, undefined);
+    assert.equal(value, true);
+    for (const lock of locks) assert.equal(existsSync(lock), false);
+  });
+});
+
+test('Node fetch reports when a refresh request is written', async (t) => {
+  // An answer slower than the send budget is kept once the request is
+  // written, which only works if Node's own fetch reports the write.
+  const requestIds = [];
+  const server = createServer((request, response) => {
+    requestIds.push(request.headers['x-request-id']);
+    request.resume();
+    request.on('end', () => setTimeout(() => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(renewedSignInBody());
+    }, 300));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  await inScratchHome('notis-cli-oauth-real-fetch-', async ({ configFile }) => {
+    writeExpiredSignIn(configFile);
+    const refreshed = await refreshOAuthCredential(
+      expiredRuntime(),
+      (_url, init) => fetch(`http://127.0.0.1:${port}/oauth/token`, init),
+      { sendTimeoutMs: 100, responseTimeoutMs: 5_000, unsentRetryDelaysMs: [] },
+    );
+    assert.equal(refreshed, true);
+    assert.equal(requestIds.length, 1);
+    assert.match(requestIds[0], /^cli_[0-9a-f]{24}$/);
+    assert.equal(storedRefreshToken(configFile), 'renewed-refresh-token');
+  });
+});
+
+test('Node fetch reports a refresh request stuck before it is written', async (t) => {
+  // The server accepts the connection but never completes the secure
+  // handshake, so the request is never written and can be given up safely.
+  const sockets = new Set();
+  const server = createTcpServer((socket) => {
+    sockets.add(socket);
+    socket.on('error', () => {});
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    for (const socket of sockets) socket.destroy();
+    return new Promise((resolve) => server.close(resolve));
+  });
+  const { port } = server.address();
+  await inScratchHome('notis-cli-oauth-stalled-', async ({ configFile }) => {
+    writeExpiredSignIn(configFile);
+    let tokenRequests = 0;
+    const startedAt = Date.now();
+    await assert.rejects(refreshOAuthCredential(expiredRuntime(), (_url, init) => {
+      tokenRequests += 1;
+      return fetch(`https://127.0.0.1:${port}/oauth/token`, init);
+    }, { sendTimeoutMs: 300, responseTimeoutMs: 10_000, unsentRetryDelaysMs: [] }), (error) => {
+      assert.equal(error.code, 'oauth_refresh_unreachable');
+      assert.equal(error.retryable, true);
+      return true;
+    });
+    // Given up at the send budget, not after waiting for an answer.
+    assert.ok(Date.now() - startedAt < 5_000);
+    assert.equal(tokenRequests, 1);
+    assert.ok(sockets.size >= 1);
+    assert.equal(storedRefreshToken(configFile), 'stored-refresh-token');
+  });
 });
 
 // A worktree profile is authenticated by the running ./dev.sh. Authorizing a

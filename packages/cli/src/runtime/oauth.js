@@ -3,6 +3,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import {
   mkdirSync,
   readdirSync,
@@ -11,6 +12,7 @@ import {
   rmdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
@@ -22,7 +24,7 @@ import { createInterface } from 'node:readline/promises';
 
 import { CliError, EXIT_CODES, usageError } from './errors.js';
 import { readComputerIdentity } from './computer-identity.js';
-import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
+import { getAuthRecovery, getRetryRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
   channelFromProfile,
   cliCommandForChannel,
@@ -56,13 +58,32 @@ export function defaultCliOAuthScopes(metadata) {
     .filter((scope) => typeof scope === 'string' && scope.startsWith('notis:'));
   return advertised.length > 0 ? [...new Set(advertised)] : DEFAULT_CLI_OAUTH_SCOPES;
 }
-const OAUTH_LOCK_DIR = join(homedir(), '.notis', 'oauth.lock');
+// Read at call time so a test, or a caller with its own HOME, never touches
+// the lock another process on this computer is using.
+function oauthLockDir() {
+  return join(homedir(), '.notis', 'oauth.lock');
+}
 const DEFAULT_LOGIN_TIMEOUT_MS = 300_000;
 const DEFAULT_REFRESH_EXPIRES_IN = 30 * 24 * 60 * 60;
 // A parked authorization outlives the terminal that started it: the user may
 // still have to sign up, verify an email, and consent before pasting the code.
 const PENDING_LOGIN_TTL_SECONDS = 30 * 60;
 const OAUTH_HTTP_TIMEOUT_MS = 10_000;
+// A refresh rotates the token it presents as soon as the server reads it, so
+// the token request is budgeted by phase (docs/no-dead-ends.md). Reaching the
+// server costs nothing: a slow or stalled link (a VPN over a phone hotspot)
+// may take this long, and a request never written is retried. Once written,
+// the server has very likely already answered, so the client waits this long
+// for that answer instead of abandoning it and keeping a rotated token.
+const OAUTH_TOKEN_SEND_TIMEOUT_MS = 30_000;
+const OAUTH_TOKEN_RESPONSE_TIMEOUT_MS = 60_000;
+const OAUTH_TOKEN_UNSENT_RETRY_DELAYS_MS = [1_000, 3_000];
+// Another process waits for a refresh in progress rather than failing.
+const OAUTH_REFRESH_LOCK_WAIT_MS = OAUTH_TOKEN_SEND_TIMEOUT_MS + OAUTH_TOKEN_RESPONSE_TIMEOUT_MS + 30_000;
+// A refresh keeps its lock folders fresh so that no process, current or older,
+// takes them over as stale while the token request is still running.
+const OAUTH_REFRESH_LOCK_TOUCH_MS = 5_000;
+const OAUTH_REFRESH_SAVE_RETRY_DELAYS_MS = [250, 1_000];
 const RESPONSE_FLUSH_GRACE_MS = 2_000;
 const MAX_NODE_TIMER_MS = 2_147_483_647;
 
@@ -122,6 +143,231 @@ async function fetchJson(url, init = {}, fetchImpl = fetch) {
     clearTimeout(timeout);
     init.signal?.removeEventListener?.('abort', abortFromCaller);
   }
+}
+
+// Token requests in flight, by the request id each one carries in a header.
+// Node's fetch reports through these diagnostics channels when it creates a
+// request and when it writes the request to a socket; the id ties each report
+// to its request.
+const tokenRequestPhases = new Map();
+const REQUEST_CREATED_CHANNEL = 'undici:request:create';
+const REQUEST_WRITTEN_CHANNEL = 'undici:client:sendHeaders';
+// Failures that happen before a request can be written anywhere.
+const UNSENT_FAILURE_CODES = new Set([
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+function diagnosticHeaderText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((item) => String(item)).join('\n');
+  return '';
+}
+
+function trackedTokenRequest(message) {
+  if (tokenRequestPhases.size === 0) return null;
+  const text = `${diagnosticHeaderText(message?.headers)}\n${diagnosticHeaderText(message?.request?.headers)}`;
+  for (const [requestId, phase] of tokenRequestPhases) {
+    if (text.includes(requestId)) return phase;
+  }
+  return null;
+}
+
+function onTokenRequestCreated(message) {
+  const phase = trackedTokenRequest(message);
+  if (phase) phase.created = true;
+}
+
+function onTokenRequestWritten(message) {
+  const phase = trackedTokenRequest(message);
+  if (phase && !phase.sent) {
+    phase.sent = true;
+    phase.onSent?.();
+  }
+}
+
+function watchTokenRequest(requestId) {
+  const phase = { created: false, sent: false, onSent: null };
+  if (tokenRequestPhases.size === 0) {
+    subscribe(REQUEST_CREATED_CHANNEL, onTokenRequestCreated);
+    subscribe(REQUEST_WRITTEN_CHANNEL, onTokenRequestWritten);
+  }
+  tokenRequestPhases.set(requestId, phase);
+  const stop = () => {
+    if (!tokenRequestPhases.delete(requestId)) return;
+    if (tokenRequestPhases.size === 0) {
+      unsubscribe(REQUEST_CREATED_CHANNEL, onTokenRequestCreated);
+      unsubscribe(REQUEST_WRITTEN_CHANNEL, onTokenRequestWritten);
+    }
+  };
+  return { phase, stop };
+}
+
+function networkFailureCode(error) {
+  return error?.cause?.code || error?.cause?.errors?.[0]?.code || error?.code || null;
+}
+
+class TokenRequestFailure extends Error {
+  constructor(error, { sent, timedOut }) {
+    super(error instanceof Error ? error.message : String(error));
+    this.name = 'TokenRequestFailure';
+    this.cause = error;
+    this.sent = sent;
+    this.timedOut = timedOut;
+  }
+}
+
+async function attemptTokenRequest(url, body, fetchImpl, { sendDeadline, responseTimeoutMs }) {
+  const requestId = `cli_${randomBytes(12).toString('hex')}`;
+  const { phase, stop } = watchTokenRequest(requestId);
+  const controller = new AbortController();
+  let answered = false;
+  let timedOut = false;
+  let timer = null;
+  // Timers run before the event loop reads sockets, so an answer that arrived
+  // just as a deadline passed is still waiting to be read. Let the loop read
+  // it first and give up only if it is still missing.
+  const giveUp = (stage) => setImmediate(() => {
+    if (answered || (stage === 'send' && phase.sent)) return;
+    timedOut = true;
+    controller.abort();
+  });
+  const waitForAnswer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => giveUp('answer'), responseTimeoutMs);
+  };
+  phase.onSent = waitForAnswer;
+  timer = setTimeout(() => {
+    if (phase.sent) return;
+    // Provably never written: stop waiting, nothing was consumed.
+    if (phase.created) giveUp('send');
+    // A fetch that does not report its writes may already have sent it.
+    else waitForAnswer();
+  }, Math.max(0, sendDeadline - Date.now()));
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Request-Id': requestId,
+      },
+      body,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    answered = true;
+    return { response, text };
+  } catch (error) {
+    const code = networkFailureCode(error);
+    const sent = phase.sent || (!phase.created && !UNSENT_FAILURE_CODES.has(code));
+    throw new TokenRequestFailure(error, { sent, timedOut });
+  } finally {
+    clearTimeout(timer);
+    stop();
+  }
+}
+
+/**
+ * POST to the token endpoint without abandoning an answer the server may
+ * already have acted on. A request that provably never reached the server is
+ * retried within the send budget; once written, a failure leaves the outcome
+ * unknown and is never replayed here (the server forgives a retry of the same
+ * token for a few minutes, so the next command recovers).
+ */
+async function postTokenRequest(url, body, fetchImpl = fetch, {
+  sendTimeoutMs = OAUTH_TOKEN_SEND_TIMEOUT_MS,
+  responseTimeoutMs = OAUTH_TOKEN_RESPONSE_TIMEOUT_MS,
+  unsentRetryDelaysMs = OAUTH_TOKEN_UNSENT_RETRY_DELAYS_MS,
+} = {}) {
+  const sendDeadline = Date.now() + sendTimeoutMs;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await attemptTokenRequest(url, body, fetchImpl, { sendDeadline, responseTimeoutMs });
+    } catch (failure) {
+      const delay = unsentRetryDelaysMs[attempt];
+      if (failure.sent || delay === undefined || Date.now() + delay >= sendDeadline) throw failure;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+function refreshRetryError(runtime, code, message, cause) {
+  return new CliError({
+    code,
+    message,
+    exitCode: EXIT_CODES.network,
+    retryable: true,
+    hints: getRetryRecovery(runtime).hints,
+    cause,
+  });
+}
+
+// The answer to a refresh, or a retryable error that keeps the stored sign-in
+// untouched when the answer is missing or unreadable.
+function readRefreshAnswer(runtime, { response, text }) {
+  let payload = null;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    const details = payload && typeof payload === 'object' ? payload : {};
+    if (response.status >= 500 || response.status === 429) {
+      throw refreshRetryError(
+        runtime,
+        details.error || 'oauth_refresh_unavailable',
+        'The Notis sign-in server could not renew your session right now. Your sign-in is kept; run the command again.',
+      );
+    }
+    throw oauthError(
+      details.error || 'oauth_request_failed',
+      details.error_description || details.message || `OAuth request failed with status ${response.status}`,
+      null,
+      details,
+    );
+  }
+  if (
+    !payload
+    || typeof payload.access_token !== 'string'
+    || !payload.access_token
+    || typeof payload.refresh_token !== 'string'
+    || !payload.refresh_token
+  ) {
+    throw refreshRetryError(
+      runtime,
+      'oauth_refresh_outcome_unknown',
+      'The Notis sign-in server answered, but the renewed session could not be read. Your sign-in is kept; run the command again.',
+    );
+  }
+  return payload;
+}
+
+async function persistRefreshedSignIn(runtime, metadata, tokenResponse) {
+  let lastError = null;
+  for (const delay of [0, ...OAUTH_REFRESH_SAVE_RETRY_DELAYS_MS]) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    try {
+      return persistOAuthTokenResponse(runtime, metadata, tokenResponse);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  // Never revoke the renewed sign-in here: it is the only valid one left. The
+  // server forgives presenting the previous token again for a few minutes.
+  throw new CliError({
+    code: 'oauth_refresh_not_saved',
+    message: 'Your renewed sign-in could not be saved on this computer. Run the command again in the next few minutes.',
+    exitCode: EXIT_CODES.unexpected,
+    retryable: true,
+    hints: getRetryRecovery(runtime).hints,
+    cause: lastError,
+  });
 }
 
 export async function discoverCliOAuth(apiBase, fetchImpl = fetch) {
@@ -2423,18 +2669,18 @@ function pendingAuthorizationProfiles() {
 
 function lockIsStale() {
   try {
-    return Date.now() - statSync(OAUTH_LOCK_DIR).mtimeMs > 45_000;
+    return Date.now() - statSync(oauthLockDir()).mtimeMs > 45_000;
   } catch {
     return false;
   }
 }
 
-async function acquireRefreshLock(runtime, waitMs = 60_000) {
+async function acquireRefreshLock(runtime, waitMs = OAUTH_REFRESH_LOCK_WAIT_MS) {
   mkdirSync(join(homedir(), '.notis'), { recursive: true });
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {
-      mkdirSync(OAUTH_LOCK_DIR);
+      mkdirSync(oauthLockDir());
       return true;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
@@ -2449,7 +2695,7 @@ async function acquireRefreshLock(runtime, waitMs = 60_000) {
       }
       if (lockIsStale()) {
         try {
-          rmdirSync(OAUTH_LOCK_DIR);
+          rmdirSync(oauthLockDir());
           continue;
         } catch {
           // The owner may have completed between stat and removal.
@@ -2463,20 +2709,38 @@ async function acquireRefreshLock(runtime, waitMs = 60_000) {
   }
 }
 
-export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
+// Touch lock folders while a refresh holds them, so their age keeps saying
+// "in use" for as long as the token request runs.
+function keepLockFoldersFresh(paths) {
+  const touch = () => {
+    const now = new Date();
+    for (const path of paths) {
+      try {
+        utimesSync(path, now, now);
+      } catch {
+        // Released, or retired by stale-lock recovery; nothing to keep.
+      }
+    }
+  };
+  const interval = setInterval(touch, OAUTH_REFRESH_LOCK_TOUCH_MS);
+  interval.unref?.();
+  return () => clearInterval(interval);
+}
+
+export async function refreshOAuthCredential(runtime, fetchImpl = fetch, tokenRequestOptions = {}) {
   // Refresh rotates the same stored grant that login publishes and logout
   // removes. Join their global -> profile lock order so a token rotation can
   // never be mistaken for a successor authorization by a concurrent logout.
-  const globalLock = await acquireListenerGlobalLock();
+  const globalLock = await acquireListenerGlobalLock({ waitMs: OAUTH_REFRESH_LOCK_WAIT_MS });
   let profileLock = null;
   let ownsLock = false;
+  let stopTouchingLocks = () => {};
   let metadata = null;
-  let rotatedResponse = null;
-  let rotatedPersisted = false;
   try {
     profileLock = await acquireListenerStartLock(runtime);
     ownsLock = await acquireRefreshLock(runtime);
     if (!ownsLock) return true;
+    stopTouchingLocks = keepLockFoldersFresh([profileLock, oauthLockDir()]);
     const config = loadConfig();
     const profile = getProfile(config, runtime.profileName);
     assertOAuthApiTarget(runtime, profile);
@@ -2493,29 +2757,43 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
     }
 
     metadata = storedOAuthMetadata(runtime, profile);
-    rotatedResponse = await fetchJson(
-      metadata.tokenEndpoint,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
+    let answer;
+    try {
+      answer = await postTokenRequest(
+        metadata.tokenEndpoint,
+        new URLSearchParams({
           grant_type: 'refresh_token',
           refresh_token: profile.oauth_refresh_token,
           client_id: profile.oauth_client_id,
           resource: metadata.resource,
           ...cliDeviceParams(),
         }),
-      },
-      fetchImpl,
-    );
-    const updated = persistOAuthTokenResponse(runtime, metadata, rotatedResponse);
-    rotatedPersisted = true;
+        fetchImpl,
+        tokenRequestOptions,
+      );
+    } catch (failure) {
+      if (!(failure instanceof TokenRequestFailure)) throw failure;
+      // The stored sign-in stays exactly as it was: either the server never
+      // saw this request, or it forgives the same token again for a while.
+      throw failure.sent
+        ? refreshRetryError(
+          runtime,
+          'oauth_refresh_outcome_unknown',
+          'The Notis sign-in server did not answer in time. Your sign-in is kept; run the command again.',
+          failure.cause,
+        )
+        : refreshRetryError(
+          runtime,
+          'oauth_refresh_unreachable',
+          'Could not reach the Notis sign-in server. Your sign-in is kept; check the connection and run the command again.',
+          failure.cause,
+        );
+    }
+    const rotatedResponse = readRefreshAnswer(runtime, answer);
+    const updated = await persistRefreshedSignIn(runtime, metadata, rotatedResponse);
     updateRuntimeFromOAuthProfile(runtime, updated);
     return true;
   } catch (error) {
-    if (rotatedResponse && !rotatedPersisted) {
-      await revokeCancelledToken(metadata, rotatedResponse, fetchImpl);
-    }
     if (error instanceof CliError) {
       throw new CliError({
         code: error.code,
@@ -2523,16 +2801,19 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch) {
         exitCode: error.exitCode,
         retryable: error.retryable,
         details: error.details,
-        hints: getAuthRecovery(runtime).hints,
+        // A retryable failure keeps the sign-in, so its hint is to try again,
+        // never to sign in again.
+        hints: error.retryable ? error.hints : getAuthRecovery(runtime).hints,
         warnings: error.warnings,
         cause: error,
       });
     }
     throw error;
   } finally {
+    stopTouchingLocks();
     if (ownsLock) {
       try {
-        rmdirSync(OAUTH_LOCK_DIR);
+        rmdirSync(oauthLockDir());
       } catch {
         // A process exit or external cleanup may already have removed the lock.
       }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { installSkillSyncService } from '../src/runtime/skill-sync-service.js';
-import { runAutomaticSkillSync } from '../src/skill-sync-worker.js';
+import { main as runSkillSyncWorker, runAutomaticSkillSync, signInFingerprint } from '../src/skill-sync-worker.js';
 import { syncSkillsHandler } from '../src/command-specs/skills.js';
 
 const account = { profile: 'beta', apiBase: 'https://api-beta.notis.ai', userId: 'owner' };
@@ -54,6 +54,94 @@ test('changed profile identity or endpoint cannot silently rebind the background
     settings: async () => ({ user_id: 'other', sync_enabled: true }),
     lock: async () => assert.fail('must reject before writes'),
   }), /identity mismatch/);
+});
+
+// The worker runs every minute. A sign-in the server rejected can only fail
+// the same way again, so the worker waits until that sign-in changes.
+function workerHome(t) {
+  const home = mkdtempSync(join(tmpdir(), 'notis-service-worker-'));
+  const exitCode = process.exitCode;
+  t.after(() => {
+    process.exitCode = exitCode;
+    rmSync(home, { recursive: true, force: true });
+  });
+  return { home, status: join(home, '.notis', 'skills', 'service', 'status.json') };
+}
+
+const workerArgs = [account.profile, account.apiBase, account.userId];
+
+function failingWith(code, counter) {
+  return async () => {
+    counter.runs += 1;
+    throw Object.assign(new Error('failed'), { code });
+  };
+}
+
+test('background sync stops presenting a rejected sign-in until it changes', async t => {
+  const { home, status } = workerHome(t);
+  const counter = { runs: 0 };
+  const rejected = failingWith('invalid_grant', counter);
+  await runSkillSyncWorker(workerArgs, { home, run: rejected, fingerprint: () => 'sign-in-1' });
+  const first = JSON.parse(readFileSync(status, 'utf8'));
+  assert.equal(counter.runs, 1);
+  assert.deepEqual(
+    { status: first.status, code: first.code, sign_in: first.sign_in, profile: first.profile },
+    { status: 'error', code: 'invalid_grant', sign_in: 'sign-in-1', profile: 'beta' },
+  );
+
+  // The same sign-in is not presented again and the status stays as it was.
+  await runSkillSyncWorker(workerArgs, { home, run: rejected, fingerprint: () => 'sign-in-1' });
+  assert.equal(counter.runs, 1);
+  assert.equal(readFileSync(status, 'utf8'), JSON.stringify(first, null, 2));
+
+  // A new sign-in, from `notis login` or a renewal by another process, is used.
+  await runSkillSyncWorker(workerArgs, {
+    home,
+    run: async () => {
+      counter.runs += 1;
+      return { status: 'synced' };
+    },
+    fingerprint: () => 'sign-in-2',
+  });
+  assert.equal(counter.runs, 2);
+  assert.equal(JSON.parse(readFileSync(status, 'utf8')).status, 'synced');
+});
+
+test('background sync keeps trying after failures that leave the sign-in usable', async t => {
+  const { home, status } = workerHome(t);
+  const counter = { runs: 0 };
+  const unknown = failingWith('oauth_refresh_outcome_unknown', counter);
+  await runSkillSyncWorker(workerArgs, { home, run: unknown, fingerprint: () => 'sign-in-1' });
+  assert.equal(JSON.parse(readFileSync(status, 'utf8')).sign_in, undefined);
+  await runSkillSyncWorker(workerArgs, { home, run: unknown, fingerprint: () => 'sign-in-1' });
+  assert.equal(counter.runs, 2);
+
+  // A rejection recorded for another profile does not hold this one back.
+  mkdirSync(join(home, '.notis', 'skills', 'service'), { recursive: true });
+  writeFileSync(status, JSON.stringify({ status: 'error', code: 'invalid_grant', sign_in: 'sign-in-1', profile: 'other' }));
+  await runSkillSyncWorker(workerArgs, { home, run: unknown, fingerprint: () => 'sign-in-1' });
+  assert.equal(counter.runs, 3);
+});
+
+test('the sign-in fingerprint follows every renewal and holds no credential', () => {
+  const profile = {
+    oauth_access_token: 'access-token-value',
+    oauth_refresh_token: 'refresh-token-value',
+    oauth_client_id: 'notis_cli',
+    oauth_issuer: 'https://mcp.notis.ai',
+    oauth_user_id: 'owner',
+    oauth_access_expires_at: 1000,
+    oauth_refresh_expires_at: 2000,
+  };
+  const config = (patch = {}) => ({ current_profile: 'beta', profiles: { beta: { ...profile, ...patch } } });
+  const value = signInFingerprint('beta', config());
+  assert.match(value, /^[0-9a-f]{16}$/);
+  // The tokens themselves are never part of it.
+  assert.equal(signInFingerprint('beta', config({ oauth_refresh_token: 'another-value' })), value);
+  // A renewal or a new sign-in changes it.
+  assert.notEqual(signInFingerprint('beta', config({ oauth_access_expires_at: 1900 })), value);
+  assert.notEqual(signInFingerprint('beta', config({ oauth_client_id: 'notis_cli_2' })), value);
+  assert.equal(signInFingerprint('missing', config()), null);
 });
 
 test('LaunchAgent survives npm cache removal, has no secrets and is idempotent', async t => {
