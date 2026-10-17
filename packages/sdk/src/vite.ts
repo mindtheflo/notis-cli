@@ -1,12 +1,12 @@
 /**
- * Vite config builder for Notis apps.
+ * Vite config builder for Notis Space views.
  *
  * Usage:
  * ```ts
  * // vite.config.ts
  * import { notisViteConfig } from '@notis/sdk/vite';
- * import appConfig from './notis.config';
- * export default notisViteConfig(appConfig);
+ * import workspace from './notis.config';
+ * export default notisViteConfig(workspace);
  * ```
  *
  * Produces a library-mode ES module bundle with React externalized.
@@ -14,7 +14,6 @@
  */
 
 import * as vite from 'vite';
-import type { NotisAppConfig } from './config';
 import type { SpacesWorkspace } from './space';
 import { notisTailwindContent } from './tailwind';
 
@@ -28,7 +27,12 @@ const externalReact = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runt
 // render transparent. Targeting these versions keeps light-dark() as written.
 export const NOTIS_CSS_TARGET = ['chrome123', 'edge123', 'firefox120', 'safari17.5'];
 
-export function notisViteConfig(appConfig: NotisAppConfig | SpacesWorkspace): vite.UserConfig {
+/**
+ * Every selected Space builds with the same library config; the CLI writes the
+ * selected entry to `.notis/_entry.tsx`. The workspace index is accepted so
+ * vite.config.ts can pass its notis.config default export.
+ */
+export function notisViteConfig(_workspace: SpacesWorkspace): vite.UserConfig {
   // Vite 8 preserves external require() calls. App bundles run in a browser
   // with an ESM import map, so bundled CommonJS dependencies must import React.
   // Older pulled apps also receive this SDK; their Vite already does this.

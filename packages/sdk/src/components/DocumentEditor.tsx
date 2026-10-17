@@ -35,11 +35,7 @@ const fallbackTitleStyle: CSSProperties = {
  * types get a typed placeholder.
  */
 function DocumentEditorFallback({ documentId, variant = 'full', className }: NotisDocumentEditorProps) {
-  const runtime = useNotisRuntime();
   const { document, loading, error } = useDocument(documentId ?? null);
-  // Listing screenshots should show the app as it looks in the portal, so the
-  // harness-only editing notice stays out of scenario captures.
-  const isScreenshot = Boolean(runtime?.context?.screenshotScenario);
 
   if (loading) {
     return <div className={className} style={fallbackFrameStyle}>Loading document…</div>;
@@ -59,9 +55,7 @@ function DocumentEditorFallback({ documentId, variant = 'full', className }: Not
       {isMarkdown ? (
         <>
           <Markdown value={document.contentMarkdown ?? ''} />
-          {isScreenshot ? null : (
-            <p style={fallbackNoticeStyle}>Read-only preview — editing is available inside the Notis portal.</p>
-          )}
+          <p style={fallbackNoticeStyle}>Read-only preview: editing is available inside the Notis portal.</p>
         </>
       ) : document.contentType === 'view' ? (
         <div style={fallbackFrameStyle}>

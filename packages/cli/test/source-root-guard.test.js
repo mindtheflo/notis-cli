@@ -65,7 +65,7 @@ test('every source-writing entry point refuses a folder that is not a Space sour
 
   assert.throws(() => syncEmbeddedSdk(dir, { templateSdkDir, retiredFiles: RETIRED, log() {} }), refusal);
   await assert.rejects(buildSpaceArtifact(dir, 'overview', { stdio: 'pipe' }), refusal);
-  await assert.rejects(buildArtifact(dir, { stdio: 'pipe' }), refusal);
+  await assert.rejects(buildArtifact(dir, { stdio: 'pipe', prepare: () => assert.fail('prepare ran outside a Space source') }), refusal);
   for (const operation of ['build', 'verify', 'preview', 'deploy', 'inspect']) {
     const ctx = commandContext(operation, dir);
     await assert.rejects(Promise.resolve().then(() => ctx.spec.handler(ctx)), refusal, operation);

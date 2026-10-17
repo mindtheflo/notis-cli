@@ -599,45 +599,6 @@ test('a stopped local-only worktree blocks unauthenticated network commands', ()
   assert.doesNotMatch(payload.error.message, /connect|fetch/i);
 });
 
-test('a stopped local-only worktree blocks live app harness modes', () => {
-  const root = mkdtempSync(join(tmpdir(), 'notis-worktree-live-harness-stopped-'));
-  const home = mkdtempSync(join(tmpdir(), 'notis-worktree-live-harness-home-'));
-  mkdirSync(join(root, '.context'), { recursive: true });
-  mkdirSync(join(home, '.notis'), { recursive: true });
-  writeFileSync(
-    join(root, '.context', 'notis-routing.json'),
-    JSON.stringify({ version: 1, mode: 'local-only', workspace_root: root }),
-  );
-  writeFileSync(
-    join(home, '.notis', 'config.json'),
-    JSON.stringify({
-      current_profile: 'default',
-      profiles: {
-        default: {
-          api_base: 'https://api.notis.ai',
-          oauth_access_token: makeJwt('real-user'),
-          oauth_access_expires_at: 4_102_444_800,
-          oauth_user_id: 'real-user',
-        },
-      },
-    }),
-  );
-
-  for (const command of ['verify', 'screenshot']) {
-    const result = runCliProbe(root, ['apps', command, '.', '--mode', 'live', '--skip-build', '--json'], {
-      HOME: home,
-    });
-    assert.equal(result.status, 4, result.stderr);
-    assert.equal(JSON.parse(result.stdout).error.code, 'dev_runtime_unavailable');
-  }
-
-  const stub = runCliProbe(root, ['apps', 'verify', '.', '--mode', 'stub', '--skip-build', '--json'], {
-    HOME: home,
-  });
-  assert.equal(stub.status, 2, stub.stderr);
-  assert.equal(JSON.parse(stub.stdout).error.code, 'usage_error');
-});
-
 test('CLI renders a structured error when a local-only runtime is stopped', () => {
   const root = mkdtempSync(join(tmpdir(), 'notis-worktree-stopped-'));
   const nested = join(root, 'packages', 'cli');

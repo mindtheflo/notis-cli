@@ -13,7 +13,7 @@ For CI, hosted agents, or internal scripts, pass a non-persisted token with `NOT
 - `LOCAL_NOTIS_DATABASE_LIST_DATABASES` — list native databases.
 - `LOCAL_NOTIS_DATABASE_GET_DATABASE` — inspect one database schema.
 - `LOCAL_NOTIS_DATABASE_QUERY` — query native database documents.
-- `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` — create or update database schema. Creation requires the owning app's slug or id in the `app` argument (every database belongs to a Notis app).
+- `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE` — create or update database schema. Creation links the database to at least one Space with `links.add` and names its main view in that Space with `main_view`.
 
 ## Workflow
 

@@ -1,7 +1,7 @@
 {
   "name": "@notis_ai/cli",
   "version": "0.2.0",
-  "description": "Agent-first Notis CLI for apps and generic tool execution",
+  "description": "Agent-first Notis CLI for Spaces, Skills and generic tool execution",
   "type": "module",
   "bin": {
     "notis": "bin/notis.js"
@@ -35,8 +35,7 @@
     "ajv-formats": "^3.0.1",
     "commander": "^15.0.0",
     "esbuild": "^0.28.2",
-    "playwright-core": "1.63.0",
-    "sharp": "^0.35.4"
+    "playwright-core": "1.63.0"
   },
   "keywords": [
     "notis",

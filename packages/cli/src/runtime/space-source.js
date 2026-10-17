@@ -7,7 +7,7 @@ import { usageError } from './errors.js';
 import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifest.js';
 
 const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'collection', 'sourceIncludes', 'verificationFixtures', ...VIEW_DEFINITION_FIELDS]);
-/** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-apps-platform.md. */
+/** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-spaces-platform.md. */
 export const VIEWER_READ_FAMILIES = Object.freeze(['databases', 'skills']);
 const WORKSPACE_INDEXES = new Set(['notis.config.ts', 'notis.config.js', 'notis.config.mjs']);
 const ROOT_CONFIGS = ['package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'vite.config.js', 'vite.config.mjs',

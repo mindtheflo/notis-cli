@@ -82,15 +82,10 @@ function ensureParentCommand(program, parentMap, parentPath) {
 
 function buildRuntime(globalOptions, spec) {
   const localBackendTypes = new Set(['local', 'local_config', 'local_registry']);
-  const commandName = spec.command_path.join(' ');
-  const liveAppHarness = (
-    commandName === 'apps verify' || commandName === 'apps screenshot'
-  ) && globalOptions.mode === 'live';
   const runtime = resolveRuntimeProfile(globalOptions, {
     requireAuth: spec.require_auth !== false,
     allowUnknownProfile: spec.allow_unknown_profile === true,
-    allowUnavailableWorktree:
-      localBackendTypes.has(spec.backend_call?.type) && !liveAppHarness,
+    allowUnavailableWorktree: localBackendTypes.has(spec.backend_call?.type),
   });
   // A stopped local-only worktree may keep executing commands whose backend is
   // entirely local, but it must not carry a shared live credential into those
@@ -223,7 +218,7 @@ export function createProgram(launchContext = {}) {
 
   program
     .name('notis')
-    .description('Agent-first Notis CLI for apps and generic tool execution')
+    .description('Agent-first Notis CLI for Spaces and generic tool execution')
     .version(CLI_VERSION)
     .showHelpAfterError()
     .option('--json', 'Shortcut for --output json')

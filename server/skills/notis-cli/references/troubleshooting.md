@@ -19,8 +19,8 @@ workspace it belongs to, or to switch to a real account profile.
 
 ### Deploy fails with "network_error" or "fetch failed"
 
-Run `notis doctor` to verify the effective profile and endpoint. Read back the exact app ID,
-version and release state before retrying. An uncertain network response is not proof of rollback.
+Run `notis doctor` to verify the effective profile and endpoint. Read back the exact Space ID,
+source revision and release state before retrying. An uncertain network response is not proof of rollback.
 There is no direct storage deployment path. Repair authentication when needed without changing the
 intended profile, then reconcile the previous outcome before starting a new release.
 

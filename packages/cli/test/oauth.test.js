@@ -210,7 +210,7 @@ test('OAuth profile fields survive normalization in profile and legacy config sh
     oauth_issuer: 'https://api.notis.ai',
     oauth_api_base: 'https://api.notis.ai',
     oauth_resource: 'https://api.notis.ai/cli',
-    oauth_scopes: ['notis:read', 'notis:apps'],
+    oauth_scopes: ['notis:read', 'notis:spaces'],
     oauth_user_id: 'oauth-user',
   };
 
@@ -1363,7 +1363,7 @@ test('agent login emits an authorization URL and exits without waiting for input
   // knows about, Spaces included.
   assert.deepEqual(
     authorizeUrl.searchParams.get('scope').split(' '),
-    ['notis:read', 'notis:write', 'notis:connections', 'notis:apps', 'notis:spaces'],
+    ['notis:read', 'notis:write', 'notis:connections', 'notis:spaces'],
   );
 });
 
@@ -1376,7 +1376,7 @@ test('login without --scope asks for every permission the server advertises', as
         notis_cli_client_id: 'notis_cli',
         notis_cli_copy_paste_redirect_uri: 'https://app.notis.ai/cli-setup/code/bootstrap',
         // A permission added on the server after this CLI was released.
-        scopes_supported: ['notis:apps', 'notis:future', 'notis:read', 'notis:spaces', 'openid'],
+        scopes_supported: ['notis:future', 'notis:read', 'notis:spaces', 'openid'],
       }));
     }
     return new Response(JSON.stringify({
@@ -1396,7 +1396,7 @@ test('login without --scope asks for every permission the server advertises', as
   const advertised = await loginWithOAuth(runtime(), { mode: 'code' }, null, fetchImpl);
   assert.deepEqual(
     new URL(advertised.agentAuthorization.authorize_url).searchParams.get('scope').split(' '),
-    ['notis:apps', 'notis:future', 'notis:read', 'notis:spaces'],
+    ['notis:future', 'notis:read', 'notis:spaces'],
   );
 
   // An explicit --scope still narrows the request.
@@ -1515,7 +1515,7 @@ test('concurrent CLI processes serialize refresh and reuse the rotated credentia
         refresh_token: 'rotated-refresh-token',
         expires_in: 3600,
         refresh_expires_in: 7200,
-        scope: 'notis:read notis:write notis:connections notis:apps',
+        scope: 'notis:read notis:write notis:connections notis:spaces',
       }));
       return;
     }

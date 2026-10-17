@@ -382,7 +382,7 @@ export const spacesCommandSpecs = [
       const sourceLink = { space_id: ctx.args.spaceId, api_base: ctx.runtime.apiBase.replace(/\/$/, '') };
       let databaseStructures, authoringOverrides;
       const result = await pullAppSource({ targetDir: resolve(ctx.args.dir || ctx.args.spaceId), force: false,
-        sourceKind: 'space', sourceLink, version: requestedRevision || 'latest',
+        sourceLink, version: requestedRevision || 'latest',
         async downloadSource() {
           const query = new URLSearchParams({ space_id: ctx.args.spaceId, format: 'archive',
             ...(requestedRevision === null ? {} : { revision: String(requestedRevision) }) });

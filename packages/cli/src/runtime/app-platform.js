@@ -1,9 +1,9 @@
 /**
  * App platform utilities for the Notis CLI.
  *
- * Handles project scaffolding, validation, building, and linking. This is the
- * CLI-side counterpart to @notis/sdk -- it reads notis.config.ts, runs the
- * Vite build, and packages the bundle for deployment.
+ * Handles project scaffolding, validation, building, and Space source pulls.
+ * This is the CLI-side counterpart to @notis/sdk -- it reads notis.config.ts,
+ * runs the Vite build, and packages the bundle for deployment.
  */
 
 import { spawn } from 'node:child_process';
@@ -16,28 +16,17 @@ import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
 import { usageError } from './errors.js';
-import { acquireScaffoldSource, loadScaffoldCatalog } from './app-registry-scaffolds.js';
-import { validateArtifactBoundary, validateProjectBoundary, validateProjectDesign } from './app-boundary-validator.js';
-import { CHANGELOG_MERGE_DATE, readAppChangelog } from './app-changelog.js';
+import { validateArtifactBoundary } from './app-boundary-validator.js';
 import { HOST_ONLY_SDK_FILES, RETIRED_SDK_FILES } from './retired-sdk-files.js';
 import { assertSourceRoot } from './source-root.js';
 
 const NOTIS_DIR = '.notis';
-const STATE_FILE = join(NOTIS_DIR, 'state.json');
+const SPACE_SOURCE_FILE = join(NOTIS_DIR, 'space-source.json');
 const OUTPUT_DIR = join(NOTIS_DIR, 'output');
 const BUNDLE_DIR = join(OUTPUT_DIR, 'bundle');
 const MANIFEST_FILE = join(OUTPUT_DIR, 'manifest.json');
-const METADATA_DIR = 'metadata';
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const TEMPLATE_SDK_DIR = join(CLI_ROOT, 'dist', 'sdk');
-export const NOTIS_APP_CATEGORIES = [
-  'Productivity',
-  'Sales & Marketing',
-  'Operations',
-  'Product & Engineering',
-  'Personal',
-];
-export const MIN_LISTING_SCREENSHOTS = 3;
 const SOURCE_COPY_EXCLUDES = new Set([
   'node_modules',
   '.notis',
@@ -58,39 +47,16 @@ const SCAFFOLD_COPY_EXCLUDES = new Set([
   'coverage',
   '.next',
   '.turbo',
+  // The CLI reads its own template/.harness theme; projects never use a copy.
+  '.harness',
 ]);
-// Listing media describes the scaffold's own Store entry, so a new project must
-// never inherit it. Scaffold packaging still ships these files -- only the
-// `apps init` copy drops them. Screenshots only: `screenshot-fixtures.json` is
-// not listing media, it is the stub data the dev harness serves, and dropping
-// it would make every route of a fresh project render its empty state.
-const SCAFFOLD_LISTING_MEDIA = /^metadata\/screenshot-\d+\.png$/i;
 const PULL_LOCK_TIMEOUT_MS = 30_000;
 const PULL_LOCK_POLL_MS = 25;
-const STATE_WRITE_LOCK_TIMEOUT_MS = 5_000;
-const STATE_WRITE_LOCK_STALE_MS = 2_000;
-const stateWriteLockWait = new Int32Array(new SharedArrayBuffer(4));
 let appConfigImportNonce = 0;
 
 // ---------------------------------------------------------------------------
 // Project directory resolution
 // ---------------------------------------------------------------------------
-
-// Every Notis app the user did not deliberately place lives here, mirroring the
-// desktop's synced-skills root (~/.notis/skills). A default that depends on the
-// caller's working directory is unusable for agents: the shell sits wherever
-// the previous command left it, so `apps init` would scatter projects into
-// unrelated checkouts. Pass an explicit [dir] to override -- that is how an app
-// ends up in a tracked git repo or an existing monorepo.
-export const DEFAULT_APPS_ROOT = join(homedir(), NOTIS_DIR, 'apps');
-
-export function defaultAppProjectDir(slug) {
-  const safeSlug = String(slug || '').trim();
-  if (!safeSlug || safeSlug.includes('/') || safeSlug.includes('\\') || safeSlug.startsWith('.')) {
-    throw usageError(`Cannot derive a default project directory from "${slug}". Pass an explicit target directory.`);
-  }
-  return join(DEFAULT_APPS_ROOT, safeSlug);
-}
 
 // A `~/...` path only expands when a shell is involved. Agents routinely spawn
 // the CLI without one, and the documented default home is written with a tilde,
@@ -178,9 +144,9 @@ function stripNotisSdkImports(source) {
 function transpileTsConfigSource(source, configPath) {
   // Strip the @notis/sdk/config import unconditionally. The SDK package often
   // points its `exports` at raw .ts source, which Node cannot import from the
-  // temp .mjs file we emit below. `defineNotisApp` is just an identity helper,
-  // so removing the import and replacing the call with a parens-wrapped
-  // expression preserves the config value without ever resolving the SDK.
+  // temp .mjs file we emit below. The config helpers are identity functions,
+  // so replacing the import with local identity functions preserves the
+  // config value without ever resolving the SDK.
   const stripped = stripNotisSdkImports(source);
   try {
     const { transformSync } = createRequire(import.meta.url)('esbuild');
@@ -240,337 +206,6 @@ export async function loadAppConfig(projectDir, { file = null } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Project validation
-// ---------------------------------------------------------------------------
-
-export function detectProjectProblems(projectDir) {
-  const problems = [];
-
-  if (!existsSync(join(projectDir, 'package.json'))) {
-    problems.push('Missing package.json');
-  }
-
-  const hasViteConfig = ['vite.config.ts', 'vite.config.js', 'vite.config.mjs']
-    .some((name) => existsSync(join(projectDir, name)));
-  if (!hasViteConfig) {
-    problems.push('Missing vite.config file');
-  }
-
-  if (!existsSync(join(projectDir, 'app'))) {
-    problems.push('Missing app/ directory');
-  }
-
-  const hasNotisConfig = ['notis.config.ts', 'notis.config.js', 'notis.config.mjs']
-    .some((name) => existsSync(join(projectDir, name)));
-  if (!hasNotisConfig) {
-    problems.push('Missing notis.config.ts');
-  }
-
-  return problems;
-}
-
-export function detectProjectWarnings(projectDir, appConfig = null) {
-  const warnings = [];
-
-  if (!existsSync(join(projectDir, 'components.json'))) {
-    warnings.push('Missing components.json -- shadcn is not configured.');
-  }
-
-  const hasTailwind = ['tailwind.config.ts', 'tailwind.config.js', 'tailwind.config.cjs']
-    .some((name) => existsSync(join(projectDir, name)));
-  if (!hasTailwind) {
-    warnings.push('Missing Tailwind config.');
-  }
-
-  const readsWorkspaceDatabases =
-    appConfig?.capabilities?.workspaceDatabases === 'read';
-  if (
-    appConfig
-    && appConfig.kind !== 'report'
-    && !readsWorkspaceDatabases
-    && (!Array.isArray(appConfig.databases) || appConfig.databases.length === 0)
-  ) {
-    warnings.push('No database references declared in notis.config.ts.');
-  }
-
-  if (appConfig && appConfig.kind !== 'report') {
-    try {
-      const listing = inspectListingReadiness(projectDir, appConfig);
-      warnings.push(...listing.errors, ...listing.warnings);
-    } catch (error) {
-      warnings.push(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  return warnings;
-}
-
-function safeKebab(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)+/g, '');
-}
-
-function jsStringLiteral(value) {
-  return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-}
-
-function normalizeCategories(categories = []) {
-  if (!Array.isArray(categories)) {
-    return [];
-  }
-  const allowed = new Set(NOTIS_APP_CATEGORIES);
-  const normalized = [];
-  for (const category of categories) {
-    if (typeof category !== 'string' || !category.trim()) {
-      continue;
-    }
-    const trimmed = category.trim();
-    if (!allowed.has(trimmed)) {
-      throw usageError(
-        `Invalid Notis app category "${trimmed}". Use one of: ${NOTIS_APP_CATEGORIES.join(', ')}.`,
-      );
-    }
-    if (!normalized.includes(trimmed)) {
-      normalized.push(trimmed);
-    }
-  }
-  return normalized;
-}
-
-function pngDimensions(buffer) {
-  const signature = '89504e470d0a1a0a';
-  if (!Buffer.isBuffer(buffer) || buffer.length < 24 || buffer.subarray(0, 8).toString('hex') !== signature) {
-    return null;
-  }
-  return {
-    width: buffer.readUInt32BE(16),
-    height: buffer.readUInt32BE(20),
-  };
-}
-
-function imageAssetMeta(projectDir, relPath, { maxBytes }) {
-  const fullPath = join(projectDir, relPath);
-  const content = readFileSync(fullPath);
-  const dimensions = pngDimensions(content);
-  const errors = [];
-  const warnings = [];
-
-  if (!relPath.toLowerCase().endsWith('.png')) {
-    errors.push(`${relPath} must be a PNG file.`);
-  }
-  if (content.length > maxBytes) {
-    errors.push(`${relPath} must be ${Math.round(maxBytes / 1024 / 1024)} MB or smaller.`);
-  }
-  if (!dimensions) {
-    errors.push(`${relPath} is not a valid PNG file.`);
-  } else if (dimensions.width !== 2000 || dimensions.height !== 1250) {
-    errors.push(`${relPath} must be exactly 2000x1250 pixels.`);
-  }
-
-  return {
-    path: relPath,
-    content_type: 'image/png',
-    bytes: content.length,
-    width: dimensions?.width ?? null,
-    height: dimensions?.height ?? null,
-    errors,
-    warnings,
-  };
-}
-
-export function discoverMetadataAssets(projectDir) {
-  const metadataDir = join(projectDir, METADATA_DIR);
-  const screenshots = [];
-
-  if (existsSync(metadataDir)) {
-    for (const entry of readdirSync(metadataDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const match = /^screenshot-(\d+)\.png$/i.exec(entry.name);
-      if (!match) continue;
-      screenshots.push({
-        index: Number.parseInt(match[1], 10),
-        ...imageAssetMeta(projectDir, join(METADATA_DIR, entry.name), {
-          maxBytes: 2 * 1024 * 1024,
-        }),
-      });
-    }
-  }
-
-  screenshots.sort((a, b) => a.index - b.index);
-  return {
-    screenshots: screenshots.slice(0, 6),
-  };
-}
-
-function normalizeConfiguredScreenshots(appConfig = null) {
-  if (!Array.isArray(appConfig?.screenshots) || appConfig.screenshots.length === 0) {
-    return null;
-  }
-  if (appConfig.screenshots.length > 6) {
-    throw usageError('Configure at most six listing screenshots.');
-  }
-
-  const seenPaths = new Set();
-  return appConfig.screenshots.map((entry, index) => {
-    const path = typeof entry?.path === 'string' ? entry.path.trim().replace(/\\/g, '/') : '';
-    const alt = typeof entry?.alt === 'string' ? entry.alt.trim() : '';
-    const route = typeof entry?.route === 'string' ? entry.route.trim() : '';
-    const scenario = typeof entry?.scenario === 'string' ? entry.scenario.trim() : '';
-    const focus = typeof entry?.focus === 'string' ? entry.focus.trim() : '';
-    const theme = typeof entry?.theme === 'string' ? entry.theme.trim().toLowerCase() : '';
-    if (!/^metadata\/screenshot-\d+\.png$/i.test(path)) {
-      throw usageError(`screenshots[${index}].path must match metadata/screenshot-N.png.`);
-    }
-    const expectedPath = `metadata/screenshot-${index + 1}.png`;
-    if (path !== expectedPath) {
-      throw usageError(`screenshots[${index}].path must be ${expectedPath} so capture order stays stable.`);
-    }
-    if (seenPaths.has(path)) {
-      throw usageError(`Duplicate listing screenshot path: ${path}`);
-    }
-    if (theme && theme !== 'light' && theme !== 'dark') {
-      throw usageError(`screenshots[${index}].theme must be light or dark.`);
-    }
-    seenPaths.add(path);
-    return {
-      path,
-      alt,
-      route: route || null,
-      scenario: scenario || null,
-      focus: focus || null,
-      theme: theme || 'light',
-    };
-  });
-}
-
-/** Resolve listing screenshot files in their configured editorial order. */
-export function resolveListingScreenshots(projectDir, appConfig = null) {
-  const discovered = discoverMetadataAssets(projectDir).screenshots;
-  const configured = normalizeConfiguredScreenshots(appConfig);
-  if (!configured) {
-    return discovered.map((asset) => ({
-      ...asset,
-      alt: null,
-      route: null,
-      scenario: null,
-      focus: null,
-      theme: 'light',
-    }));
-  }
-
-  const byPath = new Map(discovered.map((asset) => [asset.path.replace(/\\/g, '/'), asset]));
-  return configured.map((entry) => {
-    const asset = byPath.get(entry.path);
-    if (!asset) {
-      return {
-        ...entry,
-        content_type: 'image/png',
-        bytes: null,
-        width: null,
-        height: null,
-        errors: [`${entry.path} is configured but the file does not exist.`],
-        warnings: [],
-      };
-    }
-    return { ...asset, ...entry };
-  });
-}
-
-/**
- * Screenshot scenarios named in notis.config.ts that metadata/screenshot-fixtures.json
- * does not define. A missing scenario is silent at capture time -- the harness
- * simply falls back to the default fixtures -- so it is reported as a warning.
- */
-export function findUnknownScreenshotScenarios(projectDir, screenshots = []) {
-  const named = screenshots.filter((entry) => entry?.scenario);
-  if (named.length === 0) {
-    return [];
-  }
-  const fixturesPath = join(projectDir, METADATA_DIR, 'screenshot-fixtures.json');
-  if (!existsSync(fixturesPath)) {
-    return ['metadata/screenshot-fixtures.json is missing, so screenshot scenarios cannot be applied.'];
-  }
-  let defined;
-  try {
-    const parsed = JSON.parse(readFileSync(fixturesPath, 'utf-8'));
-    const scenarios = parsed?.scenarios && typeof parsed.scenarios === 'object' ? parsed.scenarios : {};
-    defined = new Set(Object.keys(scenarios));
-  } catch {
-    return ['metadata/screenshot-fixtures.json is not valid JSON, so screenshot scenarios cannot be applied.'];
-  }
-  const warnings = [];
-  for (const entry of named) {
-    if (!defined.has(entry.scenario)) {
-      warnings.push(
-        `${entry.path} names scenario "${entry.scenario}", which metadata/screenshot-fixtures.json does not define.`,
-      );
-    }
-  }
-  return warnings;
-}
-
-export function inspectListingReadiness(projectDir, appConfig = null) {
-  const config = appConfig || {};
-  const warnings = [];
-  const errors = [];
-  const screenshots = resolveListingScreenshots(projectDir, config);
-  const metadata = { screenshots };
-  const categories = normalizeCategories(config.categories || []);
-  const changelog = readAppChangelog(projectDir);
-  errors.push(...changelog.errors);
-
-  const packagePath = join(projectDir, 'package.json');
-  if (!existsSync(packagePath)) {
-    errors.push('package.json is required for Store publication.');
-  } else {
-    try {
-      const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'));
-      const notisAppVersion = String(packageJson.notisAppVersion || '').trim();
-      if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(notisAppVersion)) {
-        errors.push('package.json must include a semver `notisAppVersion` (for example, "0.1.0").');
-      }
-    } catch {
-      errors.push('package.json must contain valid JSON for Store publication.');
-    }
-  }
-
-  if (!String(config.tagline || '').trim()) {
-    errors.push('Listing tagline missing in notis.config.ts.');
-  }
-  if (categories.length === 0) {
-    errors.push(`Listing category missing in notis.config.ts. Use one of: ${NOTIS_APP_CATEGORIES.join(', ')}.`);
-  }
-  if (metadata.screenshots.length < MIN_LISTING_SCREENSHOTS) {
-    errors.push(`Listing screenshots: ${metadata.screenshots.length}/${MIN_LISTING_SCREENSHOTS} minimum in metadata/screenshot-N.png. Run \`notis apps screenshot\` to generate them.`);
-  }
-  for (const screenshot of metadata.screenshots) {
-    errors.push(...screenshot.errors);
-    warnings.push(...screenshot.warnings);
-    if (!screenshot.alt) {
-      errors.push(`${screenshot.path} is missing descriptive alt text in notis.config.ts -> screenshots.`);
-    }
-  }
-
-  return {
-    ready:
-      errors.length === 0 &&
-      Boolean(String(config.tagline || '').trim()) &&
-      categories.length > 0 &&
-      metadata.screenshots.length >= MIN_LISTING_SCREENSHOTS &&
-      metadata.screenshots.every((screenshot) => Boolean(screenshot.alt)) &&
-      changelog.entries.length > 0,
-    warnings,
-    errors,
-    metadata,
-    categories,
-    changelog,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
 
@@ -604,387 +239,15 @@ export async function runProjectScript({ projectDir, scriptName, args = [], env 
 }
 
 /**
- * Derive an export name from a route path.
- * '/' -> 'index', '/inbox' -> 'inbox', '/my-tasks' -> 'myTasks'
+ * Build a bundle in place: `prepare` writes the entry file and manifest, the
+ * build script packages into .notis/output/, then the build receipt is saved.
+ * Space builds supply `prepare` (see space-platform.js).
  */
-export function exportNameFromPath(routePath) {
-  if (routePath === '/') return 'index';
-  const slug = routePath.replace(/^\//, '').replace(/\//g, '-');
-  const identifier = slug
-    .split(/[^A-Za-z0-9_$]+/)
-    .filter(Boolean)
-    .map((part, index) => {
-      const lower = part.toLowerCase();
-      if (index === 0) return lower;
-      return lower.charAt(0).toUpperCase() + lower.slice(1);
-    })
-    .join('');
-  if (!identifier) return 'route';
-  return /^[A-Za-z_$]/.test(identifier) ? identifier : `r${identifier}`;
-}
-
-function slugFromPath(routePath) {
-  if (routePath === '/') return 'index';
-  return routePath.replace(/^\//, '').replace(/\//g, '-');
-}
-
-/**
- * Auto-detect routes from the app/ directory by scanning for page.tsx files.
- */
-function autoDetectRoutes(projectDir) {
-  const appDir = join(projectDir, 'app');
-  const routes = [];
-
-  function scan(dir, pathPrefix) {
-    if (!existsSync(dir)) return;
-    const entries = readdirSync(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (entry.name.startsWith('_') || entry.name.startsWith('.')) continue;
-
-      if (entry.isDirectory()) {
-        scan(join(dir, entry.name), `${pathPrefix}/${entry.name}`);
-      } else if (entry.name === 'page.tsx' || entry.name === 'page.jsx' || entry.name === 'page.js') {
-        const routePath = pathPrefix || '/';
-        const slug = slugFromPath(routePath);
-        routes.push({
-          path: routePath,
-          slug,
-          name: slug === 'index' ? 'Home' : slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-          default: routePath === '/',
-          export_name: exportNameFromPath(routePath),
-        });
-      }
-    }
+export async function buildArtifact(projectDir, { stdio = 'inherit', prepare,
+  finalize = null, executable = true, refreshSdk = true, runBuild = runProjectScript } = {}) {
+  if (typeof prepare !== 'function') {
+    throw new TypeError('buildArtifact needs a prepare step that writes the entry file and manifest.');
   }
-
-  scan(appDir, '');
-  return routes;
-}
-
-function validateConfiguredRoutes(routes) {
-  if (routes.length === 0) {
-    return;
-  }
-
-  const slugSet = new Set();
-  let defaultCount = 0;
-
-  for (const route of routes) {
-    if (!route.slug || typeof route.slug !== 'string') {
-      throw usageError(`Route "${route.path}" must define a slug.`);
-    }
-    if (slugSet.has(route.slug)) {
-      throw usageError(`Duplicate route slug "${route.slug}".`);
-    }
-    slugSet.add(route.slug);
-    if (route.default) {
-      defaultCount += 1;
-    }
-    if (route.resourceDeepLinks !== undefined && typeof route.resourceDeepLinks !== 'boolean') {
-      throw usageError(`Route "${route.slug}" resourceDeepLinks must be a boolean.`);
-    }
-  }
-
-  if (defaultCount !== 1) {
-    throw usageError(`Expected exactly one default route, received ${defaultCount}.`);
-  }
-
-  for (const route of routes) {
-    if (route.parentSlug && !slugSet.has(route.parentSlug)) {
-      throw usageError(
-        `Route "${route.slug}" references unknown parentSlug "${route.parentSlug}".`,
-      );
-    }
-    const collection = route.collection || null;
-    if (
-      collection?.sidebar?.mode === 'tree' &&
-      (!collection.parentProperty || typeof collection.parentProperty !== 'string')
-    ) {
-      throw usageError(
-        `Tree collection route "${route.slug}" must define collection.parentProperty.`,
-      );
-    }
-  }
-
-  const childrenByParent = new Map();
-  for (const route of routes) {
-    if (!route.parentSlug) {
-      continue;
-    }
-    const children = childrenByParent.get(route.parentSlug) || [];
-    children.push(route.slug);
-    childrenByParent.set(route.parentSlug, children);
-  }
-
-  for (const route of routes) {
-    const seen = new Set([route.slug]);
-    let current = route.parentSlug || null;
-    while (current) {
-      if (seen.has(current)) {
-        throw usageError(`Route parent cycle detected at "${route.slug}".`);
-      }
-      seen.add(current);
-      current = routes.find((candidate) => candidate.slug === current)?.parentSlug || null;
-    }
-  }
-
-  for (const route of routes) {
-    if (
-      route.collection?.sidebar?.mode === 'tree' &&
-      (childrenByParent.get(route.slug) || []).length > 0
-    ) {
-      throw usageError(
-        `Tree collection route "${route.slug}" cannot also define static child routes.`,
-      );
-    }
-  }
-}
-
-function resolveConfiguredRoutes(appConfig, projectDir) {
-  const configuredRoutes = Array.isArray(appConfig.routes) ? appConfig.routes : [];
-  validateConfiguredRoutes(configuredRoutes);
-  const routes = configuredRoutes.map((route) => ({
-    ...route,
-    slug: route.slug,
-    export_name: route.exportName || route.export_name || exportNameFromPath(route.path),
-  }));
-  return routes.length > 0 ? routes : autoDetectRoutes(projectDir);
-}
-
-/**
- * Generate the _entry.tsx file that re-exports each route's page component.
- */
-function generateEntryFile(projectDir, routes) {
-  const entryDir = join(projectDir, NOTIS_DIR);
-  mkdirSync(entryDir, { recursive: true });
-
-  // Also re-export the layout if it exists
-  const lines = [];
-  const layoutPath = join(projectDir, 'app', 'layout.tsx');
-  if (existsSync(layoutPath)) {
-    lines.push(`export { default as __AppShell } from '../app/layout';`);
-  }
-
-  for (const route of routes) {
-    const pagePath = route.path === '/' ? '../app/page' : `../app${route.path}/page`;
-    lines.push(`export { default as ${route.export_name} } from '${pagePath}';`);
-  }
-
-  const entryPath = join(entryDir, '_entry.tsx');
-  writeFileSync(entryPath, lines.join('\n') + '\n');
-  return entryPath;
-}
-
-export async function prepareArtifactBuild(projectDir, { enforceDesign = true, log = null } = {}) {
-  validateProjectBoundary(projectDir);
-  validateProjectDesign(projectDir, { enforce: enforceDesign, log });
-  const appConfig = await loadAppConfig(projectDir);
-  const detectedRoutes = resolveConfiguredRoutes(appConfig, projectDir);
-
-  generateEntryFile(projectDir, detectedRoutes);
-
-  const manifest = generateManifest(appConfig, projectDir);
-  const manifestPath = join(projectDir, MANIFEST_FILE);
-  mkdirSync(dirname(manifestPath), { recursive: true });
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-
-  return { appConfig, manifest, routes: detectedRoutes };
-}
-
-/**
- * Generate the manifest from app config and build output.
- */
-export function generateManifest(appConfig, projectDir) {
-  if (['skills', 'onboarding'].some(key => {
-    const value = appConfig[key];
-    return Array.isArray(value) ? value.length > 0 : Boolean(value);
-  })) {
-    throw usageError('Apps no longer package Skills or onboarding. Put each Skill in skills/<alias>/ of a '
-      + 'Space source and deploy it with notis spaces deploy.');
-  }
-  const routes = resolveConfiguredRoutes(appConfig, projectDir).map((route) => {
-    const entry = {
-      path: route.path,
-      slug: route.slug,
-      name: route.name,
-      icon: route.icon || null,
-      parentSlug: route.parentSlug || null,
-      default: route.default || false,
-      resourceDeepLinks: route.resourceDeepLinks === true,
-      export_name: route.exportName || route.export_name || exportNameFromPath(route.path),
-      collection: route.collection || null,
-    };
-    if (route.tool_access) {
-      entry.tool_access = route.tool_access;
-    }
-    return entry;
-  });
-
-  if (appConfig.kind === 'report') {
-    if (routes.length !== 1 || routes[0].collection || routes[0].resourceDeepLinks) {
-      throw usageError('Reports require one standalone route, without app collections or resource deep links.');
-    }
-    if (['databases', 'automations', 'tagline', 'categories', 'author', 'screenshots'].some(key => {
-      const value = appConfig[key];
-      return Array.isArray(value) ? value.length > 0 : Boolean(value);
-    })) throw usageError('Reports cannot own databases, automations or Store metadata.');
-    if (Object.values(appConfig.capabilities || {}).some(value => value !== 'read')) {
-      throw usageError('Reports support read capabilities only; shell grants require an installed app.');
-    }
-    const databaseAccess = appConfig.databaseAccess || [];
-    if (!Array.isArray(databaseAccess) || databaseAccess.some(entry =>
-      !entry || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.id || '') ||
-      !['read', 'write'].includes(entry.access)
-    )) throw usageError('databaseAccess entries require an existing database UUID and read/write access.');
-    return { kind: 'report', version: 1, spec_version: 4,
-      routes: routes.map(route => ({ ...route, default: true, tool_access: { base: { tools: appConfig.tools || [] } } })),
-      bundle: { js: 'bundle/app.js', css: 'bundle/app.css' },
-      tools: appConfig.tools || [], tool_bindings: normalizeAppToolBindings(appConfig.toolBindings),
-      capabilities: normalizeAppCapabilities(appConfig.capabilities), database_access: databaseAccess };
-  }
-
-  // Database entries may be a bare slug (structure only) or an object opting
-  // into shipping rows to installers. Normalize to the manifest's snake_case.
-  const databases = (appConfig.databases || []).map((entry) => {
-    if (typeof entry === 'string') return entry;
-    if (!entry || typeof entry !== 'object' || !entry.slug) return entry;
-    const seedDocuments = entry.seedDocuments ?? entry.seed_documents;
-    return seedDocuments === true ? { slug: entry.slug, seed_documents: true } : entry.slug;
-  });
-  const categories = normalizeCategories(appConfig.categories || []);
-  const metadata = { screenshots: resolveListingScreenshots(projectDir, appConfig) };
-  const appSlug = safeKebab(appConfig.name);
-  const displayTitle = appConfig.title || appConfig.displayName || appConfig.name;
-  const listingMedia = {
-    screenshots: metadata.screenshots.map((screenshot) => ({
-      path: screenshot.path,
-      content_type: screenshot.content_type,
-      width: screenshot.width,
-      height: screenshot.height,
-      bytes: screenshot.bytes,
-      alt: screenshot.alt || null,
-      theme: screenshot.theme || 'light',
-    })),
-  };
-  const changelog = readAppChangelog(projectDir);
-  if (changelog.exists && changelog.errors.length > 0) {
-    throw usageError(changelog.errors.join('\n'));
-  }
-  const latestChangelogEntry = changelog.entries[0] || null;
-  const legacyVersionNotes = latestChangelogEntry?.body
-    || appConfig.versionNotes
-    || appConfig.version_notes
-    || null;
-  let releaseVersion = null;
-  try {
-    const packageJson = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'));
-    releaseVersion = String(packageJson.notisAppVersion || '').trim() || null;
-  } catch {
-    // Store readiness reports missing or malformed package metadata. Ordinary
-    // development builds remain usable without a Store release version.
-  }
-
-  return {
-    version: 1,
-    spec_version: 4,
-    app: {
-      name: displayTitle,
-      slug: appSlug || null,
-      description: appConfig.description || null,
-      icon: appConfig.icon || null,
-      accent: appConfig.accent || null,
-      title: displayTitle,
-      tagline: appConfig.tagline || null,
-      categories,
-      author: appConfig.author || null,
-      release_version: releaseVersion,
-      version_notes: legacyVersionNotes,
-    },
-    listing: {
-      title: displayTitle,
-      tagline: appConfig.tagline || null,
-      categories,
-      author: appConfig.author || null,
-      version_notes: legacyVersionNotes,
-      ...(changelog.exists
-        ? {
-            changelog: {
-              source_path: changelog.source_path,
-              entries: changelog.entries,
-            },
-          }
-        : {}),
-      media: listingMedia,
-    },
-    metadata: listingMedia,
-    routes,
-    bundle: {
-      js: 'bundle/app.js',
-      css: 'bundle/app.css',
-    },
-    databases,
-    capabilities: normalizeAppCapabilities(appConfig.capabilities),
-    tools: appConfig.tools || [],
-    tool_bindings: normalizeAppToolBindings(appConfig.toolBindings),
-  };
-}
-
-/**
- * Keep the persisted app row's presentation metadata aligned with the bundle
- * manifest. The app slug remains the stable identity; title/name is only the
- * user-facing label.
- */
-export function appRowFieldsFromManifest(manifest) {
-  const app = manifest?.app && typeof manifest.app === 'object' ? manifest.app : {};
-  const displayName = typeof app.title === 'string' && app.title.trim()
-    ? app.title.trim()
-    : typeof app.name === 'string' && app.name.trim()
-      ? app.name.trim()
-      : null;
-  return {
-    ...(displayName ? { name: displayName } : {}),
-    accent: app.accent ?? null,
-  };
-}
-
-export function normalizeAppToolBindings(bindings) {
-  return (Array.isArray(bindings) ? bindings : [])
-    .map((binding) => {
-      const name = typeof binding?.name === 'string' ? binding.name.trim() : '';
-      const providerToolName =
-        typeof binding?.providerToolName === 'string' ? binding.providerToolName.trim() : '';
-      return name && providerToolName
-        ? { name, provider_tool_name: providerToolName }
-        : null;
-    })
-    .filter(Boolean);
-}
-
-/**
- * Keeps only capabilities the platform actually understands, at the exact
- * values it accepts. An unknown key or value is dropped rather than passed
- * through, so a typo can never reach the server as a permission grant.
- */
-export function normalizeAppCapabilities(capabilities) {
-  if (!capabilities || typeof capabilities !== 'object') {
-    return {};
-  }
-  const normalized = {};
-  if (capabilities.workspaceDatabases === 'read') {
-    normalized.workspaceDatabases = 'read';
-  }
-  if (capabilities.cloudComputer === 'read' || capabilities.cloudComputer === 'shell') {
-    normalized.cloudComputer = capabilities.cloudComputer;
-  }
-  return normalized;
-}
-
-/**
- * Build the app bundle: generate entry file, run `vite build`, package into .notis/output/.
- */
-export async function buildArtifact(projectDir, { stdio = 'inherit', prepare = prepareArtifactBuild,
-  finalize = null, executable = true, includeMetadata = true, refreshSdk = true, runBuild = runProjectScript } = {}) {
   projectDir = realpathSync(assertSourceRoot(projectDir));
   const workspace = withAppReleaseWorkspace(projectDir, (identity) => {
     rmSync('build-receipt.json', { force: true });
@@ -1015,7 +278,6 @@ export async function buildArtifact(projectDir, { stdio = 'inherit', prepare = p
     );
   }
   normalizeBundleStylesheets(projectDir);
-  if (includeMetadata) copyMetadataAssets(projectDir);
   if (finalize) await finalize(projectDir);
   withAppReleaseWorkspace(projectDir, () => {}, { expected: workspace });
 
@@ -1046,240 +308,9 @@ export async function buildArtifact(projectDir, { stdio = 'inherit', prepare = p
 export function readManifest(projectDir) {
   const manifestPath = join(projectDir, MANIFEST_FILE);
   if (!existsSync(manifestPath)) {
-    throw usageError('No manifest found. Run "notis apps build" first.');
+    throw usageError('No manifest found. Run "notis spaces build" first.');
   }
   return JSON.parse(readFileSync(manifestPath, 'utf-8'));
-}
-
-function copyMetadataAssets(projectDir) {
-  const metadataDir = join(projectDir, METADATA_DIR);
-  const outputMetadataDir = join(projectDir, OUTPUT_DIR, METADATA_DIR);
-  // Vite clears the bundle directory, not sibling listing media. Always make
-  // the packaged metadata an exact reflection of the source tree so removed
-  // placeholders can never survive into a later deploy.
-  rmSync(outputMetadataDir, { recursive: true, force: true });
-  if (!existsSync(metadataDir)) {
-    return;
-  }
-  mkdirSync(outputMetadataDir, { recursive: true });
-  for (const entry of readdirSync(metadataDir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    if (!/^screenshot-\d+\.png$/i.test(entry.name)) {
-      continue;
-    }
-    cpSync(join(metadataDir, entry.name), join(outputMetadataDir, entry.name));
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Linking
-// ---------------------------------------------------------------------------
-
-const PROFILE_LINK_FIELDS = new Set([
-  'app_id',
-  'linked_at',
-  'expected_updated_at',
-  'deployed_at',
-  'version',
-]);
-
-function splitLinkedState(state) {
-  const base = {};
-  const link = {};
-  for (const [key, value] of Object.entries(state || {})) {
-    if (key === 'profiles') continue;
-    (PROFILE_LINK_FIELDS.has(key) ? link : base)[key] = value;
-  }
-  return { base, link };
-}
-
-export function appLinkedStateProfileKey({ apiBase, userId }) {
-  const normalizedApi = String(apiBase || '').trim().replace(/\/$/, '');
-  const normalizedUser = String(userId || '').trim();
-  if (!normalizedApi || !normalizedUser) return null;
-  return Buffer.from(`${normalizedApi}\0${normalizedUser}`).toString('base64url');
-}
-
-export function readLinkedState(projectDir, profileKey = null) {
-  const statePath = join(projectDir, STATE_FILE);
-  assertLinkedStatePathSafe(projectDir);
-  if (!existsSync(statePath)) return null;
-  const raw = JSON.parse(readFileSync(statePath, 'utf-8'));
-  if (!profileKey) return raw;
-  const { base, link: legacyLink } = splitLinkedState(raw);
-  const profiles = raw?.profiles && typeof raw.profiles === 'object' ? raw.profiles : {};
-  const scoped = profiles[profileKey];
-  return {
-    ...base,
-    ...(scoped && typeof scoped === 'object' ? scoped : legacyLink),
-  };
-}
-
-function readStateWriteLockOwner(lockPath) {
-  try {
-    return readFileSync(join(lockPath, 'owner'), 'utf8').trim();
-  } catch {
-    return null;
-  }
-}
-
-function reclaimStaleStateWriteLock(lockPath, observedOwner, observedMtimeMs) {
-  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
-  try {
-    renameSync(lockPath, quarantinePath);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return false;
-    throw error;
-  }
-
-  let unchanged = false;
-  try {
-    const quarantinedStat = lstatSync(quarantinePath);
-    unchanged = readStateWriteLockOwner(quarantinePath) === observedOwner
-      && quarantinedStat.mtimeMs === observedMtimeMs;
-  } catch (error) {
-    try {
-      renameSync(quarantinePath, lockPath);
-    } catch {
-      // Fail closed below if the quarantined lock cannot be restored.
-    }
-    throw error;
-  }
-
-  if (!unchanged) {
-    try {
-      renameSync(quarantinePath, lockPath);
-    } catch {
-      throw usageError(`Notis app state lock changed while it was being recovered: ${lockPath}`);
-    }
-    return false;
-  }
-
-  rmSync(quarantinePath, { recursive: true, force: true });
-  return true;
-}
-
-function withStateWriteLock(statePath, callback) {
-  mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 });
-  const lockPath = `${statePath}.write-lock`;
-  const ownerId = `${process.pid}.${randomUUID()}`;
-  const startedAt = Date.now();
-  while (true) {
-    try {
-      mkdirSync(lockPath, { mode: 0o700 });
-      try {
-        writeFileSync(join(lockPath, 'owner'), ownerId, { mode: 0o600, flag: 'wx' });
-      } catch (error) {
-        // A stale-lock recovery may have moved this candidate while the owner
-        // record was being written. Never remove a replacement writer's lock.
-        if (readStateWriteLockOwner(lockPath) === ownerId) {
-          rmSync(lockPath, { recursive: true, force: true });
-        }
-        throw error;
-      }
-      break;
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-      try {
-        const lockStat = lstatSync(lockPath);
-        if (lockStat.isSymbolicLink() || !lockStat.isDirectory()) {
-          throw usageError(`Refusing unsafe Notis app state lock: ${lockPath}`);
-        }
-        const observedOwner = readStateWriteLockOwner(lockPath);
-        const ownerPidText = String(observedOwner || '').split('.')[0];
-        const ownerPid = /^\d+$/.test(ownerPidText) ? Number.parseInt(ownerPidText, 10) : null;
-        // PID liveness alone is insufficient: operating systems can reuse a
-        // crashed writer's PID for an unrelated process. A linked-state write
-        // is synchronous and normally holds this lock only for milliseconds,
-        // so an aged lock is stale even when that numeric PID now exists.
-        let stale = Date.now() - lockStat.mtimeMs >= STATE_WRITE_LOCK_STALE_MS;
-        if (!stale && Number.isInteger(ownerPid) && ownerPid > 0) {
-          try {
-            process.kill(ownerPid, 0);
-          } catch (ownerError) {
-            if (ownerError?.code === 'ESRCH') {
-              stale = true;
-            }
-          }
-        }
-        if (stale && reclaimStaleStateWriteLock(lockPath, observedOwner, lockStat.mtimeMs)) {
-          continue;
-        }
-      } catch (statError) {
-        if (statError?.code === 'ENOENT') continue;
-        throw statError;
-      }
-      if (Date.now() - startedAt >= STATE_WRITE_LOCK_TIMEOUT_MS) {
-        throw usageError(`Timed out waiting to update Notis app state: ${statePath}`);
-      }
-      Atomics.wait(stateWriteLockWait, 0, 0, 10);
-    }
-  }
-  try {
-    return callback();
-  } finally {
-    try {
-      if (readStateWriteLockOwner(lockPath) === ownerId) {
-        rmSync(lockPath, { recursive: true, force: true });
-      }
-    } catch {
-      // Never remove a lock that no longer belongs to this writer.
-    }
-  }
-}
-
-export function writeLinkedState(projectDir, state, profileKey = null) {
-  const statePath = join(projectDir, STATE_FILE);
-  assertLinkedStatePathSafe(projectDir);
-  return withStateWriteLock(statePath, () => {
-    let nextState = state;
-    if (profileKey) {
-      let current = {};
-      if (existsSync(statePath)) {
-        current = JSON.parse(readFileSync(statePath, 'utf-8'));
-      }
-      const { base: currentBase } = splitLinkedState(current);
-      const { base } = splitLinkedState(state);
-      const { link } = splitLinkedState(state);
-      const profiles = current?.profiles && typeof current.profiles === 'object'
-        ? { ...current.profiles }
-        : {};
-      profiles[profileKey] = link;
-      nextState = { ...currentBase, ...base, profiles };
-    }
-    const temporary = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, JSON.stringify(nextState, null, 2) + '\n');
-    renameSync(temporary, statePath);
-  });
-}
-
-function assertLinkedStatePathSafe(projectDir) {
-  const notisDir = join(projectDir, NOTIS_DIR);
-  try {
-    const directoryStat = lstatSync(notisDir);
-    if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
-      throw usageError(`Refusing to use unsafe Notis state directory: ${notisDir}`);
-    }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-
-  const statePath = join(projectDir, STATE_FILE);
-  try {
-    const stateStat = lstatSync(statePath);
-    if (stateStat.isSymbolicLink() || !stateStat.isFile()) {
-      throw usageError(`Refusing to use unsafe Notis state file: ${statePath}`);
-    }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-}
-
-export function requireLinkedAppId(projectDir, explicitAppId, profileKey = null) {
-  if (explicitAppId) return explicitAppId;
-  const state = readLinkedState(projectDir, profileKey);
-  if (state?.app_id) return state.app_id;
-  throw usageError('This project is not linked to a Notis app. Run "notis apps link <app-id> ." first.');
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,31 +318,17 @@ export function requireLinkedAppId(projectDir, explicitAppId, profileKey = null)
 // ---------------------------------------------------------------------------
 
 /**
- * Scaffold a new Notis app project from the SDK template or from a published
- * Store app downloaded from the public registry repository.
+ * Scaffold a new project from the SDK template.
  */
-export async function scaffoldProject({ projectDir, appName, fromSlug = null }) {
-  let scaffoldSource = null;
-  if (fromSlug) {
-    scaffoldSource = await acquireScaffoldSource(fromSlug);
-    if (!scaffoldSource) {
-      const known = (await loadScaffoldCatalog()).map((entry) => entry.slug).join(', ') || 'none';
-      throw usageError(`Unknown scaffold "${fromSlug}". Available scaffolds: ${known}.`);
-    }
-  }
-  try {
-    return scaffoldProjectFromDir({
-      projectDir,
-      appName,
-      fromSlug,
-      templateDir: scaffoldSource ? scaffoldSource.dir : join(CLI_ROOT, 'template'),
-    });
-  } finally {
-    scaffoldSource?.cleanup();
-  }
+export async function scaffoldProject({ projectDir, appName }) {
+  return scaffoldProjectFromDir({
+    projectDir,
+    appName,
+    templateDir: join(CLI_ROOT, 'template'),
+  });
 }
 
-function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) {
+function scaffoldProjectFromDir({ projectDir, appName, templateDir }) {
   const sourceDir = resolve(templateDir);
   const requestedProjectDir = resolve(projectDir);
   if (!existsSync(sourceDir)) {
@@ -1338,14 +355,14 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
     assertPullTargetIdentity('.', parentIdentity);
     const lockedTargetIdentity = captureScaffoldTargetIdentity(targetName);
     if (!pullTargetIdentitiesMatch(initialTargetIdentity, lockedTargetIdentity)) {
-      throw usageError(`App scaffold target changed before copying: ${requestedProjectDir}`);
+      throw usageError(`Scaffold target changed before copying: ${requestedProjectDir}`);
     }
     if (!lockedTargetIdentity.exists) {
       try {
         mkdirSync(targetName);
       } catch (error) {
         if (error?.code === 'EEXIST') {
-          throw usageError(`App scaffold target changed before copying: ${requestedProjectDir}`);
+          throw usageError(`Scaffold target changed before copying: ${requestedProjectDir}`);
         }
         throw error;
       }
@@ -1356,7 +373,7 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
       activeTargetIdentity,
       captureScaffoldTargetIdentity('.'),
     )) {
-      throw usageError(`App scaffold target changed before copying: ${requestedProjectDir}`);
+      throw usageError(`Scaffold target changed before copying: ${requestedProjectDir}`);
     }
     mkdirSync(scaffoldLockName, { mode: 0o700 });
     writeFileSync(
@@ -1375,46 +392,10 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
     if (existsSync(pkgPath)) {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
       pkg.name = appName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
-      // A scaffold creates a new app identity, even when its source comes from a
-      // versioned Store example. New apps must therefore start their own release
-      // history instead of inheriting the example app's registry version.
-      pkg.notisAppVersion = '0.1.0';
-      normalizeScaffoldPackageScripts(pkg);
       ensureScaffoldLocalSdk(projectDir, pkg);
       writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
       normalizeScaffoldLockfile(projectDir, pkg);
     }
-
-    // Update notis.config.ts with the app name
-    const configPath = join(projectDir, 'notis.config.ts');
-    if (existsSync(configPath)) {
-      let config = readFileSync(configPath, 'utf-8');
-      const displayName = jsStringLiteral(appName);
-      const slugName = jsStringLiteral(safeKebab(appName) || 'my-notis-app');
-      if (fromSlug) {
-        if (/name\s*:/.test(config)) {
-          config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName}`);
-        }
-        if (/title\s*:/.test(config)) {
-          config = config.replace(/title\s*:\s*(['"`])[\s\S]*?\1/, `title: ${displayName}`);
-        } else {
-          config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName},\n  title: ${displayName}`);
-        }
-      } else {
-        if (/name\s*:/.test(config)) {
-          config = config.replace(/name\s*:\s*(['"`])[\s\S]*?\1/, `name: ${slugName}`);
-        }
-        if (/title\s*:/.test(config)) {
-          config = config.replace(/title\s*:\s*(['"`])[\s\S]*?\1/, `title: ${displayName}`);
-        } else {
-          config = config.replace(/'My Notis App'/, displayName);
-        }
-      }
-      config = removeConfigArrayProperty(config, 'screenshots');
-      writeFileSync(configPath, config);
-    }
-
-    resetScaffoldChangelog(projectDir, appName);
 
     assertPullParentIdentity(parentDir, canonicalParent, parentIdentity);
     assertPullTargetIdentity(requestedProjectDir, activeTargetIdentity);
@@ -1447,7 +428,7 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
           installedDirectory,
           capturePullTargetIdentity('.'),
         )) {
-          throw usageError(`App scaffold destination changed during installation: ${relativePath}`);
+          throw usageError(`Scaffold destination changed during installation: ${relativePath}`);
         }
         try {
           for (const name of readdirSync(sourcePath)) {
@@ -1467,7 +448,7 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
             parentIdentity,
             capturePullTargetIdentity('.'),
           )) {
-            throw usageError(`App scaffold destination changed during installation: ${parentRelativePath || '.'}`);
+            throw usageError(`Scaffold destination changed during installation: ${parentRelativePath || '.'}`);
           }
         }
         return;
@@ -1537,7 +518,7 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
     } catch (error) {
       cleanupStage = false;
       throw usageError(
-        `App scaffold was installed, but staging cleanup failed; recovery files were retained at `
+        `Scaffold was installed, but staging cleanup failed; recovery files were retained at `
         + `${join(requestedProjectDir, stageName)}: `
         + `${error instanceof Error ? error.message : String(error)}`,
       );
@@ -1581,34 +562,6 @@ function scaffoldProjectFromDir({ projectDir, appName, fromSlug, templateDir }) 
   return { projectDir: requestedProjectDir };
 }
 
-function normalizeScaffoldPackageScripts(pkg) {
-  const scripts = pkg?.scripts;
-  if (!scripts || typeof scripts !== 'object' || Array.isArray(scripts)) {
-    return;
-  }
-  // The linked SDK exports TypeScript. Vite's bundled config loader externalizes
-  // that import to Node; the minimum supported Node 22.12 lacks native TS loading.
-  // Normalize only canonical commands; never parse or rewrite custom shell code.
-  for (const [name, command] of Object.entries(scripts)) {
-    if (typeof command === 'string' && /^(vite|vite build|vite preview)$/.test(command.trim())) {
-      scripts[name] = `${command.trim()} --configLoader runner`;
-    }
-  }
-  const generateEntry = String(scripts['generate-entry'] || '').trim();
-  if (!/^tsx\s+\.\.\/\.\.\/scripts\/generate-entry\.ts\s+\.$/.test(generateEntry)) {
-    return;
-  }
-  for (const [name, command] of Object.entries(scripts)) {
-    if (name === 'generate-entry' || typeof command !== 'string') {
-      continue;
-    }
-    if (command.trim() === 'npm run generate-entry') {
-      delete scripts[name];
-    }
-  }
-  scripts['generate-entry'] = 'node -e ""';
-}
-
 function captureScaffoldTargetIdentity(targetDir) {
   try {
     const targetStat = lstatSync(targetDir, { bigint: true });
@@ -1616,83 +569,13 @@ function captureScaffoldTargetIdentity(targetDir) {
       throw usageError(`Refusing to scaffold through an unsafe target: ${targetDir}`);
     }
     if (readdirSync(targetDir).length > 0) {
-      throw usageError(`App scaffold target must be empty: ${targetDir}`);
+      throw usageError(`Scaffold target must be empty: ${targetDir}`);
     }
     return { exists: true, dev: targetStat.dev, ino: targetStat.ino };
   } catch (error) {
     if (error?.code === 'ENOENT') return { exists: false, dev: null, ino: null };
     throw error;
   }
-}
-
-/**
- * Drop `property: [ ... ]` from a notis.config.ts source.
- *
- * The scan tracks bracket depth while skipping string literals, so entries
- * whose text contains a bracket (alt text, selectors) cannot end the array
- * early. When the array cannot be resolved the source is returned untouched --
- * a stale screenshots list is a warning at verify time, a broken config is not.
- */
-function removeConfigArrayProperty(source, property) {
-  const start = source.search(new RegExp(`^[ \\t]*${property}[ \\t]*:[ \\t]*\\[`, 'm'));
-  if (start === -1) {
-    return source;
-  }
-  let index = source.indexOf('[', start);
-  let depth = 0;
-  let quote = null;
-  for (; index < source.length; index += 1) {
-    const char = source[index];
-    if (quote) {
-      if (char === '\\') {
-        index += 1;
-      } else if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (char === '\'' || char === '"' || char === '`') {
-      quote = char;
-      continue;
-    }
-    if (char === '[') {
-      depth += 1;
-    } else if (char === ']') {
-      depth -= 1;
-      if (depth === 0) {
-        break;
-      }
-    }
-  }
-  if (depth !== 0) {
-    return source;
-  }
-  let end = index + 1;
-  if (source[end] === ',') {
-    end += 1;
-  }
-  while (end < source.length && (source[end] === ' ' || source[end] === '\t')) {
-    end += 1;
-  }
-  if (source[end] === '\n') {
-    end += 1;
-  }
-  return source.slice(0, start) + source.slice(end);
-}
-
-/**
- * A new project starts its own release history: the scaffold's entries describe
- * releases of a different app.
- */
-function resetScaffoldChangelog(projectDir, appName) {
-  const changelogPath = join(projectDir, 'CHANGELOG.md');
-  if (!existsSync(changelogPath)) {
-    return;
-  }
-  writeFileSync(
-    changelogPath,
-    `# ${appName} Changelog\n\n## [Initial Release] - ${CHANGELOG_MERGE_DATE}\n\n- First Store release.\n`,
-  );
 }
 
 function normalizeScaffoldLockfile(projectDir, pkg) {
@@ -1724,12 +607,6 @@ function ensureScaffoldLocalSdk(projectDir, pkg) {
   }
 
   const localSdkDir = join(projectDir, 'packages', 'sdk');
-  if (existsSync(join(localSdkDir, 'package.json'))) {
-    // Registry scaffolds may already contain an older complete SDK mirror.
-    // Apply the same exact-owned-file retirement as an ordinary build refresh.
-    syncEmbeddedSdk(projectDir);
-    return;
-  }
   if (!existsSync(join(TEMPLATE_SDK_DIR, 'package.json'))) {
     throw usageError(`SDK template not found at ${TEMPLATE_SDK_DIR}. Ensure @notis_ai/cli is installed correctly.`);
   }
@@ -1908,11 +785,6 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
   return { updated: changed.length > 0, changed, foreign, templateVersion };
 }
 
-// Registry bookkeeping shipped alongside a published app's source: the listing
-// descriptor and the rendered Store gallery describe the published app, so a
-// scaffold copy must not inherit them.
-const REGISTRY_ARTIFACTS = /^(notis-listing\.json$|screenshots(\/|$))/;
-
 function readStablePinnedFile(descriptor, expectedStat, label) {
   const before = fstatSync(descriptor, { bigint: true });
   if (
@@ -1957,10 +829,6 @@ function copyScaffoldSource(sourceDir, targetDir) {
   function shouldCopy(path) {
     const name = path.split(/[\\/]/).pop();
     if (!name) return true;
-    const relPath = relative(sourceDir, path).replace(/\\/g, '/');
-    if (SCAFFOLD_LISTING_MEDIA.test(relPath) || REGISTRY_ARTIFACTS.test(relPath)) {
-      return false;
-    }
     return !SCAFFOLD_COPY_EXCLUDES.has(name)
       && !name.toLocaleLowerCase('en-US').startsWith('.notis-app-scaffold-')
       && !name.startsWith('.env')
@@ -2103,7 +971,7 @@ function copyScaffoldSource(sourceDir, targetDir) {
 export function collectArtifactFiles(projectDir) {
   const outputDir = join(projectDir, OUTPUT_DIR);
   if (!existsSync(outputDir)) {
-    throw usageError('No build output found. Run "notis apps build" first.');
+    throw usageError('No build output found. Run "notis spaces build" first.');
   }
 
   validateArtifactBoundary(readArtifactFiles(projectDir));
@@ -2371,7 +1239,7 @@ function capturePullTargetIdentity(targetDir) {
   try {
     const targetStat = lstatSync(targetDir, { bigint: true });
     if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
-      throw usageError(`Refusing to pull app source through an unsafe target: ${targetDir}`);
+      throw usageError(`Refusing to pull Space source through an unsafe target: ${targetDir}`);
     }
     return { exists: true, dev: targetStat.dev, ino: targetStat.ino };
   } catch (error) {
@@ -2383,7 +1251,7 @@ function capturePullTargetIdentity(targetDir) {
 function assertPullTargetIdentity(targetDir, expected) {
   const current = capturePullTargetIdentity(targetDir);
   if (!pullTargetIdentitiesMatch(current, expected)) {
-    throw usageError(`App source pull target changed while the download was in progress: ${targetDir}`);
+    throw usageError(`Space source pull target changed while the download was in progress: ${targetDir}`);
   }
 }
 
@@ -2399,7 +1267,7 @@ function assertPullParentIdentity(parentDir, canonicalParent, expectedIdentity) 
   try {
     currentCanonicalParent = realpathSync(parentDir);
   } catch {
-    throw usageError(`App source pull parent changed while the download was in progress: ${parentDir}`);
+    throw usageError(`Space source pull parent changed while the download was in progress: ${parentDir}`);
   }
   if (
     currentCanonicalParent !== canonicalParent
@@ -2408,7 +1276,7 @@ function assertPullParentIdentity(parentDir, canonicalParent, expectedIdentity) 
       expectedIdentity,
     )
   ) {
-    throw usageError(`App source pull parent changed while the download was in progress: ${parentDir}`);
+    throw usageError(`Space source pull parent changed while the download was in progress: ${parentDir}`);
   }
 }
 
@@ -2429,7 +1297,7 @@ async function withPullTargetLock(targetDir, callback) {
       capturePullTargetIdentity(canonicalTarget),
     )
   ) {
-    throw usageError(`App source pull target changed before locking: ${requestedTarget}`);
+    throw usageError(`Space source pull target changed before locking: ${requestedTarget}`);
   }
   const lockDirectory = join(canonicalParent, `.${basename(canonicalTarget)}.notis-pull-lock`);
   const ownerId = `${process.pid}.${randomUUID()}`;
@@ -2454,11 +1322,11 @@ async function withPullTargetLock(targetDir, callback) {
         throw statError;
       }
       if (lockStat.isSymbolicLink() || !lockStat.isDirectory()) {
-        throw usageError(`Refusing to use unsafe app source pull lock: ${lockDirectory}`);
+        throw usageError(`Refusing to use unsafe Space source pull lock: ${lockDirectory}`);
       }
       if (Date.now() >= deadline) {
         throw usageError(
-          `Timed out waiting to pull app source into ${targetDir}. `
+          `Timed out waiting to pull Space source into ${targetDir}. `
           + `If no pull process is running, remove the orphaned lock: ${lockDirectory}`,
         );
       }
@@ -2469,7 +1337,7 @@ async function withPullTargetLock(targetDir, callback) {
   try {
     const assertOwnership = () => {
       if (readPullLockOwner(lockDirectory)?.id !== ownerId) {
-        throw usageError(`Lost the app source pull lock for ${targetDir}.`);
+        throw usageError(`Lost the Space source pull lock for ${targetDir}.`);
       }
     };
     const assertParentIdentity = () => assertPullParentIdentity(
@@ -2480,7 +1348,7 @@ async function withPullTargetLock(targetDir, callback) {
     assertParentIdentity();
     const lockedTargetIdentity = capturePullTargetIdentity(canonicalTarget);
     if (!pullTargetIdentitiesMatch(initialRequestedIdentity, lockedTargetIdentity)) {
-      throw usageError(`App source pull target changed before locking: ${requestedTarget}`);
+      throw usageError(`Space source pull target changed before locking: ${requestedTarget}`);
     }
     return await callback(
       assertOwnership,
@@ -2499,28 +1367,26 @@ async function withPullTargetLock(targetDir, callback) {
   }
 }
 
-// Persist only an unfinished create intent. Concurrent/retried invocations share
-// its key; a fully read-back creation closes it so later new creations cannot
-// replay an app that was subsequently deleted.
-export function beginAppCreateIntent(identity, explicitKey = null) {
-  const identityHash = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
-  const path = join(homedir(), '.notis', 'app-create-intents', `${identityHash}.json`);
-  return withStateWriteLock(path, () => {
-    let intent;
-    if (existsSync(path)) intent = JSON.parse(readFileSync(path, 'utf8'));
-    if (intent && explicitKey && intent.key !== explicitKey) {
-      throw usageError('An unfinished creation exists for this identity. Reconcile it before changing its idempotency key.');
+function assertPullStatePathSafe(projectDir) {
+  const notisDir = join(projectDir, NOTIS_DIR);
+  try {
+    const directoryStat = lstatSync(notisDir);
+    if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+      throw usageError(`Refusing to use unsafe Notis state directory: ${notisDir}`);
     }
-    if (!intent) {
-      intent = { key: explicitKey || `app-create-${randomUUID()}` };
-      writeFileSync(path, JSON.stringify(intent), { mode: 0o600 });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+
+  const statePath = join(projectDir, SPACE_SOURCE_FILE);
+  try {
+    const stateStat = lstatSync(statePath);
+    if (stateStat.isSymbolicLink() || !stateStat.isFile()) {
+      throw usageError(`Refusing to use unsafe Notis state file: ${statePath}`);
     }
-    return { ...intent, complete() {
-      withStateWriteLock(path, () => {
-        if (existsSync(path) && JSON.parse(readFileSync(path, 'utf8')).key === intent.key) unlinkSync(path);
-      });
-    } };
-  });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
 }
 
 export async function pullAppSource(args) {
@@ -2542,64 +1408,39 @@ export async function pullAppSource(args) {
 }
 
 async function pullAppSourceUnlocked({
-  apiBase,
-  jwt,
-  appId,
   targetDir,
   version = 'latest',
   force = false,
-  profileKey = null,
-  expectedUpdatedAt = null,
-  downloadSource = null,
-  sourceKind = 'app',
-  sourceLink = null,
+  downloadSource,
+  sourceLink,
 }, assertLockOwnership, assertParentIdentity, initialTargetIdentity) {
   assertLockOwnership();
   assertParentIdentity();
   const targetWasNonEmpty = existsSync(targetDir) && readdirSync(targetDir).length > 0;
   if (targetWasNonEmpty) {
     if (!force) {
-      throw usageError(`Target directory is not empty: ${targetDir}. Pass --force to overwrite it.`);
+      throw usageError(`Target directory is not empty: ${targetDir}. Pull into a new or empty directory.`);
     }
   }
 
-  let archiveBuffer, pulledVersion;
-  if (downloadSource) {
-    const source = await downloadSource();
-    archiveBuffer = source.archiveBuffer;
-    pulledVersion = source.revision;
-  } else {
-    const params = new URLSearchParams({ app_id: appId, version: String(version || 'latest') });
-    const response = await fetch(`${apiBase.replace(/\/$/, '')}/portal_apps/source?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${jwt}` },
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw usageError(typeof data?.error === 'string' ? data.error : `Failed to pull app source (${response.status}).`);
-    }
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const versionMatch = /-v(\d+)\.tar\.gz/i.exec(contentDisposition);
-    pulledVersion = versionMatch ? Number.parseInt(versionMatch[1], 10) : null;
-    archiveBuffer = Buffer.from(await response.arrayBuffer());
-  }
+  const { archiveBuffer, revision: pulledVersion } = await downloadSource();
   const requestedVersion = String(version || 'latest') === 'latest'
     ? null
     : Number.parseInt(String(version), 10);
   if (!Number.isInteger(pulledVersion) || pulledVersion <= 0) {
-    throw usageError('The app source response did not identify a valid positive version.');
+    throw usageError('The Space source response did not identify a valid positive version.');
   }
   if (requestedVersion !== null && (!Number.isInteger(requestedVersion) || requestedVersion <= 0)) {
-    throw usageError(`Invalid app source version: ${version}`);
+    throw usageError(`Invalid Space source version: ${version}`);
   }
   if (
     requestedVersion !== null
     && pulledVersion !== requestedVersion
   ) {
     throw usageError(
-      `Requested app source version ${requestedVersion}, but the server returned version ${pulledVersion}.`,
+      `Requested Space source version ${requestedVersion}, but the server returned version ${pulledVersion}.`,
     );
   }
-  const linkedVersion = pulledVersion;
   assertParentIdentity();
   assertLockOwnership();
 
@@ -2632,7 +1473,7 @@ async function pullAppSourceUnlocked({
         mkdirSync(targetName);
       } catch (error) {
         if (error?.code === 'EEXIST') {
-          throw usageError(`App source pull target changed while the download was in progress: ${targetDir}`);
+          throw usageError(`Space source pull target changed while the download was in progress: ${targetDir}`);
         }
         throw error;
       }
@@ -2645,13 +1486,13 @@ async function pullAppSourceUnlocked({
         || activeTargetIdentity.ino !== initialTargetIdentity.ino
       )
     ) {
-      throw usageError(`App source pull target changed while the download was in progress: ${targetDir}`);
+      throw usageError(`Space source pull target changed while the download was in progress: ${targetDir}`);
     }
     assertLockOwnership();
     process.chdir(targetName);
     assertPullTargetIdentity('.', activeTargetIdentity);
     const targetRoot = '.';
-    assertLinkedStatePathSafe(targetRoot);
+    assertPullStatePathSafe(targetRoot);
     const preservedPaths = collectPullPreservedPaths(targetRoot);
 
     const transactionName = basename(mkdtempSync(join('.', '.notis-app-pull-')));
@@ -2667,12 +1508,11 @@ async function pullAppSourceUnlocked({
     extractTarGz(archiveBuffer, stageDir);
     const stagedEntries = readdirSync(stageDir);
     if (stagedEntries.length === 0) {
-      throw usageError('The app source archive did not contain any editable source files.');
+      throw usageError('The Space source archive did not contain any editable source files.');
     }
 
-    const stateFile = sourceKind === 'space' ? join(NOTIS_DIR, 'space-source.json') : STATE_FILE;
-    const previousStatePath = join(targetRoot, stateFile);
-    const backupStatePath = join(backupDir, stateFile);
+    const previousStatePath = join(targetRoot, SPACE_SOURCE_FILE);
+    const backupStatePath = join(backupDir, SPACE_SOURCE_FILE);
     const hadPreviousState = existsSync(previousStatePath);
     if (hadPreviousState) {
       mkdirSync(dirname(backupStatePath), { recursive: true });
@@ -2722,22 +1562,13 @@ async function pullAppSourceUnlocked({
       }
       assertPullTargetIdentity(targetDir, activeTargetIdentity);
       assertLockOwnership();
-      if (sourceKind === 'space') {
-        withAppReleaseWorkspace(targetRoot, () => {
-          const temporary = `.space-source-${randomUUID()}.json`;
-          try {
-            writeFileSync(temporary, JSON.stringify({ ...sourceLink, revision: linkedVersion }), { flag: 'wx', mode: 0o600 });
-            renameSync(temporary, 'space-source.json');
-          } finally { rmSync(temporary, { force: true }); }
-        }, { create: true });
-      } else {
-        writeLinkedState(targetRoot, {
-          app_id: appId,
-          ...(Number.isFinite(linkedVersion) ? { version: linkedVersion } : {}),
-          ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
-          linked_at: new Date().toISOString(),
-        }, profileKey);
-      }
+      withAppReleaseWorkspace(targetRoot, () => {
+        const temporary = `.space-source-${randomUUID()}.json`;
+        try {
+          writeFileSync(temporary, JSON.stringify({ ...sourceLink, revision: pulledVersion }), { flag: 'wx', mode: 0o600 });
+          renameSync(temporary, basename(SPACE_SOURCE_FILE));
+        } finally { rmSync(temporary, { force: true }); }
+      }, { create: true });
       assertPullTargetIdentity(targetDir, activeTargetIdentity);
       assertLockOwnership();
     } catch (error) {
@@ -2811,19 +1642,19 @@ async function pullAppSourceUnlocked({
         );
       }
       throw usageError(
-        `App source was updated, but transaction cleanup failed; recovery files were retained at `
+        `Space source was updated, but transaction cleanup failed; recovery files were retained at `
         + `${transactionDisplayPath}: ${cleanupMessage}`,
       );
     }
   }
 
-  return { projectDir: targetDir, version: pulledVersion || version };
+  return { projectDir: targetDir, version: pulledVersion };
 }
 
 function readArtifactFiles(projectDir) {
   const outputDir = join(projectDir, OUTPUT_DIR);
   if (!existsSync(outputDir)) {
-    throw usageError('No build output found. Run "notis apps build" first.');
+    throw usageError('No build output found. Run "notis spaces build" first.');
   }
 
   const files = {};
@@ -2864,7 +1695,7 @@ function withAppReleaseWorkspace(projectDir, operation, { create = false, expect
       mkdirSync(NOTIS_DIR);
       notisIdentity = capturePullTargetIdentity(NOTIS_DIR);
     }
-    if (!notisIdentity.exists) throw usageError('No build workspace found. Run notis apps build first.');
+    if (!notisIdentity.exists) throw usageError('No build workspace found. Run notis spaces build first.');
     if (expected) assertPullTargetIdentity(NOTIS_DIR, expected.notisIdentity);
     process.chdir(NOTIS_DIR);
     assertPullTargetIdentity('.', notisIdentity);
@@ -3071,69 +1902,12 @@ export function prepareAppRelease(projectDir) {
         if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
       }
       if (receipt?.source_hash !== appFilesDigest(sourceFiles) || receipt?.artifact_hash !== appFilesDigest(files)) {
-        throw usageError('Build output is missing or stale. Run notis apps build before deploying.');
+        throw usageError('Build output is missing or stale. Run notis spaces build before deploying.');
       }
       return release = freezePinnedArtifactSnapshot(workspace, files, sourceFiles);
     });
   } catch (error) {
     try { release?.close(); } catch { /* Parent replacement retains staging, never follows it. */ }
     throw error;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Standalone verification diagnostics, never deployment authority.
-// Deploy automatically verifies a frozen snapshot before upload; neither a
-// forged passing report nor an environment variable may bypass that check.
-// ---------------------------------------------------------------------------
-export const VERIFY_STAMP_FILE = join(OUTPUT_DIR, 'verify.json');
-
-export function computeArtifactHash(projectDir) {
-  const outputDir = join(projectDir, OUTPUT_DIR);
-  const bundleDir = join(outputDir, 'bundle');
-  const hash = createHash('sha256');
-  const files = listFilesRecursive(bundleDir).sort();
-  for (const relPath of files) {
-    hash.update(`bundle/${relPath}\0`);
-    hash.update(readFileSync(join(bundleDir, relPath)));
-    hash.update('\0');
-  }
-  const manifestPath = join(projectDir, MANIFEST_FILE);
-  if (existsSync(manifestPath)) {
-    hash.update('manifest.json\0');
-    hash.update(readFileSync(manifestPath));
-  }
-  if (files.length === 0 && !existsSync(manifestPath)) return null;
-  return hash.digest('hex');
-}
-
-export function writeVerifyStamp(projectDir, { ok, mode, summary, results }) {
-  const stamp = {
-    version: 1,
-    artifact_hash: computeArtifactHash(projectDir),
-    generated_at: new Date().toISOString(),
-    mode,
-    ok: Boolean(ok),
-    summary,
-    routes: (results || []).map((result) => ({
-      route: result.route,
-      status: result.status,
-      assertions: (result.assertions || []).map((assertion) => ({ code: assertion.code, message: assertion.message })),
-    })),
-  };
-  const stampPath = join(projectDir, VERIFY_STAMP_FILE);
-  mkdirSync(dirname(stampPath), { recursive: true });
-  writeFileSync(stampPath, JSON.stringify(stamp, null, 2) + '\n');
-  return stamp;
-}
-
-export function readVerifyStamp(projectDir) {
-  const stampPath = join(projectDir, VERIFY_STAMP_FILE);
-  if (!existsSync(stampPath)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(stampPath, 'utf-8'));
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
   }
 }

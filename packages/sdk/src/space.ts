@@ -24,7 +24,7 @@ export const SPACE_VIEWER_READ_OPERATIONS: Readonly<Record<SpaceViewerReadOperat
 });
 
 /**
- * Space cloud computer access (`cloudComputer`), the Space form of a Beta App's `capabilities.cloudComputer`.
+ * Space cloud computer access, declared as `cloudComputer` in `defineSpace`.
  * `read`: facts only. `shell`: facts, one command, one file write. Always the signed-in viewer's own
  * cloud computer, after that viewer allows it; never on a Site, a link or an agent render.
  */

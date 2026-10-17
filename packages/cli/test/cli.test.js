@@ -1,19 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
 import { promisify } from 'node:util';
 
-import { appLinkedStateProfileKey, buildArtifact, collectSourceFiles, detectProjectWarnings, generateManifest, inspectListingReadiness, normalizeAppCapabilities, normalizeAppToolBindings, pullAppSource, readLinkedState, scaffoldProject, writeLinkedState } from '../src/runtime/app-platform.js';
+import { collectSourceFiles, pullAppSource, scaffoldProject } from '../src/runtime/app-platform.js';
 import { collectProjectBoundaryViolations } from '../src/runtime/app-boundary-validator.js';
-import { acquireScaffoldSource, filterScaffoldCatalog, loadScaffoldCatalog, resolveScaffoldTargetPath } from '../src/runtime/app-registry-scaffolds.js';
 import { doctorChannelSummary, DOCTOR_TOOL_ROUNDTRIP_TIMEOUT_MS, doctorToolRoundtripRuntime } from '../src/command-specs/meta.js';
-
-import { appRowFieldsFromManifest, pruneStaleScreenshotFiles, screenshotExitCode, screenshotIndexByRouteSlug, shouldPruneStaleScreenshotFiles } from '../src/command-specs/apps.js';
 
 import { getApiBase, normalizeConfig, parseDebugEntitlementOverride } from '../src/runtime/profiles.js';
 import { COMMAND_SPECS } from '../src/command-specs/index.js';
@@ -184,14 +181,6 @@ function makePaxTarGz(name, content) {
 function makeJwt(sub = 'auth-user-123', exp = 4102444800) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub, exp })}.sig`;
-}
-
-function makeStoreScreenshotPngHeader() {
-  const buffer = Buffer.alloc(24);
-  Buffer.from('89504e470d0a1a0a', 'hex').copy(buffer, 0);
-  buffer.writeUInt32BE(2000, 16);
-  buffer.writeUInt32BE(1250, 20);
-  return buffer;
 }
 
 test('normalizeConfig migrates the legacy flat config shape', () => {
@@ -642,13 +631,14 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
   }
 });
 
-test('top-level help omits the removed db command group', () => {
+test('top-level help omits the removed db and apps command groups', () => {
   const result = runCli(['--help']);
   assert.equal(result.status, 0, result.stderr);
 
-  assert.match(result.stdout, /apps\s+Develop, deploy, and submit Notis Apps\./);
+  assert.match(result.stdout, /^\s+spaces\s+Build independent Spaces/m);
   assert.match(result.stdout, /^\s+tools\s+/m);
   assert.match(result.stdout, /Discover and execute generic tools exposed/);
+  assert.doesNotMatch(result.stdout, /^\s+apps\s/m);
   assert.doesNotMatch(result.stdout, /^\s+db\s/m);
   assert.doesNotMatch(result.stdout, /^\s+agent-context\s/m);
   assert.doesNotMatch(result.stdout, /^\s+agent-capture\s/m);
@@ -689,492 +679,106 @@ test('describe removed database query command fails', () => {
   assert.equal(payload.error.code, 'usage_error');
 });
 
-test('describe apps create is registered', () => {
-  const result = runCli(['describe', 'apps', 'create', '--json']);
-  assert.equal(result.status, 0, result.stderr);
+// `notis spaces pull` checks the downloaded archive and hands it to
+// pullAppSource, which owns the checkout transaction. These tests drive that
+// transaction directly with a fixture download.
+const SPACE_SOURCE_LINK = { space_id: 'space-1', api_base: 'https://fixture.invalid' };
 
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.data.spec.command_path.join(' '), 'apps create');
-  assert.equal(payload.data.spec.backend_call.name, 'LOCAL_NOTIS_CREATE_APP');
-  const optionFlags = (payload.data.spec.args_schema.options || []).map((o) => o.flags);
-  assert.equal(optionFlags.some((flags) => flags.includes('--icon')), false);
-});
+function spaceSourceDownload(archiveBuffer, revision, onDownload = null) {
+  return {
+    sourceLink: SPACE_SOURCE_LINK,
+    async downloadSource() {
+      if (onDownload) await onDownload();
+      return { archiveBuffer, revision };
+    },
+  };
+}
 
-test('apps create reads icon metadata from notis.config.ts instead of a CLI flag', async () => {
-  let requestBody = null;
-  let app = null;
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-create-icon-'));
+function unreachableDownload() {
+  return {
+    sourceLink: SPACE_SOURCE_LINK,
+    async downloadSource() {
+      throw new Error('The pull must be refused before the download starts.');
+    },
+  };
+}
+
+function gatedDownload() {
+  let release;
+  const gate = new Promise((resolvePromise) => { release = resolvePromise; });
+  let markStarted;
+  const started = new Promise((resolvePromise) => { markStarted = resolvePromise; });
+  return {
+    started,
+    release,
+    async wait() {
+      markStarted();
+      await gate;
+    },
+  };
+}
+
+function readSpaceSourceLink(projectDir) {
+  return JSON.parse(readFileSync(join(projectDir, '.notis', 'space-source.json'), 'utf-8'));
+}
+
+function writeSpaceSourceLink(projectDir, revision) {
+  mkdirSync(join(projectDir, '.notis'), { recursive: true });
   writeFileSync(
-    join(projectDir, 'notis.config.mjs'),
-    `export default {
-      name: 'task-manager',
-      title: 'Task Manager',
-      description: 'Track team tasks',
-      icon: 'phosphor:check-square',
-      routes: [],
-      tools: []
-    };\n`,
+    join(projectDir, '.notis', 'space-source.json'),
+    JSON.stringify({ ...SPACE_SOURCE_LINK, revision }),
   );
+}
 
-  const server = createHttpServer(async (req, res) => {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
-    if (body.tool_name === 'LOCAL_NOTIS_CREATE_APP') {
-      requestBody = body;
-      app = { id: 'app-1', name: 'Task Manager', slug: 'task-manager', can_edit: true, updated_at: 'now' };
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(body.tool_name === 'LOCAL_NOTIS_LIST_APPS' ? { apps: app ? [app] : [] } : { app }));
-  });
-
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-
-  try {
-    const result = await runCliAsync(
-      ['--json', '--api-base', `http://127.0.0.1:${port}`, 'apps', 'create', 'Task Manager', projectDir],
-      { NOTIS_JWT: makeJwt() },
-    );
-
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_CREATE_APP');
-    assert.equal(requestBody.arguments.icon, 'phosphor:check-square');
-    assert.equal(requestBody.arguments.description, 'Track team tasks');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
-});
-
-test('apps duplicate emits machine output and identifies the mutation', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-duplicate-app-'));
-  mkdirSync(join(projectDir, '.notis'), { recursive: true });
-  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
-    app_id: 'app-1',
-    version: 3,
-    linked_at: '2026-07-29T00:00:00.000Z',
-  }));
-
-  let requestBody = null;
-  const server = createHttpServer(async (req, res) => {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    requestBody = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      app: { id: 'app-copy-1', name: 'Task Manager Copy', slug: 'task-manager-copy' },
-      duplicated_from_app_id: 'app-1',
-      copied_document_count: 4,
-      portal_url: 'https://app.notis.ai/apps/app-copy-1',
-      databases: [{ id: 'db-copy-1', slug: 'tasks', name: 'Tasks' }],
-    }));
-  });
-
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-
-  try {
-    const result = await runCliAsync(
-      [
-        '--json',
-        '--api-base',
-        `http://127.0.0.1:${port}`,
-        'apps',
-        'duplicate',
-        projectDir,
-        '--name',
-        'Task Manager Copy',
-      ],
-      { NOTIS_JWT: makeJwt() },
-    );
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout);
-    assert.equal(payload.ok, true);
-    assert.equal(payload.data.app_id, 'app-copy-1');
-    assert.equal(payload.data.duplicated_from_app_id, 'app-1');
-    assert.equal(payload.data.copied_document_count, 4);
-    assert.equal(payload.data.databases[0].id, 'db-copy-1');
-    assert.equal(payload.meta.mutating, true);
-    assert.match(payload.data.idempotency_key, /^[0-9a-f-]{36}$/);
-    assert.equal(requestBody.tool_name, 'LOCAL_NOTIS_DUPLICATE_APP');
-    assert.equal(requestBody.arguments.app_id, 'app-1');
-    assert.equal(requestBody.arguments.name, 'Task Manager Copy');
-    assert.equal(requestBody.arguments.copy_documents, 'declared');
-    assert.equal(requestBody.idempotency_key, payload.data.idempotency_key);
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
-});
-
-test('apps pull and publish are registered for source and Store workflows', () => {
-  const pullSpec = COMMAND_SPECS.find(
-    (spec) => spec.command_path.join(' ') === 'apps pull',
-  );
-  assert.ok(pullSpec, 'apps pull command spec should exist');
-  assert.equal(pullSpec.backend_call.type, 'http');
-  assert.equal(pullSpec.backend_call.name, 'portal_apps/source');
-  assert.equal(pullSpec.mutates, true);
-  assert.equal(pullSpec.require_auth, true);
-
-  const appCommands = COMMAND_SPECS
-    .filter((spec) => spec.command_path[0] === 'apps')
-    .map((spec) => spec.command_path.join(' '));
-  assert.ok(appCommands.includes('apps publish'));
-
-  const publishSpec = COMMAND_SPECS.find(
-    (spec) => spec.command_path.join(' ') === 'apps publish',
-  );
-  assert.equal(publishSpec.backend_call.type, 'http');
-  assert.equal(publishSpec.backend_call.name, 'portal_apps/publish');
-  assert.equal(publishSpec.require_auth, true);
-});
-
-test('cli tool access does not expose store publish tools', () => {
-  const toolAccess = JSON.parse(
-    readFileSync(resolve(cliRoot, '../../server/config/tool_access/cli.json'), 'utf-8'),
-  );
-  const tools = toolAccess?.base?.tools || [];
-
-  assert.ok(!tools.includes('LOCAL_NOTIS_PUBLISH_APP'));
-});
-
-test('apps publish requires explicit App Details confirmation', () => {
-  const result = runCli(['--json', 'apps', 'publish'], { NOTIS_JWT: makeJwt() });
-  assert.notEqual(result.status, 0);
-  const payload = JSON.parse(result.stdout);
-  assert.match(payload.error.message, /--confirm-ready/);
-});
-
-test('apps publish submits the matching deployed version for Store review', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-publish-ready-'));
-  mkdirSync(join(projectDir, '.notis'), { recursive: true });
-  mkdirSync(join(projectDir, 'metadata'), { recursive: true });
-  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
-    name: 'ready-app',
-    version: '0.1.0',
-    notisAppVersion: '0.1.0',
-  }));
-  writeFileSync(join(projectDir, '.notis', 'state.json'), JSON.stringify({
-    app_id: 'app-1',
-    version: 8,
-    linked_at: '2026-07-16T00:00:00.000Z',
-  }));
-  writeFileSync(join(projectDir, 'notis.config.mjs'), `export default {
-    name: 'ready-app',
-    title: 'Ready App',
-    description: 'Ready for the Store.',
-    tagline: 'A ready Store app.',
-    categories: ['Productivity'],
-    screenshots: [
-      { path: 'metadata/screenshot-1.png', alt: 'First screenshot.' },
-      { path: 'metadata/screenshot-2.png', alt: 'Second screenshot.' },
-      { path: 'metadata/screenshot-3.png', alt: 'Third screenshot.' },
-    ],
-    routes: [],
-    tools: [],
-  };\n`);
-  writeFileSync(join(projectDir, 'CHANGELOG.md'), `# Ready App Changelog
-
-## [Ready for the Store] - 2026-07-16
-
-- Initial Store release.
-`);
-  for (let index = 1; index <= 3; index += 1) {
-    writeFileSync(join(projectDir, 'metadata', `screenshot-${index}.png`), makeStoreScreenshotPngHeader());
-  }
-
-  const requests = [];
-  const server = createHttpServer(async (req, res) => {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
-    requests.push({ url: req.url, body });
-    res.writeHead(200, { 'content-type': 'application/json' });
-    if (req.url === '/cli_tools') {
-      res.end(JSON.stringify({
-        app: {
-          id: 'app-1',
-          visibility: 'public_store_hidden',
-          current_version: 8,
-        },
-        active_submission: { status: 'merged' },
-      }));
-      return;
-    }
-    assert.equal(req.url, '/portal_apps/publish');
-    res.end(JSON.stringify({
-      submission: {
-        id: 'submission-1',
-        app_id: 'app-1',
-        source_version: 8,
-        status: 'pending_review',
-        github_pr_url: 'https://github.com/notis/app-store/pull/8',
-      },
-    }));
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-
-  try {
-    const result = await runCliAsync(
-      [
-        '--json',
-        '--api-base',
-        `http://127.0.0.1:${port}`,
-        'apps',
-        'publish',
-        projectDir,
-        '--confirm-ready',
-      ],
-      { NOTIS_JWT: makeJwt() },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout);
-    assert.equal(payload.data.source_version, 8);
-    assert.equal(payload.data.submission.status, 'pending_review');
-    assert.equal(requests[0].body.tool_name, 'LOCAL_NOTIS_GET_APP');
-    assert.deepEqual(requests[1].body, { app_id: 'app-1' });
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
-});
-
-test('describe apps pull --json renders the spec', () => {
-  const result = runCli(['describe', 'apps', 'pull', '--json']);
-  assert.equal(result.status, 0, result.stderr);
-
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.data.spec.command_path.join(' '), 'apps pull');
-  assert.equal(payload.data.spec.backend_call.name, 'portal_apps/source');
-});
-
-test('apps pull pins an explicitly requested source version', async () => {
-  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-pinned-version-'));
-  const tarball = makeTarGz({ 'package.json': '{"name":"pinned"}\n' });
-  let lookupToolName = null;
-  const server = createHttpServer(async (req, res) => {
-    if (req.url === '/cli_tools' && req.method === 'POST') {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      lookupToolName = JSON.parse(Buffer.concat(chunks).toString('utf-8')).tool_name;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ apps: [{ app_id: 'app-1', slug: 'pinned-app' }] }));
-      return;
-    }
-    assert.equal(req.url, '/portal_apps/source?app_id=app-1&version=2');
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="pinned-v2.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    const result = await runCliAsync(
-      [
-        '--json',
-        '--api-base',
-        `http://127.0.0.1:${port}`,
-        'apps',
-        'pull',
-        'app-1',
-        targetDir,
-        '--force',
-        '--source-version',
-        '2',
-      ],
-      { NOTIS_JWT: makeJwt() },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout);
-    assert.equal(payload.data.version, 2);
-    assert.equal(lookupToolName, 'LOCAL_NOTIS_LIST_APPS');
-    const state = readLinkedState(payload.data.project_dir, appLinkedStateProfileKey({
-      apiBase: `http://127.0.0.1:${port}`,
-      userId: 'auth-user-123',
-    }));
-    assert.equal(state.app_id, 'app-1');
-    assert.equal(state.version, 2);
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
-});
-
-test('pullAppSource downloads source, extracts it, and writes linked state', async () => {
+test('pullAppSource extracts the downloaded source and records the Space source link', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-target-'));
   const tarball = makeTarGz({
     'package.json': '{"name":"sample"}\n',
     'app/page.tsx': 'export default function Page() { return null; }\n',
   });
-  const server = createHttpServer((req, res) => {
-    assert.equal(req.headers.authorization, 'Bearer jwt-1');
-    assert.equal(req.url, '/portal_apps/source?app_id=app-1&version=latest');
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="sample-v7.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    const result = await pullAppSource({
-      apiBase: `http://127.0.0.1:${port}`,
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir,
-    });
-    assert.equal(result.version, 7);
-    assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"sample"}\n');
-    const state = JSON.parse(readFileSync(join(targetDir, '.notis', 'state.json'), 'utf-8'));
-    assert.equal(state.app_id, 'app-1');
-    assert.equal(state.version, 7);
-    assert.match(state.linked_at, /^\d{4}-\d{2}-\d{2}T/);
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  const result = await pullAppSource({ targetDir, ...spaceSourceDownload(tarball, 7) });
+
+  assert.equal(result.version, 7);
+  assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"sample"}\n');
+  assert.deepEqual(readSpaceSourceLink(targetDir), { ...SPACE_SOURCE_LINK, revision: 7 });
+  assert.equal(existsSync(join(targetDir, '.notis', 'state.json')), false);
 });
 
 test('pullAppSource extracts the PAX path emitted for long server source names', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-pax-'));
   const longPath = `skills/${'long-segment-'.repeat(10)}guide.md`;
   const tarball = makePaxTarGz(longPath, '# Long path\n');
-  const server = createHttpServer((_req, res) => {
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="pax-v4.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await pullAppSource({
-      apiBase: `http://127.0.0.1:${port}`,
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir,
-      version: 4,
-    });
-    assert.equal(readFileSync(join(targetDir, longPath), 'utf-8'), '# Long path\n');
-    assert.equal(readLinkedState(targetDir).version, 4);
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
-});
 
-test('apps pull uses the OAuth credential refreshed during app lookup for source download', async () => {
-  const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-refreshed-oauth-'));
-  const configHome = mkdtempSync(join(tmpdir(), 'notis-pull-refreshed-config-'));
-  const configFile = join(configHome, 'config.json');
-  const tarball = makeTarGz({ 'package.json': '{"name":"refreshed"}\n' });
-  let sourceAuthorization = null;
-  const server = createHttpServer(async (req, res) => {
-    if (req.url === '/oauth/token') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        access_token: makeJwt('oauth-user'),
-        refresh_token: 'rotated-refresh',
-        expires_in: 900,
-        refresh_expires_in: 3600,
-        scope: 'notis:read notis:apps',
-      }));
-      return;
-    }
-    if (req.url === '/cli_tools') {
-      assert.equal(req.headers.authorization, `Bearer ${makeJwt('oauth-user')}`);
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ apps: [{ app_id: 'app-1', slug: 'refreshed-app' }] }));
-      return;
-    }
-    if (req.url === '/portal_apps/source?app_id=app-1&version=latest') {
-      sourceAuthorization = req.headers.authorization;
-      res.writeHead(200, {
-        'content-type': 'application/gzip',
-        'content-disposition': 'attachment; filename="refreshed-v3.tar.gz"',
-      });
-      res.end(tarball);
-      return;
-    }
-    res.writeHead(404).end();
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  const apiBase = `http://127.0.0.1:${port}`;
-  writeFileSync(configFile, JSON.stringify({
-    current_profile: 'default',
-    profiles: {
-      default: {
-        api_base: apiBase,
-        oauth_access_token: makeJwt('oauth-user', 1),
-        oauth_refresh_token: 'refresh-token',
-        oauth_access_expires_at: 1,
-        oauth_refresh_expires_at: 4102444800,
-        oauth_client_id: 'notis_cli',
-        oauth_issuer: apiBase,
-        oauth_scopes: ['notis:read', 'notis:apps'],
-        oauth_user_id: 'oauth-user',
-      },
-    },
-  }));
+  await pullAppSource({ targetDir, version: 4, ...spaceSourceDownload(tarball, 4) });
 
-  try {
-    const result = await runCliAsync(
-      ['--json', '--api-base', apiBase, 'apps', 'pull', 'app-1', targetDir],
-      { NOTIS_CLI_CONFIG_FILE: configFile },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(sourceAuthorization, `Bearer ${makeJwt('oauth-user')}`);
-    assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"refreshed"}\n');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+  assert.equal(readFileSync(join(targetDir, longPath), 'utf-8'), '# Long path\n');
+  assert.equal(readSpaceSourceLink(targetDir).revision, 4);
 });
 
 test('pullAppSource serializes concurrent forced pulls for one target', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-concurrent-'));
-  const tarballs = new Map([
-    ['2', makeTarGz({ 'package.json': '{"version":2}\n' })],
-    ['3', makeTarGz({ 'package.json': '{"version":3}\n' })],
+  let activeDownloads = 0;
+  let maxActiveDownloads = 0;
+  const download = (revision) => spaceSourceDownload(
+    makeTarGz({ 'package.json': `{"version":${revision}}\n` }),
+    revision,
+    async () => {
+      activeDownloads += 1;
+      maxActiveDownloads = Math.max(maxActiveDownloads, activeDownloads);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+      activeDownloads -= 1;
+    },
+  );
+
+  await Promise.all([
+    pullAppSource({ targetDir, version: 2, force: true, ...download(2) }),
+    pullAppSource({ targetDir, version: 3, force: true, ...download(3) }),
   ]);
-  let activeRequests = 0;
-  let maxActiveRequests = 0;
-  const server = createHttpServer(async (req, res) => {
-    const requestedVersion = new URL(req.url, 'http://localhost').searchParams.get('version');
-    activeRequests += 1;
-    maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': `attachment; filename="concurrent-v${requestedVersion}.tar.gz"`,
-    });
-    res.end(tarballs.get(requestedVersion));
-    activeRequests -= 1;
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  const base = {
-    apiBase: `http://127.0.0.1:${port}`,
-    jwt: 'jwt-1',
-    appId: 'app-1',
-    targetDir,
-    force: true,
-  };
-  try {
-    await Promise.all([
-      pullAppSource({ ...base, version: 2 }),
-      pullAppSource({ ...base, version: 3 }),
-    ]);
-    assert.equal(maxActiveRequests, 1);
-    assert.equal(readLinkedState(targetDir).version, 3);
-    assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"version":3}\n');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  assert.equal(maxActiveDownloads, 1);
+  assert.equal(readSpaceSourceLink(targetDir).revision, 3);
+  assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"version":3}\n');
 });
 
 test('pullAppSource rejects a symlinked target before acquiring a separate lock', async () => {
@@ -1185,13 +789,7 @@ test('pullAppSource rejects a symlinked target before acquiring a separate lock'
   symlinkSync(realTarget, aliasTarget, 'dir');
 
   await assert.rejects(
-    () => pullAppSource({
-      apiBase: 'http://127.0.0.1:9',
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir: aliasTarget,
-      force: true,
-    }),
+    () => pullAppSource({ targetDir: aliasTarget, force: true, ...unreachableDownload() }),
     /unsafe target/,
   );
   assert.equal(readFileSync(join(realTarget, 'existing.txt'), 'utf-8'), 'keep me');
@@ -1206,42 +804,27 @@ test('pullAppSource rejects a directory-to-symlink swap during download', async 
   writeFileSync(join(targetDir, 'existing.txt'), 'original source');
   writeFileSync(join(outsideDir, 'outside.txt'), 'keep outside');
   const tarball = makeTarGz({ 'package.json': '{"name":"fresh"}\n' });
-  let releaseResponse;
-  const responseGate = new Promise((resolvePromise) => { releaseResponse = resolvePromise; });
-  let markRequestStarted;
-  const requestStarted = new Promise((resolvePromise) => { markRequestStarted = resolvePromise; });
-  const server = createHttpServer(async (_req, res) => {
-    markRequestStarted();
-    await responseGate;
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="fresh-v2.tar.gz"',
-    });
-    res.end(tarball);
+  const download = gatedDownload();
+
+  const pulling = pullAppSource({
+    targetDir,
+    version: 2,
+    force: true,
+    ...spaceSourceDownload(tarball, 2, download.wait),
   });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
   try {
-    const pulling = pullAppSource({
-      apiBase: `http://127.0.0.1:${port}`,
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir,
-      version: 2,
-      force: true,
-    });
-    await requestStarted;
+    await Promise.race([download.started, pulling]);
     renameSync(targetDir, originalDir);
     symlinkSync(outsideDir, targetDir, 'dir');
-    releaseResponse();
+    download.release();
 
     await assert.rejects(pulling, /unsafe target|target changed/);
     assert.equal(readFileSync(join(originalDir, 'existing.txt'), 'utf-8'), 'original source');
     assert.equal(readFileSync(join(outsideDir, 'outside.txt'), 'utf-8'), 'keep outside');
     assert.equal(existsSync(join(outsideDir, 'package.json')), false);
   } finally {
-    releaseResponse?.();
-    await new Promise((resolvePromise) => server.close(resolvePromise));
+    download.release();
+    await pulling.catch(() => {});
   }
 });
 
@@ -1251,160 +834,81 @@ test('pullAppSource rejects a parent-directory swap for a new target during down
   const movedParent = `${parentDir}-original`;
   const outsideParent = mkdtempSync(join(tmpdir(), 'notis-pull-parent-outside-'));
   const tarball = makeTarGz({ 'package.json': '{"name":"fresh"}\n' });
-  let releaseResponse;
-  const responseGate = new Promise((resolvePromise) => { releaseResponse = resolvePromise; });
-  let markRequestStarted;
-  const requestStarted = new Promise((resolvePromise) => { markRequestStarted = resolvePromise; });
-  const server = createHttpServer(async (_req, res) => {
-    markRequestStarted();
-    await responseGate;
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="fresh-v2.tar.gz"',
-    });
-    res.end(tarball);
+  const download = gatedDownload();
+
+  const pulling = pullAppSource({
+    targetDir,
+    version: 2,
+    ...spaceSourceDownload(tarball, 2, download.wait),
   });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
   try {
-    const pulling = pullAppSource({
-      apiBase: `http://127.0.0.1:${port}`,
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir,
-      version: 2,
-    });
-    await requestStarted;
+    await Promise.race([download.started, pulling]);
     renameSync(parentDir, movedParent);
     symlinkSync(outsideParent, parentDir, 'dir');
-    releaseResponse();
+    download.release();
 
     await assert.rejects(pulling, /parent changed/);
     assert.equal(existsSync(join(outsideParent, 'target')), false);
     assert.equal(existsSync(join(movedParent, 'target')), false);
   } finally {
-    releaseResponse?.();
-    await new Promise((resolvePromise) => server.close(resolvePromise));
+    download.release();
+    await pulling.catch(() => {});
   }
 });
 
-test('pullAppSource reports readable no-source errors', async () => {
+test('pullAppSource leaves the checkout untouched when the download fails', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-no-source-'));
   writeFileSync(join(targetDir, 'existing.txt'), 'keep me');
-  const server = createHttpServer((req, res) => {
-    assert.equal(req.url, '/portal_apps/source?app_id=app-legacy&version=latest');
-    res.writeHead(400, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      error: 'No editable source snapshot exists for this app version. Re-deploy the app with the current Notis CLI, then run `notis apps pull` again.',
-    }));
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await assert.rejects(
-      () => pullAppSource({
-        apiBase: `http://127.0.0.1:${port}`,
-        jwt: 'jwt-1',
-        appId: 'app-legacy',
-        targetDir,
-        force: true,
-      }),
-      /No editable source snapshot exists/,
-    );
-    assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  await assert.rejects(
+    () => pullAppSource({
+      targetDir,
+      force: true,
+      sourceLink: SPACE_SOURCE_LINK,
+      async downloadSource() {
+        throw new Error('No editable source snapshot exists for this Space revision.');
+      },
+    }),
+    /No editable source snapshot exists/,
+  );
+  assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
+  assert.equal(existsSync(join(targetDir, '.notis')), false);
 });
 
 test('pullAppSource rejects unsafe source archive paths', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-unsafe-'));
   writeFileSync(join(targetDir, 'existing.txt'), 'keep me');
   const tarball = makeTarGz({ '../outside.txt': 'nope' });
-  const server = createHttpServer((_req, res) => {
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="sample-v1.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await assert.rejects(
-      () => pullAppSource({
-        apiBase: `http://127.0.0.1:${port}`,
-        jwt: 'jwt-1',
-        appId: 'app-1',
-        targetDir,
-        force: true,
-      }),
-      /unsafe path/,
-    );
-    assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  await assert.rejects(
+    () => pullAppSource({ targetDir, force: true, ...spaceSourceDownload(tarball, 1) }),
+    /unsafe path/,
+  );
+  assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
 });
 
-test('pullAppSource rejects a server response that does not match the pinned version', async () => {
+test('pullAppSource rejects a download that does not match the pinned revision', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-version-race-'));
   writeFileSync(join(targetDir, 'existing.txt'), 'keep me');
   const tarball = makeTarGz({ 'package.json': '{"name":"newer"}\n' });
-  const server = createHttpServer((req, res) => {
-    assert.equal(req.url, '/portal_apps/source?app_id=app-1&version=2');
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="newer-v3.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await assert.rejects(
-      () => pullAppSource({
-        apiBase: `http://127.0.0.1:${port}`,
-        jwt: 'jwt-1',
-        appId: 'app-1',
-        targetDir,
-        version: 2,
-        force: true,
-      }),
-      /Requested app source version 2, but the server returned version 3/,
-    );
-    assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  await assert.rejects(
+    () => pullAppSource({ targetDir, version: 2, force: true, ...spaceSourceDownload(tarball, 3) }),
+    /Requested Space source version 2, but the server returned version 3/,
+  );
+  assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
 });
 
-test('pullAppSource requires the response to prove its source version', async () => {
+test('pullAppSource requires the download to prove its source revision', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-missing-version-'));
   writeFileSync(join(targetDir, 'existing.txt'), 'keep me');
   const tarball = makeTarGz({ 'package.json': '{"name":"unversioned"}\n' });
-  const server = createHttpServer((_req, res) => {
-    res.writeHead(200, { 'content-type': 'application/gzip' });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await assert.rejects(
-      () => pullAppSource({
-        apiBase: `http://127.0.0.1:${port}`,
-        jwt: 'jwt-1',
-        appId: 'app-1',
-        targetDir,
-        version: 2,
-        force: true,
-      }),
-      /did not identify a valid positive version/,
-    );
-    assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  await assert.rejects(
+    () => pullAppSource({ targetDir, version: 2, force: true, ...spaceSourceDownload(tarball, null) }),
+    /did not identify a valid positive version/,
+  );
+  assert.equal(readFileSync(join(targetDir, 'existing.txt'), 'utf-8'), 'keep me');
 });
 
 test('pullAppSource rejects case-folded local-only archive entries', async () => {
@@ -1414,31 +918,12 @@ test('pullAppSource rejects case-folded local-only archive entries', async () =>
     'package.json': '{"name":"bad"}\n',
     'app/.ENV.LOCAL': 'replace secret',
   });
-  const server = createHttpServer((_req, res) => {
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="bad-v2.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await assert.rejects(
-      () => pullAppSource({
-        apiBase: `http://127.0.0.1:${port}`,
-        jwt: 'jwt-1',
-        appId: 'app-1',
-        targetDir,
-        version: 2,
-        force: true,
-      }),
-      /local-only path/,
-    );
-    assert.equal(readFileSync(join(targetDir, '.env.local'), 'utf-8'), 'keep secret');
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  await assert.rejects(
+    () => pullAppSource({ targetDir, version: 2, force: true, ...spaceSourceDownload(tarball, 2) }),
+    /local-only path/,
+  );
+  assert.equal(readFileSync(join(targetDir, '.env.local'), 'utf-8'), 'keep secret');
 });
 
 test('pullAppSource stages forced updates and preserves local-only checkout state', async () => {
@@ -1459,56 +944,34 @@ test('pullAppSource stages forced updates and preserves local-only checkout stat
   writeFileSync(join(targetDir, 'packages', 'foo', '.env.local'), 'keep nested env');
   writeFileSync(join(targetDir, 'packages', 'foo', 'node_modules', 'nested', 'index.js'), 'keep nested deps');
   writeFileSync(join(targetDir, 'packages', 'foo', '.notis', 'runtime.json'), 'keep nested runtime');
-  writeLinkedState(targetDir, { app_id: 'old-app', version: 8 });
+  writeSpaceSourceLink(targetDir, 8);
 
   const tarball = makeTarGz({
     'package.json': '{"name":"fresh"}\n',
     'app/page.tsx': 'export default function Page() { return null; }\n',
     'packages/foo/index.ts': 'export const fresh = true;\n',
   });
-  const server = createHttpServer((_req, res) => {
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="fresh-v2.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await pullAppSource({
-      apiBase: `http://127.0.0.1:${port}`,
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir,
-      version: 2,
-      force: true,
-    });
 
-    assert.equal(existsSync(join(targetDir, 'app', 'old.tsx')), false);
-    assert.equal(existsSync(join(targetDir, 'stale.txt')), false);
-    assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"fresh"}\n');
-    assert.equal(readFileSync(join(targetDir, '.git', 'config'), 'utf-8'), 'keep git');
-    assert.equal(readFileSync(join(targetDir, '.env.local'), 'utf-8'), 'keep env');
-    assert.equal(readFileSync(join(targetDir, 'node_modules', 'pkg', 'index.js'), 'utf-8'), 'keep deps');
-    assert.equal(readFileSync(join(targetDir, '.notis', 'output', 'manifest.json'), 'utf-8'), 'keep build');
-    assert.equal(readFileSync(join(targetDir, 'packages', 'foo', '.env.local'), 'utf-8'), 'keep nested env');
-    assert.equal(
-      readFileSync(join(targetDir, 'packages', 'foo', 'node_modules', 'nested', 'index.js'), 'utf-8'),
-      'keep nested deps',
-    );
-    assert.equal(
-      readFileSync(join(targetDir, 'packages', 'foo', '.notis', 'runtime.json'), 'utf-8'),
-      'keep nested runtime',
-    );
-    assert.equal(lstatSync(join(targetDir, 'app', 'local-link')).isSymbolicLink(), true);
-    assert.deepEqual(
-      { app_id: readLinkedState(targetDir).app_id, version: readLinkedState(targetDir).version },
-      { app_id: 'app-1', version: 2 },
-    );
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+  await pullAppSource({ targetDir, version: 2, force: true, ...spaceSourceDownload(tarball, 2) });
+
+  assert.equal(existsSync(join(targetDir, 'app', 'old.tsx')), false);
+  assert.equal(existsSync(join(targetDir, 'stale.txt')), false);
+  assert.equal(readFileSync(join(targetDir, 'package.json'), 'utf-8'), '{"name":"fresh"}\n');
+  assert.equal(readFileSync(join(targetDir, '.git', 'config'), 'utf-8'), 'keep git');
+  assert.equal(readFileSync(join(targetDir, '.env.local'), 'utf-8'), 'keep env');
+  assert.equal(readFileSync(join(targetDir, 'node_modules', 'pkg', 'index.js'), 'utf-8'), 'keep deps');
+  assert.equal(readFileSync(join(targetDir, '.notis', 'output', 'manifest.json'), 'utf-8'), 'keep build');
+  assert.equal(readFileSync(join(targetDir, 'packages', 'foo', '.env.local'), 'utf-8'), 'keep nested env');
+  assert.equal(
+    readFileSync(join(targetDir, 'packages', 'foo', 'node_modules', 'nested', 'index.js'), 'utf-8'),
+    'keep nested deps',
+  );
+  assert.equal(
+    readFileSync(join(targetDir, 'packages', 'foo', '.notis', 'runtime.json'), 'utf-8'),
+    'keep nested runtime',
+  );
+  assert.equal(lstatSync(join(targetDir, 'app', 'local-link')).isSymbolicLink(), true);
+  assert.deepEqual(readSpaceSourceLink(targetDir), { ...SPACE_SOURCE_LINK, revision: 2 });
 });
 
 test('pullAppSource fails closed when a preserved symlink collides with pulled source', async () => {
@@ -1516,50 +979,26 @@ test('pullAppSource fails closed when a preserved symlink collides with pulled s
   const localAppDir = mkdtempSync(join(tmpdir(), 'notis-pull-local-app-'));
   writeFileSync(join(localAppDir, 'local.txt'), 'keep local');
   symlinkSync(localAppDir, join(targetDir, 'app'), 'dir');
-  writeLinkedState(targetDir, { app_id: 'old-app', version: 1 });
+  writeSpaceSourceLink(targetDir, 1);
   const tarball = makeTarGz({
     'package.json': '{"name":"fresh"}\n',
     'app/page.tsx': 'export default null;\n',
   });
-  const server = createHttpServer((_req, res) => {
-    res.writeHead(200, {
-      'content-type': 'application/gzip',
-      'content-disposition': 'attachment; filename="fresh-v2.tar.gz"',
-    });
-    res.end(tarball);
-  });
-  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
-  const { port } = server.address();
-  try {
-    await assert.rejects(
-      () => pullAppSource({
-        apiBase: `http://127.0.0.1:${port}`,
-        jwt: 'jwt-1',
-        appId: 'app-1',
-        targetDir,
-        version: 2,
-        force: true,
-      }),
-      /Local-only path conflicts with pulled source: app/,
-    );
-    assert.equal(lstatSync(join(targetDir, 'app')).isSymbolicLink(), true);
-    assert.equal(readFileSync(join(targetDir, 'app', 'local.txt'), 'utf-8'), 'keep local');
-    assert.deepEqual(readLinkedState(targetDir), { app_id: 'old-app', version: 1 });
-  } finally {
-    await new Promise((resolvePromise) => server.close(resolvePromise));
-  }
+
+  await assert.rejects(
+    () => pullAppSource({ targetDir, version: 2, force: true, ...spaceSourceDownload(tarball, 2) }),
+    /Local-only path conflicts with pulled source: app/,
+  );
+  assert.equal(lstatSync(join(targetDir, 'app')).isSymbolicLink(), true);
+  assert.equal(readFileSync(join(targetDir, 'app', 'local.txt'), 'utf-8'), 'keep local');
+  assert.deepEqual(readSpaceSourceLink(targetDir), { ...SPACE_SOURCE_LINK, revision: 1 });
 });
 
 test('pullAppSource refuses a non-empty target directory without force', async () => {
   const targetDir = mkdtempSync(join(tmpdir(), 'notis-pull-non-empty-'));
   writeFileSync(join(targetDir, 'existing.txt'), 'x');
   await assert.rejects(
-    () => pullAppSource({
-      apiBase: 'http://127.0.0.1:9',
-      jwt: 'jwt-1',
-      appId: 'app-1',
-      targetDir,
-    }),
+    () => pullAppSource({ targetDir, ...unreachableDownload() }),
     /Target directory is not empty/,
   );
 });
@@ -1597,572 +1036,46 @@ test('collectSourceFiles keeps lockfiles and excludes runtime, build, and secret
   assert.equal(sourceFiles['tsconfig.tsbuildinfo'], undefined);
 });
 
-test('linked app state rejects a symlinked .notis directory', () => {
+test('pullAppSource rejects a symlinked .notis directory', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-state-dir-symlink-'));
   const outsideDir = mkdtempSync(join(tmpdir(), 'notis-state-dir-outside-'));
   symlinkSync(outsideDir, join(projectDir, '.notis'), 'dir');
+  const tarball = makeTarGz({ 'package.json': '{"name":"fresh"}\n' });
 
-  assert.throws(
-    () => writeLinkedState(projectDir, { app_id: 'app-1', version: 2 }),
+  await assert.rejects(
+    () => pullAppSource({ targetDir: projectDir, force: true, ...spaceSourceDownload(tarball, 2) }),
     /unsafe Notis state directory/,
   );
-  assert.equal(existsSync(join(outsideDir, 'state.json')), false);
+  assert.equal(lstatSync(join(projectDir, '.notis')).isSymbolicLink(), true);
+  assert.equal(existsSync(join(outsideDir, 'space-source.json')), false);
+  assert.equal(existsSync(join(projectDir, 'package.json')), false);
 });
 
-test('linked app state rejects a symlinked state file', () => {
+test('pullAppSource rejects a symlinked Space source link file', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-state-file-symlink-'));
   const outsideDir = mkdtempSync(join(tmpdir(), 'notis-state-file-outside-'));
   const outsideFile = join(outsideDir, 'outside.json');
   mkdirSync(join(projectDir, '.notis'), { recursive: true });
   writeFileSync(outsideFile, 'keep outside');
-  symlinkSync(outsideFile, join(projectDir, '.notis', 'state.json'));
+  symlinkSync(outsideFile, join(projectDir, '.notis', 'space-source.json'));
+  const tarball = makeTarGz({ 'package.json': '{"name":"fresh"}\n' });
 
-  assert.throws(
-    () => writeLinkedState(projectDir, { app_id: 'app-1', version: 2 }),
+  await assert.rejects(
+    () => pullAppSource({ targetDir: projectDir, force: true, ...spaceSourceDownload(tarball, 2) }),
     /unsafe Notis state file/,
   );
   assert.equal(readFileSync(outsideFile, 'utf-8'), 'keep outside');
-});
-
-test('buildArtifact loads a TypeScript notis.config.ts without CommonJS globals', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-'));
-
-  writeFileSync(
-    join(projectDir, 'package.json'),
-    JSON.stringify({
-      name: 'test-app',
-      notisAppVersion: '1.2.3',
-      private: true,
-      scripts: {
-        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','body{}');"`,
-      },
-    }),
-  );
-  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-  writeFileSync(join(projectDir, 'notis.config.ts'), `
-import { defineNotisApp } from '@notis/sdk/config';
-
-export default defineNotisApp({
-  name: 'Test App',
-  routes: [{ path: '/', slug: 'home', name: 'Home', default: true, resourceDeepLinks: true }],
-  databases: ['tasks'],
-  tools: [],
-});
-`);
-  mkdirSync(join(projectDir, 'app'), { recursive: true });
-  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
-
-  const { manifest } = await buildArtifact(projectDir);
-  assert.equal(manifest.app.name, 'Test App');
-  assert.equal(manifest.app.release_version, '1.2.3');
-  assert.equal(manifest.spec_version, 4);
-  assert.equal(manifest.routes[0].path, '/');
-  assert.equal(manifest.routes[0].resourceDeepLinks, true);
-  assert.ok(manifest.routes[0].export_name);
-  assert.ok(manifest.bundle);
-  assert.deepEqual(manifest.databases, ['tasks']);
-});
-
-test('buildArtifact supplies the portable loader for historical Vite scripts without rewriting source', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-historical-vite-build-'));
-  try {
-    const packagePath = join(projectDir, 'package.json');
-    const packageSource = JSON.stringify({
-      name: 'historical-vite', notisAppVersion: '1.2.3',
-      scripts: { build: ' vite build ' },
-    });
-    writeFileSync(packagePath, packageSource);
-    writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-    writeFileSync(join(projectDir, 'notis.config.ts'), `export default {
-      name: 'Historical Vite', routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
-    };`);
-    mkdirSync(join(projectDir, 'app'));
-    writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
-    mkdirSync(join(projectDir, 'node_modules', '.bin'), { recursive: true });
-    writeFileSync(join(projectDir, 'node_modules', '.bin', 'vite'), `#!/usr/bin/env node
-const fs = require('node:fs');
-const assert = require('node:assert/strict');
-assert.deepEqual(process.argv.slice(2), ['build', '--configLoader', 'runner']);
-fs.mkdirSync('.notis/output/bundle', { recursive: true });
-fs.writeFileSync('.notis/output/bundle/app.js', 'export default function(){return null;}');
-`, { mode: 0o755 });
-    const { manifest } = await buildArtifact(projectDir, { stdio: 'pipe' });
-    assert.equal(manifest.app.release_version, '1.2.3');
-    assert.equal(readFileSync(packagePath, 'utf8'), packageSource);
-    assert.ok(existsSync(join(projectDir, '.notis', 'build-receipt.json')));
-  } finally {
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-test('generateManifest rejects non-boolean resourceDeepLinks route config', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-resource-links-'));
-  assert.throws(
-    () => generateManifest({
-      name: 'Bad resource links',
-      routes: [{
-        path: '/',
-        slug: 'home',
-        name: 'Home',
-        default: true,
-        resourceDeepLinks: 'yes',
-      }],
-    }, projectDir),
-    /resourceDeepLinks must be a boolean/,
-  );
-});
-
-test('generateManifest rejects App Skills and onboarding, which belong to Space sources', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-skills-moved-'));
-  try {
-    mkdirSync(join(projectDir, 'app'));
-    writeFileSync(join(projectDir, 'app/page.tsx'), 'export default function Home() { return null; }');
-    const config = { name: 'Skill free', routes: [{ path: '/', slug: 'home', name: 'Home', default: true }] };
-    for (const extra of [
-      { skills: [{ key: 'onboard', path: 'skills/onboard', name: 'Onboard' }] },
-      { onboarding: { skill: 'onboard', prompt: 'Set up' } },
-    ]) {
-      assert.throws(() => generateManifest({ ...config, ...extra }, projectDir), /skills\/<alias>\/ of a Space source/);
-    }
-    const manifest = generateManifest({ ...config, skills: [] }, projectDir);
-    assert.equal('skills' in manifest, false);
-    assert.equal('onboarding' in manifest, false);
-  } finally {
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-test('apps build keeps machine output parseable when the project build writes logs', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-json-'));
-  const buildScript = [
-    "console.log('BUILD_LOG_MUST_NOT_REACH_STDOUT')",
-    "const fs=require('fs')",
-    "const p='.notis/output/bundle'",
-    "fs.mkdirSync(p,{recursive:true})",
-    "fs.writeFileSync(p+'/app.js','export default function(){return null;}')",
-    "fs.writeFileSync(p+'/app.css','body{}')",
-  ].join(';');
-
-  writeFileSync(
-    join(projectDir, 'package.json'),
-    JSON.stringify({
-      name: 'json-build-app',
-      private: true,
-      scripts: { build: `node -e "${buildScript}"` },
-    }),
-  );
-  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-  writeFileSync(
-    join(projectDir, 'notis.config.mjs'),
-    `export default {
-      name: 'JSON Build App',
-      routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
-      databases: [],
-      tools: [],
-    };\n`,
-  );
-  mkdirSync(join(projectDir, 'app'), { recursive: true });
-  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
-
-  const result = runCli(['apps', 'build', projectDir, '--json']);
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.doesNotMatch(result.stdout, /BUILD_LOG_MUST_NOT_REACH_STDOUT/);
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.command, 'apps build');
-});
-
-test('buildArtifact preserves named imports and sanitizes generated route export names', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-edge-'));
-
-  writeFileSync(
-    join(projectDir, 'package.json'),
-    JSON.stringify({
-      name: 'edge-test-app',
-      private: true,
-      scripts: {
-        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','body{}');"`,
-      },
-    }),
-  );
-  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-  writeFileSync(join(projectDir, 'shared.js'), `
-export const ROUTE_PATHS = ['/step-1', '/api-V2', '/404'];
-export const DB_SLUGS = ['tasks', 'notes'];
-`);
-  writeFileSync(join(projectDir, 'notis.config.ts'), `
-import { defineNotisApp } from '@notis/sdk/config';
-import { ROUTE_PATHS, DB_SLUGS } from './shared.js';
-
-export default defineNotisApp({
-  name: 'Edge Test App',
-  routes: ROUTE_PATHS.map((path, index) => ({
-    path,
-    slug: path === '/' ? 'home' : path.slice(1).toLowerCase(),
-    name: path,
-    default: index === 0,
-  })),
-  databases: DB_SLUGS,
-  tools: [],
-});
-`);
-
-  mkdirSync(join(projectDir, 'app', 'step-1'), { recursive: true });
-  mkdirSync(join(projectDir, 'app', 'api-V2'), { recursive: true });
-  mkdirSync(join(projectDir, 'app', '404'), { recursive: true });
-  writeFileSync(join(projectDir, 'app', 'step-1', 'page.tsx'), 'export default function Page() { return null; }\n');
-  writeFileSync(join(projectDir, 'app', 'api-V2', 'page.tsx'), 'export default function Page() { return null; }\n');
-  writeFileSync(join(projectDir, 'app', '404', 'page.tsx'), 'export default function Page() { return null; }\n');
-
-  const { manifest } = await buildArtifact(projectDir);
-  assert.deepEqual(manifest.databases, ['tasks', 'notes']);
-  assert.deepEqual(
-    manifest.routes.map((route) => route.export_name),
-    ['step1', 'apiV2', 'r404'],
-  );
-
-  const entrySource = readFileSync(join(projectDir, '.notis', '_entry.tsx'), 'utf-8');
-  assert.match(entrySource, /export \{ default as step1 \}/);
-  assert.match(entrySource, /export \{ default as apiV2 \}/);
-  assert.match(entrySource, /export \{ default as r404 \}/);
-});
-
-test('buildArtifact rewrites Tailwind-style global selectors into shadow-safe bundle selectors', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-shadow-css-'));
-
-  writeFileSync(
-    join(projectDir, 'package.json'),
-    JSON.stringify({
-      name: 'shadow-css-test-app',
-      private: true,
-      scripts: {
-        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','export default function(){return null;}'); fs.writeFileSync(p+'/app.css','html,:host{line-height:1.5}:root{--radius:8px}@layer theme{:root,:host{--spacing:.25rem}}body{margin:0}');"`,
-      },
-    }),
-  );
-  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-  writeFileSync(join(projectDir, 'notis.config.ts'), `
-import { defineNotisApp } from '@notis/sdk/config';
-
-export default defineNotisApp({
-  name: 'Shadow CSS Test App',
-  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
-});
-`);
-  mkdirSync(join(projectDir, 'app'), { recursive: true });
-  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
-
-  await buildArtifact(projectDir);
-
-  const css = readFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), 'utf-8');
-  assert.equal(css, '[data-notis-app-root],:host{line-height:1.5}[data-notis-app-root],:host{--radius:8px}@layer theme{[data-notis-app-root],:host{--spacing:.25rem}}[data-notis-app-root]{margin:0}');
-});
-
-test('buildArtifact rejects source CSS that escapes the app surface', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-invalid-source-'));
-
-  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'invalid-source-app', private: true }));
-  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-  writeFileSync(join(projectDir, 'notis.config.ts'), `
-import { defineNotisApp } from '@notis/sdk/config';
-
-export default defineNotisApp({
-  name: 'Invalid Source App',
-  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
-});
-`);
-  mkdirSync(join(projectDir, 'app'), { recursive: true });
-  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
-  writeFileSync(join(projectDir, 'app', 'globals.css'), 'body { color: red; }\n');
-
-  await assert.rejects(
-    () => buildArtifact(projectDir),
-    /body selectors are forbidden/i,
-  );
-});
-
-test('buildArtifact rejects artifact JS that reaches for the portal runtime global', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-app-build-invalid-artifact-'));
-
-  writeFileSync(
-    join(projectDir, 'package.json'),
-    JSON.stringify({
-      name: 'invalid-artifact-app',
-      private: true,
-      scripts: {
-        build: `node -e "const fs=require('fs'); const p='.notis/output/bundle'; fs.mkdirSync(p,{recursive:true}); fs.writeFileSync(p+'/app.js','const runtime = window.__NOTIS_RUNTIME__; export default function(){return runtime ? null : null;}'); fs.writeFileSync(p+'/app.css','[data-notis-app-root]{}');"`,
-      },
-    }),
-  );
-  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n');
-  writeFileSync(join(projectDir, 'notis.config.ts'), `
-import { defineNotisApp } from '@notis/sdk/config';
-
-export default defineNotisApp({
-  name: 'Invalid Artifact App',
-  routes: [{ path: '/', slug: 'home', name: 'Home', default: true }],
-});
-`);
-  mkdirSync(join(projectDir, 'app'), { recursive: true });
-  writeFileSync(join(projectDir, 'app', 'page.tsx'), 'export default function Page() { return null; }\n');
-
-  await assert.rejects(
-    () => buildArtifact(projectDir),
-    /window\.__NOTIS_RUNTIME__/i,
-  );
-});
-
-// The catalog is the public app registry (github.com/mindtheflo/notis-apps):
-// every published Store app is automatically a scaffold. Tests run against the
-// local fixture registry so they stay hermetic.
-const FIXTURE_REGISTRY_DIR = resolve('./fixtures/app-registry');
-
-async function withFixtureRegistry(run) {
-  const previous = process.env.NOTIS_APP_REGISTRY_DIR;
-  process.env.NOTIS_APP_REGISTRY_DIR = FIXTURE_REGISTRY_DIR;
-  try {
-    return await run();
-  } finally {
-    if (previous === undefined) {
-      delete process.env.NOTIS_APP_REGISTRY_DIR;
-    } else {
-      process.env.NOTIS_APP_REGISTRY_DIR = previous;
-    }
-  }
-}
-
-test('scaffold catalog lists published registry apps', async () => {
-  await withFixtureRegistry(async () => {
-    const catalog = await loadScaffoldCatalog();
-    const entry = catalog.find((scaffold) => scaffold.slug === 'demo-dice');
-
-    assert.ok(entry, 'fixture registry app missing from catalog');
-    assert.equal(entry.name, 'Demo Dice');
-    assert.equal(entry.tagline, 'Roll dice from a published Store app.');
-    assert.equal(entry.categories[0], 'Personal');
-    assert.equal(entry.icon, 'phosphor:dice-five');
-  });
-});
-
-test('scaffold catalog search matches name, tagline, and category', async () => {
-  await withFixtureRegistry(async () => {
-    const catalog = await loadScaffoldCatalog();
-
-    assert.equal(filterScaffoldCatalog(catalog, 'dice').length, 1);
-    assert.equal(filterScaffoldCatalog(catalog, 'PERSONAL roll').length, 1);
-    assert.equal(filterScaffoldCatalog(catalog, 'spreadsheet').length, 0);
-    assert.equal(filterScaffoldCatalog(catalog, '  ').length, catalog.length);
-  });
-});
-
-test('registry scaffold targets reject cross-platform traversal paths', () => {
-  const root = join(tmpdir(), 'notis-scaffold-boundary');
-  assert.equal(
-    resolveScaffoldTargetPath(root, 'app/page.tsx'),
-    join(root, 'app', 'page.tsx'),
-  );
-  for (const unsafe of [
-    '../outside',
-    '..\\outside',
-    'app/../../outside',
-    'app\\..\\..\\outside',
-    '/absolute/path',
-    'C:\\absolute\\path',
-  ]) {
-    assert.throws(
-      () => resolveScaffoldTargetPath(root, unsafe),
-      /Refusing (unsafe path|path outside scaffold directory)/,
-    );
-  }
-});
-
-function fakeRegistryResponse(body, { status = 200, binary = false } = {}) {
-  const bytes = Buffer.from(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => bytes.toString('utf-8'),
-    arrayBuffer: async () => Uint8Array.from(bytes).buffer,
-    binary,
-  };
-}
-
-async function withRemoteRegistryFetch(fetchImpl, run) {
-  const previousFetch = globalThis.fetch;
-  const previousDir = process.env.NOTIS_APP_REGISTRY_DIR;
-  const previousRepo = process.env.NOTIS_APP_REGISTRY_REPO;
-  const previousRef = process.env.NOTIS_APP_REGISTRY_REF;
-  delete process.env.NOTIS_APP_REGISTRY_DIR;
-  process.env.NOTIS_APP_REGISTRY_REPO = 'example/scaffolds';
-  process.env.NOTIS_APP_REGISTRY_REF = 'main';
-  globalThis.fetch = fetchImpl;
-  try {
-    return await run();
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousDir === undefined) delete process.env.NOTIS_APP_REGISTRY_DIR;
-    else process.env.NOTIS_APP_REGISTRY_DIR = previousDir;
-    if (previousRepo === undefined) delete process.env.NOTIS_APP_REGISTRY_REPO;
-    else process.env.NOTIS_APP_REGISTRY_REPO = previousRepo;
-    if (previousRef === undefined) delete process.env.NOTIS_APP_REGISTRY_REF;
-    else process.env.NOTIS_APP_REGISTRY_REF = previousRef;
-  }
-}
-
-test('remote scaffold resolves the registry ref once and downloads by immutable commit', async () => {
-  const commitSha = 'a'.repeat(40);
-  const urls = [];
-  await withRemoteRegistryFetch(async (url) => {
-    urls.push(String(url));
-    if (String(url).includes('/commits/main')) {
-      return fakeRegistryResponse(JSON.stringify({ sha: commitSha }));
-    }
-    if (String(url).includes(`/git/trees/${commitSha}`)) {
-      return fakeRegistryResponse(JSON.stringify({ tree: [
-        { type: 'blob', path: 'apps/demo/notis.config.ts' },
-        { type: 'blob', path: 'apps/demo/app/page.tsx' },
-      ] }));
-    }
-    return fakeRegistryResponse('export default {}');
-  }, async () => {
-    const source = await acquireScaffoldSource('demo');
-    try {
-      assert.equal(existsSync(join(source.dir, 'notis.config.ts')), true);
-      assert.equal(existsSync(join(source.dir, 'app', 'page.tsx')), true);
-    } finally {
-      source.cleanup();
-    }
-  });
-
-  const rawUrls = urls.filter((url) => url.includes('raw.githubusercontent.com'));
-  assert.equal(rawUrls.length, 2);
-  assert.ok(rawUrls.every((url) => url.includes(`/${commitSha}/`)));
-  assert.equal(urls.filter((url) => url.includes('/commits/main')).length, 1);
-});
-
-test('remote scaffold accepts a bounded large GitHub commit-detail response', async () => {
-  const commitSha = 'e'.repeat(40);
-  await withRemoteRegistryFetch(async (url) => {
-    const requestUrl = String(url);
-    if (requestUrl.includes('/commits/main')) {
-      return fakeRegistryResponse(JSON.stringify({
-        sha: commitSha,
-        files: [{ patch: 'x'.repeat(300 * 1024) }],
-      }));
-    }
-    if (requestUrl.includes(`/git/trees/${commitSha}`)) {
-      return fakeRegistryResponse(JSON.stringify({ tree: [
-        { type: 'blob', path: 'apps/demo/notis.config.ts', size: 20 },
-      ] }));
-    }
-    if (requestUrl.includes('raw.githubusercontent.com')) {
-      return fakeRegistryResponse("export default { name: 'demo' };\n");
-    }
-    throw new Error(`unexpected registry request: ${requestUrl}`);
-  }, async () => {
-    const catalog = await loadScaffoldCatalog();
-    assert.equal(catalog[0].slug, 'demo');
-  });
-});
-
-test('remote scaffold rejects a truncated GitHub registry tree', async () => {
-  const commitSha = 'd'.repeat(40);
-  await withRemoteRegistryFetch(async (url) => {
-    const requestUrl = String(url);
-    if (requestUrl.includes('/commits/main')) {
-      return fakeRegistryResponse(JSON.stringify({ sha: commitSha }));
-    }
-    if (requestUrl.includes(`/git/trees/${commitSha}`)) {
-      return fakeRegistryResponse(JSON.stringify({ truncated: true, tree: [
-        { type: 'blob', path: 'apps/demo/notis.config.ts' },
-      ] }));
-    }
-    throw new Error(`unexpected download: ${requestUrl}`);
-  }, async () => {
-    await assert.rejects(loadScaffoldCatalog(), /tree was truncated/);
-  });
-});
-
-test('failed remote scaffold waits for sibling downloads before removing its temp directory', async () => {
-  const commitSha = 'b'.repeat(40);
-  const before = new Set(
-    readdirSync(tmpdir()).filter((name) => name.startsWith('notis-scaffold-')),
-  );
-  await withRemoteRegistryFetch(async (url) => {
-    const requestUrl = String(url);
-    if (requestUrl.includes('/commits/main')) {
-      return fakeRegistryResponse(JSON.stringify({ sha: commitSha }));
-    }
-    if (requestUrl.includes(`/git/trees/${commitSha}`)) {
-      return fakeRegistryResponse(JSON.stringify({ tree: [
-        { type: 'blob', path: 'apps/demo/notis.config.ts' },
-        { type: 'blob', path: 'apps/demo/app/late.tsx' },
-      ] }));
-    }
-    if (requestUrl.endsWith('/apps/demo/notis.config.ts')) {
-      throw new Error('fixture download failure');
-    }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
-    return fakeRegistryResponse('export default function Late() {}', { binary: true });
-  }, async () => {
-    await assert.rejects(acquireScaffoldSource('demo'), /fixture download failure/);
-  });
-
-  const leaked = readdirSync(tmpdir())
-    .filter((name) => name.startsWith('notis-scaffold-') && !before.has(name));
-  assert.deepEqual(leaked, []);
-});
-
-test('remote scaffold refuses declared files above the source size limit', async () => {
-  const commitSha = 'c'.repeat(40);
-  await withRemoteRegistryFetch(async (url) => {
-    const requestUrl = String(url);
-    if (requestUrl.includes('/commits/main')) {
-      return fakeRegistryResponse(JSON.stringify({ sha: commitSha }));
-    }
-    if (requestUrl.includes(`/git/trees/${commitSha}`)) {
-      return fakeRegistryResponse(JSON.stringify({ tree: [
-        { type: 'blob', path: 'apps/demo/notis.config.ts', size: 6 * 1024 * 1024 },
-      ] }));
-    }
-    throw new Error(`unexpected download: ${requestUrl}`);
-  }, async () => {
-    await assert.rejects(acquireScaffoldSource('demo'), /file larger than/);
-  });
-});
-
-test('scaffoldProject copies a published scaffold and renames slug plus title', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-from-'));
-
-  await withFixtureRegistry(() => scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'demo-dice' }));
-
-  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8');
-  const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'));
-  assert.match(config, /name:\s*'dice-lab'/);
-  assert.match(config, /title:\s*'Dice Lab'/);
-  assert.equal(existsSync(join(projectDir, 'CHANGELOG.md')), true);
-  assert.equal(existsSync(join(projectDir, 'app', 'page.tsx')), true);
-  assert.equal(pkg.dependencies['@notis/sdk'], 'file:./packages/sdk');
-  assert.equal(pkg.notisAppVersion, '0.1.0');
-  assert.equal(pkg.scripts.build, 'vite build --configLoader runner');
-  assert.equal(pkg.scripts['generate-entry'], 'node -e ""');
-  assert.equal(pkg.scripts.prebuild, undefined);
-  assert.equal(existsSync(join(projectDir, 'packages', 'sdk', 'package.json')), true);
-  assert.equal(existsSync(join(projectDir, 'package-lock.json')), true);
-  const lockfile = JSON.parse(readFileSync(join(projectDir, 'package-lock.json'), 'utf-8'));
-  assert.equal(lockfile.name, 'dice-lab');
-  assert.equal(lockfile.packages[''].name, 'dice-lab');
+  assert.equal(existsSync(join(projectDir, 'package.json')), false);
 });
 
 test('scaffoldProject refuses a non-empty destination without overwriting it', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-non-empty-'));
   writeFileSync(join(projectDir, 'keep.txt'), 'keep me');
 
-  await withFixtureRegistry(() => assert.rejects(
-    scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'demo-dice' }),
+  await assert.rejects(
+    scaffoldProject({ projectDir, appName: 'Dice Lab' }),
     /target must be empty/,
-  ));
+  );
 
   assert.equal(readFileSync(join(projectDir, 'keep.txt'), 'utf8'), 'keep me');
   assert.equal(existsSync(join(projectDir, 'package.json')), false);
@@ -2175,346 +1088,39 @@ test('scaffoldProject refuses a symlinked destination', async () => {
   writeFileSync(join(outsideDir, 'keep.txt'), 'keep me');
   symlinkSync(outsideDir, projectDir, 'dir');
 
-  await withFixtureRegistry(() => assert.rejects(
-    scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'demo-dice' }),
+  await assert.rejects(
+    scaffoldProject({ projectDir, appName: 'Dice Lab' }),
     /unsafe target/,
-  ));
+  );
 
   assert.equal(readFileSync(join(outsideDir, 'keep.txt'), 'utf8'), 'keep me');
   assert.equal(existsSync(join(outsideDir, 'package.json')), false);
 });
 
-test('scaffoldProject rejects source symlinks before normalizing staged files', async () => {
-  const registryDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-source-symlink-registry-'));
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-source-symlink-target-'));
-  const outsideDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-source-symlink-outside-'));
-  const outsidePackage = join(outsideDir, 'package.json');
-  cpSync(FIXTURE_REGISTRY_DIR, registryDir, { recursive: true });
-  writeFileSync(outsidePackage, '{"name":"outside","scripts":{}}\n');
-  const packagePath = join(registryDir, 'apps', 'demo-dice', 'package.json');
-  unlinkSync(packagePath);
-  symlinkSync(outsidePackage, packagePath, 'file');
-  const previousRegistryDir = process.env.NOTIS_APP_REGISTRY_DIR;
-  process.env.NOTIS_APP_REGISTRY_DIR = registryDir;
+test('scaffoldProject names the package and starts a Space workspace without App release metadata', async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-bare-'));
   try {
-    await assert.rejects(
-      scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'demo-dice' }),
-      /Refusing symlinked scaffold source entry/,
-    );
+    await scaffoldProject({ projectDir, appName: 'Mind the Flo' });
+
+    const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'));
+    assert.equal(pkg.name, 'mind-the-flo');
+    assert.equal('notisAppVersion' in pkg, false);
+    assert.equal(existsSync(join(projectDir, 'CHANGELOG.md')), false);
+    assert.match(readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8'), /defineSpaces\(/);
+    // A starter kit, not an App: no home route and no copy of the CLI theme source.
+    assert.equal(existsSync(join(projectDir, 'app', 'layout.tsx')), true);
+    assert.equal(existsSync(join(projectDir, 'components', 'ui', 'button.tsx')), true);
+    assert.equal(existsSync(join(projectDir, 'app', 'page.tsx')), false);
+    assert.equal(existsSync(join(projectDir, '.harness')), false);
+    assert.deepEqual(collectProjectBoundaryViolations(projectDir), [],
+      'the complete generated source, including its bundled SDK, must pass the build boundary gate');
   } finally {
-    if (previousRegistryDir === undefined) delete process.env.NOTIS_APP_REGISTRY_DIR;
-    else process.env.NOTIS_APP_REGISTRY_DIR = previousRegistryDir;
-  }
-
-  assert.equal(readFileSync(outsidePackage, 'utf8'), '{"name":"outside","scripts":{}}\n');
-  assert.deepEqual(readdirSync(projectDir), []);
-});
-
-test('scaffoldProject leaves an existing empty destination retryable after staging fails', async () => {
-  const registryDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-invalid-registry-'));
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-retryable-'));
-  cpSync(FIXTURE_REGISTRY_DIR, registryDir, { recursive: true });
-  writeFileSync(join(registryDir, 'apps', 'demo-dice', 'package.json'), '{invalid json');
-  const previousRegistryDir = process.env.NOTIS_APP_REGISTRY_DIR;
-  process.env.NOTIS_APP_REGISTRY_DIR = registryDir;
-  try {
-    await assert.rejects(
-      scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'demo-dice' }),
-      /JSON/,
-    );
-  } finally {
-    if (previousRegistryDir === undefined) delete process.env.NOTIS_APP_REGISTRY_DIR;
-    else process.env.NOTIS_APP_REGISTRY_DIR = previousRegistryDir;
-  }
-
-  assert.deepEqual(readdirSync(projectDir), []);
-});
-
-test('scaffoldProject makes composed legacy generate-entry calls portable without parsing shell source', async () => {
-  const registryDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-custom-prebuild-registry-'));
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-custom-prebuild-'));
-  cpSync(FIXTURE_REGISTRY_DIR, registryDir, { recursive: true });
-  const packagePath = join(registryDir, 'apps', 'demo-dice', 'package.json');
-  const fixturePackage = JSON.parse(readFileSync(packagePath, 'utf8'));
-  fixturePackage.scripts.prebuild = 'npm run generate-entry && npm run typecheck';
-  fixturePackage.scripts.dev = 'npm run generate-entry && vite';
-  fixturePackage.scripts.prepare = "sh -c 'npm run generate-entry'";
-  fixturePackage.scripts.inspect = `node -e "console.log('a&&b')" && npm run generate-entry`;
-  fixturePackage.scripts.alternate = 'npm run-script generate-entry';
-  writeFileSync(packagePath, `${JSON.stringify(fixturePackage, null, 2)}\n`);
-  const previousRegistryDir = process.env.NOTIS_APP_REGISTRY_DIR;
-  process.env.NOTIS_APP_REGISTRY_DIR = registryDir;
-  try {
-    await scaffoldProject({ projectDir, appName: 'Custom Build', fromSlug: 'demo-dice' });
-  } finally {
-    if (previousRegistryDir === undefined) delete process.env.NOTIS_APP_REGISTRY_DIR;
-    else process.env.NOTIS_APP_REGISTRY_DIR = previousRegistryDir;
-  }
-
-  const scaffoldPackage = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8'));
-  assert.equal(scaffoldPackage.scripts['generate-entry'], 'node -e ""');
-  assert.equal(scaffoldPackage.scripts.prebuild, 'npm run generate-entry && npm run typecheck');
-  assert.equal(scaffoldPackage.scripts.dev, 'npm run generate-entry && vite');
-  assert.equal(scaffoldPackage.scripts.prepare, "sh -c 'npm run generate-entry'");
-  assert.equal(scaffoldPackage.scripts.inspect, `node -e "console.log('a&&b')" && npm run generate-entry`);
-  assert.equal(scaffoldPackage.scripts.alternate, 'npm run-script generate-entry');
-});
-
-test('scaffoldProject normalizes standalone Vite commands without a legacy entry generator', async () => {
-  const registryDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-vite-registry-'));
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-vite-'));
-  cpSync(FIXTURE_REGISTRY_DIR, registryDir, { recursive: true });
-  const packagePath = join(registryDir, 'apps', 'demo-dice', 'package.json');
-  const fixturePackage = JSON.parse(readFileSync(packagePath, 'utf8'));
-  fixturePackage.scripts = {
-    dev: ' vite ',
-    build: 'vite build',
-    preview: 'vite preview',
-    custom: 'vite build --mode staging',
-    compound: 'npm run typecheck && vite build',
-  };
-  writeFileSync(packagePath, `${JSON.stringify(fixturePackage, null, 2)}\n`);
-  const previousRegistryDir = process.env.NOTIS_APP_REGISTRY_DIR;
-  process.env.NOTIS_APP_REGISTRY_DIR = registryDir;
-  try {
-    await scaffoldProject({ projectDir, appName: 'Portable Vite', fromSlug: 'demo-dice' });
-    const pkg = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8'));
-    assert.deepEqual(pkg.scripts, {
-      dev: 'vite --configLoader runner',
-      build: 'vite build --configLoader runner',
-      preview: 'vite preview --configLoader runner',
-      custom: 'vite build --mode staging',
-      compound: 'npm run typecheck && vite build',
-    });
-  } finally {
-    if (previousRegistryDir === undefined) delete process.env.NOTIS_APP_REGISTRY_DIR;
-    else process.env.NOTIS_APP_REGISTRY_DIR = previousRegistryDir;
-    rmSync(registryDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
 
-test('scaffoldProject rejects a slug missing from the registry', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-unknown-'));
-
-  await withFixtureRegistry(() =>
-    assert.rejects(
-      scaffoldProject({ projectDir, appName: 'Nope', fromSlug: 'not-a-published-app' }),
-      /Unknown scaffold "not-a-published-app"\. Available scaffolds: demo-dice/,
-    ));
-});
-
-test('scaffoldProject leaves listing and registry artifacts behind', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-listing-'));
-
-  await withFixtureRegistry(() => scaffoldProject({ projectDir, appName: 'Dice Lab', fromSlug: 'demo-dice' }));
-
-  const metadata = existsSync(join(projectDir, 'metadata'))
-    ? readdirSync(join(projectDir, 'metadata'))
-    : [];
-  assert.deepEqual(metadata.filter((entry) => /^screenshot-\d+\.png$/.test(entry)), []);
-  // The fixtures file is harness stub data, not listing media: a fresh project
-  // must keep it or every route renders its empty state in the temporary test harness.
-  assert.ok(metadata.includes('screenshot-fixtures.json'));
-  // Registry bookkeeping describes the published app, not the new project.
-  assert.equal(existsSync(join(projectDir, 'notis-listing.json')), false);
-  assert.equal(existsSync(join(projectDir, 'screenshots')), false);
-
-  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8');
-  assert.doesNotMatch(config, /screenshots\s*:/);
-  assert.doesNotMatch(config, /metadata\/screenshot-/);
-  // The rest of the listing declaration must survive the screenshot removal.
-  assert.match(config, /tagline:/);
-  assert.match(config, /routes:\s*\[/);
-
-  const changelog = readFileSync(join(projectDir, 'CHANGELOG.md'), 'utf-8');
-  assert.match(changelog, /^# Dice Lab Changelog/);
-  assert.equal(changelog.match(/^## \[/gm).length, 1);
-});
-
-test('scaffoldProject renames the bare template slug plus title', async () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-scaffold-bare-'));
-
-  await scaffoldProject({ projectDir, appName: 'Mind the Flo' });
-
-  const config = readFileSync(join(projectDir, 'notis.config.ts'), 'utf-8');
-  assert.match(config, /name:\s*'mind-the-flo'/);
-  assert.match(config, /title:\s*'Mind the Flo'/);
-  assert.deepEqual(collectProjectBoundaryViolations(projectDir), [],
-    'the complete generated app, including its bundled SDK, must pass the build boundary gate');
-});
-
-test('listing readiness validates the locked category enum', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-listing-category-'));
-
-  assert.throws(
-    () => inspectListingReadiness(projectDir, { categories: ['Developer Tools'] }),
-    /Invalid Notis app category/,
-  );
-});
-
-test('workspace database catalog apps do not get an empty database warning', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-workspace-database-warning-'));
-
-  const ordinaryWarnings = detectProjectWarnings(projectDir, { databases: [] });
-  assert.match(ordinaryWarnings.join('\n'), /No database references declared/);
-
-  const catalogWarnings = detectProjectWarnings(projectDir, {
-    databases: [],
-    capabilities: { workspaceDatabases: 'read' },
-  });
-  assert.doesNotMatch(catalogWarnings.join('\n'), /No database references declared/);
-});
-
-test('capability normalization accepts both cloudComputer values and drops the rest', () => {
-  assert.deepEqual(normalizeAppCapabilities({ cloudComputer: 'read' }), { cloudComputer: 'read' });
-  assert.deepEqual(normalizeAppCapabilities({ cloudComputer: 'shell' }), { cloudComputer: 'shell' });
-  assert.deepEqual(normalizeAppCapabilities({ cloudComputer: 'write' }), {});
-  assert.deepEqual(
-    normalizeAppCapabilities({ workspaceDatabases: 'read', cloudComputer: 'shell', bogus: true }),
-    { workspaceDatabases: 'read', cloudComputer: 'shell' },
-  );
-});
-
-test('tool binding normalization keeps only exact public/provider name pairs', () => {
-  assert.deepEqual(
-    normalizeAppToolBindings([
-      { name: ' LOCAL_MCP_SITE_EXECUTE_SQL ', providerToolName: ' execute_sql ' },
-      { name: '', providerToolName: 'ignored' },
-      { name: 'LOCAL_MCP_SITE_MISSING' },
-    ]),
-    [{ name: 'LOCAL_MCP_SITE_EXECUTE_SQL', provider_tool_name: 'execute_sql' }],
-  );
-});
-
-function listingPng(width = 2000, height = 1250) {
-  const content = Buffer.alloc(24);
-  Buffer.from('89504e470d0a1a0a', 'hex').copy(content, 0);
-  content.writeUInt32BE(width, 16);
-  content.writeUInt32BE(height, 20);
-  return content;
-}
-
-function writeListingChangelog(projectDir) {
-  writeFileSync(
-    join(projectDir, 'CHANGELOG.md'),
-    '# App Changelog\n\n## [Initial Release] - {PR_MERGE_DATE}\n\n- First release.\n',
-  );
-}
-
-test('listing readiness requires three exact screenshots with alt text', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-listing-media-'));
-  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
-    name: 'listing-media',
-    version: '0.1.0',
-    notisAppVersion: '0.1.0',
-  }));
-  writeListingChangelog(projectDir);
-  mkdirSync(join(projectDir, 'metadata'));
-  for (let index = 1; index <= 3; index += 1) {
-    writeFileSync(join(projectDir, 'metadata', `screenshot-${index}.png`), listingPng());
-  }
-  const config = {
-    tagline: 'See the patterns in your days.',
-    categories: ['Personal'],
-    screenshots: [1, 2, 3].map((index) => ({
-      path: `metadata/screenshot-${index}.png`,
-      alt: `Journal state ${index}`,
-      focus: index === 2 ? '[data-journal-detail]' : undefined,
-      theme: index === 2 ? 'dark' : 'light',
-    })),
-  };
-
-  const ready = inspectListingReadiness(projectDir, config);
-  assert.equal(ready.ready, true);
-  assert.equal(ready.metadata.screenshots[1].focus, '[data-journal-detail]');
-  assert.equal(ready.metadata.screenshots[1].theme, 'dark');
-
-  config.screenshots[0].alt = '';
-  const missingAlt = inspectListingReadiness(projectDir, config);
-  assert.equal(missingAlt.ready, false);
-  assert.match(missingAlt.errors.join('\n'), /missing descriptive alt text/);
-
-  config.screenshots[0].alt = 'Journal overview';
-  writeFileSync(join(projectDir, 'metadata', 'screenshot-1.png'), listingPng(1600, 1000));
-  const wrongDimensions = inspectListingReadiness(projectDir, config);
-  assert.equal(wrongDimensions.ready, false);
-  assert.match(wrongDimensions.errors.join('\n'), /exactly 2000x1250/);
-
-  config.screenshots[0].theme = 'sepia';
-  assert.throws(
-    () => inspectListingReadiness(projectDir, config),
-    /theme must be light or dark/,
-  );
-});
-
-test('listing readiness requires the registry app version contract', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'notis-listing-version-'));
-  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({
-    name: 'listing-version',
-    version: '0.1.0',
-  }));
-
-  const readiness = inspectListingReadiness(projectDir, {});
-  assert.equal(readiness.ready, false);
-  assert.match(readiness.errors.join('\n'), /notisAppVersion/);
-});
-
-test('screenshot cleanup only prunes stale files during a full successful refresh', () => {
-  assert.equal(shouldPruneStaleScreenshotFiles(null, 0), true);
-  assert.equal(shouldPruneStaleScreenshotFiles(['home'], 0), false);
-  assert.equal(shouldPruneStaleScreenshotFiles(null, 1), false);
-
-  const outputDir = mkdtempSync(join(tmpdir(), 'notis-screenshots-'));
-  writeFileSync(join(outputDir, 'screenshot-1.png'), 'one');
-  writeFileSync(join(outputDir, 'screenshot-2.png'), 'two');
-  writeFileSync(join(outputDir, 'screenshot-3.png'), 'three');
-  writeFileSync(join(outputDir, 'notes.txt'), 'keep');
-
-  pruneStaleScreenshotFiles(outputDir, 2);
-
-  assert.equal(existsSync(join(outputDir, 'screenshot-1.png')), true);
-  assert.equal(existsSync(join(outputDir, 'screenshot-2.png')), true);
-  assert.equal(existsSync(join(outputDir, 'screenshot-3.png')), false);
-  assert.equal(existsSync(join(outputDir, 'notes.txt')), true);
-});
-
-test('selected route screenshots keep their full-manifest slot numbers', () => {
-  const slots = screenshotIndexByRouteSlug({
-    routes: [
-      { slug: 'home' },
-      { slug: 'history' },
-      { slug: 'settings' },
-    ],
-  });
-
-  assert.equal(slots.get('home'), 1);
-  assert.equal(slots.get('history'), 2);
-  assert.equal(slots.get('settings'), 3);
-});
-
-test('manifest display title and accent are forwarded to app row fields', () => {
-  assert.deepEqual(
-    appRowFieldsFromManifest({ app: { name: 'internal-slug', title: 'Display Title', accent: 'mint' } }),
-    { name: 'Display Title', accent: 'mint' },
-  );
-  assert.deepEqual(
-    appRowFieldsFromManifest({ app: { name: 'Legacy Display Name' } }),
-    { name: 'Legacy Display Name', accent: null },
-  );
-  assert.deepEqual(
-    appRowFieldsFromManifest({ app: {} }),
-    { accent: null },
-  );
-});
-
-test('screenshot command exits nonzero when any capture fails', () => {
-  assert.equal(screenshotExitCode(0), 0);
-  assert.notEqual(screenshotExitCode(1), 0);
-});
-
 test('authenticated commands fail with a JSON auth envelope in non-interactive mode', () => {
-  const result = runCli(['apps', 'list', '--json', '--non-interactive'], {
+  const result = runCli(['spaces', 'list', '--json', '--non-interactive'], {
     NOTIS_API_BASE: 'http://localhost:3001',
   });
   assert.equal(result.status, 3);
@@ -2553,7 +1159,7 @@ test('an expired OAuth grant points at re-authorizing the profile that failed', 
     }),
   );
 
-  const result = runCli(['apps', 'list', '--json', '--non-interactive'], { HOME: homeDir });
+  const result = runCli(['spaces', 'list', '--json', '--non-interactive'], { HOME: homeDir });
   assert.equal(result.status, 3, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.error.code, 'auth_expired');
@@ -2590,7 +1196,7 @@ test('a dev.sh profile without its runtime refuses to route to the live API', ()
   );
 
   const result = runCli(
-    ['--profile', 'dev-somewhere', 'apps', 'list', '--json', '--non-interactive'],
+    ['--profile', 'dev-somewhere', 'spaces', 'list', '--json', '--non-interactive'],
     { HOME: homeDir },
   );
   assert.equal(result.status, 4, result.stderr);
@@ -2600,7 +1206,7 @@ test('a dev.sh profile without its runtime refuses to route to the live API', ()
 });
 
 test('expired NOTIS_JWT never falls back to a stored profile', () => {
-  const result = runCli(['apps', 'list', '--json', '--non-interactive'], {
+  const result = runCli(['spaces', 'list', '--json', '--non-interactive'], {
     NOTIS_API_BASE: 'https://api.notis.ai',
     NOTIS_JWT: makeJwt('auth-user-123', 1),
   });
@@ -4013,14 +2619,15 @@ test('tools exec gives image generation tools a long-running timeout floor', asy
   }
 });
 
-
-
-test('deprecated app dev command surfaces are not registered', () => {
+test('the retired apps command group is not registered', () => {
   const commandPaths = COMMAND_SPECS.map((spec) => spec.command_path.join(' '));
   assert.ok(!commandPaths.includes('run dev'));
-  assert.ok(!commandPaths.includes('apps preview'));
-});
+  assert.equal(COMMAND_SPECS.some((spec) => spec.command_path[0] === 'apps'), false);
 
+  const result = runCli(['apps', 'list']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unknown command/i);
+});
 
 test('docs generator stays in sync with committed docs', () => {
   const result = spawnSync('node', [docsScript, '--check'], {
@@ -4032,107 +2639,4 @@ test('docs generator stays in sync with committed docs', () => {
     encoding: 'utf-8',
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-});
-
-for (const outcome of ['rejected', 'unknown']) {
-  test(`app creation ${outcome} preserves the correct retry identity`, async () => {
-    const taskHome = mkdtempSync(join(tmpdir(), 'notis-create-retry-'));
-    const cached = new Map();
-    const keys = [];
-    let corrected = false;
-    let app = null;
-    const server = createHttpServer(async (req, res) => {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      let payload;
-      if (body.tool_name === 'LOCAL_NOTIS_LIST_APPS') {
-        payload = { apps: app ? [app] : [] };
-      } else {
-        assert.equal(body.tool_name, 'LOCAL_NOTIS_CREATE_APP');
-        keys.push(body.idempotency_key);
-        if (!cached.has(body.idempotency_key)) {
-          if (!corrected) cached.set(body.idempotency_key, { status: 'error', outcome, message: 'Creation failed' });
-          else {
-            app = { id: 'app-retry', name: 'Retry App', slug: 'retry-app', can_edit: true, current_version: 0, updated_at: 'now' };
-            cached.set(body.idempotency_key, { status: 'success', app });
-          }
-        }
-        payload = cached.get(body.idempotency_key);
-      }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(payload));
-    });
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const args = ['--json', '--api-base', `http://127.0.0.1:${server.address().port}`];
-    const env = { HOME: taskHome, NOTIS_JWT: makeJwt() };
-    try {
-      const first = await runCliAsync([...args, 'apps', 'create', 'Retry App'], env);
-      assert.notEqual(first.status, 0);
-      corrected = true;
-      const second = await runCliAsync([...args, 'apps', 'create', 'Retry App'], env);
-      assert.equal(keys.length, 2);
-      if (outcome === 'rejected') {
-        assert.equal(second.status, 0, second.stdout + second.stderr);
-        assert.notEqual(keys[0], keys[1]);
-        assert.equal(JSON.parse(second.stdout).data.app.id, 'app-retry');
-      } else {
-        assert.notEqual(second.status, 0);
-        assert.equal(keys[0], keys[1]);
-        const override = await runCliAsync([...args, '--idempotency-key', 'explicit-replacement', 'apps', 'create', 'Retry App'], env);
-        assert.notEqual(override.status, 0);
-        assert.equal(keys.length, 2);
-        assert.equal(app, null);
-      }
-    } finally {
-      await new Promise(resolve => server.close(resolve));
-      rmSync(taskHome, { recursive: true, force: true });
-    }
-  });
-}
-
-for (const remoteVersion of [0, 1]) {
-  test(`unreleased recovery link checks expected version against remote version ${remoteVersion}`, async () => {
-    const projectDir = mkdtempSync(join(tmpdir(), 'notis-guarded-link-'));
-    const taskHome = mkdtempSync(join(tmpdir(), 'notis-guarded-link-home-'));
-    const requests = [];
-    const server = createHttpServer(async (req, res) => {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      if (body.tool_name) requests.push(body);
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ apps: [{ id: 'guarded-app', current_version: remoteVersion, updated_at: 'observed-revision', can_edit: true }] }));
-    });
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const result = await runCliAsync(['--json', '--api-base', `http://127.0.0.1:${server.address().port}`, 'apps', 'link', 'guarded-app', projectDir, '--expected-version', '0'], { HOME: taskHome, NOTIS_JWT: makeJwt() });
-      assert.deepEqual(requests.map(body => body.tool_name), ['LOCAL_NOTIS_LIST_APPS']);
-      if (remoteVersion === 0) {
-        assert.equal(result.status, 0, result.stdout + result.stderr);
-        const data = JSON.parse(result.stdout).data;
-        assert.equal(data.version, 0);
-        assert.equal(data.expected_updated_at, 'observed-revision');
-        const saved = JSON.parse(readFileSync(join(projectDir, '.notis/state.json'), 'utf8'));
-        const linked = Object.values(saved.profiles)[0];
-        assert.equal(linked.version, 0);
-        assert.equal(linked.expected_updated_at, data.expected_updated_at);
-      } else {
-        assert.notEqual(result.status, 0);
-        assert.equal(existsSync(join(projectDir, '.notis/state.json')), false);
-      }
-    } finally {
-      await new Promise(resolve => server.close(resolve));
-      rmSync(projectDir, { recursive: true, force: true });
-      rmSync(taskHome, { recursive: true, force: true });
-    }
-  });
-}
-
-test('recovery link rejects an invalid expected version before accessing the backend', () => {
-  for (const expected of ['-1', '0.1', 'NaN', '9007199254740992']) {
-    const result = runCli(['--json', '--api-base', 'http://127.0.0.1:1', 'apps', 'link', 'guarded-app', '--expected-version', expected], { NOTIS_JWT: makeJwt() });
-    assert.notEqual(result.status, 0);
-    assert.equal(JSON.parse(result.stdout).error.code, 'usage_error');
-  }
 });

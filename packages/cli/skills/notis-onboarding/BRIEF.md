@@ -130,4 +130,4 @@ in this document.
 
 What they *do* have: 1,000+ integrations through this CLI, skills that sync to
 their coding agents, long-term memory, notes and databases, and the ability to
-build Notis apps from this machine.
+build Notis Spaces from this machine.

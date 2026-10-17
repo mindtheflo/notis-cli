@@ -59,9 +59,8 @@ const UNAVAILABLE: CloudComputerFacts = {
  *   : <GithubConnect />;
  * ```
  *
- * Requires `capabilities.cloudComputer: 'read'` in `notis.config.ts` and the
- * user's approval at install time. In a Space, declare `cloudComputer: 'read'`
- * (or `'shell'`) in `defineSpace`; until the viewer allows it the facts answer
+ * Requires `cloudComputer: 'read'` (or `'shell'`) in `defineSpace` and the
+ * viewer's approval; until the viewer allows it the facts answer
  * unavailable, so offer `requestApproval()`. It answers with state the platform already
  * holds: reading it never creates, resumes or commands a sandbox, and the GitHub
  * probe only runs when the sandbox is already awake. `authenticated: null`

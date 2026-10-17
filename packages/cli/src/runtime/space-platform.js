@@ -72,7 +72,7 @@ export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inhe
       symlinkSync(join(projectDir, 'node_modules'), join(staging.projectDir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     }
     const frozenSelection = await loadSelectedSpace(staging.projectDir, selectedKey);
-    await buildArtifact(staging.projectDir, { stdio, refreshSdk: false, executable: Boolean(selection.entry), includeMetadata: false,
+    await buildArtifact(staging.projectDir, { stdio, refreshSdk: false, executable: Boolean(selection.entry),
       prepare: directory => prepareSelectedArtifact(directory, frozenSelection), finalize: finalizeSelectedArtifact,
       ...(runBuild ? { runBuild } : {}) });
     const current = await loadSelectedSpace(projectDir, selectedKey);

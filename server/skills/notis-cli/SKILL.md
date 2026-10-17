@@ -78,7 +78,7 @@ Default delivery below applies only when no more restrictive user or repository
 instruction exists. Explicit preview-only/no-deploy requests and standing requirements
 for explicit deployment consent override the default. Preserve that authority across
 local and cloud runs. For local-only work, build and run stub verification; do not
-create remote resources or activate an app. Use the CLI's documented
+create remote resources or deploy a Space. Use the CLI's documented
 build/verification harness. Store publication remains
 separately authorized.
 

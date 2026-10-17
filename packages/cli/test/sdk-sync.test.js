@@ -133,7 +133,8 @@ for (const target of ['packages', 'packages/sdk', 'packages/sdk/src', 'packages/
       if (!target.endsWith('package.json') && target.startsWith('packages/sdk/src')) {
         writeFileSync(join(projectDir, 'packages/sdk/package.json'), '{"name":"@notis/sdk","version":"0.0.0"}');
       }
-      await assert.rejects(buildArtifact(projectDir, { stdio: 'pipe' }), /unsafe target|unsafe package/);
+      await assert.rejects(buildArtifact(projectDir, { stdio: 'pipe', prepare: () => assert.fail('prepare ran after a refused SDK refresh') }),
+        /unsafe target|unsafe package/);
       const victim = join(outside, target.endsWith('.json') || target.endsWith('.ts') ? 'victim' : 'package.json');
       assert.equal(readFileSync(victim, 'utf8'), 'outside sentinel');
       assert.equal(existsSync(join(projectDir, '.notis/build-receipt.json')), false);

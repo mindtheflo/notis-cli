@@ -15,5 +15,3 @@ When building or deploying a Space, do NOT use `npx --package @notis_ai/cli@late
 Database schemas have two routes: the native database tool (create with `links.add`
 and `main_view`), or a `create` declaration in Space source that the deploy applies
 atomically. Tool calls are also valid for testing runtime behavior after deployment.
-`notis apps` is the legacy App group for accounts not yet moved to Spaces; a legacy
-App cannot declare Skills.

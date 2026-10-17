@@ -14,8 +14,8 @@ separate action. Preserve exact identity and prior authorization.
    `.notis/space-lock.json`, resources, source key and current revisions. Never
    silently advance a stale checkout or create a duplicate to avoid a conflict.
 2. **Build.** Edit the selected definition, its view and linked Skill files.
-   Update `CHANGELOG.md`. Run `spaces build <dir> --space <key>`; it freezes source
-   and artifact bytes and validates the view contract and design.
+   Run `spaces build <dir> --space <key>`; it freezes source and artifact bytes
+   and validates the view contract and design.
 3. **Verify.** Run `spaces verify <dir> --space <key> --space-id <space-id>`.
    This checks current action authorizations and renders explicit fictional
    fixtures at 390px and 1440px with the shared read-only renderer. Provide exact
@@ -73,8 +73,8 @@ a new revision. Source restoration does not revert user data or provider effects
 
 Before an explicitly authorized Store publication:
 
-1. Review the complete snapshot: source, listing, media, schema, selected starter
-   rows, linked Skills/helpers and automations. Exclude personal data, account
+1. Review the complete snapshot: source, listing text and icon, schema, selected
+   starter rows, linked Skills/helpers and automations. Exclude personal data, account
    identifiers, credentials, local paths and private run logs. Use wholly fictional
    fixtures; redacting a name from real private content is insufficient.
 2. Keep databases structure-only unless the user requested packaged examples.
@@ -102,7 +102,7 @@ local changes. Store publication and installed source deployment remain separate
 
 ## Release history
 
-Keep `CHANGELOG.md` newest first, with `## [Release title] - YYYY-MM-DD` headings
-(or `{PR_MERGE_DATE}` before the release date is known). Source history belongs to
-that Space; changing its local changelog does not change an already published
-Store snapshot. Use the verified source revision, not the changelog title, as proof.
+A Space's release history is its published source revisions; use the verified
+source revision as proof of a release. Store release notes belong to the version
+they describe (`spaces store publish --notes`), and deploying new source does not
+change an already published Store version.

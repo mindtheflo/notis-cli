@@ -52,7 +52,6 @@ function specsFor(prefix) {
 }
 
 function renderReadme() {
-  const appSpecs = specsFor('apps');
   const spaceSpecs = specsFor('spaces');
   const viewSpecs = specsFor('views');
   const agentSpecs = specsFor('agents');
@@ -155,12 +154,6 @@ ${spaceSpecs.map(renderCommandBlock).join('\n')}
 
 ${viewSpecs.map(renderCommandBlock).join('\n')}
 
-## Legacy Apps
-
-For accounts not yet moved to Spaces. A legacy App cannot declare Skills; Skills are linked to Spaces.
-
-${appSpecs.map(renderCommandBlock).join('\n')}
-
 ## Reports and saved HTML
 
 Create independently authored interactive reports as Space views with the product \`notis-reports\` and \`notis-apps\` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
@@ -222,8 +215,6 @@ or no-deploy requests stop at local artifacts without remote mutation. Store pub
    folders and resource links commit with the source release.
 4. Read back the published revision, then \`views find\` and \`views render\` its live view link.
 
-\`notis apps\` is the legacy App group for accounts not yet moved to Spaces; a legacy App cannot declare Skills.
-
 ## Reports and HTML
 
 Interactive reports are independent Space views. Save self-contained HTML pages and reports in Notis Notes with its Save HTML Skill; pages and reports saved before Spaces open there too. See the canonical product guidance for build, revision, native file and view-link rules.
@@ -252,7 +243,7 @@ For CI, hosted agents, or internal scripts, pass a non-persisted token with \`NO
 - \`LOCAL_NOTIS_DATABASE_LIST_DATABASES\` — list native databases.
 - \`LOCAL_NOTIS_DATABASE_GET_DATABASE\` — inspect one database schema.
 - \`LOCAL_NOTIS_DATABASE_QUERY\` — query native database documents.
-- \`LOCAL_NOTIS_DATABASE_UPSERT_DATABASE\` — create or update database schema. Creation requires the owning app's slug or id in the \`app\` argument (every database belongs to a Notis app).
+- \`LOCAL_NOTIS_DATABASE_UPSERT_DATABASE\` — create or update database schema. Creation links the database to at least one Space with \`links.add\` and names its main view in that Space with \`main_view\`.
 
 ## Workflow
 

@@ -1,4 +1,4 @@
-## Building an App
+## Building a Space view
 
 ### Design defaults
 

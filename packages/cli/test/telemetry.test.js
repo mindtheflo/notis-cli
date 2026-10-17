@@ -13,8 +13,8 @@ import {
 const serverAllowlist = new URL('../../../server/routers/cli_telemetry/_1_code/entry.py', import.meta.url);
 
 const spec = {
-  command_path: ['apps', 'build'],
-  backend_call: { type: 'local', name: 'next_build_and_package' },
+  command_path: ['spaces', 'build'],
+  backend_call: { type: 'local', name: 'space_build' },
 };
 const runtime = {
   apiBase: 'https://api.notis.ai',
@@ -33,7 +33,7 @@ test('CLI telemetry is bounded and excludes command arguments and workspace data
   });
 
   assert.deepEqual(payload, {
-    command_id: 'apps.build',
+    command_id: 'spaces.build',
     backend_kind: 'local',
     result: 'failed',
     error_category: 'network',

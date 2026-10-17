@@ -57,4 +57,3 @@ relation property with `LOCAL_NOTIS_DATABASE_UPSERT_DATABASE`, action `remove`).
 It also refuses every database linked to a Space (`database_linked_to_space`): a
 Space database cannot be deleted directly, so offer to move it instead. A database
 used only in one Space is deleted with that Space when its bin entry is deleted.
-A legacy App database its App declares is refused with `database_declared_by_app`.

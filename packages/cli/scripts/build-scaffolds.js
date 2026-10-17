@@ -88,8 +88,7 @@ await build({
 
 // Memory hooks need an immutable, self-contained CLI runtime. The installed
 // launcher copies this exact bundle into ~/.notis rather than retaining a path
-// into an ephemeral npx cache or source checkout. Sharp is lazy-loaded and is
-// unrelated to hook commands, so leave it external to keep this bundle small.
+// into an ephemeral npx cache or source checkout.
 const hookBundlePath = join(distDir, 'agent-hooks', 'notis-agent-hook.mjs');
 await build({
   entryPoints: [join(cliRoot, 'src', 'agent-hook-entry.js')],
@@ -98,7 +97,6 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node18',
-  external: ['sharp'],
   banner: {
     js: "import { createRequire as __notisCreateRequire } from 'node:module'; const require = __notisCreateRequire(import.meta.url);",
   },

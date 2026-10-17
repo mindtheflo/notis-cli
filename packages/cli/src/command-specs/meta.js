@@ -271,10 +271,10 @@ export const metaCommandSpecs = [
     summary: 'Describe a first-class CLI command in detail.',
     when_to_use: 'Use this when an agent or human needs the exact shape, examples, and semantics of a command.',
     args_schema: {
-      arguments: [{ token: '<command...>', key: 'commandPath', description: 'Command path to describe, such as "apps deploy".' }],
+      arguments: [{ token: '<command...>', key: 'commandPath', description: 'Command path to describe, such as "spaces deploy".' }],
       options: [],
     },
-    examples: ['notis describe apps deploy', 'notis describe tools exec'],
+    examples: ['notis describe spaces deploy', 'notis describe tools exec'],
     output_schema: 'Returns the command spec metadata for the requested command.',
     mutates: false,
     idempotent: true,

@@ -1,8 +1,8 @@
 import { notisViteConfig } from '@notis/sdk/vite';
 import react from '@vitejs/plugin-react';
-import appConfig from './notis.config';
+import workspace from './notis.config';
 
-const config = notisViteConfig(appConfig);
+const config = notisViteConfig(workspace);
 
 export default {
   ...config,

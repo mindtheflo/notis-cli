@@ -190,12 +190,6 @@ export interface NotisRuntimeContext {
   collectionItem?: CollectionItemDetail | null;
   /** App-owned resource requested through the route's `?resource=<id>` link. */
   resourceId?: string | null;
-  /**
-   * Set when the app is being rendered by the screenshot harness (`notis apps
-   * screenshot`) for the named listing scenario. Lets apps and SDK components
-   * hide dev-only chrome from listing images.
-   */
-  screenshotScenario?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -573,9 +567,9 @@ export interface NotisRuntime {
   handover?(payload: HandoverPayload): Promise<HandoverResult>;
 
   /**
-   * Read-only facts about the user's cloud computer. Requires
-   * `capabilities.cloudComputer: 'read'` in `notis.config.ts` plus the user's
-   * approval; resolving it never creates, resumes or commands a sandbox.
+   * Read-only facts about the viewer's cloud computer. Requires `cloudComputer`
+   * in `defineSpace` plus the viewer's approval; resolving it never creates,
+   * resumes or commands a sandbox.
    *
    * Use the `useCloudComputer` hook rather than calling this directly. Hosts
    * without a cloud computer (the dev harness, the vite preview) answer

@@ -44,7 +44,7 @@ test('buildArtifact runs the injected runner instead of the PATH npm script', as
   try {
     const manifest = { schema: 'notis-space/v1', local_key: 'tasks', kind: 'container', name: 'Tasks' };
     const result = await buildArtifact(directory, {
-      refreshSdk: false, includeMetadata: false,
+      refreshSdk: false,
       prepare: async root => {
         mkdirSync(join(root, '.notis/output'), { recursive: true });
         writeFileSync(join(root, '.notis/output/manifest.json'), JSON.stringify(manifest));

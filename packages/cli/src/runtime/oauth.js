@@ -49,7 +49,6 @@ export const DEFAULT_CLI_OAUTH_SCOPES = [
   'notis:read',
   'notis:write',
   'notis:connections',
-  'notis:apps',
   'notis:spaces',
 ];
 

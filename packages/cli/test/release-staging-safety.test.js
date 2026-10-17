@@ -10,9 +10,6 @@ import {
   collectArtifactFiles,
   collectSourceFiles,
   prepareAppRelease,
-  computeArtifactHash,
-  readVerifyStamp,
-  writeVerifyStamp,
 } from '../src/runtime/app-platform.js';
 
 function createBuiltProject() {
@@ -23,37 +20,12 @@ function createBuiltProject() {
   writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export const app = 1;\n');
   writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.css'), '.a{}\n');
   writeFileSync(join(projectDir, '.notis', 'output', 'manifest.json'), JSON.stringify({ version: 1, routes: [] }));
-  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'gate-app', notisAppVersion: '0.1.0' }));
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'gate-app' }));
   return projectDir;
 }
 
-const passing = (results = [{ route: 'home', status: 'passed', assertions: [] }]) => ({
-  ok: true,
-  mode: 'stub',
-  summary: { total: 1, passed: 1, failed: 0, manual: 0 },
-  results,
-});
-
-test('standalone verification diagnostics record failures and the exact checked artifact hash', () => {
-  const projectDir = createBuiltProject();
-  try {
-    assert.equal(readVerifyStamp(projectDir), null);
-    writeVerifyStamp(projectDir, { ...passing(), ok: false, summary: { total: 1, passed: 0, failed: 1, manual: 0 } });
-    assert.equal(readVerifyStamp(projectDir).ok, false);
-    writeVerifyStamp(projectDir, passing());
-    const checked = readVerifyStamp(projectDir);
-    assert.equal(checked.ok, true);
-    assert.equal(checked.artifact_hash, computeArtifactHash(projectDir));
-    writeFileSync(join(projectDir, '.notis', 'output', 'bundle', 'app.js'), 'export const app = 2;\n');
-    assert.notEqual(checked.artifact_hash, computeArtifactHash(projectDir));
-    // The stored diagnostics remain an honest record of the old bytes, not
-    // deployment authority. Frozen deploy rejection is exercised end-to-end
-    // in apps-verify.test.js, including a forged stamp and old bypass env var.
-    assert.deepEqual(readVerifyStamp(projectDir), checked);
-  } finally {
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
+// The workspace guard refuses before any entry file or manifest is written.
+const refusedBeforePrepare = { prepare: () => assert.fail('prepare ran after a refused workspace') };
 
 function writeReceipt(projectDir) {
   writeFileSync(join(projectDir, '.notis', 'build-receipt.json'), JSON.stringify({
@@ -69,7 +41,7 @@ test('build and release reject a linked .notis parent without deleting or stagin
     writeFileSync(join(outside, 'build-receipt.json'), 'outside sentinel');
     rmSync(join(projectDir, '.notis'), { recursive: true });
     symlinkSync(outside, join(projectDir, '.notis'), 'dir');
-    await assert.rejects(buildArtifact(projectDir), /unsafe target/);
+    await assert.rejects(buildArtifact(projectDir, refusedBeforePrepare), /unsafe target/);
     assert.throws(() => prepareAppRelease(projectDir), /unsafe target/);
     assert.equal(readFileSync(join(outside, 'build-receipt.json'), 'utf8'), 'outside sentinel');
     assert.deepEqual(readdirSync(outside), ['build-receipt.json']);
@@ -144,7 +116,7 @@ test('build pins .notis identity across a parent swap before chdir', async () =>
       }
       return originalChdir.call(process, path);
     };
-    await assert.rejects(buildArtifact(projectDir), /target changed/);
+    await assert.rejects(buildArtifact(projectDir, refusedBeforePrepare), /target changed/);
     assert.equal(swapped, true);
     assert.equal(readFileSync(join(outside, 'build-receipt.json'), 'utf8'), 'outside sentinel');
   } finally {

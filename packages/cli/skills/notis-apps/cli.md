@@ -16,8 +16,6 @@ or no-deploy requests stop at local artifacts without remote mutation. Store pub
    folders and resource links commit with the source release.
 4. Read back the published revision, then `views find` and `views render` its live view link.
 
-`notis apps` is the legacy App group for accounts not yet moved to Spaces; a legacy App cannot declare Skills.
-
 ## Reports and HTML
 
 Interactive reports are independent Space views. Save self-contained HTML pages and reports in Notis Notes with its Save HTML Skill; pages and reports saved before Spaces open there too. See the canonical product guidance for build, revision, native file and view-link rules.
