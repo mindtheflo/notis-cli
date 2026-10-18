@@ -92,8 +92,9 @@ test('read-only rehearsal reads existing intents without writes or new version a
 test('full rerun preserves the exact version while npm receipt is still missing', async () => {
   const { store } = api();
   const first = await resolveReleaseIntent({ identity, store, reserve: true, allocateVersion: () => intent.version });
-  assert.throws(() => publishAndReconcile({ ...identity, version: first.intent.version, tag: 'beta',
-    tarball: '/tmp/test.tgz', integrity: 'sha512-fixture', read: () => null, run: () => ({ status: 1 }) }), /not verified/);
+  await assert.rejects(() => publishAndReconcile({ ...identity, version: first.intent.version, tag: 'beta',
+    tarball: '/tmp/test.tgz', integrity: 'sha512-fixture', read: () => null, run: () => ({ status: 1 }),
+    sleep: async () => {}, reconcileDelaysMs: [] }), /not verified/);
   const rerun = await resolveReleaseIntent({ identity, store, reserve: true,
     allocateVersion: () => assert.fail('No second version after ambiguous publication') });
   assert.equal(rerun.intent.version, first.intent.version);

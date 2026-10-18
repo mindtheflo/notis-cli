@@ -86,15 +86,38 @@ export function verifyPublishedReceipt({ receipt, tagged, sourceSha, channel, ve
   }
 }
 
-// Never replay an ambiguous publish. Even a nonzero exit can mean npm accepted it.
-export function publishAndReconcile({ packageName, version, tag, sourceSha, channel, tarball, integrity,
-  read = readRegistry, run = spawnSync, cwd = process.cwd(), env = process.env }) {
-  let receipt = read(packageName, version, { cwd, env });
-  if (!receipt) {
-    run('npm', ['publish', tarball, '--ignore-scripts', '--tag', tag], { cwd, env, stdio: 'inherit' });
-    receipt = read(packageName, version, { cwd, env });
+const DEFAULT_RECONCILE_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+async function readVerifiedPublishedReceipt({ packageName, version, tag, sourceSha, channel, integrity,
+  read, sleep, delays }) {
+  let lastError;
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    const receipt = await read(packageName, version);
+    const tagged = await read(packageName, tag);
+    try {
+      verifyPublishedReceipt({ receipt, tagged, sourceSha, channel, version, integrity });
+      return { receipt, tagged };
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < delays.length) await sleep(delays[attempt]);
   }
-  const tagged = read(packageName, tag, { cwd, env });
-  verifyPublishedReceipt({ receipt, tagged, sourceSha, channel, version, integrity });
+  throw lastError;
+}
+
+// Never replay an ambiguous publish. Even a nonzero exit can mean npm accepted it.
+export async function publishAndReconcile({ packageName, version, tag, sourceSha, channel, tarball, integrity,
+  read = readRegistry, run = spawnSync, cwd = process.cwd(), env = process.env,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), reconcileDelaysMs = DEFAULT_RECONCILE_DELAYS_MS }) {
+  const readOptions = { cwd, env };
+  let receipt = await read(packageName, version, readOptions);
+  if (!receipt) {
+    await run('npm', ['publish', tarball, '--ignore-scripts', '--tag', tag], { cwd, env, stdio: 'inherit' });
+    await readVerifiedPublishedReceipt({ packageName, version, tag, sourceSha, channel, integrity,
+      read: (name, selector) => read(name, selector, readOptions), sleep, delays: reconcileDelaysMs });
+  } else {
+    const tagged = await read(packageName, tag, readOptions);
+    verifyPublishedReceipt({ receipt, tagged, sourceSha, channel, version, integrity });
+  }
   return { verified: true, packageName, version, tag, sourceSha, integrity };
 }

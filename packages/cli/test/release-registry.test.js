@@ -30,36 +30,52 @@ test('source identity deduplicates only the matching channel and commit', () => 
   assert.equal(matchesRelease(receipt, identity.sourceSha, 'stable'), false);
 });
 
-test('ambiguous publish success is reconciled once without replay', () => {
+test('ambiguous publish success is reconciled once without replay', async () => {
   let calls = 0;
   const reads = [null, receipt, receipt];
-  const result = publishAndReconcile({ ...options, read: () => reads.shift(),
-    run: () => { calls++; return { status: 1 }; } });
+  const result = await publishAndReconcile({ ...options, read: () => reads.shift(),
+    run: () => { calls++; return { status: 1 }; }, sleep: async () => {} });
   assert.equal(result.verified, true);
   assert.equal(calls, 1);
 });
 
-test('already published exact bytes are read back without another publish', () => {
-  const result = publishAndReconcile({ ...options, read: () => receipt,
+test('already published exact bytes are read back without another publish', async () => {
+  const result = await publishAndReconcile({ ...options, read: () => receipt,
     run: () => assert.fail('Must not publish an existing version') });
   assert.equal(result.verified, true);
 });
 
-test('uncertain or conflicting receipt is held, never replayed', () => {
+test('uncertain or conflicting receipt is held, never replayed', async () => {
   for (const candidate of [null, { ...receipt, dist: { integrity: 'different' } },
     { ...receipt, notisRelease: { ...identity, sourceSha: 'b'.repeat(40) } }]) {
     let calls = 0;
     const reads = [null, candidate, receipt];
-    assert.throws(() => publishAndReconcile({ ...options, read: () => reads.shift(),
-      run: () => { calls++; return { status: 1 }; } }), /not verified/);
+    await assert.rejects(() => publishAndReconcile({ ...options, read: () => reads.shift(),
+      run: () => { calls++; return { status: 1 }; }, sleep: async () => {}, reconcileDelaysMs: [] }), /not verified/);
     assert.equal(calls, 1);
   }
 });
 
-test('a published version with a different dist-tag is not declared delivered', () => {
+test('a published version with a different dist-tag is not declared delivered', async () => {
   const reads = [receipt, { ...receipt, version: '0.2.0-beta.999.1' }];
-  assert.throws(() => publishAndReconcile({ ...options, read: () => reads.shift(),
+  await assert.rejects(() => publishAndReconcile({ ...options, read: () => reads.shift(),
     run: () => assert.fail('No republish') }), /not verified/);
+});
+
+test('a delayed npm receipt is polled without a second publish', async () => {
+  let publishes = 0;
+  let reads = 0;
+  const result = await publishAndReconcile({ ...options,
+    read: () => {
+      reads += 1;
+      return reads < 4 ? null : receipt;
+    },
+    run: () => { publishes += 1; return { status: 1 }; },
+    sleep: async () => {}, reconcileDelaysMs: [1, 1],
+  });
+  assert.equal(result.verified, true);
+  assert.equal(publishes, 1);
+  assert.equal(reads, 5);
 });
 
 test('legacy GitHub receipts reconcile across the CI migration', () => {
