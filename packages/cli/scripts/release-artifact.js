@@ -87,6 +87,9 @@ export function verifyArtifact({ manifest, tarball, planBytes, expected = {} }) 
       || !/^[0-9a-f]{40}$/.test(builder.orchestrationSha || '')
       || !/^[A-Za-z0-9_-]+$/.test(builder.runId || '') || typeof builder.jobId !== 'string'
       || !/^[A-Za-z0-9_. -]+$/.test(builder.jobId) || builder.smoke !== 'native-exact-tarball'
-      || !['api', 'schedule', 'workflow_dispatch'].includes(builder.event)) throw new Error('Invalid Depot build provenance');
+      // push: a merge, or a release calling the publisher with its own event.
+      || !['api', 'push', 'schedule', 'workflow_call', 'workflow_dispatch'].includes(builder.event)) {
+    throw new Error('Invalid Depot build provenance');
+  }
   return { plan, packageManifest };
 }

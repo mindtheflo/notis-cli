@@ -350,7 +350,7 @@ export const skillsCommandSpecs = [
     },
     examples: ['notis skills sync', 'notis skills sync --json'],
     output_schema:
-      'Returns account sync counts plus baseSkills, baseInstalled, baseLinked, and baseBackups. On the cloud computer returns cloudComputer: true and removedStaleLinks instead.',
+      'Returns account sync counts plus baseSkills, baseInstalled, baseKept (base skills left as installed because that copy is newer), baseLinked, and baseBackups. On the cloud computer returns cloudComputer: true and removedStaleLinks instead.',
     mutates: true,
     idempotent: true,
     require_auth: true,

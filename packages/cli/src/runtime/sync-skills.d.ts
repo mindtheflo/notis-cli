@@ -3,6 +3,8 @@ import type { BaseSkillReconcileResult } from './base-skills.js';
 export interface ReconcileAllSkillsResult {
   baseSkills: string[];
   baseInstalled: number;
+  /** Base skills left as installed because that copy is newer. */
+  baseKept: number;
   baseLinked: number;
   baseBackups: string[];
 }

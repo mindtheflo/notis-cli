@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -17,6 +20,13 @@ export const BASE_SKILL_NAMES = Object.freeze([
   'notis-query',
   'notis-cli',
 ]);
+
+/**
+ * The npm package and Desktop build write this file into each skill folder
+ * they ship: `stamp` is the commit time (Unix seconds) of the newest commit
+ * that changed the skill. A source checkout has none.
+ */
+export const BASE_SKILL_STAMP_FILE = '.notis-base-skill.json';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -72,6 +82,60 @@ function backupConflict(linkPath, backupRoot, targetLabel, skillName, now) {
   return backupPath;
 }
 
+/** The version stamp of one skill folder, or null when it has none. */
+export function readBaseSkillStamp(skillDir) {
+  try {
+    const { stamp } = JSON.parse(readFileSync(join(skillDir, BASE_SKILL_STAMP_FILE), 'utf8'));
+    return Number.isSafeInteger(stamp) && stamp > 0 ? stamp : null;
+  } catch {
+    return null;
+  }
+}
+
+function byName(left, right) {
+  if (left.name === right.name) return 0;
+  return left.name < right.name ? -1 : 1;
+}
+
+/** Digest of a skill folder's files, leaving out its version stamp. */
+function contentDigest(root) {
+  const hash = createHash('sha256');
+  const walk = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(byName)) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = join(directory, entry.name);
+      if (path === BASE_SKILL_STAMP_FILE) continue;
+      if (entry.isDirectory()) {
+        hash.update(`dir\0${path}\0`);
+        walk(full, path);
+      } else if (entry.isSymbolicLink()) {
+        hash.update(`link\0${path}\0${readlinkSync(full)}\0`);
+      } else {
+        const bytes = readFileSync(full);
+        hash.update(`file\0${path}\0${bytes.length}\0`);
+        hash.update(bytes);
+      }
+    }
+  };
+  walk(root, '');
+  return hash.digest('hex');
+}
+
+/**
+ * Newest wins. Desktop and the CLI both run this with the copy they ship, so
+ * a copy replaces the installed one only when it is newer, or when both are
+ * the same version and the installed files changed since. A source checkout
+ * has no stamp and replaces the installed copy whenever their files differ.
+ */
+function baseSkillAction(source, destination) {
+  if (!existsSync(join(destination, 'SKILL.md'))) return 'install';
+  const bundled = readBaseSkillStamp(source);
+  const installed = readBaseSkillStamp(destination);
+  if (bundled !== null && installed !== null && installed > bundled) return 'keep';
+  if (bundled !== null && (installed === null || installed < bundled)) return 'install';
+  return contentDigest(source) === contentDigest(destination) ? 'current' : 'install';
+}
+
 function replaceDirectory(source, destination) {
   mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
   const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
@@ -109,6 +173,7 @@ export function reconcileBaseSkills({
   const paths = getBaseSkillPaths({ home, userId });
   const result = {
     installed: 0,
+    kept: 0,
     linked: 0,
     unchanged: 0,
     backups: [],
@@ -120,8 +185,20 @@ export function reconcileBaseSkills({
     if (!existsSync(join(source, 'SKILL.md'))) {
       throw new Error(`Bundled base skill is missing: ${name}`);
     }
-    replaceDirectory(source, join(paths.baseRoot, name));
-    result.installed += 1;
+    const destination = join(paths.baseRoot, name);
+    let action;
+    try {
+      action = baseSkillAction(source, destination);
+    } catch {
+      // An unreadable installed copy is repaired, as before stamps existed.
+      action = 'install';
+    }
+    if (action === 'install') {
+      replaceDirectory(source, destination);
+      result.installed += 1;
+    } else if (action === 'keep') {
+      result.kept += 1;
+    }
   }
 
   for (const targetRoot of paths.targetRoots) {

@@ -8,9 +8,11 @@ import { sourceSha, tarEntry as entry, tarball, validBundle } from '../test-supp
 const fixture = (overrides = {}) => validBundle(overrides.readOnly ?? false, overrides);
 
 test('artifact requires exact native smoke provenance, npm destination and packed gitHead', () => {
-  for (const builder of [{ smoke: undefined }, { smoke: 'not-tested' }, { event: 'push' }]) {
+  for (const builder of [{ smoke: undefined }, { smoke: 'not-tested' }, { event: 'pull_request' }, { event: undefined }]) {
     assert.throws(() => fixture({ builder }), /provenance/);
   }
+  // A merge or a release (whose called publisher reports the caller's push) builds the CLI.
+  for (const event of ['push', 'workflow_call', 'workflow_dispatch', 'api']) fixture({ builder: { event } });
   assert.throws(() => fixture({ packageManifest: { gitHead: 'f'.repeat(40) } }), /identity/);
   assert.throws(() => fixture({ packageManifest: { publishConfig: { registry: 'https://wrong.invalid' } } }), /registry/);
 });

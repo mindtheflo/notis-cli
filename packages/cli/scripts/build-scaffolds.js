@@ -5,13 +5,13 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { build } from 'esbuild';
 
+import { stageBaseSkills } from './base-skill-stamps.js';
 import { copyBoundaryRules, copyDesignRules } from './copy-boundary-rules.js';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, '..');
 const repoRoot = resolve(cliRoot, '../..');
 execFileSync(process.execPath, [join(repoRoot, 'scripts/generate-portal-route-roots.mjs')]);
-const baseSkillNames = ['notis-apps', 'notis-query', 'notis-cli'];
 
 // Bundle the app boundary rules into the package so the validator works once
 // installed via npm (the in-repo server/config path escapes the package).
@@ -54,17 +54,10 @@ for (const folder of ['src', 'dist']) cpSync(join(renderSource, folder), join(re
 
 // The CLI is the distribution owner for the three system skills. Copy from
 // server/skills, the product source of truth, so npm never ships hand-maintained
-// duplicates or a partial skill folder.
-rmSync(outputBaseSkillsDir, { recursive: true, force: true });
-mkdirSync(outputBaseSkillsDir, { recursive: true });
-for (const name of baseSkillNames) {
-  const source = join(repoRoot, 'server', 'skills', name);
-  if (!existsSync(join(source, 'SKILL.md'))) {
-    throw new Error(`Base skill source not found at ${source}`);
-  }
-  cpSync(source, join(outputBaseSkillsDir, name), { recursive: true });
-}
-process.stdout.write(`Copied ${baseSkillNames.length} base skills to ${outputBaseSkillsDir}\n`);
+// duplicates or a partial skill folder. Each copy carries a version stamp, so
+// the CLI and Desktop keep whichever installed copy is newest.
+const baseSkillStamps = stageBaseSkills({ repoRoot, targetRoot: outputBaseSkillsDir });
+process.stdout.write(`Copied ${Object.keys(baseSkillStamps).length} stamped base skills to ${outputBaseSkillsDir}\n`);
 
 await build({
   entryPoints: [join(cliRoot, 'src', 'runtime', 'skill-sync', 'index.ts')],

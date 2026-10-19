@@ -217,7 +217,7 @@ export async function reconcileAllSkills({
     // Base skills are linked from the account that owns the agent folders.
     const base = linkAgentFolders
       ? reconcileBase({ userId, ...(home ? { home } : {}) })
-      : { skills: [], installed: 0, linked: 0, unchanged: 0, backups: [] };
+      : { skills: [], installed: 0, kept: 0, linked: 0, unchanged: 0, backups: [] };
     const account = await runAccountSync(
       serverUrl,
       jwt,
@@ -232,6 +232,7 @@ export async function reconcileAllSkills({
       ...account,
       baseSkills: base.skills,
       baseInstalled: base.installed,
+      baseKept: base.kept ?? 0,
       baseLinked: base.linked,
       baseBackups: base.backups,
     };
