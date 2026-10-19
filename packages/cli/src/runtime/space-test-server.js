@@ -33,11 +33,11 @@ function shownListParams(where, params) {
   walk(where);
   return [...names].sort();
 }
-/** Public runtime declarations (server declared_view_runtime): params, list names and chrome, never filters. */
+/** Public runtime declarations (server declared_view_runtime): params, list names and chrome, never filters (nor a record page's rule). */
 function viewDeclarations(manifest) {
   const shows=Object.fromEntries(Object.entries(manifest.shows || {}).map(([name,value])=>[name,Object.hasOwn(value,'where')
     ? {database:value.database,...(value.open?{open:value.open}:{}),params:shownListParams(value.where,manifest.params)} : {about:value.about,...(value.services?.length?{services:value.services}:{})}]));
-  return {...(manifest.params && Object.keys(manifest.params).length?{params:structuredClone(manifest.params)}:{}),
+  return {...(manifest.params && Object.keys(manifest.params).length?{params:Object.fromEntries(Object.entries(manifest.params).map(([name,{page,...value}])=>[name,structuredClone(value)]))}:{}),
     ...(Object.keys(shows).length?{shows}:{}),...(['portal','hidden'].includes(manifest.chrome)?{chrome:manifest.chrome}:{})};
 }
 const VIEWER_READS={list_databases:'databases',get_database:'databases',query_database:'databases',list_skills:'skills',get_skill:'skills'};

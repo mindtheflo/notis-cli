@@ -1,7 +1,8 @@
 /**
  * What a view declares (V4): path, typed params, shows, memory, chrome and a Markdown override.
  * Mirrors server/lib/space_view_manifest.py, which re-checks every release; property-level checks
- * need the linked schemas and run on the server during `spaces verify` and deploy.
+ * need the linked schemas and run on the server during `spaces verify` and deploy (a record param's
+ * page rule is also checked here against a database created in the same release).
  * Every presentation requires path, description and memory, including sources that omit
  * specVersion. Containers remain non-executable; explicit specVersion 2 is unchanged.
  */
@@ -29,6 +30,13 @@ const FIELD_KEYS = ['property', 'property_id', 'column'];
 const OPS = new Set(['equals', 'not_equals', 'in', 'contains', 'not_contains', 'starts_with', 'ends_with', 'is_empty', 'is_not_empty',
   'greater_than', 'less_than', 'greater_than_or_equal_to', 'less_than_or_equal_to', 'does_not_contain', 'before', 'after',
   'on_or_before', 'on_or_after']);
+// A record param's page rule (`page: { where }`) reads only these fields, with fixed values.
+const PAGE_COLUMN_OPS = { record_key: ['equals', 'not_equals', 'in'], id: ['equals', 'not_equals', 'in'],
+  content_type: ['equals', 'not_equals', 'is_empty', 'is_not_empty'], file_type: ['equals', 'not_equals', 'is_empty', 'is_not_empty'],
+  title: ['equals', 'not_equals', 'is_empty', 'is_not_empty'] };
+const PAGE_PROPERTY_OPS = { select: ['equals', 'not_equals', 'is_empty', 'is_not_empty'], checkbox: ['equals', 'not_equals'] };
+const EMPTY_OPS = new Set(['is_empty', 'is_not_empty']);
+const KIND_ALIASES = { phone: 'phone_number', string: 'text' };
 const CRON_BOUNDS = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
 const DEBOUNCE = [60, 86400];
 
@@ -36,6 +44,10 @@ const plain = value => Boolean(value) && typeof value === 'object' && !Array.isA
 const text = (value, limit) => typeof value === 'string' && value.trim().length >= 1 && value.trim().length <= limit && !CONTROL.test(value);
 const isoDate = value => typeof value === 'string' && DATE.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
   && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+// A text filter value the database can store (no NUL, no lone surrogate), as native queries accept it.
+const filterText = value => typeof value === 'string' && value.length <= 16384 && !value.includes('\u0000') && value.isWellFormed();
+// Python's casefold, closely enough for property names ("ß" matches "ss").
+const fold = value => String(value).toUpperCase().toLowerCase();
 
 export function validateViewPath(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 100) {
@@ -112,7 +124,7 @@ export function viewParamValue(declaration, value) {
 
 function validateParam(name, declaration, resources) {
   if (!NAME.test(name) || RESERVED_PARAMS.has(name) || CREDENTIAL_PARAM.test(name)) throw usageError(`Param names are camelCase words; "${name}" is not available.`);
-  const allowed = new Set(['type', 'description', 'required', 'default', 'values', 'database', 'main', 'slugProperty']);
+  const allowed = new Set(['type', 'description', 'required', 'default', 'values', 'database', 'main', 'slugProperty', 'page']);
   if (!plain(declaration) || Object.keys(declaration).some(field => !allowed.has(field)) || !VIEW_PARAM_TYPES.includes(declaration.type)) {
     throw usageError(`Declare param "${name}" as { type, description, ... } with type ${VIEW_PARAM_TYPES.join(', ')}.`);
   }
@@ -130,8 +142,12 @@ function validateParam(name, declaration, resources) {
     if ('main' in declaration && typeof declaration.main !== 'boolean') throw usageError(`Param "${name}": main is true or false.`);
     if ('slugProperty' in declaration && !text(declaration.slugProperty, 200)) throw usageError(`Param "${name}": slugProperty names a property of its database.`);
     if ('default' in declaration) throw usageError(`Param "${name}": a record param has no default record.`);
-  } else if (['database', 'main', 'slugProperty'].some(field => field in declaration)) {
-    throw usageError(`Param "${name}": database, main and slugProperty belong to record params.`);
+    if ('page' in declaration) {
+      if (declaration.required === true) throw usageError(`Param "${name}": a page param is optional, so Back opens its view without it.`);
+      validatePage(name, declaration.page, resources[declaration.database]);
+    }
+  } else if (['database', 'main', 'slugProperty', 'page'].some(field => field in declaration)) {
+    throw usageError(`Param "${name}": database, main, slugProperty and page belong to record params.`);
   }
   if ('default' in declaration) {
     if (declaration.required === true) throw usageError(`Param "${name}": a required param has no default.`);
@@ -171,6 +187,73 @@ function walkFilter(node, visit, where, depth = 0, budget = { left: 200 }) {
     throw usageError(`${where}: each condition is { field: { property }, op, value } in the native filter language.`);
   }
   visit(node);
+}
+
+/**
+ * The kind of a property of a database this release creates, resolved as the server does (property ID, else
+ * current then previous name, never ambiguous); undefined when the CLI has no schema (a linked database).
+ */
+function createdPropertyKind(resource, field, where) {
+  const schema = resource?.create?.schema;
+  if (!plain(schema) || !plain(schema.properties) || !Array.isArray(schema.property_order) || schema.schema_version == null) return undefined;
+  const properties = Object.entries(schema.properties).filter(([, prop]) => plain(prop));
+  let keys;
+  if ('property_id' in field) keys = properties.filter(([key]) => key === field.property_id).map(([key]) => key);
+  else {
+    const name = fold(field.property);
+    keys = properties.filter(([key, prop]) => fold(prop.name ?? key) === name).map(([key]) => key);
+    if (!keys.length) {
+      keys = properties.filter(([, prop]) => Array.isArray(prop.previous_names) && prop.previous_names.some(old => fold(old) === name)).map(([key]) => key);
+    }
+  }
+  if (keys.length !== 1) throw usageError(`${where}: "${Object.values(field)[0]}" is not a property of that database.`);
+  const prop = schema.properties[keys[0]];
+  const declared = String(prop.kind ?? prop.type ?? 'rich_text');
+  const kind = Object.hasOwn(KIND_ALIASES, declared) ? KIND_ALIASES[declared] : declared;
+  return kind === 'status' ? 'select' : kind;
+}
+
+/**
+ * A record param's page rule: `{ where }` over the subset a page reads (record_key, id, content_type, file_type and
+ * title columns; select, status and checkbox properties), with fixed values. The server re-checks properties against
+ * the bound schema at verify and deploy and never sends the rule to the browser.
+ */
+function validatePage(name, page, resource) {
+  const where = `params.${name}.page`;
+  if (!plain(page) || Object.keys(page).join(',') !== 'where' || !plain(page.where) || !Object.keys(page.where).length) {
+    throw usageError(`Param "${name}": declare page as { where } with at least one condition over its records.`);
+  }
+  walkFilter(page.where, condition => {
+    const [[key, reference]] = Object.entries(condition.field);
+    const kind = key === 'column' ? 'column' : createdPropertyKind(resource, condition.field, where);
+    const ops = kind === 'column' ? (Object.hasOwn(PAGE_COLUMN_OPS, reference) ? PAGE_COLUMN_OPS[reference] : null)
+      : kind === undefined ? PAGE_PROPERTY_OPS.select : Object.hasOwn(PAGE_PROPERTY_OPS, kind) ? PAGE_PROPERTY_OPS[kind] : null;
+    if (!ops) {
+      throw usageError(kind === 'column'
+        ? `${where}: a page rule reads the columns ${Object.keys(PAGE_COLUMN_OPS).join(', ')}, and select, status or checkbox properties.`
+        : `${where}: "${reference}" is not a select, status or checkbox property, so a page rule cannot read it.`);
+    }
+    if (!ops.includes(condition.op)) throw usageError(`${where}: ${condition.op} does not apply to "${reference}" in a page rule.`);
+    if (EMPTY_OPS.has(condition.op)) {
+      if ('value' in condition) throw usageError(`${where}: ${condition.op} takes no value.`);
+      return;
+    }
+    if (!('value' in condition)) throw usageError(`${where}: ${condition.op} needs a value.`);
+    if (condition.op === 'in' && (!Array.isArray(condition.value) || condition.value.length < 1 || condition.value.length > 500)) {
+      throw usageError(`${where}: in takes a list of 1 to 500 record ids.`);
+    }
+    for (const value of condition.op === 'in' ? condition.value : [condition.value]) {
+      // Fixed values only: neither {param} nor {{param}} is ever bound in a page rule (the server refuses both).
+      if (typeof value === 'string' && (PLACEHOLDER.test(value)
+        || (value.startsWith('{{') && value.endsWith('}}') && PLACEHOLDER.test(value.slice(1, -1))))) {
+        throw usageError(`${where}: a page rule compares with fixed values, not {param} placeholders.`);
+      }
+      const [valid, expected] = kind === 'checkbox' ? [typeof value === 'boolean', 'true or false']
+        : kind === undefined ? [typeof value === 'boolean' || filterText(value), 'an option name, or true or false for a checkbox']
+          : [filterText(value), kind === 'select' ? 'an option name or ID' : 'a text value'];
+      if (!valid) throw usageError(`${where}: compare "${reference}" with ${expected}.`);
+    }
+  }, where);
 }
 
 function validateShows(name, declaration, params, resources, collection) {
@@ -222,8 +305,13 @@ export function viewManifestFields(definition, { entry, resources }) {
   if (definition.params !== undefined) {
     if (!plain(params) || Object.keys(params).length > 50) throw usageError('Declare params as { name: { type, description, ... } }.');
     const mains = new Map();
+    let page = null;
     for (const [name, declaration] of Object.entries(params)) {
       validateParam(name, declaration, resources);
+      if ('page' in declaration) {
+        if (page) throw usageError(`Params "${page}" and "${name}" both declare page; at most one param of a view opens records as pages.`);
+        page = name;
+      }
       if (declaration.type !== 'record' || declaration.main !== true) continue;
       if (mains.has(declaration.database)) {
         throw usageError(`Params "${mains.get(declaration.database)}" and "${name}" both claim main for database "${declaration.database}"; a database has one main view.`);

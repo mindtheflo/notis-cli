@@ -77,6 +77,14 @@ Editor’s collection list. Keep both tied to the same declared resource.
 - Record params name a declared database and have no default record. `main: true`
   claims that database's main view. `slugProperty` is a title/number property used
   for readable link text, not record identity.
+- One optional (never `required`) record param per view may declare `page: {where}`:
+  a matching saved HTML page or report then opens full screen as its own page, for
+  Editors in the Portal (Back, plus Share for HTML) and, for HTML pages only, on its
+  record Site. `where` compares
+  fixed values over `record_key`/`id`, `content_type`/`file_type`/`title` and select,
+  status or checkbox properties; it never reaches the browser. Viewers still get the
+  view, so keep its own HTML/report rendering. The full rules live under Record pages
+  in the platform reference (`docs/notis-apps-platform.md`).
 - `path` is descriptive lowercase words, up to four slash-separated segments;
   do not put IDs, credentials or reserved product routes in it.
 - `shows` for native data is `{database, where, open?}`. `where` is the native filter

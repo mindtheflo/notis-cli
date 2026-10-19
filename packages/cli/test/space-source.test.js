@@ -11,6 +11,13 @@ import { buildSpaceArtifact, prepareSpaceRelease } from '../src/runtime/space-pl
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const VIEW_DECLARATION = `path:'contract',description:'A source contract fixture.',memory:{markdown:false,attachments:false,screenshot:false,snapshots:[]}`;
 
+test('retired Site entry prefixes are available to ordinary Space views', async () => {
+  const { validateViewPath } = await import('../src/runtime/space-view-manifest.js');
+  for (const path of ['s', 'site', 's/detail', 'site/detail']) {
+    assert.equal(validateViewPath(path), path);
+  }
+});
+
 test('every presentation requires V4 declarations before build, with or without the version marker', async () => {
   const { viewManifestFields } = await import('../src/runtime/space-view-manifest.js');
   const valid = { name: 'Contract', path: 'contract', description: 'The selected fixture.',
@@ -333,5 +340,92 @@ test('V4 view manifest: specVersion 2 declares path, described params, shows, me
     }
     writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'A',specVersion:2,path:'a',description:'Root.',memory:{markdown:true,attachments:false,screenshot:false,snapshots:[]}};`);
     await assert.rejects(loadSelectedSpace(root, 'a'), /container has no page/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a record param page rule: one per view, exactly { where }, fixed values over the page subset, created schemas checked', async () => {
+  const { viewManifestFields } = await import('../src/runtime/space-view-manifest.js');
+  const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
+  const resources = { notes: { kind: 'database', key: 'notes' } };
+  const view = params => ({ name: 'Notes', path: 'notes', description: 'Notes and saved pages.',
+    memory: { markdown: false, attachments: false, screenshot: false, snapshots: [] }, params });
+  const note = page => ({ type: 'record', database: 'notes', main: true, description: 'The open note.', ...(page === undefined ? {} : { page }) });
+  const check = (definition, options = { entry: 'view.tsx', resources }) => viewManifestFields(definition, options);
+  const notesPage = { where: { or: [
+    { field: { column: 'content_type' }, op: 'equals', value: 'view' },
+    { and: [{ field: { column: 'content_type' }, op: 'not_equals', value: 'file' },
+      { or: [{ field: { property: 'Type' }, op: 'equals', value: 'HTML page' }, { field: { property: 'Type' }, op: 'equals', value: 'Report' }] }] },
+  ] } };
+  assert.deepEqual(check(view({ note: note(notesPage) })).params.note.page, notesPage, 'The rule rides in the manifest for the server');
+  for (const where of [
+    { field: { column: 'record_key' }, op: 'in', value: ['0f8fad5b-d9cb-469f-a165-70867728950e'] },
+    { field: { column: 'id' }, op: 'not_equals', value: 'a1' },
+    { field: { column: 'title' }, op: 'is_not_empty' },
+    { field: { column: 'file_type' }, op: 'is_empty' },
+    { field: { property: 'Published' }, op: 'equals', value: true },
+    { field: { property_id: 'prop_type' }, op: 'not_equals', value: 'Report' },
+    { field: { property: 'Status' }, op: 'is_empty' },
+  ]) check(view({ note: note({ where }) }));
+  const failures = [
+    [{ note: note({ ...notesPage, open: 'note' }) }, /declare page as \{ where \}/],
+    [{ note: note({}) }, /declare page as \{ where \}/],
+    [{ note: note('notes') }, /declare page as \{ where \}/],
+    [{ note: note({ where: {} }) }, /at least one condition/],
+    [{ note: note(notesPage), other: { ...note(notesPage), main: false, description: 'Another note.' } }, /both declare page/],
+    [{ note: note(), tab: { type: 'enum', values: ['all'], description: 'The tab.', page: notesPage } }, /page belong to record params/],
+    [{ note: { ...note(notesPage), required: true } }, /page param is optional/],
+    [{ note: note({ where: { field: { column: 'created_at' }, op: 'after', value: '2026-01-01' } }) }, /reads the columns record_key, id, content_type, file_type, title/],
+    [{ note: note({ where: { field: { column: 'title' }, op: 'contains', value: 'Q3' } }) }, /contains does not apply to "title"/],
+    [{ note: note({ where: { field: { column: 'content_type' }, op: 'in', value: ['view'] } }) }, /in does not apply to "content_type"/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'in', value: ['Report'] } }) }, /in does not apply to "Type"/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'equals', value: '{note.Type}' } }) }, /fixed values, not \{param\} placeholders/],
+    [{ note: note({ where: { field: { column: 'record_key' }, op: 'in', value: ['{note}'] } }) }, /fixed values, not \{param\} placeholders/],
+    // As on the server, {{param}} is refused too.
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'equals', value: '{{note}}' } }) }, /fixed values, not \{param\} placeholders/],
+    [{ note: note({ where: { field: { column: 'id' }, op: 'in', value: ['a1', '{{note.Type}}'] } }) }, /fixed values, not \{param\} placeholders/],
+    [{ note: note({ where: { field: { column: 'record_key' }, op: 'in', value: [] } }) }, /list of 1 to 500 record ids/],
+    [{ note: note({ where: { field: { column: 'title' }, op: 'is_empty', value: '' } }) }, /is_empty takes no value/],
+    [{ note: note({ where: { field: { column: 'title' }, op: 'equals' } }) }, /equals needs a value/],
+    [{ note: note({ where: { field: { column: 'title' }, op: 'equals', value: 3 } }) }, /compare "title" with a text value/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'equals', value: 3 } }) }, /option name, or true or false for a checkbox/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'like', value: 'Report' } }) }, /native filter language/],
+  ];
+  for (const [params, pattern] of failures) assert.throws(() => check(view(params)), pattern, JSON.stringify(params));
+  // A database created in the same release brings its schema, so its property kinds are checked before the server.
+  const schema = { schema_version: 1, value_encoding_version: 1, coercion_version: 1, title_property_id: 'title',
+    property_order: ['title', 'type', 'published', 'tags', 'stage', 'kind_a', 'kind_b'], properties: {
+      title: { id: 'title', name: 'Name', kind: 'title', config: {} },
+      type: { id: 'type', name: 'Type', kind: 'select', previous_names: ['Format'], config: {} },
+      published: { id: 'published', name: 'Published', kind: 'checkbox', config: {} },
+      tags: { id: 'tags', name: 'Tags', kind: 'multi_select', config: {} },
+      stage: { id: 'stage', name: 'Stage', kind: 'status', config: {} },
+      kind_a: { id: 'kind_a', name: 'Kind', kind: 'select', config: {} },
+      kind_b: { id: 'kind_b', name: 'kind', kind: 'select', config: {} } } };
+  const created = { entry: 'view.tsx', resources: { notes: { kind: 'database', create: { name: 'Notes', schema } } } };
+  for (const where of [
+    { field: { property: 'type' }, op: 'equals', value: 'Report' },
+    { field: { property: 'Format' }, op: 'not_equals', value: 'Report' },
+    { field: { property: 'Stage' }, op: 'is_not_empty' },
+    { field: { property_id: 'published' }, op: 'equals', value: false },
+  ]) check(view({ note: note({ where }) }), created);
+  for (const [where, pattern] of [
+    [{ field: { property: 'Missing' }, op: 'equals', value: 'x' }, /"Missing" is not a property of that database/],
+    [{ field: { property: 'Kind' }, op: 'equals', value: 'x' }, /"Kind" is not a property of that database/],
+    [{ field: { property_id: 'prop_type' }, op: 'equals', value: 'x' }, /"prop_type" is not a property of that database/],
+    [{ field: { property: 'Tags' }, op: 'is_empty' }, /"Tags" is not a select, status or checkbox property/],
+    [{ field: { property: 'Name' }, op: 'equals', value: 'Q3' }, /"Name" is not a select, status or checkbox property/],
+    [{ field: { property: 'Published' }, op: 'is_empty' }, /is_empty does not apply to "Published"/],
+    [{ field: { property: 'Published' }, op: 'equals', value: 'yes' }, /compare "Published" with true or false/],
+    [{ field: { property: 'Type' }, op: 'equals', value: true }, /compare "Type" with an option name or ID/],
+  ]) assert.throws(() => check(view({ note: note({ where }) }), created), pattern, JSON.stringify(where));
+  // Through the source pipeline: the rule reaches the manifest unchanged, and a misplaced one stops the build.
+  const root = fixture();
+  const save = params => writeFileSync(join(root, 'spaces/a/space.config.ts'),
+    `export default ${JSON.stringify({ ...view(params), entry: './view.tsx', resources })};`);
+  try {
+    save({ note: note(notesPage) });
+    assert.deepEqual(generateSpaceManifest(await loadSelectedSpace(root, 'a')).params.note.page, notesPage);
+    save({ note: note(), tab: { type: 'text', description: 'The tab.', page: notesPage } });
+    await assert.rejects(loadSelectedSpace(root, 'a'), /page belong to record params/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -161,6 +161,12 @@ export interface SpaceViewParam {
   main?: boolean;
   /** Record params: the property that makes the record slug in links; defaults to the title. */
   slugProperty?: string;
+  /**
+   * Record params, at most one per view: a record matching `where` (fixed values only) opens full screen as its own
+   * page instead of this view. Editors see saved HTML pages and reports in the Portal; a record Site shows its HTML
+   * page only. The server checks the rule; it never reaches the browser.
+   */
+  page?: { where: NativeFilter };
 }
 /**
  * Notis data the view lists: exactly this native filter over a declared database, with `{param}`,
@@ -275,8 +281,8 @@ export interface SpaceRuntimeDescriptor {
   viewerReads?: SpaceViewerReadFamily[];
   /** Declared cloud computer access; present only for a signed-in Editor, never on a Site. */
   cloudComputer?: SpaceCloudComputerLevel;
-  /** V4: declared URL params, list names and chrome of the executable revision. */
-  params?: Record<string, SpaceViewParam>;
+  /** V4: declared URL params (never a record param's `page` rule), list names and chrome of the executable revision. */
+  params?: Record<string, Omit<SpaceViewParam, 'page'>>;
   shows?: Record<string, SpaceShownDescriptor>;
   chrome?: SpaceChrome;
   actions: Record<string, SpaceActionDescriptor>;
