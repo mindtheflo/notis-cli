@@ -6,6 +6,7 @@ its preinstalled `notis` command, or the same `npx` form if `notis` is not found
 A create/edit request authorizes the checked installed-Space update unless the
 user or applicable policy says preview-only/no-deploy. Store publication is a
 separate action. Preserve exact identity and prior authorization.
+Ordinary data and resource edits apply immediately; only source needs a release.
 
 ## Update one Space
 
@@ -21,6 +22,8 @@ separate action. Preserve exact identity and prior authorization.
    fixtures at 390px and 1440px with the shared read-only renderer. Provide exact
    action/list/body/record fixtures. A denied read, write-on-load or failed width
    is a failure, not a passing empty page. Inspect both locales and intended states.
+   Missing browser tooling blocks release: install `agent-browser` and make it
+   available on PATH.
 4. **Publish source.** Use `spaces deploy <dir> --space <key> --space-id <space-id>
    --request-id <stable-id>`. Or `spaces preview` seals a candidate, and
    `spaces promote <release-id> <dir>` publishes that exact candidate. Preview
@@ -41,7 +44,8 @@ separate action. Preserve exact identity and prior authorization.
 Start locally with `spaces init`, then build. Discover/list existing Spaces before
 creating the intended remote identity with `LOCAL_NOTIS_MANAGE_SPACE`. Use a stable
 UUID and reconcile an uncertain creation. Read back its revision and resources,
-then verify/deploy with `--space-id`. A source-created database is committed with
+then verify/deploy with `--space-id`. If that first release fails, retry it into
+the same Space; never create a second one. A source-created database is committed with
 its main view in that publication; no separate provisional database is necessary.
 
 ## What the checks prove
