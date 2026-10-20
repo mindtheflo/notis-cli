@@ -11,10 +11,14 @@ export function createSpaceFixtureBroker({ release, capabilities, width, outputs
   const frozen = spaceHarnessSnapshot(release, capabilities, engine, { authorizationMode, unavailableActions });
   const calls = [];
   const params = structuredClone(engine.context.params || {});
+  // The fixture's own "now" pins the browser clock, so a view that asks for the
+  // last hour sends the exact inputs its fixtures recorded.
+  const now = engine.context.now;
+  const fixedClock = typeof now === 'string' && Number.isFinite(Date.parse(now)) ? { fixed_clock: now } : {};
   const value = { ...frozen, url: `https://app.notis.ai/verification/${encodeURIComponent(release.manifest.local_key)}`,
     view: { space_id: frozen.descriptor.resource.id, name: release.manifest.name, revision: 1 },
     locale: engine.context.locale === 'fr' ? 'fr' : 'en', params,
-    markdownExport: release.manifest.markdown?.export_name || null, render_options: { outputs, width } };
+    markdownExport: release.manifest.markdown?.export_name || null, render_options: { outputs, width }, ...fixedClock };
   return {
     fixtureDigest: engine.digest,
     calls,
