@@ -1,0 +1,1004 @@
+/*
+ * Notis toolkit stylesheet (`@notis/sdk/toolkit.css`).
+ *
+ * Plain CSS on the Portal tokens (hsl(var(--muted)) and friends), never Tailwind utilities, so one adopted sheet
+ * works in the Portal document and in every Space shadow root (adoptToolkitStyles in ./styles.ts). The host registers
+ * this text and adopts it; it is never imported into a host's global CSS bundle. Every class is prefixed `nui-`,
+ * except `.notis-markdown` and its `.notis-markdown-table` scroll box (the Markdown value renderer's classes, in the
+ * markdown section).
+ *
+ * Token selectors (one rule set, both places):
+ *   light: :root (Portal document), :host (Space shadow root), [data-notis-theme="light"]
+ *   dark:  .dark (Portal document), [data-notis-theme="dark"] (the Space app root, set by SdkPresentation)
+ * In a shadow root :root matches nothing, so :host carries the light defaults and the app root's data-notis-theme
+ * re-scopes them for its subtree. Overlay layer roots therefore sit inside [data-notis-app-root] (findLayerRoot).
+ * Every use also carries the light value as a var() fallback.
+ *
+ * Sections are owned by their stream. Append new sections at the end with the same marker:
+ *   / * == section: <name> (<owner>) == * /
+ */
+
+/* == section: marker (A2) == */
+/* Identifies this sheet in an adopted root (host checks and tests). The SDK never searches the page for it. */
+.nui-toolkit-sheet-marker { --nui-toolkit-sheet: 1; }
+
+/* == section: tokens (A2) == */
+/* Deck tokens (design-options/styles.css). Light first, dark re-scopes. */
+:root, :host, [data-notis-theme="light"] {
+  --nui-blue: 217 91% 60%;
+  --nui-a-open: .10;
+  --nui-a-sel: .05;
+  --nui-a-selopen: .15;
+  --nui-pop-ring: 0 0 0 1px rgb(0 0 0 / .08);
+  --nui-elev: 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06);
+  --nui-elev-lg: 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12);
+  --nui-elev-today: 0 10px 30px rgb(0 0 0 / .25);
+}
+.dark, [data-notis-theme="dark"] {
+  --nui-a-open: .20;
+  --nui-a-sel: .15;
+  --nui-a-selopen: .26;
+  --nui-pop-ring: 0 0 0 1px rgb(255 255 255 / .10);
+  --nui-elev: 0 0 #0000;
+  --nui-elev-lg: 0 0 #0000;
+  --nui-elev-today: 0 0 #0000;
+}
+/* The status groups, one palette (the Manager's signal colours). A Space maps its statuses, never picks a colour.
+   Declared on every theme scope so var(--muted-foreground) resolves against the scope's own value. */
+:root, :host, .dark, [data-notis-theme] {
+  --nui-st-backlog: var(--muted-foreground); --nui-st-todo: var(--muted-foreground); --nui-st-cancelled: var(--muted-foreground);
+  --nui-st-active: var(--status-live, 142 71% 45%); --nui-st-review: var(--status-live, 142 71% 45%);
+  --nui-st-waiting: var(--muted-foreground); --nui-st-done: var(--muted-foreground);
+  --nui-st-failed: var(--destructive); --nui-st-up: var(--muted-foreground); --nui-st-down: var(--destructive);
+}
+
+/* == section: base (A2) == */
+.nui-root { font-family: inherit; color: hsl(var(--foreground)); }
+:where(.nui-root, .nui-layer) button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: default; }
+.nui-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.nui-icon { display: inline-block; flex-shrink: 0; width: 1em; height: 1em; vertical-align: -0.125em; }
+.nui-icon-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; font-size: 16px; color: hsl(var(--muted-foreground)); }
+.nui-icon-btn:hover, .nui-icon-btn[aria-expanded="true"] { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-icon-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-icon-btn:disabled { opacity: .45; }
+.nui-st { display: inline-block; flex-shrink: 0; width: 16px; height: 16px; color: hsl(var(--nui-st-todo, var(--muted-foreground))); }
+.nui-st[data-st="backlog"] { color: hsl(var(--nui-st-backlog, var(--muted-foreground))); }
+.nui-st[data-st="active"] { color: hsl(var(--nui-st-active, var(--muted-foreground))); }
+/* Ready for review is still work in flight, nearly done: the active colour, a fuller circle. */
+.nui-st[data-st="review"] { color: hsl(var(--nui-st-review, var(--muted-foreground))); }
+.nui-st[data-st="waiting"] { color: hsl(var(--nui-st-waiting, var(--muted-foreground))); }
+.nui-st[data-st="done"] { color: hsl(var(--nui-st-done, var(--muted-foreground))); }
+.nui-st[data-st="cancelled"] { color: hsl(var(--nui-st-cancelled, var(--muted-foreground))); }
+.nui-st[data-st="failed"] { color: hsl(var(--nui-st-failed, var(--destructive))); }
+/* A service that is up is calm, like done work; only a service that is down asks for attention. */
+.nui-st[data-st="up"] { color: hsl(var(--nui-st-up, var(--muted-foreground))); }
+.nui-st[data-st="down"] { color: hsl(var(--nui-st-down, var(--destructive))); }
+
+/* == section: rows (A2) == */
+.nui-row {
+  position: relative; outline: none; cursor: default; user-select: none; -webkit-user-select: none;
+  background: var(--nui-row-rest, transparent);
+  --nui-row-hover: hsl(var(--muted) / .4);
+  /* Never an edge or stripe on one side (Flo, 16 Oct): the cursor is a ring on all four sides, the rest are fills. */
+  --nui-row-cursor: transparent;
+  --nui-row-cursor-shadow: inset 0 0 0 1px hsl(var(--foreground) / .28);
+  --nui-row-open: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .10));
+  --nui-row-open-shadow: 0 0 #0000;
+  --nui-row-sel: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05));
+  --nui-row-selopen: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-selopen, .15));
+  --nui-row-focus: hsl(var(--nui-blue, 217 91% 60%) / .8);
+}
+.nui-row:hover:not([data-open]):not([data-selected]):not([data-cursor]) { background: var(--nui-row-hover); }
+.nui-row[data-cursor] { background: var(--nui-row-cursor); box-shadow: var(--nui-row-cursor-shadow); }
+.nui-row[data-selected] { background: var(--nui-row-sel); }
+.nui-row[data-open] { background: var(--nui-row-open); box-shadow: var(--nui-row-open-shadow); }
+.nui-row[data-open][data-selected] { background: var(--nui-row-selopen); }
+.nui-row[data-open][data-cursor] { box-shadow: var(--nui-row-open-shadow), var(--nui-row-cursor-shadow); }
+.nui-row[data-selected][data-cursor] { box-shadow: var(--nui-row-cursor-shadow); }
+.nui-row:focus-visible:not([data-cursor]) { outline: 2px solid var(--nui-row-focus); outline-offset: -2px; }
+
+/* Row anatomy. */
+div.nui-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px 6px 16px; box-sizing: border-box; }
+[data-density="compact"] div.nui-row { min-height: 40px; padding-top: 4px; padding-bottom: 4px; }
+/* The divider is a 1px line painted at the top, not a border: an open or cursor row's ring is then 1px on all four
+   sides, and the line above and below it steps aside (a state background replaces it on the row itself). */
+div.nui-row + div.nui-row { background-image: linear-gradient(hsl(var(--border) / .5), hsl(var(--border) / .5)); background-size: 100% 1px; background-repeat: no-repeat; }
+div.nui-row + div.nui-row[data-open], div.nui-row + div.nui-row[data-cursor],
+div.nui-row[data-open] + div.nui-row, div.nui-row[data-cursor] + div.nui-row { background-image: none; }
+/* Two title lines (Memories): the row aligns to its top and the trail sits on the first title line. */
+div.nui-row:has(> .nui-row-main[data-wrap]), div.nui-row[data-wrap] { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
+div.nui-row:has(> .nui-row-main[data-wrap]) > .nui-row-trail, div.nui-row[data-wrap] > .nui-row-trail { align-self: flex-start; line-height: 20px; }
+div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap] .nui-row-more { margin-top: -4px; }
+.nui-row-lead { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; }
+.nui-row-icon { display: inline-flex; font-size: 16px; line-height: 1; color: hsl(var(--muted-foreground)); }
+.nui-row-check { display: none; width: 16px; height: 16px; padding: 0; border-radius: 4px; align-items: center; justify-content: center; color: transparent; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .35); cursor: pointer; }
+.nui-row-check svg { width: 12px; height: 12px; }
+.nui-row:hover .nui-row-check, .nui-row[data-selected] .nui-row-check, [data-has-selection] .nui-row .nui-row-check, .nui-row-lead:not(:has(.nui-row-icon)) .nui-row-check { display: inline-flex; }
+.nui-row:hover .nui-row-icon, .nui-row[data-selected] .nui-row-icon, [data-has-selection] .nui-row .nui-row-icon { display: none; }
+.nui-row[data-selected] .nui-row-check { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; color: #fff; }
+[data-touch] .nui-row:hover .nui-row-check { display: none; }
+[data-touch] .nui-row:hover .nui-row-icon { display: inline-flex; }
+[data-touch] [data-has-selection] .nui-row .nui-row-check, [data-touch][data-has-selection] .nui-row .nui-row-check { display: inline-flex; }
+[data-touch] [data-has-selection] .nui-row .nui-row-icon, [data-touch][data-has-selection] .nui-row .nui-row-icon { display: none; }
+.nui-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.nui-row-title { font-size: 14px; line-height: 20px; color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-row-title[data-lines="2"] { white-space: normal; text-wrap: pretty; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.nui-row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nui-row-meta-start { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-row-dot { flex-shrink: 0; color: hsl(var(--muted-foreground) / .6); }
+.nui-row-snippet { font-size: 13px; line-height: 18px; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-row-trail { display: flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
+/* Labels give way first: the meta start (who, where, when) truncates only once the labels are down to their ellipsis. */
+.nui-row-labels { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-star { display: inline-flex; flex-shrink: 0; font-size: 14px; color: hsl(32 95% 40%); }
+.dark .nui-star { color: hsl(38 92% 60%); }
+.nui-row-label[data-tone="warning"] { color: hsl(32 95% 40%); }
+.dark .nui-row-label[data-tone="warning"] { color: hsl(38 92% 60%); }
+.nui-row-label[data-tone="danger"] { color: hsl(var(--destructive)); }
+.nui-row-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nui-row-more { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; opacity: 0; font-size: 16px; color: hsl(var(--muted-foreground)); }
+.nui-row-more:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-row-more:focus-visible { opacity: 1; outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-row:hover .nui-row-more, .nui-row[data-cursor] .nui-row-more, .nui-row-more[aria-expanded="true"] { opacity: 1; }
+/* A pending or disabled row keeps the slot so its trail lines up with the rows around it. */
+.nui-row-more[data-slot] { visibility: hidden; pointer-events: none; }
+[data-touch] .nui-row-more { display: none; }
+.nui-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 9999px; overflow: hidden; background: hsl(var(--foreground) / .08); color: hsl(var(--foreground) / .7); font-size: 12px; line-height: 1; font-weight: 600; flex-shrink: 0; }
+.nui-avatar > img { width: 100%; height: 100%; object-fit: cover; }
+.nui-group-head { display: flex; align-items: center; gap: 8px; padding: 16px 16px 6px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+
+/* Table rows share the row states. */
+.nui-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.nui-table th { position: sticky; top: 0; z-index: 1; height: 36px; padding: 0 12px; text-align: left; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); box-shadow: inset 0 -1px 0 hsl(var(--border) / .8); white-space: nowrap; }
+tr.nui-row > td { height: 40px; padding: 0 12px; border-top: 1px solid hsl(var(--border) / .5); font-size: 13px; white-space: nowrap; }
+/* A table's edge cells sit 24px in, like the page head and a data section's table (lb deck). */
+.nui-table :is(th, td):first-child:not(.nui-group-head) { padding-left: 24px; }
+.nui-table :is(th, td):last-child:not(.nui-group-head) { padding-right: 24px; }
+/* TBL4: fills only, never an inset on the first cell; the cursor is a ring on all four sides of the row. */
+tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-shadow: none; }
+tr.nui-row[data-cursor] { outline: 1px solid hsl(var(--foreground) / .28); outline-offset: -1px; }
+
+/* Tiles: a ring on all four sides for every state, never an edge on one side. */
+.nui-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 12px; padding: 16px 24px 32px; }
+.nui-tile { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; outline: none; border-radius: 8px; padding: 16px; box-sizing: border-box; background: hsl(var(--background)); box-shadow: 0 0 0 1px hsl(var(--foreground) / .1); cursor: default; user-select: none; -webkit-user-select: none; }
+.nui-tile[data-variant="manager"] { min-height: 152px; }
+.nui-tile:hover:not([data-open]):not([data-selected]):not([data-cursor]) { box-shadow: 0 0 0 1px hsl(var(--foreground) / .2); }
+.nui-tile[data-selected] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05)); box-shadow: 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .35); }
+.nui-tile[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .10)); box-shadow: 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .5); }
+.nui-tile[data-cursor] { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .65); }
+.nui-tile:focus-visible:not([data-cursor]) { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; }
+.nui-tile .nui-row-more { position: absolute; top: 8px; right: 8px; }
+.nui-tile:hover .nui-row-more, .nui-tile[data-cursor] .nui-row-more { opacity: 1; }
+.nui-tile-mark { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; overflow: hidden; font-size: 18px; }
+.nui-tile-top { display: flex; align-items: center; gap: 12px; min-width: 0; padding-right: 24px; }
+.nui-tile-head { display: flex; flex-direction: column; gap: 0; min-width: 0; flex: 1; }
+.nui-tile-title { font-size: 14px; line-height: 20px; font-weight: 500; color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-tile-subtitle { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-tile-body { font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; text-wrap: pretty; }
+.nui-tile-bottom { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: auto; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+.nui-tile-figure { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
+.nui-tile-bottom > :not(.nui-tile-figure) { flex-shrink: 0; white-space: nowrap; }
+.nui-tile-spacer { flex: 1; }
+
+/* == section: list and reader (A2) == */
+.nui-lr { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; height: 100%; min-height: 0; min-width: 0; overflow: hidden; --nui-fab-safe-bottom: var(--notis-fab-safe-bottom, 0px); --nui-fab-safe-end: var(--notis-fab-safe-end, 0px); }
+.nui-lr-body { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
+.nui-lr-list { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; container: nui-lr-list / inline-size; }
+/* Looks: two-tone tints the list at all times; plain tints it only while a reader sits beside it. The pane line is a
+   full-height hairline on the list's end, never a coloured edge. */
+.nui-lr[data-look="two-tone"] .nui-lr-list,
+.nui-lr .nui-panels[data-mode="split"][data-reader-open] > .nui-panels-list > .nui-lr-list { background: hsl(var(--muted) / .4); }
+.nui-lr .nui-panels[data-mode="split"][data-reader-open] > .nui-panels-list > .nui-lr-list { border-right: 1px solid hsl(var(--border) / .7); }
+/* The one 44px line: title, tabs, view menu and create. It never wraps: the tabs fold into More, the title truncates. */
+.nui-lr-toolbar { display: flex; flex-shrink: 0; flex-wrap: nowrap; align-items: center; gap: 4px; min-height: 44px; padding: 0 8px 0 6px; box-sizing: border-box; border-bottom: 1px solid hsl(var(--border) / .5); min-width: 0; }
+.nui-lr-title { display: inline-flex; flex: 0 1 auto; align-items: baseline; gap: 6px; min-width: 0; margin: 0; padding-inline: 10px 4px; font-size: 14px; line-height: 20px; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; overflow: hidden; }
+.nui-lr-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-lr-title-count { flex-shrink: 0; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-lr-toolbar-spacer { flex: 1 1 0; min-width: 0; }
+.nui-lr-tools { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.nui-lr-info { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px 6px 16px; box-sizing: border-box; font-size: 13px; line-height: 18px; color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .03); }
+.nui-lr-sub-label { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
+.nui-lr-sub-label > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-lr-view-note { margin: 4px 0 0; padding: 8px 10px 6px; max-width: 240px; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
+.nui-lr-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; outline: none; padding-bottom: var(--nui-fab-safe-bottom); scroll-padding-bottom: var(--nui-fab-safe-bottom); }
+.nui-lr[data-bar] .nui-lr-scroll { padding-bottom: max(64px, var(--nui-fab-safe-bottom)); scroll-padding-bottom: max(64px, var(--nui-fab-safe-bottom)); }
+/* A footer already lifts the end of the list by its 48px: the floating Notis button only reaches the rest into it. */
+.nui-lr-list[data-footer] .nui-lr-scroll { padding-bottom: max(0px, calc(var(--nui-fab-safe-bottom) - 48px)); scroll-padding-bottom: max(0px, calc(var(--nui-fab-safe-bottom) - 48px)); }
+.nui-lr[data-bar] .nui-lr-list[data-footer] .nui-lr-scroll { padding-bottom: max(64px, calc(var(--nui-fab-safe-bottom) - 48px)); scroll-padding-bottom: max(64px, calc(var(--nui-fab-safe-bottom) - 48px)); }
+.nui-lr-empty { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; }
+/* The list's own footer (page numbers): one line at the end of the row, clear of the floating Notis button unless a
+   reader sits between them. The first child's auto margin ends the row without hiding an overflow at the start. */
+.nui-lr-footer { display: flex; flex-shrink: 0; align-items: center; gap: 12px; height: 48px; box-sizing: border-box; padding-inline: 16px max(12px, calc(var(--nui-fab-safe-end) + 8px)); overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
+.nui-lr-footer > :first-child { margin-inline-start: auto; }
+.nui-panels[data-mode="split"][data-reader-open] > .nui-panels-list .nui-lr-footer { padding-inline-end: 12px; }
+.nui-lr-reader { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; background: hsl(var(--background)); container: nui-lr-reader / inline-size; }
+.nui-lr-reader:focus { outline: none; }
+/* The reader bar (C1 order): close or back, open as, previous, next, label, actions, more, expand, close. Fixed while
+   the body scrolls; at any width the label truncates first, then the actions fold into More; close always shows. */
+.nui-lr-bar { display: flex; flex-shrink: 0; align-items: center; gap: 4px; height: 48px; min-width: 0; padding: 0 8px; box-sizing: border-box; overflow: hidden; box-shadow: inset 0 -1px 0 hsl(var(--border) / .5); }
+.nui-lr-bar > * { flex-shrink: 0; }
+.nui-lr-label { flex: 1 1 0; min-width: 0; margin-inline-start: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); }
+.nui-lr-actions { display: inline-flex; align-items: center; gap: 4px; }
+.nui-lr-act { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border-radius: 6px; font-size: 13px; white-space: nowrap; color: hsl(var(--foreground) / .85); }
+.nui-lr-act > .nui-icon { font-size: 16px; color: hsl(var(--muted-foreground)); }
+.nui-lr-act:hover { background: hsl(var(--foreground) / .06); }
+.nui-lr-act:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-lr-act[aria-disabled="true"] { opacity: .4; cursor: default; }
+.nui-lr-act[aria-disabled="true"]:hover { background: none; }
+@container nui-lr-reader (max-width: 560px) { .nui-lr-act-label { display: none; } }
+/* A narrow reader (the center dialog beside the chat) has no room for a readable label: it keeps its place, unseen. */
+@container nui-lr-reader (max-width: 360px) { .nui-lr-label { visibility: hidden; } }
+/* Phone widths (to 430) have no keyboard: the key hints go before the label truncates; the tooltip still names them. */
+@container nui-lr-reader (max-width: 430px) { .nui-lr-act > .nui-kbd-group { display: none; } }
+.nui-lr-back { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border-radius: 6px; font-size: 14px; color: hsl(var(--foreground) / .8); }
+.nui-lr-back:hover { background: hsl(var(--foreground) / .06); }
+.nui-lr-back:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-lr-back .nui-icon { font-size: 16px; }
+.nui-lr-back[data-compact] { justify-content: center; width: 32px; padding: 0; }
+.nui-lr-back[data-compact] .nui-lr-back-label { display: none; }
+@container nui-lr-reader (max-width: 560px) { .nui-lr-back { justify-content: center; width: 32px; padding: 0; } .nui-lr-back-label { display: none; } }
+.nui-lr-reader-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.nui-lr-reader-inner { max-width: 44rem; margin: 0 auto; padding: 32px 32px max(56px, calc(var(--nui-fab-safe-bottom) + 16px)); box-sizing: border-box; }
+@container nui-lr-reader (max-width: 360px) { .nui-lr-reader-inner { padding: 20px 16px max(40px, calc(var(--nui-fab-safe-bottom) + 16px)); } }
+/* Reader properties (RD5) and section heads (RD6). A field list (`.nui-fields-list`) keeps its own rows. */
+.nui-lr-reader-inner dl:not(.nui-fields-list) { display: grid; grid-template-columns: 8rem minmax(0, 1fr); margin: 24px 0 0; }
+.nui-lr-reader-inner dl:not(.nui-fields-list) > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; }
+.nui-lr-reader-inner dl:not(.nui-fields-list) > dt { font-size: 13px; color: hsl(var(--muted-foreground)); }
+/* A dl may group each pair in a div (valid HTML): the group is one row on the same two columns, never a cell. */
+.nui-lr-reader-inner dl:not(.nui-fields-list) > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; gap: 0; align-items: center; min-width: 0; }
+.nui-lr-reader-inner dl:not(.nui-fields-list) > div > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; }
+.nui-lr-reader-inner dl:not(.nui-fields-list) > div > dt { font-size: 13px; color: hsl(var(--muted-foreground)); }
+.nui-lr-reader-inner h3 { margin: 32px 0 0; font-size: 14px; line-height: 20px; font-weight: 500; }
+/* No item open (RD9): one line and the keys to pick one. */
+.nui-lr-pick { display: flex; flex: 1; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 0 32px; text-align: center; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); }
+.nui-lr-pick > p { margin: 0; text-wrap: pretty; }
+.nui-lr-pick-keys { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; font-size: 13px; }
+/* Center peek: a modal over the Space only, 24px from its edges, at most 880px wide and 85% of the Space high. */
+.nui-lr-scrim { position: absolute; inset: 0; z-index: 5; background: rgb(0 0 0 / .32); }
+.nui-lr[data-bar] .nui-lr-scrim { bottom: 64px; }
+.nui-lr-center { position: absolute; left: 50%; top: 50%; z-index: 6; display: flex; flex-direction: column; width: min(880px, calc(100% - 48px)); height: min(85%, calc(100% - 48px)); border-radius: 12px; overflow: hidden; background: hsl(var(--background)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev-lg, 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12)); transform: translate(-50%, -50%); animation: nui-center-in .16s ease; }
+.nui-lr[data-bar] .nui-lr-center { top: calc(50% - 32px); height: min(85%, calc(100% - 112px)); }
+.nui-lr-center > .nui-lr-reader { flex: 1; }
+@keyframes nui-center-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
+/* Full page: the reader replaces the list. */
+.nui-lr[data-mode="full"][data-reader-open] .nui-lr-list { display: none; }
+@media (prefers-reduced-motion: reduce) { .nui-lr-center { animation: none; } }
+
+/* == section: selection bar (A2) == */
+.nui-selbar-slot { position: absolute; left: 0; right: 0; bottom: 0; height: 0; z-index: 7; }
+.nui-selbar { position: absolute; left: 50%; bottom: 14px; z-index: 7; display: flex; align-items: center; transform: translateX(-50%); width: max-content; max-width: calc(100% - 16px); gap: 2px; padding: 5px 6px 5px 14px; box-sizing: border-box; border-radius: 9999px; font-size: 13px; background: hsl(var(--foreground) / .95); color: hsl(var(--background)); box-shadow: var(--nui-elev-today, 0 10px 30px rgb(0 0 0 / .25)); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); --kc-ink: var(--background); white-space: nowrap; }
+.nui-sb-count { flex-shrink: 0; padding: 0 8px 0 0; font-weight: 500; font-variant-numeric: tabular-nums; }
+.nui-sb-btn { display: inline-flex; flex-shrink: 0; align-items: center; gap: 7px; height: 28px; padding: 0 9px; border-radius: 9999px; color: hsl(var(--background) / .9); }
+.nui-sb-btn:hover, .nui-sb-btn[aria-expanded="true"] { background: hsl(var(--background) / .12); }
+.nui-sb-btn:focus-visible { outline: 2px solid hsl(var(--background) / .8); outline-offset: -2px; }
+.nui-sb-btn:disabled { opacity: .5; }
+.nui-sb-btn > .nui-sb-icon { display: none; font-size: 15px; }
+.nui-sb-btn > .nui-sb-x { display: inline-block; font-size: 15px; }
+.nui-selbar[data-fit="nokeys"] .nui-sb-btn > .nui-sb-keys { display: none; }
+.nui-selbar[data-fit="icons"] { gap: 0; padding: 4px 4px 4px 12px; }
+.nui-selbar[data-fit="icons"] .nui-sb-btn { padding: 0 7px; }
+.nui-selbar[data-fit="icons"] .nui-sb-btn > :is(.nui-sb-label, .nui-sb-keys) { display: none; }
+.nui-selbar[data-fit="icons"] .nui-sb-btn > .nui-sb-icon { display: inline-block; }
+
+/* == section: toast (A2) == */
+.nui-toast-wrap { position: absolute; left: 0; right: 0; bottom: 18px; z-index: 8; display: flex; justify-content: center; padding-inline: 12px; pointer-events: none; }
+/* The toast sits under the list while it shows. Where the open item covers the list (full page, center, one pane) it
+   sits on the ListReader itself, above the reader; in center the selection bar still shows below the scrim. */
+.nui-lr[data-bar] .nui-lr-list > .nui-toast-wrap, .nui-lr[data-bar][data-mode="center"] > .nui-toast-wrap { bottom: 66px; }
+/* A list footer lifts the selection bar and the toast above it (it is 48px tall). */
+.nui-lr-list[data-footer] > .nui-selbar-slot { bottom: 48px; }
+.nui-lr-list[data-footer] > .nui-toast-wrap { bottom: 66px; }
+.nui-lr[data-bar] .nui-lr-list[data-footer] > .nui-toast-wrap { bottom: 114px; }
+.nui-toast { pointer-events: auto; box-sizing: border-box; display: flex; align-items: center; gap: 10px; max-width: min(560px, 100%); padding: 7px 8px 7px 14px; border-radius: 10px; font-size: 13px; color: hsl(var(--popover-foreground, var(--foreground))); background: hsl(var(--popover)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); }
+/* The words, with the reason as a muted second line under them. */
+.nui-toast-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.nui-toast-reason { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+.nui-toast-btn { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; font-weight: 500; }
+.nui-toast-btn:hover:not([aria-disabled="true"]) { background: hsl(var(--foreground) / .06); }
+/* A running Undo: the button says Undoing and takes no press. */
+.nui-toast-btn[aria-disabled="true"] { cursor: default; color: hsl(var(--muted-foreground)); }
+.nui-toast-x { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: -6px; border-radius: 6px; font-size: 14px; color: hsl(var(--muted-foreground)); }
+.nui-toast-x:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-toast-btn:focus-visible, .nui-toast-x:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+
+/* == section: overlays (A2) == */
+.nui-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 66; }
+.nui-menu, .nui-popover { position: fixed; z-index: 66; box-sizing: border-box; border-radius: 8px; color: hsl(var(--popover-foreground, var(--foreground))); background: hsl(var(--popover)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); --kc-ink: var(--foreground); }
+.nui-menu { min-width: 208px; max-height: min(420px, calc(100vh - 16px)); overflow-y: auto; padding: 4px; outline: none; }
+.nui-popover { padding: 12px; outline: none; }
+.nui-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; box-sizing: border-box; border-radius: 5px; font-size: 13px; text-align: left; white-space: nowrap; color: hsl(var(--foreground)); outline: none; cursor: default; }
+.nui-menu-item > .nui-icon { font-size: 15px; color: hsl(var(--muted-foreground)); }
+.nui-menu-item:hover:not([aria-disabled="true"]), .nui-menu-item:focus-visible, .nui-menu-item[data-active], .nui-menu-item[aria-expanded="true"] { background: hsl(var(--accent)); }
+.nui-menu-item[aria-disabled="true"] { opacity: .45; }
+.nui-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-menu-keys { margin-left: auto; flex-shrink: 0; }
+.nui-menu-item[data-tone="danger"], .nui-menu-item[data-tone="danger"] > .nui-icon { color: hsl(var(--destructive)); }
+.nui-menu-check { visibility: hidden; margin-left: auto; font-size: 15px; }
+.nui-menu-item[aria-checked="true"] .nui-menu-check { visibility: visible; color: hsl(var(--foreground)); }
+.nui-menu-caret { margin-left: auto; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.nui-menu-sep { height: 1px; margin: 4px 0; background: hsl(var(--border) / .7); }
+.nui-tip { position: fixed; z-index: 70; pointer-events: none; display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 10px; border-radius: 6px; background: #000; color: #fff; font-size: 13px; line-height: 18px; white-space: nowrap; --kc-ink: 0 0% 100%; }
+.nui-om-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 2px; height: 32px; min-width: 32px; padding: 0 6px; border-radius: 6px; font-size: 16px; color: hsl(var(--muted-foreground)); }
+.nui-om-btn:hover, .nui-om-btn[aria-expanded="true"] { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-om-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-om-btn > .nui-om-caret { font-size: 12px; opacity: .7; }
+.nui-om-btn[aria-disabled="true"] { opacity: .4; cursor: default; }
+.nui-om-btn[aria-disabled="true"]:hover { background: none; color: hsl(var(--muted-foreground)); }
+
+/* == section: blocks (A2) == */
+/*
+ * Section: a full-width page section, flat on every kind (no border, ring, background or radius). Its head row holds a
+ * data label (h2, 14px medium), a count, meta, tabs and actions; the page title lives in the top bar. The kind sets the
+ * spacing (PG1 to PG4): bar px 24 pt 12; stats none (the StatRow strip runs edge to edge); chart px 24 pt 32; data
+ * pt 40 with its head px 24 pb 12 and the table's edge cells 24 in; form px 24 pt 24, full width (each field caps its
+ * own width).
+ */
+.nui-section { min-width: 0; }
+.nui-section-head { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+.nui-section-title { min-width: 0; margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-section-count { flex-shrink: 0; font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-section-meta { min-width: 0; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-section-tabs { display: flex; min-width: 0; align-items: center; }
+.nui-section-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; margin-left: auto; }
+.nui-section[data-kind="bar"] { display: flex; align-items: center; gap: 8px; padding: 12px 24px 0; }
+.nui-section[data-kind="bar"] > * { flex-shrink: 0; }
+.nui-section[data-kind="bar"] > :is(.nui-section-head, .nui-tabrow) { flex: 1 1 auto; min-width: 0; }
+.nui-section[data-kind="chart"] { padding: 32px 24px 0; container: nui-section / inline-size; }
+.nui-section[data-kind="chart"] > .nui-section-head + * { margin-top: 16px; }
+.nui-section[data-kind="chart"] .nui-section-tabs { flex-shrink: 0; margin-left: auto; }
+.nui-section[data-kind="chart"] .nui-section-tabs + .nui-section-actions { margin-left: 0; }
+/* A narrow chart section (560px or less): the title wraps instead of being cut to a few words, and the tabs (a chart
+   kind switch) take their own line under it. */
+@container nui-section (max-width: 560px) {
+  .nui-section[data-kind="chart"] > .nui-section-head { flex-wrap: wrap; }
+  .nui-section[data-kind="chart"] > .nui-section-head > .nui-section-title { white-space: normal; }
+  .nui-section[data-kind="chart"] > .nui-section-head > .nui-section-tabs { flex-basis: 100%; margin-left: 0; }
+}
+.nui-section[data-kind="data"] { padding-top: 40px; }
+.nui-section[data-kind="data"] > .nui-section-head { padding: 0 24px 12px; }
+.nui-section[data-kind="data"] .nui-ctable :is(th, td):first-child { padding-left: 24px; }
+.nui-section[data-kind="data"] .nui-ctable :is(th, td):last-child { padding-right: 24px; }
+.nui-section[data-kind="form"] { padding: 24px 24px 0; }
+.nui-section[data-kind="form"] > .nui-section-head { margin-bottom: 12px; }
+/* A stats strip right after a bar (PG2): 16px below it, with a hairline above and below. */
+.nui-section[data-kind="bar"] + :is(.nui-stats, .nui-section[data-kind="stats"]) { margin-top: 16px; border-block: 1px solid hsl(var(--border) / .5); }
+/* A TabRow in a section's head (or in a bar) leaves the row's height, inset and rule to the section, takes the room
+   the head leaves and folds the pills that do not fit into More; its end content follows the pills. */
+:is(.nui-section-tabs, .nui-section[data-kind="bar"]) > .nui-tabrow { flex: 1 1 auto; height: auto; padding: 0; border-bottom: 0; }
+:is(.nui-section-tabs, .nui-section[data-kind="bar"]) > .nui-tabrow > .nui-tabrow-end { margin-left: 0; }
+/* Folded to one pill and More, a tabrow in a section's tabs slot keeps their width and the slot scrolls instead. */
+.nui-section-tabs > .nui-tabrow[data-fold="least"] { min-width: max-content; }
+/* A bar's tabs slot (filter pills, a period picker, toggles) takes the room between the head and the actions; content
+   that cannot fold scrolls sideways in its one row instead of overflowing the pane. The 2px pad keeps focus rings in. */
+.nui-section[data-kind="bar"] .nui-section-tabs { flex: 1 1 auto; gap: 8px; margin: -2px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
+.nui-section[data-kind="bar"] .nui-section-tabs::-webkit-scrollbar { display: none; }
+.nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow) { flex-shrink: 0; }
+.nui-section[data-kind="bar"] .nui-section-tabs .nui-toggles { flex-wrap: nowrap; }
+.nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 5px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }
+.nui-badge[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-badge[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-st-active, 142 71% 45%)); }
+.nui-badge[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(32 95% 40%); }
+.dark .nui-badge[data-tone="warning"] { color: hsl(38 92% 60%); }
+.nui-badge[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--destructive)); }
+.nui-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 7px; font-size: 13px; font-weight: 500; white-space: nowrap; color: hsl(var(--foreground)); background: hsl(var(--foreground) / .06); }
+.nui-btn:hover:not(:disabled) { background: hsl(var(--foreground) / .1); }
+.nui-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 1px; }
+.nui-btn:disabled { opacity: .5; }
+.nui-btn[data-variant="primary"] { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.nui-btn[data-variant="primary"]:hover:not(:disabled) { background: hsl(var(--primary) / .9); }
+.nui-btn[data-variant="secondary"] { background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground)); }
+.nui-btn[data-variant="secondary"]:hover:not(:disabled) { background: hsl(var(--secondary) / .8); }
+.nui-btn[data-variant="ghost"] { background: transparent; color: hsl(var(--foreground) / .85); }
+.nui-btn[data-variant="ghost"]:hover:not(:disabled) { background: hsl(var(--foreground) / .04); color: hsl(var(--foreground)); }
+.nui-btn[data-variant="danger"] { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground, 0 0% 100%)); }
+.nui-btn[data-variant="danger"]:hover:not(:disabled) { background: hsl(var(--destructive) / .9); }
+.nui-btn[data-size="sm"] { height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; }
+.nui-btn[data-size="lg"] { height: 36px; padding: 0 14px; font-size: 14px; }
+.nui-btn[data-variant="link"] { height: auto; padding: 0; border-radius: 3px; background: transparent; color: hsl(var(--primary)); text-underline-offset: 4px; }
+.nui-btn[data-variant="link"]:hover:not(:disabled) { background: transparent; text-decoration: underline; }
+/* Toggles (Button pressed, ToggleGroup) [B6]: quiet while off, filled while on, whatever the variant. The off hover stays lighter than the on fill. */
+.nui-btn[aria-pressed] { background: transparent; color: hsl(var(--muted-foreground)); }
+.nui-btn[aria-pressed]:hover:not(:disabled) { background: hsl(var(--foreground) / .04); color: hsl(var(--foreground)); }
+.nui-btn[aria-pressed="true"] { background: hsl(var(--foreground) / .1); color: hsl(var(--foreground)); }
+.nui-btn[aria-pressed="true"]:hover:not(:disabled) { background: hsl(var(--foreground) / .13); }
+.nui-btn > .nui-icon { font-size: 15px; }
+.nui-btn-count { font-size: 12px; font-variant-numeric: tabular-nums; opacity: .6; }
+.nui-toggles { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* SegmentedControl: a mode switch inside a section (a chart's Bars, Line, Area). No track: its buttons are pills (tabs, below). */
+.nui-seg { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.nui-select { height: 30px; padding: 0 26px 0 8px; border: 0; border-radius: 7px; font: inherit; font-size: 13px; color: hsl(var(--foreground)); background-color: hsl(var(--foreground) / .05); -webkit-appearance: none; appearance: none; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 12px center, right 8px center; background-size: 4px 4px; background-repeat: no-repeat; }
+.nui-select:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 1px; }
+.nui-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 40px 24px; text-align: center; }
+.nui-empty-title { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; }
+.nui-empty-body { margin: 0; max-width: 20rem; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
+.nui-empty-action { margin-top: 12px; }
+.nui-notice { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 18px; background: hsl(var(--foreground) / .05); }
+.nui-notice[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .08); }
+.nui-notice[data-tone="warning"] { background: hsl(38 92% 50% / .12); }
+.nui-notice[data-tone="danger"] { background: hsl(var(--destructive) / .08); color: hsl(var(--destructive)); }
+.nui-notice[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .1); }
+.nui-notice-text { flex: 1; min-width: 0; padding-block: 3px; }
+.nui-metric { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.nui-metric-label { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+.nui-metric-value { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.nui-metric-delta { font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-metric-delta[data-trend="up"] { color: hsl(var(--nui-st-active, 142 71% 45%)); }
+.nui-metric-delta[data-trend="down"] { color: hsl(var(--destructive)); }
+.nui-metric-hint { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+
+/* == section: layout (S5) == */
+/*
+ * Panels: the Manager chat rule inside a Space. One pane below list min + reader min (320 + 360 = 680px for the
+ * defaults), measured on the Panels element itself (container query, never the viewport: a Space sits in a shadow
+ * root beside a chat of any width). Panels with other minimums add their own named container rule inline.
+ * The pane line between list and reader is the list's full-height hairline (list and reader section).
+ */
+.nui-panels { position: relative; display: flex; flex: 1 1 auto; height: 100%; min-height: 0; min-width: 0; overflow: hidden; container-type: inline-size; container-name: nui-panels; }
+.nui-panels-list, .nui-panels-reader { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+.nui-panels-list { flex: 1 1 auto; container: nui-panels-list / inline-size; }
+/* Stacked (one pane): the open item covers the list and slides in from the right. */
+.nui-panels-reader { position: absolute; inset: 0; z-index: 4; width: 100%; background: hsl(var(--background)); container: nui-panels-reader / inline-size;
+  transform: translateX(0); transition: transform .22s cubic-bezier(.2, .8, .2, 1); }
+@starting-style { .nui-panels-reader { transform: translateX(104%); } }
+.nui-panels-handle { display: none; position: absolute; top: 0; bottom: 0; left: -4px; z-index: 5; width: 9px; cursor: col-resize; touch-action: none; outline: none; }
+.nui-panels-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: hsl(var(--nui-blue, 217 91% 60%) / .6); opacity: 0; transition: opacity .12s ease; pointer-events: none; }
+/* A pass over the edge is not a rest: the line shows after 200ms, at once while dragging or focused. */
+.nui-panels-handle:hover::after { opacity: 1; transition-delay: .2s; }
+.nui-panels-handle[data-resizing]::after, .nui-panels-handle:focus-visible::after { opacity: 1; transition-delay: 0s; }
+.nui-panels-backbar { display: flex; flex-shrink: 0; align-items: center; height: 48px; padding: 0 8px; }
+.nui-panels-back { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border-radius: 6px; font-size: 14px; color: hsl(var(--foreground) / .8); }
+.nui-panels-back:hover { background: hsl(var(--foreground) / .06); }
+.nui-panels-back:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-panels-back .nui-icon { font-size: 16px; }
+/* Split (two panes): the reader sits beside the list, as wide as chosen, never squeezing the list under its minimum. */
+@container nui-panels (min-width: 680px) {
+  .nui-panels:not([data-custom-split]) > .nui-panels-reader { position: relative; inset: auto; z-index: auto; flex: 0 0 auto; transform: none; transition: none;
+    width: clamp(var(--nui-panels-reader-min, 360px), var(--nui-panels-reader-w, 420px), calc(100cqw - var(--nui-panels-list-min, 320px))); }
+  .nui-panels:not([data-custom-split]) > .nui-panels-reader > .nui-panels-handle { display: block; }
+  .nui-panels:not([data-custom-split]) > .nui-panels-reader > .nui-panels-backbar { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .nui-panels-reader { transition: none; } }
+
+/* == section: keycap (A1) == */
+/* Locked "soft" caps (toolkit spec 2.2). --kc-ink defaults to --foreground; menus, the selection bar and tips set it. */
+.nui-kbd-group { display: inline-flex; flex-shrink: 0; align-items: center; gap: 3px; vertical-align: middle; white-space: nowrap; }
+.nui-kbd-caps { display: inline-flex; align-items: center; gap: 3px; }
+.nui-kbd { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 20px; min-width: 20px; padding: 0 5px; border: 0; border-radius: 4px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1; font-weight: 500; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
+.nui-kbd-sep { font-size: 11px; line-height: 1; color: hsl(var(--muted-foreground)); }
+.nui-kbd-group[data-on="chrome"] .nui-kbd { height: 18px; min-width: 18px; font-size: 10px; background: hsl(var(--sidebar-foreground, var(--foreground)) / .15); box-shadow: inset 0 0 0 1px hsl(var(--sidebar-foreground, var(--foreground)) / .2); color: hsl(var(--sidebar-foreground, var(--foreground)) / .75); }
+.nui-kbd-group[data-on="chrome"] .nui-kbd-sep { font-size: 10px; color: hsl(var(--sidebar-foreground, var(--foreground)) / .6); }
+.nui-kbd-group[data-on="pill"] .nui-kbd { background: hsl(var(--background) / .15); box-shadow: inset 0 0 0 1px hsl(var(--background) / .2); color: hsl(var(--background) / .85); }
+.nui-kbd-group[data-on="pill"] .nui-kbd-sep { color: hsl(var(--background) / .6); }
+.nui-kbd-group[data-on="discreet"] .nui-kbd { height: 18px; min-width: 18px; padding: 0 4px; background: hsl(var(--kc-ink, var(--foreground)) / .05); color: hsl(var(--kc-ink, var(--foreground)) / .5); }
+.nui-kbd-group[data-on="discreet"] .nui-kbd-sep { color: hsl(var(--kc-ink, var(--foreground)) / .4); }
+.nui-kbd-group[data-on="tooltip"] .nui-kbd { height: 18px; min-width: 18px; padding: 0 4px; background: hsl(var(--kc-ink, var(--foreground)) / .14); color: hsl(var(--kc-ink, var(--foreground)) / .7); }
+.nui-kbd-group[data-on="tooltip"] .nui-kbd-sep { color: hsl(var(--kc-ink, var(--foreground)) / .5); }
+
+/* == section: help sheet (A1) == */
+/* Dialog rules of the Portal: z-index 100, 8px radius, no outside-click close, no animation, full screen on phones. */
+.nui-help { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 32px 16px; box-sizing: border-box; --kc-ink: var(--foreground); }
+.nui-help-backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / .4); }
+.nui-help-panel { position: relative; display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(680px, 100%); box-sizing: border-box; border-radius: 8px; background: hsl(var(--background)); color: hsl(var(--foreground)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev-lg, 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12)); outline: none; overflow: hidden; }
+.nui-help-head { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; height: 52px; padding: 0 12px 0 20px; }
+.nui-help-title { margin: 0; min-width: 0; font-size: 15px; line-height: 20px; font-weight: 600; }
+.nui-help-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 20px 20px; }
+.nui-help-empty { margin: 8px 0 0; font-size: 13px; color: hsl(var(--muted-foreground)); }
+.nui-help-group + .nui-help-group { margin-top: 16px; }
+.nui-help-group-title { margin: 0 0 4px; font-size: 13px; line-height: 20px; font-weight: 600; color: hsl(var(--muted-foreground)); }
+.nui-help-list { margin: 0; padding: 0; list-style: none; }
+.nui-help-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 32px; font-size: 13px; line-height: 18px; }
+.nui-help-label { flex: 1; min-width: 0; padding: 7px 0; }
+@media (max-width: 639px) {
+  .nui-help { padding: 0; }
+  .nui-help-panel { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+}
+
+/* == section: dates base (A3) == */
+/* The A2 button reset covers .nui-root and .nui-layer only; these pieces also render in plain Portal pages. */
+:where(.nui-dp, .nui-pp, .nui-pp-pop, .nui-cal, .nui-tl-view, .nui-ctable-wrap) button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: default; }
+
+/* == section: day picker (A3) == */
+/* react-day-picker on nui-dp-* classes (DayPicker.tsx); no library sheet. Weeks start Monday. */
+.nui-dp { position: relative; box-sizing: border-box; font-size: 12px; color: hsl(var(--foreground)); --nui-dp-cell: 32px; }
+.nui-dp-months { position: relative; display: flex; flex-wrap: wrap; gap: 20px; }
+.nui-dp-month { width: calc(var(--nui-dp-cell) * 7); }
+.nui-dp-caption { display: flex; align-items: center; justify-content: center; height: 28px; margin-bottom: 4px; }
+.nui-dp-caption-label { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; line-height: 18px; font-weight: 500; white-space: nowrap; }
+.nui-dp-nav { position: absolute; top: 0; left: 0; right: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; height: 28px; pointer-events: none; }
+.nui-dp-nav-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: hsl(var(--muted-foreground)); pointer-events: auto; }
+.nui-dp-nav-btn:hover:not(:disabled) { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+.nui-dp-nav-btn:disabled { opacity: .35; }
+.nui-dp-nav-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-dp-chevron { width: 16px; height: 16px; }
+.nui-dp-dropdowns { display: inline-flex; align-items: center; gap: 4px; }
+.nui-dp-dropdown-root { position: relative; display: inline-flex; align-items: center; height: 28px; padding: 0 6px; border-radius: 6px; }
+.nui-dp-dropdown-root:hover, .nui-dp-dropdown-root:focus-within { background: hsl(var(--accent)); }
+.nui-dp-dropdown-root .nui-dp-chevron { width: 12px; height: 12px; color: hsl(var(--muted-foreground)); }
+.nui-dp-dropdown { position: absolute; inset: 0; z-index: 2; width: 100%; margin: 0; opacity: 0; border: 0; font: inherit; -webkit-appearance: none; appearance: none; cursor: pointer; }
+.nui-dp-grid { border-collapse: collapse; border-spacing: 0; }
+.nui-dp-weekday { width: var(--nui-dp-cell); height: 24px; padding: 0; font-size: 11px; font-weight: 400; text-align: center; color: hsl(var(--muted-foreground)); }
+.nui-dp-day { position: relative; width: var(--nui-dp-cell); height: var(--nui-dp-cell); padding: 0; text-align: center; }
+.nui-dp-day-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: var(--nui-dp-cell); height: var(--nui-dp-cell); border-radius: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.nui-dp-day-btn:hover:not(:disabled) { background: hsl(var(--accent)); }
+.nui-dp-day-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-dp-today .nui-dp-day-btn::after { content: ""; position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: hsl(var(--chart-1, 210 100% 49%)); }
+.nui-dp-outside .nui-dp-day-btn { color: hsl(var(--muted-foreground) / .7); }
+.nui-dp-disabled .nui-dp-day-btn, .nui-dp-day-btn:disabled { color: hsl(var(--muted-foreground) / .45); background: none; }
+.nui-dp-range-middle { background: hsl(var(--chart-1, 210 100% 49%) / .1); }
+.nui-dp-range-middle .nui-dp-day-btn { border-radius: 0; }
+.nui-dp-range-middle .nui-dp-day-btn:hover { background: hsl(var(--chart-1, 210 100% 49%) / .12); }
+.nui-dp-range-start:not(.nui-dp-range-end) { background: linear-gradient(to right, transparent 50%, hsl(var(--chart-1, 210 100% 49%) / .1) 50%); }
+.nui-dp-range-end:not(.nui-dp-range-start) { background: linear-gradient(to left, transparent 50%, hsl(var(--chart-1, 210 100% 49%) / .1) 50%); }
+.nui-dp-selected:not(.nui-dp-range-middle) .nui-dp-day-btn, .nui-dp-selected:not(.nui-dp-range-middle) .nui-dp-day-btn:hover { background: hsl(var(--chart-1, 210 100% 49%)); color: #fff; font-weight: 500; }
+.nui-dp-selected:not(.nui-dp-range-middle).nui-dp-today .nui-dp-day-btn::after { background: #fff; }
+.nui-dp-hidden { visibility: hidden; }
+.nui-dp-footer { margin-top: 8px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+
+/* == section: period picker (A3) == */
+.nui-pp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.nui-pp-trigger { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; line-height: 18px; white-space: nowrap; background: hsl(var(--foreground) / .045); color: hsl(var(--foreground)); }
+.nui-pp-trigger:hover, .nui-pp-trigger[aria-expanded="true"] { background: hsl(var(--foreground) / .08); }
+.nui-pp-trigger:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 1px; }
+.nui-pp-glyph { width: 15px; height: 15px; color: hsl(var(--muted-foreground)); }
+.nui-pp-name { font-weight: 500; }
+.nui-pp-dates, .nui-pp-muted { color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.nui-pp-caret { width: 12px; height: 12px; color: hsl(var(--muted-foreground)); }
+.nui-popover.nui-pp-pop { padding: 0; border-radius: 8px; overflow: hidden; max-width: calc(100vw - 16px); }
+.nui-pp-pop-cmp { min-width: 264px; }
+.nui-pp-panel { display: flex; }
+.nui-pp-presets { display: flex; flex-direction: column; gap: 1px; width: 184px; padding: 4px; box-sizing: border-box; flex-shrink: 0; }
+.nui-pp-panel > .nui-pp-presets { border-right: 1px solid hsl(var(--border) / .6); }
+.nui-pp-pop-cmp .nui-pp-presets { width: auto; }
+.nui-pp-opt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 8px; box-sizing: border-box; border-radius: 5px; font-size: 13px; line-height: 18px; text-align: left; color: hsl(var(--foreground)); outline: none; }
+.nui-pp-opt:hover, .nui-pp-opt:focus-visible { background: hsl(var(--accent)); }
+.nui-pp-opt[aria-selected="true"] { font-weight: 500; }
+.nui-pp-opt-text { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.nui-pp-opt-2 { min-height: 44px; padding: 4px 8px; }
+.nui-pp-opt-dates { font-size: 12px; line-height: 16px; font-weight: 400; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.nui-pp-check { flex-shrink: 0; width: 15px; height: 15px; margin-left: auto; }
+.nui-pp-cal { display: flex; flex-direction: column; padding: 12px 12px 8px; }
+.nui-pp-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid hsl(var(--border) / .6); }
+.nui-pp-hint { min-width: 0; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+.nui-pp-grow { flex: 1; }
+.nui-pp-btn { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.nui-pp-btn:hover:not(:disabled) { background: hsl(var(--foreground) / .06); }
+.nui-pp-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 1px; }
+.nui-pp-btn.nui-pp-primary { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.nui-pp-btn.nui-pp-primary:hover:not(:disabled) { background: hsl(var(--primary) / .9); }
+.nui-pp-btn:disabled { opacity: .5; }
+/* One month (narrow): presets wrap in a row above the calendar. */
+.nui-pp-panel[data-one] { flex-direction: column; }
+.nui-pp-panel[data-one] > .nui-pp-presets { flex-direction: row; flex-wrap: wrap; width: auto; max-width: calc(224px + 24px); gap: 2px; border-right: 0; border-bottom: 1px solid hsl(var(--border) / .6); }
+.nui-pp-panel[data-one] .nui-pp-opt { width: auto; min-height: 28px; }
+.nui-pp-panel[data-one] .nui-pp-check { display: none; }
+.nui-pp-panel[data-one] .nui-pp-opt[aria-selected="true"] { background: hsl(var(--accent)); }
+/* Presets only (no `custom` preset): no calendar beside the list, so no divider [B13]. */
+.nui-pp-panel > .nui-pp-presets:only-child { border-right: 0; }
+
+/* == section: calendar (A3) == */
+.nui-cal { display: flex; flex-direction: column; min-height: 0; min-width: 0; color: hsl(var(--foreground)); }
+/* The view takes focus (a click on it, or a period step that took the focused item away) so [ and ] step it. */
+.nui-cal:focus, .nui-tl-view:focus { outline: none; }
+.nui-cal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 12px 10px 20px; }
+.nui-cal-title { min-width: 0; margin: 0; font-size: 18px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nui-cal-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: auto; }
+.nui-cal-views { display: inline-flex; gap: 2px; }
+.nui-cal-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; font-size: 13px; white-space: nowrap; color: hsl(var(--foreground) / .85); }
+.nui-cal-btn:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+/* The view switch takes the deck pill (Flo 5b): no track, active fg/.07 medium, inactive /.60. */
+.nui-cal-views .nui-cal-btn { padding: 0 8px; color: hsl(var(--foreground) / .6); }
+.nui-cal-views .nui-cal-btn:hover { background: hsl(var(--foreground) / .04); color: hsl(var(--foreground)); }
+.nui-cal-views .nui-cal-btn[aria-pressed="true"] { background: hsl(var(--foreground) / .07); color: hsl(var(--foreground)); font-weight: 500; }
+.nui-cal-btn[aria-expanded="true"] { background: hsl(var(--foreground) / .06); }
+.nui-cal-btn:focus-visible, .nui-cal-nav:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-cal-nav { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; font-size: 16px; color: hsl(var(--muted-foreground)); }
+.nui-cal-nav:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-cal-nav svg, .nui-cal-btn svg { width: 16px; height: 16px; }
+.nui-cal-count { font-size: 12px; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-cal-body { display: flex; flex: 1; flex-direction: column; min-height: 0; border-top: 1px solid hsl(var(--border) / .6); }
+.nui-cal-main { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; outline: none; }
+.nui-cal-body[data-tray="side"] .nui-cal-main { flex-direction: row; }
+.nui-cal-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: auto; }
+.nui-cal-wd { padding: 6px 8px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); border-bottom: 1px solid hsl(var(--border) / .6); }
+.nui-cal-day { display: flex; flex-direction: column; gap: 3px; min-width: 0; min-height: 0; padding: 4px 4px 6px; box-sizing: border-box; border-right: 1px solid hsl(var(--border) / .6); border-bottom: 1px solid hsl(var(--border) / .6); overflow: hidden; }
+.nui-cal-day:nth-child(7n) { border-right: 0; }
+.nui-cal-day[data-weekend] { background: hsl(var(--foreground) / .028); }
+.nui-cal-num { display: inline-flex; align-self: flex-start; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; font-size: 12px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nui-cal-day[data-outside] .nui-cal-num { color: hsl(var(--muted-foreground) / .7); }
+[data-today] > .nui-cal-num, [data-today] .nui-cal-wdh > .nui-cal-num { background: hsl(var(--nui-blue, 217 91% 60%)); color: #fff; font-weight: 600; }
+.nui-cal-chips { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nui-cal-chips[data-dots] { flex-direction: row; flex-wrap: wrap; }
+.nui-cal-chip { display: flex; align-items: center; gap: 6px; min-width: 0; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 6px; font-size: 12px; line-height: 16px; background: hsl(var(--background)); box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .1); outline: none; cursor: default; }
+.nui-cal-chip:hover { background: hsl(var(--foreground) / .04); }
+.nui-cal-chip[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .1)); }
+.nui-cal-chip[data-cursor], .nui-cal-chip:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .65); }
+.nui-cal-chip[data-variant="dot"] { justify-content: center; width: 24px; padding: 0; }
+.nui-cal-chip[data-variant="card"] { flex-direction: column; align-items: stretch; gap: 4px; height: auto; padding: 8px; border-radius: 8px; }
+.nui-cal-chip[data-variant="row"] { height: auto; min-height: 36px; padding: 6px 10px; font-size: 13px; line-height: 18px; }
+.nui-cal-chip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-cal-chip[data-variant="card"] .nui-cal-chip-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; font-size: 12px; line-height: 17px; }
+.nui-cal-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-cal-more { align-self: flex-start; height: 22px; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nui-cal-more:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-cal-more:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+/* Week */
+.nui-cal-grid[data-view="week"] { grid-template-rows: auto; align-content: stretch; }
+.nui-cal-wday { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 0 6px 16px; border-right: 1px solid hsl(var(--border) / .6); }
+.nui-cal-wday:nth-child(7n) { border-right: 0; }
+.nui-cal-wday[data-weekend] { background: hsl(var(--foreground) / .028); }
+.nui-cal-wdh { display: flex; align-items: center; gap: 6px; height: 44px; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nui-cal-wdh-name { white-space: nowrap; }
+.nui-cal-cards { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nui-cal-grid[data-stacked] { grid-template-columns: 64px minmax(0, 1fr); }
+.nui-cal-grid[data-stacked] .nui-cal-wday { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; gap: 0; padding: 0; border-right: 0; }
+.nui-cal-grid[data-stacked] .nui-cal-wdh { flex-direction: column; justify-content: center; gap: 2px; height: auto; min-height: 52px; padding: 8px 0; border-bottom: 1px solid hsl(var(--border) / .6); }
+.nui-cal-grid[data-stacked] .nui-cal-cards { padding: 8px 12px; border-bottom: 1px solid hsl(var(--border) / .6); }
+/* Tray: items with no date */
+.nui-cal-tray { display: flex; flex-direction: column; min-height: 0; background: hsl(var(--muted) / .4); }
+.nui-cal-body[data-tray="side"] .nui-cal-tray { flex: 0 0 240px; border-left: 1px solid hsl(var(--border) / .6); overflow-y: auto; }
+.nui-cal-body[data-tray="below"] .nui-cal-tray { max-height: 42%; border-top: 1px solid hsl(var(--border) / .6); overflow-y: auto; }
+.nui-cal-tray-head { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nui-cal-tray-list { display: flex; flex-direction: column; gap: 6px; padding: 2px 10px 12px; }
+.nui-cal-body[data-tray="below"] .nui-cal-tray-list { flex-direction: row; flex-wrap: wrap; }
+.nui-cal-body[data-tray="below"] .nui-cal-tray-list > * { flex: 1 1 180px; max-width: 280px; }
+/* Agenda */
+/* Agenda: full width (FS1), month heads at ROW9 sizes, day rows as the deck's cal-ag-day. */
+.nui-cal-agenda { width: 100%; padding-bottom: 32px; overflow-y: auto; }
+.nui-cal-amonth { margin: 0; padding: 20px 24px 6px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nui-cal-aday { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 0 8px; padding: 6px 24px 6px 0; border-top: 1px solid hsl(var(--border) / .5); }
+.nui-cal-amonth + .nui-cal-aday { border-top-color: transparent; }
+.nui-cal-adate { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 4px; }
+.nui-cal-awd { font-size: 11px; line-height: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; color: hsl(var(--muted-foreground)); }
+.nui-cal-anum { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.nui-cal-aday[data-today] .nui-cal-awd { color: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-cal-aday[data-today] .nui-cal-anum { background: hsl(var(--nui-blue, 217 91% 60%)); color: #fff; }
+.nui-cal-aday[data-past] .nui-cal-anum, .nui-cal-aday[data-past] .nui-cal-awd { color: hsl(var(--muted-foreground)); }
+.nui-cal-arows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.nui-cal-aempty { display: flex; align-items: center; min-height: 40px; font-size: 13px; color: hsl(var(--muted-foreground)); }
+.nui-cal-aempty[data-all] { padding: 0 24px; }
+/* Narrow head (C4): title, today, steps and tray on the first line, the view switch on its own line; never a wrap. */
+.nui-cal[data-narrow] .nui-cal-head { column-gap: 4px; padding-left: 12px; }
+.nui-cal[data-narrow] .nui-cal-title { flex: 1; }
+.nui-cal[data-narrow] .nui-cal-tools { display: contents; }
+.nui-cal[data-narrow] .nui-cal-views { order: 9; flex-basis: 100%; margin: 0; }
+.nui-cal[data-narrow] .nui-cal-tray-word { display: none; }
+.nui-cal[data-narrow] .nui-cal-more { align-self: center; padding: 0 4px; white-space: nowrap; }
+.nui-cal[data-narrow] .nui-cal-wd { padding: 6px 4px; text-align: center; }
+.nui-cal[data-narrow] .nui-cal-day { align-items: center; padding: 2px 2px 4px; }
+.nui-cal[data-narrow] .nui-cal-num { align-self: center; }
+.nui-cal[data-narrow] .nui-cal-aday { padding-right: 12px; }
+
+/* == section: timeline (A3) == */
+.nui-tl-view { display: flex; flex-direction: column; min-height: 0; min-width: 0; color: hsl(var(--foreground)); }
+.nui-tl-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 10px 12px 10px 24px; }
+.nui-tl-zooms { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: hsl(var(--foreground) / .06); }
+.nui-tl-grow { flex: 1; }
+.nui-tl-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; font-size: 13px; white-space: nowrap; color: hsl(var(--foreground) / .85); }
+.nui-tl-btn:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-tl-zooms .nui-tl-btn { height: 24px; padding: 0 8px; color: hsl(var(--foreground) / .7); }
+.nui-tl-zooms .nui-tl-btn[aria-pressed="true"] { background: hsl(var(--background)); color: hsl(var(--foreground)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)); }
+.nui-tl-nav { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: hsl(var(--muted-foreground)); }
+.nui-tl-nav:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-tl-nav svg { width: 16px; height: 16px; }
+.nui-tl-btn:focus-visible, .nui-tl-nav:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-tl-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; }
+.nui-tl { position: relative; padding-bottom: 16px; }
+.nui-tl-row { display: grid; grid-template-columns: 9rem minmax(0, 1fr); }
+.nui-tl-lab { position: sticky; left: 0; z-index: 2; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 .75rem 0 1.5rem; box-sizing: border-box; background: hsl(var(--background)); font-size: 13px; line-height: 18px; }
+.nui-tl-lane > .nui-tl-lab { align-items: flex-start; padding-top: 14px; }
+.nui-tl-lane + .nui-tl-lane > * { border-top: 1px solid hsl(var(--border) / .5); }
+.nui-tl-lab-text { min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-tl-count { flex-shrink: 0; font-size: 12px; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-tl-track { position: relative; margin-right: 1.5rem; }
+.nui-tl-axis { position: sticky; top: 0; z-index: 3; height: 2.25rem; background: hsl(var(--background)); border-bottom: 1px solid hsl(var(--border) / .6); }
+.nui-tl-axis > .nui-tl-lab { z-index: 4; }
+.nui-tl-tick { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 11px; line-height: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); pointer-events: none; }
+.nui-tl-today-chip { position: absolute; bottom: -1px; transform: translateX(-50%); padding: 1px 6px; border-radius: 4px 4px 0 0; font-size: 10px; line-height: 14px; font-weight: 600; white-space: nowrap; color: #fff; background: hsl(var(--destructive)); pointer-events: none; }
+.nui-tl-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: hsl(var(--foreground) / .05); pointer-events: none; }
+.nui-tl-today { position: absolute; top: 0; bottom: 0; z-index: 1; width: 1px; background: hsl(var(--destructive) / .55); pointer-events: none; }
+.nui-tl-bar { position: absolute; z-index: 1; display: flex; align-items: center; gap: 6px; height: 26px; min-width: 26px; padding: 0 3px 0 7px; box-sizing: border-box; border-radius: 6px; overflow: hidden; font-size: 12px; line-height: 16px; outline: none; cursor: default;
+  background: hsl(var(--foreground) / .06); box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .14); }
+.nui-tl-bar[data-group="active"] { background: hsl(38 92% 50% / .12); box-shadow: inset 0 0 0 1px hsl(38 92% 50% / .3); }
+.nui-tl-bar[data-group="waiting"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .1); box-shadow: inset 0 0 0 1px hsl(var(--nui-st-active, 142 71% 45%) / .28); }
+.nui-tl-bar[data-group="done"] { background: hsl(var(--nui-blue, 217 91% 60%) / .08); box-shadow: inset 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .22); color: hsl(var(--foreground) / .7); }
+.nui-tl-bar:hover { filter: brightness(.98); }
+.nui-tl-bar[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .1)); }
+.nui-tl-bar[data-cursor], .nui-tl-bar:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .7); }
+.nui-tl-bar.nui-tl-cut-l { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.nui-tl-bar.nui-tl-cut-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.nui-tl-bar-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-tl-empty { padding: 32px 24px; font-size: 13px; color: hsl(var(--muted-foreground)); }
+
+/* == section: charts (A3) == */
+/* ChartContainer (the Portal's recharts wrapper, moved) and Chart. Series colours come from --color-<key>. */
+.nui-chart-container { display: flex; justify-content: center; aspect-ratio: 16 / 9; min-width: 0; font-size: 12px; }
+.nui-chart-container .recharts-cartesian-axis-tick text { fill: hsl(var(--muted-foreground)); }
+.nui-chart-container .recharts-cartesian-grid line[stroke="#ccc"] { stroke: hsl(var(--border) / .25); }
+.nui-chart-container .recharts-curve.recharts-tooltip-cursor { stroke: hsl(var(--border)); }
+.nui-chart-container .recharts-dot[stroke="#fff"], .nui-chart-container .recharts-sector[stroke="#fff"] { stroke: transparent; }
+.nui-chart-container .recharts-rectangle.recharts-tooltip-cursor, .nui-chart-container .recharts-radial-bar-background-sector { fill: hsl(var(--muted)); }
+.nui-chart-container .recharts-polar-grid [stroke="#ccc"], .nui-chart-container .recharts-reference-line [stroke="#ccc"] { stroke: hsl(var(--border)); }
+.nui-chart-container .recharts-layer, .nui-chart-container .recharts-sector, .nui-chart-container .recharts-surface { outline: none; }
+.nui-chart { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.nui-chart-plot { position: relative; min-width: 0; }
+.nui-chart-box { width: 100%; height: 100%; aspect-ratio: auto; }
+.nui-chart-tip { display: grid; gap: 6px; min-width: 8rem; padding: 6px 10px; border-radius: 8px; font-size: 12px; line-height: 16px; color: hsl(var(--popover-foreground, var(--foreground))); background: hsl(var(--popover, var(--background))); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); }
+.nui-chart-tip-label { font-weight: 500; }
+.nui-chart-tip-rows { display: grid; gap: 4px; }
+.nui-chart-tip-row { display: flex; align-items: center; gap: 8px; }
+.nui-chart-tip-ind { flex-shrink: 0; width: 10px; height: 10px; border-radius: 2px; background: var(--nui-chart-ind); }
+.nui-chart-tip-ind[data-indicator="line"] { width: 3px; height: 14px; }
+.nui-chart-tip-ind[data-indicator="dashed"] { width: 0; height: 14px; border-left: 2px dashed var(--nui-chart-ind); background: none; }
+.nui-chart-tip-name { color: hsl(var(--muted-foreground)); }
+.nui-chart-tip-value { margin-left: auto; padding-left: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.nui-chart-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 16px; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+.nui-chart-legend[data-placement="below"] { justify-content: flex-start; padding: 0 4px; }
+.nui-chart-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.nui-chart-swatch { width: 8px; height: 8px; border-radius: 2px; }
+.nui-chart-key { display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
+.nui-chart-key[data-dashed] { height: 0; border-top: 2px dashed hsl(var(--muted-foreground) / .7); border-radius: 0; background: none; }
+/* [B13] A circle key (ChartLegend shape), "No data" in a tooltip, and a bar's value label (barLabel). */
+.nui-chart-swatch[data-shape="circle"] { border-radius: 50%; }
+.nui-chart-tip-value[data-empty] { font-weight: 400; color: hsl(var(--muted-foreground)); }
+.nui-chart-bar-label { fill: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+/*
+ * Stat row (deck PG2): a full-width strip of four equal cells, two when the strip is 640px or narrower (its own
+ * container, so it holds in any Space). Cells 24px in and 16px tall padding; no card, gap or rule between them. Labels
+ * wrap [B7].
+ */
+.nui-stats { display: flex; flex-wrap: wrap; min-width: 0; container: nui-stats / inline-size; }
+.nui-stat { display: flex; flex: 0 0 25%; flex-direction: column; box-sizing: border-box; min-width: 0; padding: 16px 24px; }
+@container nui-stats (max-width: 640px) { .nui-stat { flex-basis: 50%; } }
+.nui-stat-head { display: flex; align-items: center; gap: 2px; min-width: 0; min-height: 16px; }
+.nui-stat-label { min-width: 0; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
+.nui-stat-about { display: inline-flex; flex-shrink: 0; align-items: center; margin-block: -6px; }
+.nui-stat-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; }
+.nui-stat-value { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.nui-stat-delta { font-size: 12px; line-height: 16px; font-weight: 500; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-stat-delta[data-tone="good"], .nui-ctable-change[data-tone="good"] { color: hsl(var(--nui-st-active, 142 71% 45%)); }
+.nui-stat-delta[data-tone="destructive"], .nui-ctable-change[data-tone="destructive"] { color: hsl(var(--destructive)); }
+.nui-stat-sub { margin-top: 2px; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+/*
+ * Metric table (deck TBL1 to TBL3): 40px rows with a hairline above each, a sticky 36px header with its rule inset
+ * at the bottom. Metric takes the room left and truncates; Trend and Previous hide at 760px or less (its own container).
+ * The wrap clips instead of scrolling so the header sticks to the page scroll.
+ */
+.nui-ctable-wrap { min-width: 0; overflow-x: clip; container: nui-ctable / inline-size; }
+.nui-ctable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 18px; }
+.nui-ctable th, .nui-ctable td { height: 40px; padding: 0 12px; text-align: left; font-weight: 400; white-space: nowrap; border-top: 1px solid hsl(var(--border) / .5); }
+.nui-ctable thead th { position: sticky; top: 0; z-index: 1; height: 36px; border-top: 0; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); box-shadow: inset 0 -1px 0 hsl(var(--border) / .8); }
+.nui-ctable .nui-ctable-metric { width: 100%; max-width: 0; padding-left: 24px; overflow: hidden; text-overflow: ellipsis; }
+.nui-ctable .nui-ctable-trend { width: 140px; }
+.nui-ctable .nui-ctable-num { width: 112px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nui-ctable td.nui-ctable-prev { color: hsl(var(--muted-foreground)); }
+.nui-ctable .nui-ctable-change { width: 96px; padding-right: 24px; }
+.nui-ctable tr[data-pressable]:hover > * { background: hsl(var(--foreground) / .03); }
+.nui-ctable tr[data-active] > * { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05)); }
+.nui-ctable-pick { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; text-align: left; font-weight: inherit; }
+.nui-ctable-pick::after { content: ""; position: absolute; inset: 0; }
+.nui-ctable tr[data-pressable] { position: relative; }
+.nui-ctable-pick:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; border-radius: 4px; }
+/* A metric's about sits above the row's pick area (the pick button's ::after covers the row). */
+.nui-ctable-about { position: relative; z-index: 1; display: inline-flex; align-items: center; margin-left: 2px; vertical-align: middle; }
+@container nui-ctable (max-width: 760px) { .nui-ctable :is(.nui-ctable-trend, .nui-ctable-prev) { display: none; } }
+.nui-spark { display: block; overflow: visible; }
+.nui-spark-fill { fill: hsl(var(--chart-1, 210 100% 49%) / .12); }
+.nui-spark-line { fill: none; stroke: hsl(var(--chart-1, 210 100% 49%)); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+
+/* == section: list extras (A4) == */
+/*
+ * Floating button safe area. The Portal's floating Notis button covers ~72px of the bottom-right corner; while it is
+ * on the page the host vars below are set, and every list keeps its last row and the reader keeps its end clear.
+ * A sticky footer inside a reader (a reply box) takes .nui-fab-safe to keep its right edge clear too.
+ */
+:root:has(.notis-chat-launcher) { --notis-fab-safe-bottom: 72px; --notis-fab-safe-end: 72px; }
+.nui-fab-safe { padding-inline-end: max(var(--nui-fab-safe-end, var(--notis-fab-safe-end, 0px)), 1rem); }
+.nui-fab-safe-bottom { padding-bottom: var(--nui-fab-safe-bottom, var(--notis-fab-safe-bottom, 0px)); }
+
+/* Group headings: a count, and a fold toggle when collapsible. */
+.nui-group-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-group-count { font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground) / .8); font-weight: 400; }
+.nui-group-toggle { display: flex; align-items: center; gap: 6px; width: 100%; height: 100%; min-width: 0; padding: 0; margin: 0 -2px; border-radius: 5px; font: inherit; color: inherit; text-align: left; }
+.nui-group-toggle:hover { color: hsl(var(--foreground)); }
+.nui-group-toggle:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 0; }
+.nui-group-caret { flex-shrink: 0; font-size: 12px; }
+
+/* Pending rows show busy; disabled rows are dimmed and inert to the pointer's open. */
+.nui-row[data-pending] { opacity: .6; }
+.nui-row[data-pending] .nui-row-title::after { content: ""; display: inline-block; width: 10px; height: 10px; margin-left: 8px; vertical-align: -1px; border-radius: 9999px; border: 1.5px solid hsl(var(--muted-foreground) / .5); border-top-color: transparent; animation: nui-spin .8s linear infinite; }
+.nui-row[data-disabled] { opacity: .45; }
+.nui-row[data-disabled] .nui-row-check { visibility: hidden; }
+.nui-row[draggable="true"] { -webkit-user-drag: element; }
+@keyframes nui-spin { to { transform: rotate(360deg); } }
+
+/* Loading: skeleton rows for the first page, a thin bar above a list that refreshes, Load more at the end. */
+.nui-row-skel { pointer-events: none; }
+.nui-skel { display: block; border-radius: 4px; background: hsl(var(--foreground) / .07); animation: nui-skel 1.4s ease-in-out infinite; }
+.nui-skel-dot { flex-shrink: 0; width: 16px; height: 16px; border-radius: 9999px; }
+.nui-skel-line { height: 10px; }
+@keyframes nui-skel { 50% { opacity: .5; } }
+.nui-lr[data-loading] .nui-lr-list::before { content: ""; position: absolute; top: 0; left: 0; right: 0; z-index: 2; height: 2px; background: linear-gradient(90deg, transparent, hsl(var(--nui-blue, 217 91% 60%) / .7), transparent); background-size: 40% 100%; background-repeat: no-repeat; animation: nui-bar 1.1s ease-in-out infinite; }
+@keyframes nui-bar { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+.nui-lr-more { position: relative; display: flex; justify-content: center; padding: 8px 0 12px; }
+.nui-lr-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 1px; }
+.nui-menu-hint { margin-left: 8px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+@media (prefers-reduced-motion: reduce) { .nui-skel, .nui-row[data-pending] .nui-row-title::after, .nui-lr[data-loading] .nui-lr-list::before { animation: none; } }
+
+/* Busy selection-bar buttons. */
+.nui-sb-btn[aria-busy="true"] { cursor: progress; }
+
+/* Row priority by width: the meta truncates (urgent labels sort first), then the owner goes, so the title keeps its
+   room. Measured on the list, or on the row itself for a lone Row (390px phones). */
+.nui-row-main { min-width: 96px; }
+div.nui-row:not(.nui-lr-list div.nui-row) { container: nui-row / inline-size; }
+@container nui-row (max-width: 360px) { .nui-row-trail > .nui-avatar { display: none; } }
+@container nui-lr-list (max-width: 399px) { .nui-row .nui-row-trail > .nui-avatar { display: none; } }
+
+/* Switch. */
+.nui-switch { display: inline-flex; align-items: center; gap: 8px; padding: 0; font-size: 13px; color: hsl(var(--foreground)); cursor: pointer; }
+.nui-switch:disabled { cursor: default; opacity: .5; }
+.nui-switch[aria-busy="true"] { cursor: progress; opacity: .7; }
+.nui-switch-track { position: relative; display: inline-block; flex-shrink: 0; width: 28px; height: 16px; border-radius: 9999px; background: hsl(var(--foreground) / .18); transition: background-color .15s ease; }
+.nui-switch-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 9999px; background: hsl(var(--background)); box-shadow: 0 1px 2px rgb(0 0 0 / .2); transition: transform .15s ease; }
+.nui-switch[aria-checked="true"] .nui-switch-track { background: hsl(var(--primary)); }
+.nui-switch[aria-checked="true"] .nui-switch-thumb { transform: translateX(12px); }
+.nui-switch[data-size="md"] .nui-switch-track { width: 36px; height: 20px; }
+.nui-switch[data-size="md"] .nui-switch-thumb { width: 16px; height: 16px; }
+.nui-switch[data-size="md"][aria-checked="true"] .nui-switch-thumb { transform: translateX(16px); }
+.nui-switch:focus-visible { outline: none; }
+.nui-switch:focus-visible .nui-switch-track { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .nui-switch-track, .nui-switch-thumb { transition: none; } }
+
+/* Pagination. */
+.nui-pagination { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; color: hsl(var(--muted-foreground)); }
+.nui-pagination-label { padding: 0 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Pills (Flo 5b): one look for Tabs, TabRow and SegmentedControl. 28px, 13px; the active pill is tinted and medium,
+   never a line under it or an edge on one side. Counts 12px tabular. */
+.nui-pill, .nui-tab, .nui-seg > button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; line-height: 20px; white-space: nowrap; color: hsl(var(--foreground) / .6); }
+:is(.nui-pill:not([data-on]), .nui-tab:not([aria-selected="true"]), .nui-seg > button:not([aria-pressed="true"])):not(:disabled):hover { background: hsl(var(--foreground) / .04); color: hsl(var(--foreground)); }
+.nui-pill[data-on], .nui-tab[aria-selected="true"], .nui-seg > button[aria-pressed="true"] { background: hsl(var(--foreground) / .07); color: hsl(var(--foreground)); font-weight: 500; }
+:is(.nui-pill, .nui-tab, .nui-seg > button):focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+:is(.nui-pill, .nui-tab, .nui-seg > button):disabled { opacity: .45; }
+:is(.nui-pill, .nui-tab, .nui-seg > button) > .nui-icon { font-size: 14px; }
+.nui-pill-count, .nui-tab-count, .nui-seg-count { font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--foreground) / .6); }
+
+/* Tabs: the strip scrolls sideways when narrow. */
+.nui-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 2px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.nui-tabs::-webkit-scrollbar { display: none; }
+.nui-tabpanel { min-width: 0; outline: none; }
+
+/* TabRow (TLB1): the 44px row over a list (6 before, 8 after) or a page (20 each side). It never wraps or scrolls:
+   the pills the row has no room for fold into the More menu (TabRow measures them), so no pill is ever cut. */
+.nui-tabrow { display: flex; flex-shrink: 0; align-items: center; gap: 4px; height: 44px; min-width: 0; padding: 0 8px 0 6px; border-bottom: 1px solid hsl(var(--border) / .5); white-space: nowrap; }
+.nui-tabrow[data-inset="page"] { padding: 0 20px; }
+.nui-tabrow-tabs { display: flex; align-items: center; min-width: 0; }
+.nui-tabrow-strip { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 2px; overflow: hidden; }
+.nui-tabrow-strip > .nui-pill, .nui-tabrow-more { flex-shrink: 0; }
+/* The active pill alone beside More: with no room even for it, its label shortens (the count and More stay whole). */
+.nui-tabrow-strip > .nui-pill[data-on]:only-child { flex-shrink: 1; min-width: 0; }
+.nui-tabrow-strip > .nui-pill[data-on]:only-child > .nui-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-tabrow-strip > .nui-pill[data-on]:only-child > :not(.nui-pill-label) { flex-shrink: 0; }
+.nui-tabrow-more > .nui-tabrow-caret { font-size: 12px; opacity: .7; }
+.nui-tabrow-menu-count { margin-left: 8px; font-size: 12px; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-tabrow-end { display: flex; flex-shrink: 0; align-items: center; gap: 4px; margin-left: auto; }
+@media (max-width: 639px) {
+  .nui-tabrow { padding: 0 8px; }
+  .nui-tabrow[data-inset="page"] { padding: 0 12px; }
+}
+
+/* == section: markdown (Meetings port) == */
+/*
+ * The Markdown value renderer (src/components/Markdown.tsx) keeps its `.notis-markdown` class, the one exception to the
+ * `nui-` prefix. A Space ships no CSS (only this sheet is adopted into its shadow root), so the typography it used to
+ * take from the SDK styles.css lives here. Class selectors outrank the Space's own preflight (`ul { list-style: none }`).
+ */
+.notis-markdown { font-size: 14px; line-height: 1.65; color: hsl(var(--foreground)); overflow-wrap: break-word; }
+.notis-markdown--sm { font-size: 13px; line-height: 1.55; }
+.notis-markdown > :first-child { margin-top: 0; }
+.notis-markdown > :last-child { margin-bottom: 0; }
+.notis-markdown p { margin: 0.625em 0; }
+.notis-markdown h1, .notis-markdown h2, .notis-markdown h3, .notis-markdown h4, .notis-markdown h5, .notis-markdown h6 { margin: 1.25em 0 0.5em; font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; color: hsl(var(--foreground)); }
+.notis-markdown h1 { font-size: 1.5em; }
+.notis-markdown h2 { font-size: 1.25em; }
+.notis-markdown h3 { font-size: 1.1em; }
+.notis-markdown h4, .notis-markdown h5, .notis-markdown h6 { font-size: 1em; }
+.notis-markdown ul, .notis-markdown ol { margin: 0.625em 0; padding-left: 1.5em; }
+.notis-markdown ul { list-style-type: disc; }
+.notis-markdown ol { list-style-type: decimal; }
+.notis-markdown li { margin: 0.25em 0; }
+.notis-markdown li > ul, .notis-markdown li > ol { margin: 0.25em 0; }
+.notis-markdown ul.contains-task-list { list-style: none; padding-left: 0.375em; }
+.notis-markdown li.task-list-item input[type='checkbox'] { margin-right: 0.5em; accent-color: hsl(var(--primary)); }
+/* C16: a flat tinted block, like a callout; never an edge on one side. */
+.notis-markdown blockquote { margin: 0.75em 0; padding: 0.5em 0.875em; border-radius: 0.5rem; background: hsl(var(--muted) / .5); color: hsl(var(--muted-foreground)); }
+.notis-markdown blockquote > :first-child { margin-top: 0; }
+.notis-markdown blockquote > :last-child { margin-bottom: 0; }
+.notis-markdown a { color: hsl(var(--primary)); text-decoration: underline; text-decoration-color: hsl(var(--primary) / 0.35); text-underline-offset: 2px; }
+.notis-markdown a:hover { text-decoration-color: hsl(var(--primary)); }
+.notis-markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875em; padding: 0.125em 0.375em; border-radius: 0.25rem; background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.notis-markdown pre { margin: 0.75em 0; padding: 0.75em 1em; border-radius: 0.5rem; background: hsl(var(--muted)); overflow-x: auto; }
+.notis-markdown pre code { padding: 0; background: transparent; font-size: 0.875em; }
+.notis-markdown hr { margin: 1.25em 0; border: 0; border-top: 1px solid hsl(var(--border)); }
+.notis-markdown img { max-width: 100%; border-radius: 0.5rem; }
+/* C17: the table scrolls in its own box at phone widths; its cells never squeeze below their words. */
+.notis-markdown-table { margin: 0.75em 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.notis-markdown table { margin: 0; width: 100%; border-collapse: collapse; font-size: 0.95em; }
+.notis-markdown th, .notis-markdown td { min-width: 6em; }
+.notis-markdown th, .notis-markdown td { padding: 0.375em 0.75em; border: 1px solid hsl(var(--border)); text-align: left; }
+.notis-markdown th { background: hsl(var(--muted)); font-weight: 600; }
+
+/* == section: fields (B12) == */
+/*
+ * Editable fields (src/ui/fields): EditableFields, FieldList, FieldRow and their controls. These rules used to ship as a
+ * <style> inside each form; here they also style rows outside a form (FieldList). The rows read the width of the
+ * nearest `.nui-fields` (a named container), so a form in a narrow reader stacks its labels above the values.
+ */
+.nui-fields { display: flex; flex-direction: column; min-width: 0; container: nui-fields / inline-size; }
+.nui-fields-list { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.nui-field-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 4px 0; min-width: 0; }
+@container nui-fields (min-width: 340px) {
+  .nui-field-row:not([data-stacked]) { grid-template-columns: 9.5rem minmax(0, 1fr); column-gap: 16px; align-items: start; }
+}
+.nui-field-label { display: flex; align-items: center; gap: 6px; min-height: 32px; margin: 0; font-size: 13px; line-height: 20px;
+  color: hsl(var(--muted-foreground)); }
+.nui-field-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 999px; background: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-field-value { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-width: 0; min-height: 32px; margin: 0;
+  font-size: 13px; line-height: 20px; color: hsl(var(--foreground)); }
+.nui-field-hint { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+/* An invalid row's hint says what is wrong. */
+.nui-field-row[data-invalid] > .nui-field-value > .nui-field-hint { color: hsl(var(--destructive)); }
+.nui-field-input, .nui-field-textarea, .nui-field-trigger { box-sizing: border-box; min-height: 32px; margin: 0 -8px; padding: 6px 8px;
+  border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; outline: none; }
+.nui-field-input, .nui-field-textarea { width: calc(100% + 16px); }
+.nui-field-input[data-size="title"] { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+/* One line tall when it holds one line (24px line + padding); it grows with its text where the browser sizes it to content. */
+.nui-field-textarea { display: block; min-height: 36px; resize: none; field-sizing: content; white-space: pre-wrap;
+  overflow-wrap: anywhere; line-height: 24px; font-size: 14px; }
+.nui-field-trigger { display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% + 16px); cursor: pointer; text-align: left; }
+.nui-field-trigger > .nui-field-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A disclosure's summary (a long day, a schedule) wraps in a narrow reader instead of losing its end; the caret stays
+   beside its first line. */
+.nui-field-trigger[data-wrap] { align-items: flex-start; }
+.nui-field-trigger[data-wrap] > .nui-field-text { white-space: normal; overflow-wrap: anywhere; }
+.nui-field-input:hover, .nui-field-textarea:hover, .nui-field-trigger:hover { background: hsl(var(--foreground) / .05); }
+.nui-field-input:focus, .nui-field-textarea:focus { background: hsl(var(--foreground) / .05);
+  box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
+.nui-field-trigger:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
+/* aria-invalid (the row's `invalid`, or the field's own): a light destructive fill over the whole field. */
+.nui-field-input[aria-invalid="true"], .nui-field-textarea[aria-invalid="true"] { background: hsl(var(--destructive) / .06); }
+.nui-field-input[aria-invalid="true"]:hover, .nui-field-input[aria-invalid="true"]:focus,
+.nui-field-textarea[aria-invalid="true"]:hover, .nui-field-textarea[aria-invalid="true"]:focus { background: hsl(var(--destructive) / .09); }
+.nui-field-input[readonly], .nui-field-textarea[readonly] { cursor: default; }
+.nui-field-input[readonly]:hover, .nui-field-input[readonly]:focus, .nui-field-textarea[readonly]:hover,
+.nui-field-textarea[readonly]:focus { background: transparent; box-shadow: none; }
+.nui-field-input::placeholder, .nui-field-textarea::placeholder, .nui-field-placeholder { color: hsl(var(--muted-foreground)); }
+.nui-field-caret { flex-shrink: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.nui-field-static { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.nui-field-panel { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 6px 0 8px; }
+.nui-fields-bar { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  container: nui-fields-bar / inline-size;
+  gap: 8px; margin-top: 8px; padding: 10px 0; background: hsl(var(--background)); }
+/* In the floating Notis button's corner (stuck at the bottom of a reader at the window's right) Save keeps clear of it;
+   anywhere else the buttons stay at the end. */
+.nui-fields-bar[data-fab] { padding-inline-end: var(--nui-fab-safe-end, var(--notis-fab-safe-end, 0px)); }
+.nui-fields-bar > button { flex: none; white-space: nowrap; }
+/* One line beside the buttons; in a narrow reader (French runs long) it takes its own line above them instead. */
+.nui-fields-note { flex: 1 1 0; min-width: 0; margin-right: auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+@container nui-fields-bar (max-width: 420px) { .nui-fields-note { flex-basis: 100%; } }
+.nui-fields-error { width: 100%; font-size: 12px; line-height: 16px; color: hsl(var(--destructive)); }
+/* The status line stays in the bar for screen readers; empty, it takes no room. */
+.nui-fields-error:empty { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); }
+.nui-fields-bar .nui-kbd-group { margin-left: 6px; }
+/* A searchable multi-select: a search box over the options in a popover (menu look, after .nui-popover). */
+.nui-field-search-panel { display: flex; flex-direction: column; gap: 4px; width: 264px; max-width: calc(100vw - 16px); padding: 4px; }
+.nui-field-search { box-sizing: border-box; width: 100%; height: 32px; margin: 0; padding: 6px 8px; border: 0; border-radius: 5px;
+  background: hsl(var(--foreground) / .05); color: inherit; font: inherit; font-size: 13px; line-height: 20px;
+  outline: 2px solid transparent; outline-offset: 2px; }
+.nui-field-search::placeholder { color: hsl(var(--muted-foreground)); }
+.nui-field-options { display: flex; flex-direction: column; max-height: min(264px, calc(100vh - 96px)); overflow-y: auto; }
+.nui-field-option[aria-selected="true"] .nui-menu-check { visibility: visible; color: hsl(var(--foreground)); }
+.nui-field-search-status { padding: 6px 8px; font-size: 13px; line-height: 20px; color: hsl(var(--muted-foreground)); }
+.nui-field-search-status:empty { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip-path: inset(50%); }

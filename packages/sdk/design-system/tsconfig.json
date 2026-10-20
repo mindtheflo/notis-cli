@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    // `../../../src/ui` must reach src/ui/index.ts (the package export of @notis/sdk/ui), not the legacy
+    // placeholder src/ui.ts beside it. See design-system/resolve.mjs; harmless once the placeholder is gone.
+    "moduleSuffixes": ["/index", ""]
+  },
+  "include": ["../src", "."]
+}

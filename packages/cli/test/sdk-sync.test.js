@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildArtifact, syncEmbeddedSdk } from '../src/runtime/app-platform.js';
+import { buildArtifact, npmFailureReason, reconcileSdkLockfile, syncEmbeddedSdk, syncSpaceSdk } from '../src/runtime/app-platform.js';
 import { collectProjectBoundaryViolations, collectArtifactBoundaryViolations } from '../src/runtime/app-boundary-validator.js';
 
 // A real source has a Space index at its root; the refresh refuses any other folder.
@@ -189,4 +189,147 @@ test('SDK refresh rejects a parent-directory swap before any outside write', () 
     process.chdir(previousCwd);
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// The 0.2.0 legacy copy of the chart data table before it moved into the Spaces toolkit.
+const LEGACY_RENDER_CHART_DATA = "'use client';\n\nimport type { ReactNode } from 'react';\n\n/** A chart's data, available to view Markdown without adding a second visible table.\n * Keep labels/values identical to the chart. The renderer recognizes this semantic\n * table inside Shadow DOM; snapshots never infer numbers from SVG geometry.\n */\nexport function RenderChartData({ title, columns, rows, children }: {\n  title: string;\n  columns: readonly string[];\n  rows: readonly (readonly (string | number | boolean | null)[])[];\n  children?: ReactNode;\n}) {\n  return <>{children}<table hidden data-notis-render=\"chart-data\" aria-label={title}>\n    <thead><tr>{columns.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>\n    <tbody>{rows.map((row, index) => <tr key={index}>{columns.map((_, column) => <td key={column}>{row[column] == null ? '' : String(row[column])}</td>)}</tr>)}</tbody>\n  </table></>;\n}\n";
+
+test('a legacy app refresh retires the moved chart table and vendors no Spaces toolkit', t => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-legacy-sdk-refresh-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projectDir = join(root, 'app'); markSource(projectDir);
+  const sdk = join(projectDir, 'packages/sdk');
+  mkdirSync(join(sdk, 'src/components'), { recursive: true });
+  writeFileSync(join(sdk, 'package.json'), '{"name":"@notis/sdk","version":"0.2.0"}');
+  writeFileSync(join(sdk, 'src/components/RenderChartData.tsx'), LEGACY_RENDER_CHART_DATA);
+  const result = syncEmbeddedSdk(projectDir, { log() {} });
+  assert.equal(existsSync(join(sdk, 'src/components/RenderChartData.tsx')), false);
+  assert.ok(result.changed.includes('src/components/RenderChartData.tsx'));
+  assert.deepEqual(result.foreign, []);
+  assert.equal(existsSync(join(sdk, 'src/ui/charts/RenderChartData.tsx')), true);
+  for (const toolkit of ['src/ui/index.ts', 'src/ui/toolkit.css', 'src/words/index.ts']) {
+    assert.equal(existsSync(join(sdk, toolkit)), false, toolkit);
+  }
+  assert.deepEqual(collectProjectBoundaryViolations(projectDir), []);
+});
+
+// A Space SDK whose dependencies changed since the lock was written.
+const SPACE_SDK_MANIFEST = { name: '@notis/sdk', version: '0.3.0', type: 'module',
+  dependencies: { 'react-markdown': '^10.1.0', recharts: '^3.10.1' }, peerDependencies: { react: '>=18.0.0' } };
+
+function lockedSpace(root, sdkEntry) {
+  const templateSdkDir = join(root, 'space-sdk');
+  mkdirSync(join(templateSdkDir, 'src'), { recursive: true });
+  mkdirSync(join(templateSdkDir, 'dist'), { recursive: true });
+  writeFileSync(join(templateSdkDir, 'package.json'), JSON.stringify(SPACE_SDK_MANIFEST));
+  writeFileSync(join(templateSdkDir, 'src/index.d.ts'), 'export declare const useNotis: () => null;\n');
+  writeFileSync(join(templateSdkDir, 'dist/index.js'), 'export const useNotis = () => null;\n');
+  const projectDir = join(root, 'space'); markSource(projectDir);
+  mkdirSync(join(projectDir, 'packages/sdk'), { recursive: true });
+  writeFileSync(join(projectDir, 'packages/sdk/package.json'), JSON.stringify({ name: '@notis/sdk', version: '0.2.0' }));
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'space', dependencies: { '@notis/sdk': 'file:./packages/sdk' } }));
+  writeFileSync(join(projectDir, 'package-lock.json'), JSON.stringify({ name: 'space', lockfileVersion: 3, requires: true, packages: {
+    '': { name: 'space', dependencies: { '@notis/sdk': 'file:./packages/sdk' } },
+    'node_modules/@notis/sdk': { resolved: 'packages/sdk', link: true },
+    'packages/sdk': sdkEntry,
+  } }, null, 2));
+  return { projectDir, templateSdkDir };
+}
+
+const lockedSdk = projectDir => JSON.parse(readFileSync(join(projectDir, 'package-lock.json'), 'utf8')).packages['packages/sdk'];
+
+test('a Space SDK sync updates package-lock.json only when its @notis/sdk record differs', t => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-space-sdk-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { projectDir, templateSdkDir } = lockedSpace(root, { name: '@notis/sdk', version: '0.2.0',
+    dependencies: { 'react-markdown': '^10.1.0' }, devDependencies: { typescript: '^7.0.2' }, peerDependencies: { react: '>=18.0.0' } });
+  const calls = [], messages = [];
+  // Stands in for `npm install --package-lock-only`, which records the linked manifest.
+  const updateLock = (directory) => {
+    calls.push(directory);
+    const lock = JSON.parse(readFileSync(join(directory, 'package-lock.json'), 'utf8'));
+    const { name, version, dependencies, peerDependencies } = SPACE_SDK_MANIFEST;
+    lock.packages['packages/sdk'] = { name, version, dependencies, peerDependencies };
+    writeFileSync(join(directory, 'package-lock.json'), JSON.stringify(lock, null, 2));
+    return { ok: true };
+  };
+  const first = syncSpaceSdk(projectDir, { templateSdkDir, updateLock, log: message => messages.push(message) });
+  assert.equal(first.lockfile, 'updated');
+  assert.deepEqual(calls, [realpathSync(projectDir)]);
+  assert.equal(readFileSync(join(projectDir, 'packages/sdk/dist/index.js'), 'utf8'), 'export const useNotis = () => null;\n');
+  assert.ok(messages.some(message => message.startsWith('Updated package-lock.json for @notis/sdk 0.3.0.')), messages.join('\n'));
+  assert.equal(lockedSdk(projectDir).devDependencies, undefined);
+
+  const second = syncSpaceSdk(projectDir, { templateSdkDir, updateLock, log() {} });
+  assert.equal(second.lockfile, 'current');
+  assert.equal(calls.length, 1);
+});
+
+test('a Space SDK sync that cannot reach npm keeps going and says how to repair the lock', t => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-space-sdk-lock-offline-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stale = { name: '@notis/sdk', version: '0.2.0', dependencies: { 'react-markdown': '^10.1.0' } };
+  const { projectDir, templateSdkDir } = lockedSpace(root, stale);
+  const messages = [];
+  const result = syncSpaceSdk(projectDir, { templateSdkDir, log: message => messages.push(message),
+    updateLock: () => ({ ok: false, detail: 'npm error code ENOTFOUND' }) });
+  assert.equal(result.updated, true);
+  assert.equal(result.lockfile, 'stale');
+  assert.deepEqual(lockedSdk(projectDir), stale);
+  assert.ok(messages.some(message => message.includes('npm ci will refuse it (npm error code ENOTFOUND)')
+    && message.includes('run npm install')), messages.join('\n'));
+});
+
+test('a Space SDK sync asks npm for the lock only, retries once, and shows npm\'s own reason', { skip: process.platform === 'win32' && 'POSIX npm stand-in' }, t => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-space-sdk-lock-npm-'));
+  const pathBefore = process.env.PATH;
+  t.after(() => { process.env.PATH = pathBefore; rmSync(root, { recursive: true, force: true }); });
+  const stale = { name: '@notis/sdk', version: '0.2.0', dependencies: { 'react-markdown': '^10.1.0' } };
+  const { projectDir, templateSdkDir } = lockedSpace(root, stale);
+  // Stands in for npm on a machine without network, with npm's own output.
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'npm'), ['#!/bin/sh',
+    `pwd -P > "${join(root, 'npm-cwd')}"`, `printf '%s\\n' "$@" > "${join(root, 'npm-args')}"`,
+    ...['code ENOTFOUND', 'syscall getaddrinfo', 'errno ENOTFOUND',
+      'network request to https://registry.npmjs.org/recharts failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org',
+      'A complete log of this run can be found in: /tmp/npm-debug-0.log'].map(line => `echo 'npm error ${line}' >&2`),
+    'exit 1'].join('\n'), { mode: 0o755 });
+  process.env.PATH = `${bin}:${pathBefore}`;
+  const messages = [];
+  const result = syncSpaceSdk(projectDir, { templateSdkDir, log: message => messages.push(message) });
+  assert.equal(result.lockfile, 'stale');
+  assert.deepEqual(lockedSdk(projectDir), stale);
+  assert.equal(readFileSync(join(root, 'npm-cwd'), 'utf8').trim(), realpathSync(projectDir));
+  const args = readFileSync(join(root, 'npm-args'), 'utf8').trim().split('\n');
+  assert.equal(args[0], 'install');
+  for (const flag of ['--package-lock-only', '--ignore-scripts', '--fetch-retries=1']) assert.ok(args.includes(flag), `${flag} in ${args.join(' ')}`);
+  assert.ok(messages.some(message => message.includes(
+    'npm ci will refuse it (network request to https://registry.npmjs.org/recharts failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org).',
+  )), messages.join('\n'));
+});
+
+test('an npm failure reads as npm\'s own reason, without its metadata, stack or log pointer', () => {
+  assert.equal(npmFailureReason(['npm error code ECONNREFUSED', 'npm error syscall connect', 'npm error errno ECONNREFUSED',
+    'npm error FetchError: request to http://127.0.0.1:9/date-fns failed, reason: connect ECONNREFUSED 127.0.0.1:9',
+    'npm error     at ClientRequest.<anonymous> (minipass-fetch/lib/index.js:130:14)'].join('\n')),
+  'FetchError: request to http://127.0.0.1:9/date-fns failed, reason: connect ECONNREFUSED 127.0.0.1:9');
+  assert.equal(npmFailureReason('npm warn config production Use `--omit=dev` instead.\nnpm error code ETARGET\n'
+    + 'npm error notarget No matching version found for recharts@^9.0.0.'), 'notarget No matching version found for recharts@^9.0.0.');
+  assert.equal(npmFailureReason(''), '');
+});
+
+test('the lock check never runs npm without an npm lock or a linked SDK', t => {
+  const root = mkdtempSync(join(tmpdir(), 'notis-space-sdk-lock-skip-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { projectDir } = lockedSpace(root, { name: '@notis/sdk', version: '0.2.0' });
+  const updateLock = () => { throw new Error('npm must not run'); };
+  const check = () => reconcileSdkLockfile(projectDir, { manifest: SPACE_SDK_MANIFEST, updateLock, log() {} });
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ dependencies: { '@notis/sdk': '^0.2.0' } }));
+  assert.equal(check(), 'unlinked');
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ dependencies: { '@notis/sdk': 'file:./packages/sdk' } }));
+  writeFileSync(join(projectDir, 'package-lock.json'), JSON.stringify({ lockfileVersion: 1, dependencies: {} }));
+  assert.equal(check(), 'unsupported');
+  rmSync(join(projectDir, 'package-lock.json'));
+  assert.equal(check(), 'absent');
 });

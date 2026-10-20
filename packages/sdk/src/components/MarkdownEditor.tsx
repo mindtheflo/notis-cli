@@ -1,20 +1,39 @@
-import type { ChangeEvent, KeyboardEvent, ReactElement } from 'react';
+import type { ChangeEvent, CSSProperties, KeyboardEvent, ReactElement } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNotisRuntime } from '../provider';
 import type { NotisMarkdownEditorProps } from '../runtime';
+import { pick, type Words } from '../words/types';
+
+/** The words of the fallback Markdown editor, in English and French (C9). */
+export const MARKDOWN_EDITOR_WORDS = Object.freeze({
+  placeholder: { en: 'Write in Markdown', fr: 'Écris en Markdown' },
+}) satisfies Readonly<Record<string, Words>>;
+
+const editableStyle: CSSProperties = {
+  minHeight: 360, width: '100%', resize: 'vertical', boxSizing: 'border-box', padding: '12px 16px', borderRadius: 8,
+  border: '1px solid hsl(var(--border))', background: 'hsl(var(--background))', color: 'hsl(var(--foreground))',
+  font: 'inherit', fontSize: 14, lineHeight: '22px',
+};
+
+// Read-only reads as text, not a field (C9): no border, no resize, no caret, a muted tint.
+const readOnlyStyle: CSSProperties = {
+  ...editableStyle, resize: 'none', border: '1px solid transparent', background: 'hsl(var(--muted) / .4)',
+  cursor: 'default', outline: 'none',
+};
 
 function MarkdownEditorFallback({
   value,
   revision,
   readOnly,
   autosaveMs = 1500,
-  placeholder = 'Write in Markdown…',
+  placeholder,
   className,
   onChange,
   onSave,
   onDirtyChange,
   onSavingChange,
 }: NotisMarkdownEditorProps) {
+  const locale = useNotisRuntime()?.context?.locale === 'fr' ? 'fr' : 'en';
   const [draft, setDraft] = useState(value);
   const [saveAttempt, setSaveAttempt] = useState(0);
   const draftRef = useRef(value);
@@ -102,16 +121,18 @@ function MarkdownEditorFallback({
     <textarea
       value={draft}
       readOnly={readOnly}
-      placeholder={placeholder}
+      aria-readonly={readOnly || undefined}
+      data-readonly={readOnly ? '' : undefined}
+      placeholder={readOnly ? undefined : placeholder ?? pick(MARKDOWN_EDITOR_WORDS.placeholder, locale)}
       className={className}
       onChange={handleChange}
       onKeyDown={handleKeyDown}
-      style={{ minHeight: 360, width: '100%', resize: 'vertical' }}
+      style={readOnly ? readOnlyStyle : editableStyle}
     />
   );
 }
 
-/** Use Notis' editor while leaving persistence entirely under app control. */
+/** Use Notis' editor while leaving persistence entirely under app control; outside Notis a plain EN/FR textarea stands in. */
 export function MarkdownEditor(props: NotisMarkdownEditorProps): ReactElement {
   const runtime = useNotisRuntime();
   const HostEditor = runtime?.ui?.MarkdownEditor;

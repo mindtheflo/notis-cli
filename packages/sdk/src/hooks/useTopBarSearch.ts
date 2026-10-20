@@ -14,6 +14,9 @@ interface TopBarSearchOptions {
   onSubmit?: () => void | Promise<void>;
 }
 
+/** A view that never takes the typed values keeps at most this many waiting. */
+const MAX_UNSHOWN = 64;
+
 interface TopBarSearchActions {
   /** Toggle the loader that replaces the search icon in the top bar. */
   setLoading: (loading: boolean) => void;
@@ -45,19 +48,31 @@ interface TopBarSearchActions {
  *
  * Callback refs retain the latest committed handlers without re-registering
  * search on every app render. Inline callbacks are safe.
+ *
+ * The top bar owns what is typed in it. A `value` that came from the bar is
+ * not sent back: the view's answer can arrive after the next key, and sending
+ * it back would undo that key. A value the view sets itself (a clear button,
+ * a link, a value it trims) is sent to the bar.
  */
 export function useTopBarSearch(opts: TopBarSearchOptions): TopBarSearchActions {
   const runtime = useNotisRuntime();
   const { value, onChange, placeholder, onSubmit } = opts;
   const callbacks = useRef({ onChange, onSubmit });
   useLayoutEffect(() => { callbacks.current = { onChange, onSubmit }; });
+  // Values the bar sent that the view has not shown yet, oldest first.
+  const fromBar = useRef<string[]>([]);
   const hasSubmit = Boolean(onSubmit);
 
   useEffect(() => {
     const register = runtime?.registerTopBarSearch;
     if (!register) return;
     register({
-      onChange: (next) => callbacks.current.onChange(next),
+      onChange: (next) => {
+        const sent = fromBar.current;
+        sent.push(next);
+        if (sent.length > MAX_UNSHOWN) sent.splice(0, sent.length - MAX_UNSHOWN);
+        callbacks.current.onChange(next);
+      },
       placeholder,
       onSubmit: hasSubmit ? () => callbacks.current.onSubmit?.() : undefined,
     });
@@ -66,7 +81,13 @@ export function useTopBarSearch(opts: TopBarSearchOptions): TopBarSearchActions 
     };
   }, [runtime, placeholder, hasSubmit]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const sent = fromBar.current;
+    // The view caught up with the bar, or shows a value the bar has already gone past.
+    if (sent.length && value === sent[sent.length - 1]) { sent.length = 0; return; }
+    const shown = sent.indexOf(value);
+    if (shown >= 0) { sent.splice(0, shown + 1); return; }
+    sent.length = 0;
     runtime?.setTopBarSearchValue?.(value);
   }, [runtime, value]);
 

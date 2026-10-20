@@ -32,8 +32,7 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 /* Framework-neutral styles: the app owns its Tailwind entry point. This file
  * is also consumed in shadow roots and by apps on older Tailwind versions.
  * The shell rules live in the native sublayer `components.notis-sdk`, so a
- * page's Tailwind utilities (p-4, border-red-500) still win over them.
- * The list-row spacing contract below is the one exception. Never
+ * page's Tailwind utilities (p-4, border-red-500) still win over them. Never
  * use a bare Tailwind-owned `@layer base` / `@layer components` block: Vite
  * processes this import separately from the app stylesheet, and Tailwind 3
  * rejects those blocks without matching `@tailwind` directives.
@@ -57,32 +56,6 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
     color: hsl(var(--foreground));
     display: block;
     min-height: 100%;
-  }
-
-  .notis-app-shell {
-    margin-inline: auto;
-    width: 100%;
-    max-width: var(--portal-page-max-width);
-    padding: 1.5rem 1rem;
-  }
-
-  /* Flat panel: no border or shadow around items. */
-  .notis-app-surface {
-    border-radius: 1rem;
-    background-color: hsl(var(--muted));
-    color: hsl(var(--card-foreground));
-  }
-
-  .list-row {
-    border-radius: 0.75rem;
-    background-color: hsl(var(--muted));
-    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
-    transition-duration: 150ms;
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .list-row-selected {
-    background-color: hsl(var(--primary) / 0.06);
   }
 
   /* Split pages are full-bleed; only the list pane carries a hairline. */
@@ -112,15 +85,10 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
   }
 
   @media (min-width: 768px) {
-    .notis-app-shell { padding-block: 2rem; }
     .notis-app-section { padding: 1.5rem; }
   }
 
   @media (min-width: 1024px) {
-    .list-row { background-color: transparent; }
-    .list-row:hover { background-color: hsl(var(--muted) / 0.6); }
-    .list-row-selected,
-    .list-row-selected:hover { background-color: hsl(var(--primary) / 0.06); }
     .notis-app-split { flex-direction: row; }
     .notis-app-pane-list {
       width: 20rem;
@@ -133,13 +101,6 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
     .notis-app-pane-list { width: 24rem; }
   }
 }
-
-/* A list row owns its 16px side gutter and 12px vertical rhythm, as in the
- * Portal and pre-Space Apps. Keep only this spacing outside the utility layers:
- * Tailwind 3 utilities are unlayered, so a second class specificity preserves
- * it regardless of stylesheet order. Deliberate inline/important overrides still
- * work. Shell/section/layout utilities and row colours remain overridable above. */
-.list-row.list-row { padding: 0.75rem 1rem; }
 
 /*
  * Markdown value-type rendering (see the `Markdown` component). Plain CSS on
@@ -218,11 +179,21 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
   accent-color: hsl(var(--primary));
 }
 
+/* A flat tinted block, like a callout; never an edge on one side. */
 .notis-markdown blockquote {
   margin: 0.75em 0;
-  padding: 0.125em 0 0.125em 0.875em;
-  border-left: 3px solid hsl(var(--border));
+  padding: 0.5em 0.875em;
+  border-radius: 0.5rem;
+  background: hsl(var(--muted) / 0.5);
   color: hsl(var(--muted-foreground));
+}
+
+.notis-markdown blockquote > :first-child {
+  margin-top: 0;
+}
+
+.notis-markdown blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 .notis-markdown a {
@@ -270,8 +241,16 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
   border-radius: 0.5rem;
 }
 
-.notis-markdown table {
+/* The Markdown component wraps each table in a scroll box, so a wide table scrolls sideways on a phone. */
+.notis-markdown-table {
   margin: 0.75em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.notis-markdown table {
+  margin: 0;
   width: 100%;
   border-collapse: collapse;
   font-size: 0.95em;
@@ -279,6 +258,7 @@ dialog.notis-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 
 .notis-markdown th,
 .notis-markdown td {
+  min-width: 6em;
   padding: 0.375em 0.75em;
   border: 1px solid hsl(var(--border));
   text-align: left;

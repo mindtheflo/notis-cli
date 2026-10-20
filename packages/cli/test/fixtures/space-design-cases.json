@@ -1,0 +1,258 @@
+{
+  "description": "Shared cases for the Space design profile. The CLI test (space-design-rules.test.js) and the server test (test_space_design_check.py) both run them, so the JS validator and its Python port stay in step.",
+  "cases": [
+    {
+      "rule": "space-no-global-key-listener",
+      "file": "app/page.tsx",
+      "bad": "useEffect(() => { window.addEventListener('keydown', onKey); }, []);",
+      "good": "useEffect(() => { element.addEventListener('keydown', onKey); }, []);"
+    },
+    {
+      "rule": "space-no-global-key-listener",
+      "file": "lib/keys.ts",
+      "bad": "document.onkeydown = handle;",
+      "good": "button.onkeydown = handle;"
+    },
+    {
+      "rule": "space-no-viewport-height",
+      "file": "app/page.tsx",
+      "bad": "export default () => <main className=\"h-screen\" />;",
+      "good": "export default () => <main className=\"h-full\" />;"
+    },
+    {
+      "rule": "space-no-viewport-height",
+      "file": "app/globals.css",
+      "bad": ".pane { min-height: 100dvh; }",
+      "good": ".pane { min-height: 100%; }"
+    },
+    {
+      "rule": "space-no-viewport-height",
+      "file": "app/globals.css",
+      "bad": "/* the pane fills its host */\n.pane { height: 100vh; }",
+      "good": "/* Never h-screen or 100vh: the host frame\n   sets the height, not the viewport. */\n.pane { height: 100%; }"
+    },
+    {
+      "rule": "space-no-viewport-height",
+      "file": "components/pane.tsx",
+      "bad": "// fills the host\nexport const Pane = () => <div className=\"min-h-screen\" />;",
+      "good": "// not h-screen: the host sets the height (see https://notis.ai/x)\nexport const Pane = () => <div className=\"h-full\">{/* no 100vh here */}</div>;"
+    },
+    {
+      "rule": "space-no-raw-color",
+      "file": "app/globals.css",
+      "bad": ".chip { color: rgb(12, 34, 56); }",
+      "good": ".chip { color: var(--foreground); }"
+    },
+    {
+      "rule": "space-no-raw-color",
+      "file": "components/chip.tsx",
+      "bad": "export const Chip = () => <span className=\"bg-white text-black\" />;",
+      "good": "export const Chip = () => <span className=\"bg-background text-foreground\" />;"
+    },
+    {
+      "rule": "space-no-body-portal",
+      "file": "components/menu.tsx",
+      "bad": "return createPortal(menu, document.body);",
+      "good": "return <Menu items={items} />;"
+    },
+    {
+      "rule": "space-no-english-literal",
+      "file": "app/page.tsx",
+      "bad": "export default () => <p className=\"text-sm\">No meetings yet</p>;",
+      "good": "export default () => <p className=\"text-sm\">{copy.empty}</p>;"
+    },
+    {
+      "rule": "space-no-english-literal",
+      "file": "app/page.tsx",
+      "bad": "export default () => <input placeholder=\"Search meetings\" />;",
+      "good": "export default () => <input placeholder={copy.search} />;"
+    },
+    {
+      "rule": "space-no-english-literal",
+      "file": "lib/note-resource.tsx",
+      "bad": "export const Title = ({ note }) => <p>Untitled {note.id}</p>;",
+      "good": "export const resource = (note) => note ? { id: note.id, label: note.title } : null;"
+    },
+    {
+      "rule": "space-no-english-literal",
+      "file": "lib/clip-label.tsx",
+      "bad": "export const More = ({ text }) => <span>Read more {text}</span>;",
+      "good": "export const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);"
+    },
+    {
+      "rule": "space-no-english-literal",
+      "file": "components/empty-state.tsx",
+      "bad": "export const Empty = () => (\n  <p\n    className=\"text-sm\"\n  >No meetings yet</p>\n);",
+      "good": "export const Empty = () => (\n  <p\n    className=\"text-sm\"\n  >{copy.empty}</p>\n);"
+    },
+    {
+      "rule": "space-no-private-path",
+      "file": "lib/paths.ts",
+      "bad": "export const root = '/Users/flo/notes';",
+      "good": "export const root = 'notes';"
+    },
+    {
+      "rule": "space-no-private-path",
+      "file": "lib/paths.ts",
+      "bad": "export const state = '/vercel/sandbox/.notis/state.json';",
+      "good": "export const state = 'state.json';"
+    },
+    {
+      "rule": "space-no-outside-import",
+      "file": "app/page.tsx",
+      "bad": "import { Row } from '../../packages/sdk/src/row';",
+      "good": "import { Row } from '@notis/sdk';"
+    },
+    {
+      "rule": "space-no-outside-import",
+      "file": "lib/fs.ts",
+      "bad": "import { readFileSync } from 'node:fs';",
+      "good": "import { format } from './format';"
+    },
+    {
+      "rule": "toolkit-list-reader",
+      "file": "app/page.tsx",
+      "bad": "export default () => <main className=\"notis-app-split\" />;",
+      "good": "export default () => <ListReader items={items} />;",
+      "toolkit": true
+    },
+    {
+      "rule": "toolkit-list-keys",
+      "file": "app/page.tsx",
+      "bad": "if (event.key === 'ArrowDown') next();",
+      "good": "useListKeys({ onNext: next });",
+      "toolkit": true
+    },
+    {
+      "rule": "toolkit-shortcut",
+      "file": "app/page.tsx",
+      "bad": "if (event.key === 'e') archive();",
+      "good": "useShortcut('e', archive);",
+      "toolkit": true
+    },
+    {
+      "rule": "toolkit-selection-bar",
+      "file": "app/page.tsx",
+      "bad": "export default () => <MultiSelectActionBar count={2} />;",
+      "good": "export default () => <SelectionBar count={2} />;",
+      "toolkit": true
+    },
+    {
+      "rule": "toolkit-keycap",
+      "file": "app/page.tsx",
+      "bad": "export default () => <kbd>{copy.key}</kbd>;",
+      "good": "export default () => <Keycap keys={keys} />;",
+      "toolkit": true
+    },
+    {
+      "rule": "toolkit-menu",
+      "file": "components/actions.tsx",
+      "bad": "import * as DropdownMenu from '@radix-ui/react-dropdown-menu';",
+      "good": "import { Menu } from '@notis/sdk/ui';",
+      "toolkit": true
+    },
+    {
+      "rule": "toolkit-open-as",
+      "file": "components/sheet.tsx",
+      "bad": "export const Sheet = () => <div className=\"fixed inset-0 bg-background\" />;",
+      "good": "export const Sheet = () => <OpenAs mode={mode} />;",
+      "toolkit": true
+    },
+    {
+      "rule": "no-page-heading",
+      "file": "app/page.tsx",
+      "bad": "import { PageHeading } from '@notis/sdk/ui';\nexport default () => <PageHeading title={copy.title} />;",
+      "good": "import { ListReader } from '@notis/sdk/ui';\nexport default () => <ListReader title={copy.title} items={items} row={row} />;"
+    },
+    {
+      "rule": "no-page-heading",
+      "file": "components/summary.tsx",
+      "bad": "import {\n  Card,\n  Section,\n} from '@notis/sdk/ui';",
+      "good": "import {\n  CardGrid,\n  Section,\n} from '@notis/sdk/ui';"
+    },
+    {
+      "rule": "no-page-heading",
+      "file": "app/globals.css",
+      "bad": ".intro { composes: nui-heading-title; }",
+      "good": ".intro { composes: nui-section-title; }"
+    },
+    {
+      "rule": "no-space-h1",
+      "file": "app/page.tsx",
+      "bad": "export default () => <h1 className=\"text-lg\">{copy.title}</h1>;",
+      "good": "export default () => <Section title={copy.title}>{body}</Section>;"
+    },
+    {
+      "rule": "no-centered-column",
+      "file": "app/page.tsx",
+      "bad": "export default () => <div className=\"mx-auto max-w-3xl px-6\">{body}</div>;",
+      "good": "export default () => <div className=\"flex h-full min-h-0 flex-col\">{body}</div>;"
+    },
+    {
+      "rule": "no-centered-column",
+      "file": "components/form.tsx",
+      "bad": "export const Form = () => <form className=\"container mx-auto\">{fields}</form>;",
+      "good": "export const Form = () => <form className=\"form-container w-full\">{fields}</form>;"
+    },
+    {
+      "rule": "no-centered-column",
+      "file": "app/globals.css",
+      "bad": ".page {\n  max-width: 40rem;\n  margin: 0 auto;\n}",
+      "good": ".page {\n  max-width: 40rem;\n}\n.note { margin: 0 auto; }"
+    },
+    {
+      "rule": "no-app-shell",
+      "file": "app/page.tsx",
+      "bad": "export default () => <main className=\"notis-app-shell\">{body}</main>;",
+      "good": "export default () => <main className=\"notis-app-shelf-label\">{body}</main>;"
+    },
+    {
+      "rule": "no-app-shell",
+      "file": "components/item.tsx",
+      "bad": "export const Item = () => <li className=\"list-row\">{name}</li>;",
+      "good": "export const Item = () => <Row title={name} />;"
+    },
+    {
+      "rule": "no-root-shortcut-provider",
+      "file": "app/layout.tsx",
+      "bad": "import {\n  NotisProvider,\n  ShortcutProvider,\n} from '@notis/sdk';",
+      "good": "import { NotisProvider } from '@notis/sdk';\nimport { useShortcuts } from '@notis/sdk/interactions';"
+    },
+    {
+      "rule": "no-own-search",
+      "file": "app/page.tsx",
+      "bad": "useTopBarSearch({ placeholder: copy.search, onChange: setQuery });",
+      "good": "<ListReader items={items} row={row} search={{ placeholder: copy.search, match }} />;"
+    },
+    {
+      "rule": "no-own-search",
+      "file": "components/filter.tsx",
+      "bad": "export const Filter = () => <Field type=\"search\" value={query} />;",
+      "good": "export const Filter = () => <Field type=\"text\" value={query} />;"
+    },
+    {
+      "rule": "no-removed-listreader-props",
+      "file": "app/page.tsx",
+      "bad": "export default () => (\n  <ListReader\n    items={items}\n    row={(item) => <Row title={item.name} meta={{ count: item.count }} />}\n    fill={false}\n  />\n);",
+      "good": "export default () => (\n  <ListReader\n    items={items}\n    row={(item) => <Row title={item.name} fill={item.done} header={item.group} />}\n    crumbLabel={(item) => item.name}\n  />\n);"
+    },
+    {
+      "rule": "no-removed-listreader-props",
+      "file": "spaces/leads/view.tsx",
+      "bad": "export const View = () => <ListReader<Lead> items={leads} toolbar={<Bar />} row={row} />;",
+      "good": "export const View = () => <ListReader<Lead> items={leads} tabs={tabs} row={row} />;"
+    },
+    {
+      "rule": "no-removed-listreader-props",
+      "file": "views/notes.tsx",
+      "bad": "export const Notes = () => <ListReader items={notes} row={row} divided />;",
+      "good": "export const Notes = () => <ListReader items={notes} row={row} readerLabel={label} />;"
+    },
+    {
+      "rule": "tiles-galleries-only",
+      "file": "app/page.tsx",
+      "bad": "export default () => <ListReader items={items} layout=\"tiles\" renderTile={tile} />;",
+      "good": "export default () => <ListReader items={items} layout=\"list\" row={row} />;"
+    }
+  ]
+}

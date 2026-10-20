@@ -17,7 +17,7 @@ test('view find is a protocol-pinned read and preserves resolver links and param
   });
   const result = await viewsCommandSpecs[0].handler(context({ query: 'Inbox' }));
   assert.equal(calls[0].url, 'https://fixture.invalid/portal_spaces/find-views');
-  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'], '1');
+  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'], '2');
   assert.deepEqual(calls[0].body, { query: 'Inbox' });
   assert.deepEqual(result.data, response);
   assert.equal(result.meta.mutating, false);

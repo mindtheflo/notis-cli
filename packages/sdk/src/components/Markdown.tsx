@@ -1,6 +1,6 @@
 'use client';
 
-import type { AnchorHTMLAttributes, ReactElement } from 'react';
+import type { AnchorHTMLAttributes, ReactElement, TableHTMLAttributes } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -32,14 +32,20 @@ function MarkdownLink({
   );
 }
 
+/** A table in a scroll box of its own, so a wide table scrolls sideways on a phone instead of the page (C17). */
+function MarkdownTable({ node: _node, ...rest }: TableHTMLAttributes<HTMLTableElement> & { node?: unknown }) {
+  return <div className="notis-markdown-table"><table {...rest} /></div>;
+}
+
 const defaultComponents: Components = {
   a: MarkdownLink,
+  table: MarkdownTable,
 };
 
 /**
  * Renders a markdown value with Notis typography. Markdown is a value type:
- * use this anywhere markdown appears — document content, database fields,
- * generated text. Styling comes from `.notis-markdown` rules in the SDK
+ * use this anywhere markdown appears (document content, database fields,
+ * generated text). Styling comes from `.notis-markdown` rules in the SDK
  * stylesheet and follows the portal theme variables.
  */
 export function Markdown({ value, size = 'base', className, components }: MarkdownProps): ReactElement {

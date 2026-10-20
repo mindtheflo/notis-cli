@@ -141,7 +141,7 @@ test('native Skill creation keeps exact destination and files with stable dry-ru
   assert.equal((await commit.spec.handler(commit)).meta.mutating, true);
   assert.deepEqual(calls[0].body, { ...payload, operation: 'create', request_id: 'create-once', dry_run: true });
   assert.deepEqual(calls[1].body, { ...calls[0].body, dry_run: false });
-  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'], '1');
+  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'], '2');
   writeFileSync(file, JSON.stringify({ ...payload, user_id: 'forged' }));
   assert.throws(() => commit.spec.handler(commit));
   assert.equal(calls.length, 2);
@@ -160,7 +160,7 @@ test('read target is unambiguous and Space requests preserve the protocol fence'
   const read=context('skills read',{target:'{"space_id":"space","binding_id":"binding"}'});
   await read.spec.handler(read);
   assert.ok(calls[0].url.endsWith('/portal_skills/native-authoring'));
-  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'],'1');
+  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'],'2');
 });
 
 test('skills list sends only the inventory filters and renders one line per Skill with its links', async t => {
@@ -207,7 +207,7 @@ test('skills links posts one resource-owned link change with a stable key throug
   const move = context('skills links', { add: JSON.stringify(add), remove: JSON.stringify(remove), requestId: 'move-1' }, { skillId: 'shared' });
   const result = await move.spec.handler(move);
   assert.equal(calls[0].url, 'https://fixture.invalid/portal_spaces/resource-links');
-  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'], '1');
+  assert.equal(calls[0].headers['X-Notis-Spaces-Protocol'], '2');
   assert.deepEqual(calls[0].body, { kind: 'skill', resource_id: 'shared', links: { add, remove }, request_id: 'move-1' });
   assert.equal(result.meta.mutating, true);
   assert.equal(result.humanSummary, 'added: to/research; removed: from/research. Listed in: To/research.');
@@ -242,7 +242,7 @@ test('one edit file carries a link change for a standalone or a Space target thr
     assert.equal((await ctx.spec.handler(ctx)).meta.mutating, true);
     assert.deepEqual(calls.at(-1).body, { ...payload, operation: 'update', request_id: 'edit-links', dry_run: false });
     assert.ok(calls.at(-1).url.endsWith('/portal_skills/native-authoring'));
-    assert.equal(calls.at(-1).headers['X-Notis-Spaces-Protocol'], '1');
+    assert.equal(calls.at(-1).headers['X-Notis-Spaces-Protocol'], '2');
   }
   for (const bad of [{ links: [] }, { links: {} }, { links: { move: [] } }, { links: { add: [] }, owner: 'forged' }]) {
     writeFileSync(file, JSON.stringify({ target: targets[0], version: { revision: 5, digest: 'a'.repeat(64) }, skill_md: '# x', ...bad }));

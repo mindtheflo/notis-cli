@@ -1,0 +1,11 @@
+[
+  {"key": "lists", "title": "Lists and actions", "owns": ["ui/list/", "ui/actions/"]},
+  {"key": "layout-engine", "title": "Layout, keyboard and keycaps", "owns": ["ui/layout/", "ui/engine/", "ui/keycap/"]},
+  {"key": "overlays-open", "title": "Overlays and open modes", "owns": ["ui/overlay/", "ui/open/"]},
+  {"key": "fields", "title": "Fields", "owns": ["ui/fields/"]},
+  {"key": "dates", "title": "Dates, calendar and timeline", "owns": ["ui/period/", "ui/calendar/", "ui/timeline/"]},
+  {"key": "charts", "title": "Charts", "owns": ["ui/charts/"]},
+  {"key": "blocks", "title": "Blocks and icons", "owns": ["ui/"]},
+  {"key": "interactions", "title": "Selection, comments and shortcuts", "owns": ["components/MultiSelect", "components/Selection", "components/Notis", "components/ShortcutHints", "interactions/"]},
+  {"key": "documents", "title": "Documents, records and app shell", "owns": [""]}
+]

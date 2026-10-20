@@ -1,97 +1,139 @@
-## Building a Space view
+# Design
 
-### Design defaults
+The look, keys and words of a Space come from the toolkit pieces in
+`@notis/sdk/ui`. Pick the piece that matches the view, fill its slots with the
+Space's data, and change only what the Space needs (the four rungs in
+[SKILL.md](../SKILL.md#three-layers)).
 
-- Start from `notis spaces init`, or preserve the existing Space’s good patterns.
-- Make the main task obvious. Use compact spacing, readable text, plain page
-  titles, Phosphor icons, and the scaffold's buttons, filters, rows, and cards.
-- Match Notis in light and dark mode. Use theme tokens and restrained accents;
-  prefer flat surfaces and selection tints over decorative boxes and shadows.
-- Choose the right layout: `notis-app-shell` for ordinary content;
-  `notis-app-split`, `notis-app-pane-list`, and `notis-app-pane-detail` for a
-  full-viewport list and reader. Keep reading text comfortably sized. Let mobile
-  stack or adapt the content rather than squeeze a desktop layout onto a phone.
-- Let Notis own navigation, folder trees, and search. Use `PageHeading`,
-  `NativeSelect`, `.list-row`, and `useTopBarSearch` instead of duplicating chrome.
-- Prefer inline optimistic edits for simple changes, with rollback on failure.
-  Use SDK `Dialog` for multi-field edits or destructive confirmation; keep its actions app-owned.
+## Pick the piece
 
-Build enforces the existing design rules and reports violations by file/line.
-Use those diagnostics to fix specific problems; passing them does not establish
-that the design is good. See [troubleshooting](troubleshooting.md) when needed.
-
-### Controls and side panels
-
-- **Keep controls with what they control.** Filters, counts, and Create belong
-  above the list; record actions belong inside the detail panel. Only controls
-  that affect both panes belong above both.
-- **Align sibling panes.** Start the list and detail panel at the same height,
-  with consistent header spacing and control sizes.
-- **Keep secondary actions quiet.** Put occasional destructive actions in an
-  overflow menu, retaining their confirmation step.
-
-For example, a ticket view has two side-by-side panes: **Tickets / New ticket →
-filters → list**, and **ticket ID / actions / close → details**.
-
-### Look at the result
-
-Run build and verification, then inspect screenshots of the affected view at a
-normal desktop width and a phone width. For new layouts or theme changes, check
-both themes. Keep the review focused on the task, not a new report or approval cycle:
-
-- Does the layout use the available viewport correctly, including while loading?
-- Do sizing, spacing, text, and scrolling look right? Is anything clipped or overflowing?
-- Do loading placeholders match the real content instead of changing the layout?
-- Does the main interaction work, and do empty/error states explain what to do?
-
-Use temporary fixtures to expose slow reads, empty results, and errors where
-relevant; do not alter real user records for a screenshot. Actually inspect the
-images, fix what is wrong, and recheck the affected state. After an authorized
-release, repeat the affected-view check inside Notis as described in
-[Delivery](release.md). A standalone harness is not proof of the host layout.
-
-### Define the view and build its UI
-
-Start from `notis spaces init` or pull the exact existing Space. Follow
-[View authoring](views.md) for params, lists, resources and memory rather than
-inventing another routing or database contract. Keep the project’s layout,
-`@notis/sdk/styles.css`, and scaffold components. The host supplies the runtime;
-a layout must not install a second empty `NotisProvider`.
-
-Use `useShown` for the native lists declared in `shows`, `useActionQuery` for a
-declared read action, and first-party record components for the selected record.
-Keep labels in EN/FR locale-keyed copy. Use the locale provided by the runtime;
-format numbers, dates and empty/error text consistently with it.
-
-### Instant-view loading contract (required)
-
-Build client-first Space views with a persistent shared layout where appropriate. Navigate with `useNotisNavigation`; never use a document reload for an internal view change. “SPA” means preserving that shell and reusing reads, **not** mounting every page or fetching every database at startup.
-
-| State | Required UI |
+| The view shows | Start from |
 | --- | --- |
-| First read, no successful data | Keep headings/navigation/layout visible; use content-shaped skeletons only in missing regions, with the same pane bounds as the loaded view. No page spinner or whole-page `Loading...`. |
-| Cached view / successful empty result | Render synchronously from the shared SDK cache. Empty results are real cached results. |
-| Background refresh | Keep current content and selection. Never replace populated content with a skeleton; do not drive the top-bar spinner from mount/refetch state. |
-| Explicit Save / Upload / submitted search | Progress belongs in that button or affected section. Disable only the conflicting action. |
-| Failed read | Show a scoped error and Retry; keep usable cached content. Never show an empty-state message before `hasData` is true. |
+| A list beside an open item (tickets, notes, inbox) | `ListReader` ([sample](views.md#write-the-view)) |
+| The same records as a table | `ListReader` with `layout: 'table'` |
+| A gallery where each item has a picture or a mark (competitors, integrations, skills to discover) | `ListReader` with `layout: 'tiles'` and `renderTile`; every other list stays rows |
+| Items on dates | `CalendarView` (month, week, agenda) |
+| Items over time, by lane | `TimelineView` |
+| Numbers over a period | `Section kind="bar"` with `PeriodPicker`, `StatRow`, `Section kind="chart"` with `Chart`, `Section kind="data"` with `ChartTable`, top to bottom, full width |
+| One record as the page | `DocumentPage` (see [SDK](sdk.md#first-party-record-components)). Pick its `width` for the page: `standard` (the default) is a centred 900 px reading column for a page read as text, `wide` (1200 px) or `full` for a record that is a working surface such as a wide table or board |
+| A form or settings page | `Section kind="form"`, `Button`, `NativeSelect`, `SegmentedControl`, `Notice`, `EmptyState` |
+| A list on your own layout | `useListKeys`, `useSelection`, `Row`, `SelectionBar`, `Panels` |
 
-Use `useShown` for declared native lists and `useActionQuery` for declared read actions. `loading` means no first successful response; `isFetching` includes silent refresh. Do not copy their data into mount-only state, clear rows on error, or gate the entire app on `isFetching`.
+Floating UI comes from `Menu`, `Popover` and `Tooltip`; they open inside the
+Space and pick up its theme. Open as Side, Center or Full belongs to the list
+(`openAs`, `OpenAsMenu`); a Space does not build its own reader frame.
 
-For another **explicitly identified idempotent read**, use `useActionQuery<Result>(actionId, exactInputs)`, or `useQuery(keyArray, readCallback, { readOnly: true })`. Include every filter, selected resource, pagination option, and other input in the key. Call declared read actions within a custom read with `{ readOnly: true, dedupe: true }`; the same SQL/shell tool can also perform writes, so never mark a whole toolkit read-only. Leave mutations as explicit `useAction` calls with stable request IDs and current revisions.
+## Layout
 
-`useQueryClient().prefetch(keyArray, readCallback, { readOnly: true })` prepares small known reads after the current view has rendered or on hover/focus. It shares the host's two-request speculative budget. Match the exact foreground query key. Never prefetch a mutation, login/polling action, provider sweep, `fetchAll` query, or an aggregate that fans out into more requests. Do not invent tool names to prepare a view. Older hosts safely fall back to uncached hook-local reads and skip prefetch.
+The host top bar shows the title: Space / view with the view icon, and the
+description as a tooltip. A Space never renders an h1, a description, a heading
+block or its own search field; set `search` on `ListReader`. The Space fills the
+frame: no `mx-auto`, no `max-w-*`, no outer padding wrapper. Only the reader
+article keeps a reading measure, and the toolkit sets it. List toolbars are one
+44px tab row with a "+" at the right end; there are no labelled primary buttons
+and no second toolbar row. Sections have no boxes.
 
-Caches belong to the host's in-memory account/environment/app/version/effective-permission scope. Do not add module-global or `localStorage` caches of user data. Writes and realtime events invalidate reads; logout, access loss, and updates retire scopes. Preserve the last successful snapshot on an ordinary network failure.
+- **Crumb.** An open item adds its name to the top bar crumb ("Product /
+  Tickets / PRO-002") in every open mode; `crumbLabel` on `ListReader` names it,
+  and `useTopBarTitleLeaf` does the same on your own layout.
+- **Search.** `ListReader` `search` puts the query in the host top bar and
+  filters with `match`, or hands it to `onChange` and `onSubmit` for a server
+  search. Never draw a second search field.
+- **Tab row.** `ListReader` `tabs` (or `TabRow` on your own layout) draws pills
+  in one 44px row: `create` adds the "+" at its right end, `viewMenu` the sort,
+  group and layout menu. The pills the row has no room for fold into its More
+  menu, the active one kept in view. Show only real tabs: a tab with no data
+  source is left out, not faked. `infoLine` adds one 44px line under it for a state the whole
+  list shares, such as a sync with its "Sync now" action.
+- **Reader bar.** `readerLabel` names the open item and `readerActions` adds its
+  own icon buttons; the toolkit places close or back, the open mode, previous
+  and next, the "..." menu and expand, and moves what does not fit into the
+  menu. Set `disabled` on an action that cannot run now instead of refusing it
+  in `run`; while the open item is pending (`isPending`) every action is
+  disabled for you, and while rows are selected their keys give way to the
+  selection bar.
+- **Drag to select.** A list that selects several gets the Manager's marquee
+  for free: a drag from empty space selects the rows under it. Do not build
+  your own.
+- **Sections.** A dashboard, form or settings page is a stack of `Section`
+  kinds, full width: `bar` for the period and filters, `stats`, `chart`, `data`
+  for a table and `form`. A section title and count sit in its head; the page
+  itself has no title. Put the bar's pills and picker in its `tabs` slot as
+  they are: a `TabRow` folds what does not fit into More and other controls
+  scroll in the one row, so add no wrapper or overflow CSS of your own.
 
-### Discovering schemas and writing records
+Keep a Space small: its data, its fields, its own actions. Do not rebuild the
+sidebar, top bar, title, search field, folder tree, chat, help sheet or selection
+bar; the host and the pieces already show them. Let the phone layout come from
+the pieces too: `Panels` shows one pane when the list and the open item no
+longer both fit.
 
-Before editing a view, inspect its live database schema and current options with
-native tools through the CLI. Source refers to resources by portable alias;
-backend authority resolves exact physical IDs. Keep database-specific result
-types in the view, and preserve stable property IDs when labels change.
+Row and tile states (hover, keyboard cursor, open, selected) are full fills from
+the pieces; the keyboard cursor is a thin ring on all four sides. Never mark a
+row, tile or card with a coloured or thicker edge on one side (a left bar, a
+one-side border or an inset shadow with a sideways offset): a highlight is a
+ring on all four sides. Never restyle the pieces' states.
 
-At runtime use declared actions or first-party record components. Native writes
-carry current schema/record revisions and a stable request ID. An uncertain
-response keeps that original intent for reconciliation; a new ID is a new effect.
-Use the generated row tool only from the agent/tool surface after discovery, not
-as an account-wide transport inside authored Space code.
+## Words
+
+- Standard actions bring Notis's EN and FR words, key and toast. Do not relabel
+  them.
+- A Space's own action brings `label: { en, fr }` and, if it takes a key, one
+  that clashes with nothing on the page. Host-reserved keys (`/`, `c`,
+  `shift+c`, `?`, `mod+k`, `escape` and the others in the toolkit types) are
+  refused.
+- Every other visible string comes from EN and FR copy keyed by the runtime
+  locale (`useNotisRuntime()?.context.locale`). Format dates and numbers with
+  that locale. French runs 15 to 30 percent longer: leave room in tabs, section
+  titles, buttons, badges and table cells.
+
+## Loading, empty and error
+
+The pieces keep their layout while reading. On your own layout, keep the same
+rule:
+
+- First read: the tab row, navigation and panes stay where they will be; a
+  content-shaped skeleton fills only the missing region. No page spinner and no
+  whole-page Loading.
+- Never show an empty state before the first successful read (`hasData`). An
+  empty result is real and renders at once from the cache; give `ListReader` an
+  `empty` slot or use `EmptyState` with a next step.
+- A background refresh keeps current content and selection. Do not swap rows for
+  a skeleton or drive the top-bar spinner from `isFetching`.
+- A failed read shows a scoped `Notice` with Retry and keeps usable cached
+  content.
+- Save, upload or a submitted search shows progress in that button or section;
+  disable only the conflicting action.
+
+Change view state with `useNotisNavigation` and declared params, never a page
+reload; `toSpace`, `toNamedSpace` and `setParams` return promises, so `await`
+or `void` them. Edit simple values inline with rollback on failure; use `Dialog` for a
+multi-field edit or a destructive confirmation.
+
+## Look at the result
+
+`notis spaces build` runs the design check and reports each rule broken by file
+and line; the server runs it again on publish. Passing it does not prove the
+design is good. Then run `notis spaces verify`, which draws every view at 390
+and 1440 px in EN and FR, and actually look at the images:
+
+- Does the view fill the host frame, also while loading?
+- Is anything clipped, overflowing or truncated, in French especially?
+- Do keys, selection and the open item behave like the rest of Notis?
+- Do empty and error states say what to do next?
+
+Use fictional fixtures for slow, empty and failed reads; never change real
+records for a screenshot. Fix what is wrong and recheck that state. After an
+authorized deploy, check the affected view inside Notis as described in
+[Delivery](release.md); a standalone harness is not proof of the host layout.
+
+## Schemas and writes
+
+Before editing a view, inspect its live database schema and options with native
+tools through the CLI. Source names resources by portable alias; the backend
+resolves physical IDs. Keep result types in the view and keep property IDs
+stable when labels change.
+
+At runtime write through declared actions or first-party record components, with
+current schema and record revisions and a stable request ID. An uncertain
+response keeps that request ID for reconciliation; a new ID is a new effect.

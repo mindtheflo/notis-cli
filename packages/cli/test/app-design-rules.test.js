@@ -80,6 +80,35 @@ test('allowed patterns do not fire: hairlines, focus rings, popover shadows, tok
   assert.deepEqual(collectDesignViolationsForFile('app/page.tsx', `${clean}\n`, config), []);
 });
 
+test('one-side edges fire in every profile: thick or coloured borders and one-side inset shadows', () => {
+  const ids = (file, content, profile) => collectDesignViolationsForFile(file, `${content}\n`, loadDesignRules({ rulesPath, profile }))
+    .map((violation) => violation.ruleId);
+  const bad = [
+    ['app/page.tsx', '<li className="border-b-2 border-foreground" />'],
+    ['app/page.tsx', '<li className="border-l-[3px]" />'],
+    ['app/page.tsx', '<li className="border-l border-l-primary" />'],
+    ['app/page.tsx', '<li className="shadow-[inset_2px_0_0_hsl(var(--primary))]" />'],
+    ['app/page.tsx', "<li style={{ boxShadow: 'inset 2px 0 0 hsl(var(--primary))' }} />"],
+    ['app/page.tsx', "<li style={{ borderLeft: '3px solid hsl(var(--primary))' }} />"],
+    ['app/globals.css', '.row[data-active] { box-shadow: inset 2px 0 0 hsl(var(--foreground)); }'],
+    ['app/globals.css', '.row { border-left: 2px solid hsl(var(--primary)); }'],
+    ['app/globals.css', '.row { border-inline-start-color: hsl(var(--primary)); }'],
+    ['app/globals.css', '.row { border-bottom-width: 2px; }'],
+  ];
+  for (const profile of ['app', 'space']) {
+    for (const [file, content] of bad) assert.ok(ids(file, content, profile).includes('no-side-bar'), `${profile}: ${content}`);
+  }
+  const clean = [
+    ['app/page.tsx', '<li className="border-b border-border/50 lg:border-r" />'],
+    ['app/page.tsx', '<li className="shadow-[inset_0_0_0_1px_hsl(var(--ring))] border-t-0" />'],
+    ['app/globals.css', '.row[data-active] { box-shadow: inset 0 0 0 1px hsl(var(--ring)); }'],
+    ['app/globals.css', '.head { box-shadow: inset 0 -1px 0 hsl(var(--border) / 0.8); }'],
+    ['app/globals.css', '.row { border-bottom: 1px solid hsl(var(--border) / 0.5); border-top: 0; }'],
+    ['app/globals.css', '.row { border-top-left-radius: 6px; border-left-width: 1px; }'],
+  ];
+  for (const [file, content] of clean) assert.ok(!ids(file, content, 'app').includes('no-side-bar'), content);
+});
+
 test('exempt form controls and files outside app/ and components/ are skipped', () => {
   const config = loadDesignRules({ rulesPath });
   const bordered = '<input className="border border-input" />\n';
@@ -136,4 +165,11 @@ test('validateProjectDesign throws with file:line in enforce mode and only logs 
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
   }
+});
+
+test('a Space hears that the top bar crumb names the page; an app still hears to use a plain noun page title', () => {
+  const space = loadDesignRules({ rulesPath, profile: 'space' }).rules.find((rule) => rule.id === 'no-eyebrow');
+  const app = loadDesignRules({ rulesPath }).rules.find((rule) => rule.id === 'no-eyebrow');
+  assert.equal(space.message, 'Uppercase tracking eyebrows are banned. Use text-xs text-muted-foreground labels; the top bar crumb names the page.');
+  assert.match(app.message, /plain noun page title/);
 });

@@ -6,7 +6,7 @@
  * runs the Vite build, and packages the bundle for deployment.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants as fsConstants, copyFileSync, cpSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -27,6 +27,9 @@ const BUNDLE_DIR = join(OUTPUT_DIR, 'bundle');
 const MANIFEST_FILE = join(OUTPUT_DIR, 'manifest.json');
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const TEMPLATE_SDK_DIR = join(CLI_ROOT, 'dist', 'sdk');
+// Spaces install only types and build-time entries; the host provides the SDK
+// at runtime (scripts/build-space-sdk.js).
+const SPACE_SDK_DIR = join(CLI_ROOT, 'dist', 'space-sdk');
 const SOURCE_COPY_EXCLUDES = new Set([
   'node_modules',
   '.notis',
@@ -642,8 +645,12 @@ function listFilesRecursive(dir, base = dir, results = []) {
  * only packages/sdk/{package.json,tsconfig.json,src/<template files>} and the
  * exact retired copies of a real source; a folder without a source marker
  * (the Notis repository's own packages/sdk, for one) is refused untouched.
+ *
+ * `prune` (Spaces) makes the mirror exact instead: every owned file the
+ * template does not ship (packages/sdk/tsconfig.json, src/* and dist/*, the
+ * Space SDK's Node test runtime) is removed.
  */
-export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPLATE_SDK_DIR, retiredFiles = RETIRED_SDK_FILES } = {}) {
+export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPLATE_SDK_DIR, retiredFiles = RETIRED_SDK_FILES, prune = false } = {}) {
   const canonicalProjectDir = realpathSync(assertSourceRoot(projectDir));
   const canonicalTemplateDir = resolve(templateSdkDir);
   if (!existsSync(join(canonicalTemplateDir, 'package.json'))) {
@@ -652,9 +659,12 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
   const previousCwd = process.cwd();
   const previousIdentity = capturePullTargetIdentity(previousCwd);
   const projectIdentity = capturePullTargetIdentity(canonicalProjectDir);
-  const templateFiles = listFilesRecursive(canonicalTemplateDir).filter(
+  // listFilesRecursive skips every dist/ folder; an exact mirror owns the top-level one.
+  const listOwned = (dir) => [...listFilesRecursive(dir),
+    ...(prune ? listFilesRecursive(join(dir, 'dist')).map((relPath) => `dist/${relPath}`) : [])];
+  const templateFiles = listOwned(canonicalTemplateDir).filter(
     (relPath) => !HOST_ONLY_SDK_FILES.includes(relPath)
-      && (relPath === 'package.json' || relPath === 'tsconfig.json' || relPath.startsWith('src/')),
+      && (relPath === 'package.json' || relPath === 'tsconfig.json' || relPath.startsWith('src/') || relPath.startsWith('dist/')),
   );
   const changed = [];
   let foreign = [];
@@ -743,6 +753,22 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
     } finally { closeSync(descriptor); }
   }
 
+  // Unlink one directory entry relative to the pinned cwd; never follows a link.
+  function removeFile(segments) {
+    if (segments.length > 1) return inDirectory(segments[0], () => removeFile(segments.slice(1)));
+    try { unlinkSync(segments[0]); return true; }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  }
+
+  function removeEmptyDirectories() {
+    for (const entry of readdirSync('.', { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      inDirectory(entry.name, removeEmptyDirectories);
+      try { rmdirSync(entry.name); }
+      catch (error) { if (error.code !== 'ENOTEMPTY' && error.code !== 'EEXIST' && error.code !== 'ENOENT') throw error; }
+    }
+  }
+
   try {
     process.chdir(canonicalProjectDir);
     assertPullTargetIdentity('.', projectIdentity);
@@ -764,7 +790,18 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
       for (const [relPath, digests] of Object.entries(retiredFiles)) {
         if (!templateSet.has(relPath) && retireFile(relPath.split('/'), digests) === true) changed.push(relPath);
       }
-      foreign = listFilesRecursive('.').filter((relPath) => relPath.startsWith('src/') && !templateSet.has(relPath));
+      foreign = listOwned('.').filter((relPath) => (relPath.startsWith('src/') || (prune && (relPath === 'tsconfig.json' || relPath.startsWith('dist/'))))
+        && !templateSet.has(relPath));
+      if (prune) {
+        for (const relPath of foreign) {
+          if (removeFile(relPath.split('/'))) changed.push(relPath);
+        }
+        foreign = [];
+        inDirectory('src', removeEmptyDirectories);
+        inDirectory('dist', removeEmptyDirectories);
+        try { rmdirSync('dist'); }
+        catch (error) { if (error.code !== 'ENOTEMPTY' && error.code !== 'EEXIST' && error.code !== 'ENOENT') throw error; }
+      }
       return null;
     }));
     if (result) return result;
@@ -783,6 +820,104 @@ export function syncEmbeddedSdk(projectDir, { log = null, templateSdkDir = TEMPL
     emit(`Warning: packages/sdk/${relPath} is not part of the @notis/sdk template and was left unchanged.`);
   }
   return { updated: changed.length > 0, changed, foreign, templateVersion };
+}
+
+/**
+ * A Space's packages/sdk is exactly the package this CLI ships for Spaces
+ * (dist/space-sdk): host-module types, the build-time and pure entries, and a
+ * Node-only runtime for the Space's own tests. A Space view never loads SDK
+ * code of its own, so the mirror is pruned, not merged.
+ */
+export function syncSpaceSdk(projectDir, { log = null, templateSdkDir = SPACE_SDK_DIR, updateLock = updatePackageLock } = {}) {
+  if (!existsSync(join(templateSdkDir, 'package.json'))) {
+    throw usageError(`Space SDK not found at ${templateSdkDir}. Ensure @notis_ai/cli is installed correctly.`);
+  }
+  const result = syncEmbeddedSdk(projectDir, { log, templateSdkDir, retiredFiles: {}, prune: true });
+  if (result.reason) return result;
+  const manifest = JSON.parse(readFileSync(join(templateSdkDir, 'package.json'), 'utf-8'));
+  return { ...result, lockfile: reconcileSdkLockfile(realpathSync(projectDir), { manifest, log, updateLock }) };
+}
+
+// The package.json fields npm records for a linked package. `npm ci` checks a
+// lock against the linked package.json, so a changed SDK dependency makes it
+// refuse a lock written for the previous SDK.
+const LOCKED_MANIFEST_FIELDS = ['name', 'version', 'dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta'];
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** True when a lock entry records exactly this manifest (an absent map equals an empty one). */
+export function lockRecordsManifest(entry, manifest) {
+  if (!entry || typeof entry !== 'object') return false;
+  return LOCKED_MANIFEST_FIELDS.every((field) => {
+    const absent = field === 'name' || field === 'version' ? null : {};
+    return canonicalJson(entry[field] ?? absent) === canonicalJson(manifest[field] ?? absent);
+  });
+}
+
+// The lock only: no install scripts, node_modules untouched. One quick retry
+// keeps an offline machine from waiting out npm's minute-long default backoff,
+// and npm still answers from its cache when the network is down.
+const LOCK_UPDATE_ARGS = Object.freeze(['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund',
+  '--fetch-retries=1', '--fetch-retry-mintimeout=1000']);
+
+function updatePackageLock(projectDir) {
+  const result = spawnSync('npm', [...LOCK_UPDATE_ARGS], {
+    cwd: projectDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 180_000, shell: process.platform === 'win32',
+  });
+  if (result.error) {
+    return { ok: false, detail: result.error.code === 'ETIMEDOUT' ? 'npm did not finish within 3 minutes' : result.error.message };
+  }
+  if (result.status === 0) return { ok: true };
+  return { ok: false, detail: npmFailureReason(`${result.stderr || ''}\n${result.stdout || ''}`) || `npm exited with code ${result.status}` };
+}
+
+/** npm's reason in one line: its first error line that is not code/syscall/errno metadata, a stack frame or the log pointer. */
+export function npmFailureReason(output) {
+  const lines = String(output || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const meaningful = (line) => line && !/^(code|syscall|errno)\s/.test(line) && !/^at\s/.test(line) && !/complete log of this run/i.test(line);
+  const errors = lines.filter((line) => /^npm (error|ERR!)/.test(line)).map((line) => line.replace(/^npm (error|ERR!)\s*/, ''));
+  return errors.find(meaningful) || lines.find(meaningful) || '';
+}
+
+/**
+ * Keep package-lock.json in step with the mirrored @notis/sdk so `npm ci`
+ * accepts it. npm runs only when the lock's packages/sdk record differs from
+ * the mirrored manifest (`npm install --package-lock-only`: the lock only,
+ * no scripts, node_modules untouched). A failure, such as an offline
+ * machine, is a warning: the sync and the build or pull that ran it continue,
+ * and the next sync retries.
+ */
+export function reconcileSdkLockfile(projectDir, { manifest, log = null, updateLock = updatePackageLock } = {}) {
+  const emit = typeof log === 'function' ? log : (message) => process.stderr.write(`${message}\n`);
+  const lockPath = join(projectDir, 'package-lock.json');
+  const readLock = () => JSON.parse(readFileSync(lockPath, 'utf-8'));
+  let project, lock;
+  try {
+    project = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf-8'));
+    lock = readLock();
+  } catch {
+    return 'absent'; // No npm lock to keep, or one npm itself reports as unreadable.
+  }
+  const spec = project?.dependencies?.['@notis/sdk'] ?? project?.devDependencies?.['@notis/sdk'];
+  if (typeof spec !== 'string' || !/^file:(\.\/)?packages\/sdk\/?$/.test(spec)) return 'unlinked';
+  if (!lock?.packages || typeof lock.packages !== 'object') return 'unsupported'; // lockfileVersion 1
+  if (lockRecordsManifest(lock.packages['packages/sdk'], manifest)) return 'current';
+  const outcome = updateLock(projectDir);
+  let current = false;
+  try { current = lockRecordsManifest(readLock().packages?.['packages/sdk'], manifest); } catch { /* Reported below. */ }
+  if (outcome.ok && current) {
+    emit(`Updated package-lock.json for @notis/sdk ${manifest.version}. Run npm install to bring node_modules up to date.`);
+    return 'updated';
+  }
+  emit(`Warning: package-lock.json still records the previous @notis/sdk dependencies, so npm ci will refuse it${outcome.detail ? ` (${outcome.detail})` : ''}. `
+    + 'Everything else continues; run npm install in this project once the npm registry is reachable.');
+  return 'stale';
 }
 
 function readStablePinnedFile(descriptor, expectedStat, label) {

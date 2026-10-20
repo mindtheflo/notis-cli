@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { scaffoldProject } from './app-platform.js';
+import { scaffoldProject, syncSpaceSdk } from './app-platform.js';
 import { validateViewPath } from './space-view-manifest.js';
 import { usageError } from './errors.js';
 
@@ -10,6 +10,8 @@ export async function scaffoldSpaceCollection({ projectDir, name, databaseKey, p
   if (typeof name !== 'string' || !name.trim() || typeof titleProperty !== 'string' || !titleProperty.trim()) throw usageError('Choose a Space name and title property.');
   validateViewPath(path);
   await scaffoldProject({ projectDir, appName: name });
+  // A Space installs only the SDK's types and build-time entries; the host provides the rest.
+  syncSpaceSdk(projectDir, { log: () => {} });
   mkdirSync(join(projectDir, 'spaces', 'collection'), { recursive: true });
   writeFileSync(join(projectDir, 'notis.config.ts'), `import { defineSpaces } from '@notis/sdk/config';
 export default defineSpaces({ spaces: { collection: { definition: 'spaces/collection/space.config.ts' } } });\n`);
@@ -21,8 +23,10 @@ export default defineSpaces({ spaces: { collection: { definition: 'spaces/collec
     params: { item: { type: 'record', database: 'items', main: true, description: 'The record opened beside the list.' } },
     shows: { items: { database: 'items', where: {}, open: 'item' } },
     memory: { markdown: true, attachments: true, screenshot: false, snapshots: [] },
-    actions: { read: { tool: 'LOCAL_NOTIS_DATABASE_QUERY', inputs: { type: 'object', additionalProperties: false,
-      required: ['request'], properties: { request: { type: 'object' } } }, arguments: { database_id: { $asset: 'items' }, request: { $input: 'request' } } } },
+    // Each action is the linked database's own query, insert or trash: Notis turns it into the binding operation
+    // that useNativeMutation calls, so the view never names an account-wide database.
+    actions: { read: rowAction('LOCAL_NOTIS_DATABASE_QUERY'), create: rowAction('LOCAL_NOTIS_DATABASE_INSERT'),
+      delete: rowAction('LOCAL_NOTIS_DATABASE_DELETE') },
   };
   writeFileSync(join(projectDir, 'spaces/collection/space.config.ts'), `import { defineSpace } from '@notis/sdk/config';\nexport default defineSpace(${JSON.stringify(definition, null, 2)});\n`);
   writeFileSync(join(projectDir, 'spaces/collection/view.tsx'), COLLECTION_VIEW);
@@ -32,35 +36,68 @@ export default defineSpaces({ spaces: { collection: { definition: 'spaces/collec
   return { projectDir, key: 'collection', databaseKey };
 }
 
-export const COLLECTION_VIEW = `'use client';
-import { DocumentPage, useNotis, useNotisNavigation, useNotisRuntime, usePrefetchRecord, useShown, useViewParams, ViewSkeleton } from '@notis/sdk';
-import definition from './space.config';
-import { Button } from '@/components/ui/button';
+/** One declared action over the linked database: the tool gets the binding and the view's request, nothing else. */
+function rowAction(tool) {
+  return { tool, inputs: { type: 'object', additionalProperties: false, required: ['request'], properties: { request: { type: 'object' } } },
+    arguments: { database_id: { $asset: 'items' }, request: { $input: 'request' } } };
+}
 
-const copy = {
-  en: { empty: 'No records yet.', all: 'All records', untitled: 'Untitled', retry: 'Retry' },
-  fr: { empty: 'Aucun enregistrement pour le moment.', all: 'Tous les enregistrements', untitled: 'Sans titre', retry: 'Réessayer' },
-};
+/**
+ * The scaffolded view: one ListReader over the linked records, with the host top bar search, an All pill, a "+" that
+ * creates and opens a record, and the record's document page in the reader. The title lives in the host top bar.
+ */
+export const COLLECTION_VIEW = `'use client';
+import { useRef } from 'react';
+import { DocumentPage, useNativeMutation, useShown, useViewParams } from '@notis/sdk';
+import { EmptyState, ListReader, Notice, Row, type ListReaderApi } from '@notis/sdk/ui';
+import definition from './space.config';
+
+type Item = { record_key: string; revision: number; title: string | null; last_edited_time: string | null };
+
+/** The view's words. Spaces are English only; the toolkit's own words follow the Notis language. */
+const t = { list: 'Records', search: 'Search records…', all: 'All', create: 'New record', untitled: 'Untitled',
+  empty: 'No records yet.', remove: 'Delete', failed: 'Could not create the record. Try again.' };
+
 export default function CollectionView() {
-  const runtime = useNotisRuntime();
-  const t = copy[runtime?.context.locale === 'fr' ? 'fr' : 'en'];
-  const { resource } = useNotis();
-  const navigation = useNotisNavigation();
-  const { params } = useViewParams<typeof definition>();
-  const { data, loading, error, refetch } = useShown<{ record_key: string; title: string | null }>('items');
-  const prefetch = usePrefetchRecord();
-  // A record is the main content: the host's document page (breadcrumb back here, title, properties, body).
-  if (params.item) return <DocumentPage recordKey={params.item} onSaved={refetch}
-    breadcrumb={[{ label: t.all, onSelect: () => resource && navigation.toSpace(resource.id) }]} />;
-  return <main className="notis-app-shell space-y-2">
-    {error ? <div role="alert">{error.message}<Button onClick={refetch}>{t.retry}</Button></div> : null}
-    {loading ? <ViewSkeleton variant="table" rows={5} /> : null}
-    {data?.rows.length === 0 ? <p className="text-sm text-muted-foreground">{t.empty}</p> : null}
-    {data?.rows.map(record => <Button key={record.record_key} variant="ghost" className="w-full justify-start truncate"
-      onPointerEnter={() => prefetch(record.record_key)} onFocus={() => prefetch(record.record_key)}
-      onClick={() => resource && navigation.toSpace(resource.id, { recordKey: record.record_key })}>
-      {record.title || t.untitled}
-    </Button>)}
-  </main>;
+  const { setParams } = useViewParams<typeof definition>();
+  const { data, loading, error, refetch } = useShown<Item>('items', { allPages: true });
+  const insert = useNativeMutation('items', 'insert');
+  const trash = useNativeMutation('items', 'delete');
+  const list = useRef<ListReaderApi>(null);
+  const rows = data?.rows ?? [];
+  const write = () => ({ schemaRevision: data?.schema_revision ?? 0, requestId: crypto.randomUUID() });
+  const title = (record: Item) => record.title || t.untitled;
+
+  async function create() {
+    try {
+      const receipt = await insert.mutate({}, write());
+      await refetch();
+      await setParams({ item: receipt.record_key });
+    } catch {
+      list.current?.notify(t.failed);
+    }
+  }
+
+  async function remove(records: Item[]) {
+    for (const record of records) {
+      await trash.mutate({ record_key: record.record_key, expected_revision: record.revision }, write());
+    }
+    await refetch();
+  }
+
+  // The host top bar shows the Space and view name; the open record joins it as the last crumb.
+  return <ListReader apiRef={list} label={t.list} items={rows} getId={record => record.record_key} openParam="item"
+    loading={loading}
+    search={{ placeholder: t.search, match: (record, query) => title(record).toLocaleLowerCase().includes(query.toLocaleLowerCase()) }}
+    // One real view so far; add a pill per saved filter once the database has one.
+    tabs={{ role: 'filter', items: [{ id: 'all', label: t.all, count: rows.length }], value: 'all', onChange: () => undefined }}
+    create={{ label: t.create, onCreate: () => void create() }}
+    actions={[{ id: 'delete', run: remove }]}
+    empty={error ? <Notice tone="danger" onRetry={() => void refetch()}>{error.message}</Notice> : <EmptyState title={t.empty} />}
+    row={record => <Row title={title(record)} time={record.last_edited_time ?? undefined} />}
+    readerLabel={title}
+    crumbLabel={title}
+    readerActions={(_record, ctx) => [{ id: 'delete', label: t.remove, icon: 'trash', run: () => void ctx.run('delete') }]}
+    reader={record => <DocumentPage key={record.record_key} recordKey={record.record_key} onSaved={refetch} />} />;
 }
 `;

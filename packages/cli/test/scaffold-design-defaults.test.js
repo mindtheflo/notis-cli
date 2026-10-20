@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { collectDesignViolationsForFile, collectProjectDesignViolations } from '../src/runtime/app-boundary-validator.js';
+import { collectDesignViolationsForFile, collectProjectDesignViolations, loadDesignRules } from '../src/runtime/app-boundary-validator.js';
 import { COLLECTION_VIEW } from '../src/runtime/space-collection-scaffold.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -18,40 +18,38 @@ test('the Space scaffold has zero design violations', () => {
   assert.deepEqual(violations, []);
 });
 
-test('the scaffold ships the flat primitives and the loading contract', () => {
-  const card = readFileSync(join(templateDir, 'components', 'ui', 'card.tsx'), 'utf-8');
-  assert.match(card, /CardDepthContext/);
-  assert.doesNotMatch(card, /shadow-sm|'border/);
+test('the collection view is one ListReader with no heading, column or own search', () => {
+  for (const expected of ['<ListReader', 'search={{', 'tabs={{', 'create={{', 'row={', 'readerLabel=', 'readerActions=', 'crumbLabel=']) {
+    assert.ok(COLLECTION_VIEW.includes(expected), `${expected} is part of the collection view`);
+  }
+  // The host top bar owns the title and the search; the toolkit owns the reading measure.
+  assert.doesNotMatch(COLLECTION_VIEW, /<h1|PageHeading|\bCard\b|mx-auto|max-w-|notis-app-shell|useTopBarSearch|type="search"/);
+  assert.doesNotMatch(COLLECTION_VIEW, /\b(?:toolbar|header|fill)=|\bdivided\b|variant="outline"/);
+  // Every navigation promise is awaited or voided.
+  assert.doesNotMatch(COLLECTION_VIEW, /(?<!void |await )\b(?:toSpace|toNamedSpace|setParams)\(/);
 
-  // `spaces init` writes this view under spaces/, which the design rules do not
-  // cover yet, so lint it as app source to hold it to the same bar.
-  assert.match(COLLECTION_VIEW, /ViewSkeleton/);
-  assert.doesNotMatch(COLLECTION_VIEW, /variant="outline"/);
+  // `spaces init` writes the view under spaces/: it passes every Space rule, and the App rules too.
+  const space = loadDesignRules({ profile: 'space' });
+  assert.deepEqual(collectDesignViolationsForFile('spaces/collection/view.tsx', COLLECTION_VIEW, space).filter((violation) => !violation.allowed), []);
   assert.deepEqual(collectDesignViolationsForFile('app/view.tsx', COLLECTION_VIEW).filter((violation) => !violation.allowed), []);
+});
 
-  // The starter kit named by the scaffolded definition, the design rules and the
-  // shipped design guide. The App home route is gone; views live under spaces/.
+test('the scaffold ships the starter kit without a heading block or a card', () => {
+  // The starter kit named by the scaffolded definition and the design rules.
+  // The App home route is gone; views live under spaces/.
   for (const file of [
     'app/layout.tsx',
     'app/globals.css',
     'components/ui/button.tsx',
     'components/ui/badge.tsx',
     'components/ui/native-select.tsx',
-    'components/page-heading.tsx',
     'lib/utils.ts',
   ]) {
     assert.ok(readFileSync(join(templateDir, file), 'utf-8').length > 0, `${file} is part of the scaffold`);
   }
-  assert.equal(existsSync(join(templateDir, 'app', 'page.tsx')), false);
-
-  const styles = readFileSync(join(cliRoot, 'dist', 'sdk', 'src', 'styles.css'), 'utf-8');
-  for (const className of ['.list-row', '.list-row-selected', '.notis-app-split', '.notis-app-pane-list', '.notis-app-pane-detail']) {
-    assert.ok(styles.includes(className), `${className} is defined in the SDK styles`);
+  for (const file of ['app/page.tsx', 'components/page-heading.tsx', 'components/ui/card.tsx']) {
+    assert.equal(existsSync(join(templateDir, file)), false, `${file} is not part of the scaffold`);
   }
-  const surface = styles.match(/\.notis-app-surface\s*\{([^}]*)\}/)?.[1];
-  assert.ok(surface, 'the flat surface rule is present');
-  // Plain CSS includes border-radius; rounding is not a visible border.
-  assert.doesNotMatch(surface, /(?:^|;)\s*(?:border(?:-(?!radius\b)[a-z-]+)?|box-shadow)\s*:/);
 });
 
 test('the CLI theme source is one style block, not an executable harness', () => {

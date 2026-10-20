@@ -25,7 +25,8 @@ export interface UseDatabaseSchemaResult {
   isFetching: boolean;
   hasData: boolean;
   error: Error | null;
-  refetch: () => void;
+  /** Reads again; resolves to the read's error, or null when it succeeded. */
+  refetch: () => Promise<Error | null>;
 }
 
 /** Fetch a database's schema (normalized properties + metadata). */

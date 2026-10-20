@@ -30,7 +30,8 @@ export interface UseDocumentsResult {
   isFetching: boolean;
   hasData: boolean;
   error: Error | null;
-  refetch: () => void;
+  /** Reads again; resolves to the read's error, or null when it succeeded. */
+  refetch: () => Promise<Error | null>;
 }
 
 /**
@@ -48,8 +49,10 @@ export function useDocuments(
   options: UseDocumentsOptions = {},
 ): UseDocumentsResult {
   const runtime = useNotisRuntime();
+  // An untitled document reads "Untitled" in the Space's language.
+  const locale = runtime?.context?.locale === 'fr' ? 'fr' : 'en';
   const query = useQuery<DocumentRecord[]>(
-    ['documents', databaseSlug, options.filter ?? null, options.pageSize ?? null, options.offset ?? 0, Boolean(options.fetchAll), options.includeContent !== false],
+    ['documents', databaseSlug, options.filter ?? null, options.pageSize ?? null, options.offset ?? 0, Boolean(options.fetchAll), options.includeContent !== false, locale],
     async () => {
       if (!runtime) throw new Error('Notis runtime not available');
       const allDocuments: unknown[] = [];
@@ -74,7 +77,7 @@ export function useDocuments(
         }
         offset = nextOffset;
       }
-      return allDocuments.map(normalizeDocumentRecord).filter((document) => document.id);
+      return allDocuments.map((document) => normalizeDocumentRecord(document, { locale })).filter((document) => document.id);
     },
     { readOnly: true, enabled: options.enabled },
   );

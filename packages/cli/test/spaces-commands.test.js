@@ -61,7 +61,7 @@ test('named CLI action sends only declared inputs, exact revision/context and st
     { spaceId: 'space-1', actionId: 'send' });
   const result = await ctx.spec.handler(ctx);
   assert.equal(calls[0].url, 'https://fixture.invalid/portal_spaces/action');
-  assert.equal(calls[0].request.headers['X-Notis-Spaces-Protocol'], '1');
+  assert.equal(calls[0].request.headers['X-Notis-Spaces-Protocol'], '2');
   assert.deepEqual(JSON.parse(calls[0].request.body), { space_id: 'space-1', action_id: 'send', revision: 3,
     inputs: { text: 'hello' }, request_id: 'stable-intent', document_id: 'record-1', dry_run: true });
   assert.equal(result.meta.mutating, false);
@@ -137,7 +137,7 @@ test('interrupted source deployment keeps the original verification CAS and exac
   for (const call of calls.filter(call => call.url.endsWith('/source-publish'))) {
     assert.equal(call.body.verification.revision, 0);
     assert.equal(call.body.request_id, 'intent');
-    assert.equal(call.headers['X-Notis-Spaces-Protocol'], '1');
+    assert.equal(call.headers['X-Notis-Spaces-Protocol'], '2');
   }
   const before = calls.length;
   writeFileSync(join(root, 'one.ts'), "export default {name:'New intent'};");

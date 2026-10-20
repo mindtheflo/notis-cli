@@ -1,15 +1,17 @@
 'use client';
 
-import { useCallback, useRef, type CSSProperties, type ReactElement } from 'react';
+import { useCallback, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { useNotisRuntime } from '../provider';
+import { useTopBarTitleLeaf } from '../hooks/useTopBarTitleLeaf';
 import { DocumentEditor } from './DocumentEditor';
 import { HtmlFrame, ShareControl } from './RecordComponents';
 import { Skeleton } from './Skeleton';
+import { renderIcon } from '../ui/icons';
 import type { NotisDocumentPageProps } from '../runtime';
 
 const copy = {
-  en: { loading: 'Loading document', breadcrumb: 'Breadcrumb' },
-  fr: { loading: 'Chargement du document', breadcrumb: "Fil d'Ariane" },
+  en: { loading: 'Loading document', breadcrumb: 'Breadcrumb', untitled: 'Untitled' },
+  fr: { loading: 'Chargement du document', breadcrumb: "Fil d'Ariane", untitled: 'Sans titre' },
 };
 
 /** Column widths shared by the host page, its skeleton and the fallback, so nothing moves when the page arrives. */
@@ -19,6 +21,12 @@ export const DOCUMENT_PAGE_WIDTHS = { standard: 900, wide: 1200, full: undefined
  * toolbar height (56px plus its 1px border, Beta's py-3 toolbar). The skeleton uses the same values.
  */
 export const DOCUMENT_PAGE_GUTTER = { narrow: 16, wide: 48, breakpoint: 640, toolbar: 57 } as const;
+
+/** The widest a crumb before the last one gets; past it the words end in an ellipsis (C10). */
+const CRUMB_MAX = 160;
+// The room the fallback crumb keeps beside its buttons, and the one padding every crumb part has.
+const CRUMB_MIN = 72;
+const CRUMB_PADDING = '4px 6px';
 
 const SKELETON = 'notis-document-page-skeleton';
 // Inline styles cannot change with the width; this sheet (rendered with the skeleton, so it reaches a
@@ -67,10 +75,13 @@ export function DocumentPageSkeleton({ width = 'standard', className, label }: {
 
 /**
  * Shown by hosts that predate DocumentPage: the same record, with the editor these hosts already have.
- * menuItems show as plain toolbar buttons and onSaved is called when a save finishes (title null);
+ * menuItems show as toolbar buttons (icon only when they carry one) and onSaved is called when a save finishes (title null);
  * layout, header parts, meta and width options other than the column are not available there.
  * With viewer 'html' the host's HtmlFrame replaces the editor.
  */
+// A 16px box for a menu item's icon, sized here because a host without the toolkit stylesheet gives the svg no size.
+const ICON_BOX: CSSProperties = { display: 'inline-flex', width: 16, height: 16, overflow: 'hidden' };
+
 function DocumentPageFallback(props: NotisDocumentPageProps) {
   const t = useCopy();
   const { recordKey, breadcrumb, actions, share = false, aboveBody, belowBody, width, readOnly, className, menuItems = [], onSaved, onSavingChange } = props;
@@ -85,20 +96,32 @@ function DocumentPageFallback(props: NotisDocumentPageProps) {
   }, [onSaved, onSavingChange, recordKey]);
   return <div className={className} style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
     {showToolbar ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, padding: '0 16px' }}>
-      <nav aria-label={t.breadcrumb} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0, fontSize: 14 }}>
-        {crumbs.map((crumb, index) => <span key={`${crumb.label}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          {crumb.onSelect ? <button type="button" onClick={crumb.onSelect}
-            style={{ background: 'none', border: 0, padding: '4px 6px', borderRadius: 6, cursor: 'pointer', color: 'hsl(var(--muted-foreground))', font: 'inherit' }}>
-            {crumb.label}</button> : <span style={{ color: 'hsl(var(--muted-foreground))' }}>{crumb.label}</span>}
-          <span aria-hidden="true" style={{ color: 'hsl(var(--muted-foreground))' }}>/</span>
-        </span>)}
+      {/* C10: the crumb shrinks (each part ends in an ellipsis, a slash only between parts) and never runs under the
+        buttons, which never wrap. The last part gets the room the others leave; every part has the same padding. When
+        the buttons alone outgrow the bar (longer French labels), their labels shorten too, down to CRUMB_MIN of crumb. */}
+      <nav aria-label={t.breadcrumb} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: CRUMB_MIN, overflow: 'hidden', fontSize: 14 }}>
+        {crumbs.map((crumb, index) => {
+          const last = index === crumbs.length - 1;
+          const text: CSSProperties = { display: 'block', minWidth: 0, maxWidth: last ? '100%' : CRUMB_MAX, overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'hsl(var(--muted-foreground))' };
+          return <span key={`${crumb.label}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, flex: '0 1 auto' }}>
+            {crumb.onSelect ? <button type="button" onClick={crumb.onSelect} title={crumb.label}
+              style={{ ...text, background: 'none', border: 0, padding: CRUMB_PADDING, borderRadius: 6, cursor: 'pointer', font: 'inherit' }}>
+              {crumb.label}</button>
+              : <span title={crumb.label} style={{ ...text, padding: CRUMB_PADDING }}>{crumb.label}</span>}
+            {last ? null : <span aria-hidden="true" style={{ flex: 'none', color: 'hsl(var(--muted-foreground))' }}>/</span>}
+          </span>;
+        })}
       </nav>
-      {actions}
-      {share ? <ShareControl recordKey={recordKey} /> : null}
-      {/* The host's '...' menu is not available here: its entries show as plain buttons. */}
-      {menuItems.map((item, index) => <button key={`${item.label}-${index}`} type="button" onClick={item.onSelect} disabled={item.disabled}
-        style={{ background: 'none', border: 0, padding: '4px 8px', borderRadius: 6, cursor: item.disabled ? 'default' : 'pointer', font: 'inherit', fontSize: 13,
-          color: item.destructive ? 'hsl(var(--destructive))' : 'hsl(var(--muted-foreground))', opacity: item.disabled ? 0.5 : 1 }}>{item.label}</button>)}
+      <div data-notis-document-page-actions="" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: '0 1 auto', minWidth: 0, whiteSpace: 'nowrap' }}>
+        {actions}
+        {share ? <ShareControl recordKey={recordKey} /> : null}
+        {/* The host's '...' menu is not available here: its entries show as buttons, icon only when they carry one. */}
+        {menuItems.map((item, index) => <button key={`${item.label}-${index}`} type="button" onClick={item.onSelect} disabled={item.disabled} title={item.label}
+          aria-label={item.icon ? item.label : undefined}
+          style={{ display: 'inline-flex', alignItems: 'center', background: 'none', border: 0, padding: item.icon ? 6 : '4px 8px', borderRadius: 6, cursor: item.disabled ? 'default' : 'pointer', font: 'inherit', fontSize: 13,
+            flex: '0 1 auto', minWidth: 0, maxWidth: CRUMB_MAX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: item.destructive ? 'hsl(var(--destructive))' : 'hsl(var(--muted-foreground))', opacity: item.disabled ? 0.5 : 1 }}>{item.icon ? <span style={ICON_BOX}>{renderIcon(item.icon)}</span> : item.label}</button>)}
+      </div>
     </div> : null}
     {props.viewer === 'html' ? <HtmlFrame recordKey={recordKey} /> :
     <div style={{ ...columnStyle(width), padding: '24px 16px 96px', display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -130,8 +153,25 @@ function DocumentPageFallback(props: NotisDocumentPageProps) {
  * this component show the record with `DocumentEditor` instead.
  */
 export function DocumentPage(props: NotisDocumentPageProps): ReactElement {
-  const Host = useNotisRuntime()?.ui?.DocumentPage;
-  return Host ? <Host {...props} /> : <DocumentPageFallback {...props} />;
+  const runtime = useNotisRuntime();
+  const Host = runtime?.ui?.DocumentPage;
+  const t = useCopy();
+  const { recordKey, onTitle } = props;
+  // A record opened from the view (it draws a way back) names the top bar leaf with its title, so the view's page
+  // becomes a parent crumb. The host reports the title; until it does, and on hosts that never do, there is no leaf.
+  const leaf = props.topBarTitle ?? (Array.isArray(props.breadcrumb) && props.breadcrumb.length > 0);
+  // The top bar is then the page's crumb: its view crumb goes back as the page's last crumb did, and the host draws
+  // its own breadcrumb only where the top bar shows none.
+  const inTopBar = Boolean(leaf && Host && runtime?.setTopBarTitleLeaf);
+  const back = Array.isArray(props.breadcrumb) ? [...props.breadcrumb].reverse().find(crumb => crumb.onSelect)?.onSelect : undefined;
+  const [reported, setReported] = useState<{ recordKey: string; title: string } | null>(null);
+  const reportTitle = useCallback((title: string) => {
+    setReported(current => current?.recordKey === recordKey && current.title === title ? current : { recordKey, title });
+    onTitle?.(title);
+  }, [recordKey, onTitle]);
+  const title = reported?.recordKey === recordKey ? reported.title : null;
+  useTopBarTitleLeaf(leaf && title !== null ? title.trim() || t.untitled : null, back);
+  return Host ? <Host {...props} topBarTitle={inTopBar} onTitle={reportTitle} /> : <DocumentPageFallback {...props} />;
 }
 
 /**

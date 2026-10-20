@@ -8,7 +8,7 @@ backend owns authority, schema validation, connections, billing and orchestratio
 
 Use a Vite/React project with `@notis/sdk`; the selected source compiles to an ES
 module and stylesheet. `defineSpaces` indexes independently deployable definitions;
-`defineSpace` declares one Space. The CLI generates the manifest—edit source,
+`defineSpace` declares one Space. The CLI generates the manifest; edit source,
 not generated metadata. [View authoring](views.md) owns its declaration contract.
 
 The Portal renders authored code in a React/Shadow DOM host. Shadow DOM isolates

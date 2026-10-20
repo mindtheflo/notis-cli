@@ -27,17 +27,13 @@ import {
 import type { MultiSelectActionBarProps } from '../components/MultiSelectActionBar';
 import { isInteractionElementVisible } from '../interactions/visibility';
 import { useLongPressSelection } from './useLongPressSelection';
+import { useMarqueeSelection, type SelectionMarqueeRect } from './useMarqueeSelection';
 
 export const COLLECTION_ITEM_ATTRIBUTE = 'data-notis-collection-item-id';
 const LEGACY_ROW_ATTRIBUTE = 'data-notis-row-id';
 const INTERACTIVE_SELECTOR = 'button, a, input, textarea, select, [role="button"], [contenteditable]:not([contenteditable="false"])';
 
-export interface SelectionMarqueeRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
+export type { SelectionMarqueeRect };
 
 export type CollectionInteractionReason =
   | 'activate'
@@ -193,13 +189,6 @@ function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true;
 }
 
-function rectsIntersect(
-  a: { left: number; top: number; right: number; bottom: number },
-  b: { left: number; top: number; right: number; bottom: number },
-): boolean {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-}
-
 export function useCollectionInteractions<T>(
   options: UseCollectionInteractionsOptions<T>,
 ): CollectionInteractionController<T> {
@@ -242,7 +231,6 @@ export function useCollectionInteractions<T>(
     defaultAnchorId === undefined ? defaultActiveId : defaultAnchorId,
   );
   const anchorId = controlledAnchorId === undefined ? uncontrolledAnchorId : controlledAnchorId;
-  const [dragRect, setDragRect] = useState<SelectionMarqueeRect | null>(null);
 
   const itemsRef = useRef(items);
   const getIdRef = useRef(getId);
@@ -566,112 +554,22 @@ export function useCollectionInteractions<T>(
     activateShortcutCollection(shortcutCollectionOwnerRef.current!);
   }, []);
 
-  const dragPendingRef = useRef(false);
-  const dragActiveRef = useRef(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const dragCurrentRef = useRef({ x: 0, y: 0 });
-  const clickShouldClearRef = useRef(false);
-  const suppressNextClickRef = useRef(false);
-
-  const armSuppressNextClick = useCallback(() => {
-    suppressNextClickRef.current = true;
-    setTimeout(() => { suppressNextClickRef.current = false; }, 0);
-  }, []);
-
-  const computeDragRect = useCallback((): SelectionMarqueeRect => ({
-    left: Math.min(dragStartRef.current.x, dragCurrentRef.current.x),
-    top: Math.min(dragStartRef.current.y, dragCurrentRef.current.y),
-    width: Math.abs(dragCurrentRef.current.x - dragStartRef.current.x),
-    height: Math.abs(dragCurrentRef.current.y - dragStartRef.current.y),
-  }), []);
-
-  const computeIntersectingIds = useCallback((rect: {
-    left: number; top: number; right: number; bottom: number;
-  }) => {
-    const nodes = containerRef.current?.querySelectorAll<HTMLElement>(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
-    if (!nodes) return [];
-    const ids: string[] = [];
-    nodes.forEach((node) => {
-      if (!rectsIntersect(rect, node.getBoundingClientRect())) return;
-      const id = node.getAttribute(COLLECTION_ITEM_ATTRIBUTE);
-      if (id && selectableIdsRef.current.includes(id)) ids.push(id);
-    });
-    return ids;
-  }, []);
-
-  const handleContainerMouseDown = useCallback((event: ReactMouseEvent) => {
-    if (!enabled || event.button !== 0) return;
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-    const itemTarget = target.closest(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
-    const interactiveTarget = target.closest(INTERACTIVE_SELECTOR);
-    if (interactiveTarget && interactiveTarget !== itemTarget) {
-      clickShouldClearRef.current = false;
-      return;
-    }
-    clickShouldClearRef.current = !itemTarget;
-    if (itemTarget) return;
-    if (!enableDragSelect || selectionMode !== 'multiple') return;
-    dragPendingRef.current = true;
-    dragStartRef.current = { x: event.clientX, y: event.clientY };
-    dragCurrentRef.current = { x: event.clientX, y: event.clientY };
-  }, [enableDragSelect, enabled, selectionMode]);
-
-  const handleContainerClickCapture = useCallback((event: ReactMouseEvent) => {
-    if (!suppressNextClickRef.current) return;
-    suppressNextClickRef.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  }, []);
-
-  useEffect(() => {
-    if (!enabled || !enableDragSelect || selectionMode !== 'multiple') return;
-    const handleMouseMove = (event: MouseEvent) => {
-      if (dragPendingRef.current) {
-        const dx = event.clientX - dragStartRef.current.x;
-        const dy = event.clientY - dragStartRef.current.y;
-        if (Math.abs(dx) > dragThreshold || Math.abs(dy) > dragThreshold) {
-          dragPendingRef.current = false;
-          dragActiveRef.current = true;
-          window.getSelection()?.removeAllRanges();
-        } else return;
-      }
-      if (!dragActiveRef.current) return;
-      event.preventDefault();
-      dragCurrentRef.current = { x: event.clientX, y: event.clientY };
-      const rect = computeDragRect();
-      setDragRect(rect);
-      const ids = computeIntersectingIds({
-        left: rect.left,
-        top: rect.top,
-        right: rect.left + rect.width,
-        bottom: rect.top + rect.height,
-      });
+  // The marquee (drag from empty space) is the shared one the toolkit list uses too.
+  const marquee = useMarqueeSelection({
+    enabled: enabled && enableDragSelect && selectionMode === 'multiple',
+    itemAttribute: COLLECTION_ITEM_ATTRIBUTE,
+    isSelectable: (id) => selectableIdsRef.current.includes(id),
+    onSelect: (ids) => {
       commitSelection(new Set(ids), 'drag');
       const last = ids[ids.length - 1] ?? null;
       setAnchor(last, 'drag');
-    };
-    const handleMouseUp = () => {
-      const wasPending = dragPendingRef.current;
-      const wasActive = dragActiveRef.current;
-      dragPendingRef.current = false;
-      dragActiveRef.current = false;
-      if (wasActive) {
-        setDragRect(null);
-        clickShouldClearRef.current = false;
-        armSuppressNextClick();
-      } else if (wasPending && clickShouldClearRef.current) {
-        clickShouldClearRef.current = false;
-        clear();
-      }
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [armSuppressNextClick, clear, commitSelection, computeDragRect, computeIntersectingIds, dragThreshold, enableDragSelect, enabled, selectionMode, setAnchor]);
+    },
+    onClear: clear,
+    threshold: dragThreshold,
+    interactiveSelector: INTERACTIVE_SELECTOR,
+  });
+  const dragRect = marquee.rect;
+  const { armSuppressNextClick, onMouseDown: handleContainerMouseDown, onClickCapture: handleContainerClickCapture } = marquee;
 
   const onRowMouseDown = useCallback((id: string) => (event: ReactMouseEvent) => {
     if (!enabled || event.button !== 0 || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;

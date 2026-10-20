@@ -41,7 +41,8 @@ export function useNativeDocuments(binding: string, options: {
     const stop = runtime.subscribeDatabase(binding, () => {}, { onStatusChange: value => { if (!cancelled) setLive(value); } });
     return () => { cancelled = true; setLive(false); stop?.(); };
   }, [runtime, binding, follow]);
-  const query = useQuery(['native-documents', binding, options.query ?? {}, Boolean(options.fetchAll)], async () => {
+  const locale = runtime?.context?.locale === 'fr' ? 'fr' : 'en';
+  const query = useQuery(['native-documents', binding, options.query ?? {}, Boolean(options.fetchAll), locale], async () => {
     const action = actionFor(runtime, binding, 'query');
     if (options.query?.mode && !['rows', 'search'].includes(options.query.mode)) throw new Error('Use useActionQuery for counts and aggregates.');
     const rows: unknown[] = [];
@@ -58,7 +59,7 @@ export function useNativeDocuments(binding: string, options: {
       if (typeof result.next_offset !== 'number' || result.next_offset <= offset) throw new SdkQueryError('responseIncomplete', 'Native query pagination did not advance next_offset.');
       offset = result.next_offset;
     }
-    return { documents: rows.map(normalizeDocumentRecord), schemaRevision: revision! };
+    return { documents: rows.map((row) => normalizeDocumentRecord(row, { locale })), schemaRevision: revision! };
   }, { readOnly: true, enabled: options.enabled, staleTimeMs: options.staleTimeMs });
   return { ...query, documents: query.data?.documents ?? EMPTY_DOCUMENTS, schemaRevision: query.data?.schemaRevision, live };
 }

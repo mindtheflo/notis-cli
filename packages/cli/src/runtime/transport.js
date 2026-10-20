@@ -81,8 +81,23 @@ function createMultipartFileUpload(payload, bindingMetadata, fileBindings) {
   };
 }
 
+// The Spaces client protocol this CLI speaks. The server refuses every other
+// version with a 410 `client_update_required` answer, so an older CLI is told
+// to update instead of half-working.
+export const SPACES_PROTOCOL = 2;
+export const CLI_UPDATE_COMMAND = 'npx --package @notis_ai/cli@latest -- notis';
+
 export function normalizeBackendError(status, payload, runtime) {
   const backendError = payload?.error;
+  if (backendError === 'client_update_required') {
+    return new CliError({
+      code: 'cli_update_required',
+      message: `This Notis CLI is too old for Spaces. Run the latest one with: ${CLI_UPDATE_COMMAND}`,
+      exitCode: EXIT_CODES.usage,
+      details: payload || {},
+      hints: [{ command: CLI_UPDATE_COMMAND, reason: 'Run your command again with the latest Notis CLI' }],
+    });
+  }
   // Space errors answer {error: <stable code>, message: <readable text>}: show
   // the text (it can name the Space involved); the code stays in details.
   const codedMessage = typeof backendError === 'string' && /^[a-z][a-z0-9_]*$/.test(backendError)
@@ -298,7 +313,7 @@ export async function httpRequest({
     'X-Notis-CLI-Version': runtime.cliVersion,
     'X-Notis-Request-Id': requestId,
   };
-  if (spacesProtocol !== undefined) headers['X-Notis-Spaces-Protocol'] = String(spacesProtocol);
+  if (spacesProtocol) headers['X-Notis-Spaces-Protocol'] = String(SPACES_PROTOCOL);
   if (!multipart) {
     headers['Content-Type'] = 'application/json';
   }

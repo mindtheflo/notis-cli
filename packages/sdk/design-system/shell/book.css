@@ -1,0 +1,633 @@
+/*
+ * The document sheet of the design system book (design review spec, section 3.3, layer 1), after the Portal
+ * tokens. It styles the shell and is also the base of every frame document. Flat, like the Portal: spacing
+ * instead of lines, no borders, dividers or eyebrows; focus and highlights are full rings on all four sides.
+ */
+:root {
+  --ds-change: 32 95% 44%;
+  --ds-focus: 217 91% 60%;
+}
+.dark {
+  --ds-change: 43 96% 56%;
+}
+
+html,
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  margin: 0;
+}
+[hidden],
+[data-ds-filtered] {
+  display: none !important;
+}
+
+/* The shell. */
+.ds-app {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ds-app :focus-visible {
+  outline: 2px solid hsl(var(--ds-focus));
+  outline-offset: 2px;
+}
+.ds-app h1,
+.ds-app h2,
+.ds-app h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.ds-app h1 {
+  font-size: 26px;
+}
+.ds-app h2 {
+  font-size: 20px;
+}
+.ds-app h3 {
+  font-size: 15px;
+}
+.ds-app p {
+  margin: 6px 0 0;
+}
+.ds-muted {
+  color: hsl(var(--muted-foreground));
+}
+.ds-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: hsl(var(--muted));
+  border-radius: 4px;
+  padding: 1px 5px;
+  overflow-wrap: anywhere;
+}
+
+.ds-index {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 16px 12px 32px;
+  background: hsl(var(--muted) / 0.55);
+}
+.ds-index-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ds-index-open,
+.ds-index-close {
+  display: none;
+}
+.ds-search {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: hsl(var(--background));
+}
+.ds-search:focus {
+  outline: 2px solid hsl(var(--ds-focus));
+  outline-offset: 0;
+}
+.ds-index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+}
+.ds-index-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 6px 0;
+}
+.ds-index-section,
+.ds-index-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.ds-index-section {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ds-index-item {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  padding-left: 16px;
+}
+.ds-index-section:hover,
+.ds-index-item:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+.ds-index-badge:empty,
+.ds-badge-slot:empty {
+  display: none;
+}
+.ds-index-badge {
+  margin-left: auto;
+}
+
+.ds-main {
+  min-width: 0;
+  padding: 0 32px 96px;
+}
+.ds-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  /* Full width of the column so nothing below shows beside it while it sticks. */
+  margin: 0 -32px;
+  padding: 12px 32px;
+  background: hsl(var(--background));
+}
+.ds-bar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ds-bar-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ds-toggle-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: hsl(var(--muted));
+}
+.ds-toggle {
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  cursor: pointer;
+}
+.ds-toggle:hover {
+  color: hsl(var(--foreground));
+}
+.ds-toggle[aria-pressed='true'] {
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  font-weight: 500;
+}
+.ds-toggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.ds-section {
+  padding-top: 40px;
+  /* A little under the bar's height, so the ring halo of the card above a heading stays hidden under the bar. */
+  scroll-margin-top: calc(var(--ds-bar-height, 54px) - 6px);
+}
+.ds-section > h3 {
+  margin-top: 24px;
+}
+.ds-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 20px 0;
+}
+.ds-count {
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: hsl(var(--muted));
+}
+.ds-count strong {
+  font-size: 22px;
+}
+.ds-count span {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.ds-imports {
+  display: grid;
+  gap: 8px;
+}
+.ds-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.ds-problems {
+  margin-top: 20px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: hsl(var(--destructive) / 0.1);
+  font-size: 13px;
+}
+.ds-problems ul,
+.ds-missing ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  max-height: 360px;
+  overflow: auto;
+}
+.ds-missing {
+  margin-top: 24px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  background: hsl(var(--muted));
+  font-size: 13px;
+}
+
+.ds-specimen {
+  margin-top: 24px;
+  padding: 20px;
+  border-radius: 12px;
+  background: hsl(var(--muted));
+  /* Under the bar with room for the ring and its halo (12 px outside the card). */
+  scroll-margin-top: calc(var(--ds-bar-height, 54px) + 14px);
+}
+.ds-specimen .ds-code {
+  background: hsl(var(--background));
+}
+.ds-specimen-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ds-import-line {
+  display: inline-block;
+  margin-top: 8px;
+}
+.ds-covers {
+  font-size: 13px;
+}
+.ds-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ds-state {
+  position: relative;
+  margin-top: 18px;
+  border-radius: 10px;
+  scroll-margin-top: calc(var(--ds-bar-height, 54px) + 14px);
+}
+.ds-state-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.ds-state-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ds-frame-status:not(:empty) {
+  color: hsl(var(--destructive));
+  font-weight: 600;
+}
+.ds-state-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.ds-link {
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+}
+.ds-link:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+}
+.ds-actual {
+  background: hsl(var(--background) / 0.6);
+}
+.ds-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: hsl(var(--background));
+}
+.ds-stage-actual {
+  overflow-x: auto;
+}
+.ds-viewport {
+  transform-origin: top left;
+}
+.ds-frame {
+  display: block;
+  border: 0;
+}
+.ds-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 20px;
+  color: hsl(var(--muted-foreground));
+}
+.ds-shot {
+  display: block;
+}
+
+.ds-row {
+  overflow-wrap: anywhere;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.ds-row > .ds-code {
+  justify-self: start;
+  max-width: 100%;
+}
+.ds-row:hover {
+  background: hsl(var(--muted) / 0.6);
+}
+.ds-row-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+}
+.ds-row-head:hover {
+  background: transparent;
+}
+.ds-api-row {
+  grid-template-columns: minmax(200px, 1fr) 170px minmax(0, 1.2fr) minmax(0, 2fr);
+}
+.ds-token-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ds-swatch {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.14);
+}
+.ds-words {
+  margin-top: 24px;
+}
+.ds-words > h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.ds-flag {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--destructive-foreground));
+  background: hsl(var(--destructive));
+}
+
+/*
+ * The narrow layout (a phone, or the review page at 390): one column, the index as a full screen panel behind the
+ * Index button of the bar, and the two and three column rows stacked with their first cell on its own line.
+ */
+@media (max-width: 760px) {
+  .ds-app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ds-index {
+    display: none;
+  }
+  .ds-app[data-ds-index-open] .ds-index {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    width: auto;
+    height: auto;
+    padding: 12px 16px 32px;
+    background: hsl(var(--background));
+  }
+  .ds-index-open,
+  .ds-index-close {
+    display: inline-block;
+    flex: none;
+    color: hsl(var(--foreground));
+    background: hsl(var(--muted));
+  }
+  .ds-search {
+    background: hsl(var(--muted));
+  }
+  .ds-main {
+    padding: 0 16px 64px;
+  }
+  .ds-bar {
+    gap: 8px;
+    margin: 0 -16px;
+    padding: 10px 16px;
+  }
+  .ds-bar-title {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ds-app h1 {
+    font-size: 22px;
+  }
+  .ds-section {
+    padding-top: 28px;
+  }
+  .ds-counts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .ds-count {
+    min-width: 0;
+  }
+  .ds-import > .ds-code {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .ds-specimen {
+    padding: 14px 12px;
+  }
+  .ds-row,
+  .ds-api-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 4px 12px;
+  }
+  .ds-row > :first-child,
+  .ds-api-row > :nth-child(4) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Review mode (shell/review.ts). */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  color: hsl(var(--background));
+  background: hsl(var(--ds-change));
+}
+.ds-badge[data-status='same'] {
+  color: hsl(var(--foreground));
+  background: hsl(var(--ds-change) / 0.2);
+}
+.ds-badge[data-status='failed'],
+.ds-badge[data-status='timeout'] {
+  color: hsl(var(--destructive-foreground));
+  background: hsl(var(--destructive));
+}
+.ds-badge[data-status='removed'] {
+  color: hsl(var(--background));
+  background: hsl(var(--muted-foreground));
+}
+.ds-ring {
+  box-shadow: 0 0 0 2px hsl(var(--ds-change)), 0 0 0 6px hsl(var(--ds-change) / 0.18);
+}
+.ds-ring[data-ds-ring='failed'] {
+  box-shadow: 0 0 0 2px hsl(var(--destructive)), 0 0 0 6px hsl(var(--destructive) / 0.18);
+}
+.ds-row.ds-ring {
+  margin: 6px 0;
+}
+/* A state sits flush on its specimen card: its ring keeps a gap in the card colour so the label breathes. */
+.ds-state.ds-ring {
+  box-shadow: 0 0 0 6px hsl(var(--muted)), 0 0 0 8px hsl(var(--ds-change)), 0 0 0 12px hsl(var(--ds-change) / 0.18);
+}
+.ds-state.ds-ring[data-ds-ring='failed'] {
+  box-shadow: 0 0 0 6px hsl(var(--muted)), 0 0 0 8px hsl(var(--destructive)), 0 0 0 12px hsl(var(--destructive) / 0.18);
+}
+.ds-old {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.ds-review-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.ds-filtered-empty {
+  margin-top: 12px;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+/*
+ * The comment pin of the review deck (comments.css, .cm-pin): a foreground bubble that points at its spot with its
+ * bottom-left corner, so the spot itself stays visible. It turns blue on hover and while its thread is open.
+ */
+:root {
+  --ds-elev-lg: 0 2px 6px rgb(0 0 0 / 0.06), 0 12px 32px rgb(0 0 0 / 0.12);
+}
+.dark {
+  --ds-elev-lg: 0 0 #0000;
+}
+.ds-pin {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0 6px;
+  transform: translateY(-100%);
+  border: 0;
+  border-radius: 12px 12px 12px 2px;
+  font: 600 12px/1 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--background));
+  background: hsl(var(--foreground));
+  box-shadow: 0 0 0 2px hsl(var(--background)), var(--ds-elev-lg);
+  cursor: pointer;
+}
+.ds-pin:hover,
+.ds-pin[data-active],
+.ds-pin[data-pending] {
+  color: #fff;
+  background: hsl(var(--ds-focus));
+}
+.ds-pin:focus-visible {
+  outline: 2px solid hsl(var(--ds-focus) / 0.7);
+  outline-offset: 2px;
+}
+.ds-pin[data-resolved]:not(:hover, [data-active]) {
+  color: hsl(var(--background));
+  background: hsl(var(--muted-foreground));
+}
+.ds-pin[data-moved]::after {
+  content: 'moved';
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+  box-shadow: 0 0 0 2px hsl(var(--background)), var(--ds-elev-lg);
+  pointer-events: none;
+}
+body[data-ds-comment] .ds-stage {
+  cursor: crosshair;
+}

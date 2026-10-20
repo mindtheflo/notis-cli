@@ -244,9 +244,89 @@ function matchesAny(relPath, globs) {
   return (globs || []).some((glob) => globToRegExp(glob).test(relPath));
 }
 
-let compiledDesignRules = null;
+const REGEX_PRECEDERS = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '>', '~', '^']);
 
-export function loadDesignRules({ rulesPath = resolveDesignRulesPath() } = {}) {
+function blankRange(chars, start, end) {
+  for (let index = start; index < end; index += 1) {
+    if (chars[index] !== '\n') chars[index] = ' ';
+  }
+}
+
+/**
+ * Blank out comments so the design rules never match words inside them. Every
+ * character keeps its offset and newlines stay, so line numbers do not move.
+ * CSS has only block comments; JS and TS also have line comments. Quoted
+ * strings end at a newline so an apostrophe in JSX text cannot swallow a file,
+ * and "scheme://" is never a comment. Mirrored by mask_comments in
+ * server/lib/app_boundary_validator.py.
+ */
+export function maskComments(content, extension) {
+  const isCss = extension === '.css';
+  const chars = content.split('');
+  const length = chars.length;
+  let index = 0;
+  let previous = '';
+  while (index < length) {
+    const char = chars[index];
+    const next = chars[index + 1];
+    if (char === '/' && next === '*') {
+      const close = content.indexOf('*/', index + 2);
+      const end = close === -1 ? length : close + 2;
+      blankRange(chars, index, end);
+      index = end;
+      continue;
+    }
+    if (!isCss && char === '/' && next === '/' && !(chars[index - 1] === ':' && /[A-Za-z0-9]/.test(chars[index - 2] || ''))) {
+      let end = content.indexOf('\n', index);
+      if (end === -1) end = length;
+      blankRange(chars, index, end);
+      index = end;
+      continue;
+    }
+    if (char === '"' || char === "'" || (!isCss && char === '`')) {
+      let cursor = index + 1;
+      while (cursor < length) {
+        const inner = chars[cursor];
+        if (inner === '\\') { cursor += 2; continue; }
+        if (inner === char) { cursor += 1; break; }
+        if (inner === '\n' && char !== '`') break;
+        cursor += 1;
+      }
+      previous = char;
+      index = cursor;
+      continue;
+    }
+    if (!isCss && char === '/' && REGEX_PRECEDERS.has(previous)) {
+      let cursor = index + 1;
+      let inClass = false;
+      while (cursor < length && chars[cursor] !== '\n') {
+        const inner = chars[cursor];
+        if (inner === '\\') { cursor += 2; continue; }
+        if (inner === '[') inClass = true;
+        else if (inner === ']') inClass = false;
+        else if (inner === '/' && !inClass) { cursor += 1; break; }
+        cursor += 1;
+      }
+      previous = '/';
+      index = cursor;
+      continue;
+    }
+    if (!/\s/.test(char)) previous = char;
+    index += 1;
+  }
+  return chars.join('');
+}
+
+const compiledDesignRules = new Map();
+
+/**
+ * Load the design rules for one profile. The default profile ("app") keeps the
+ * file's top-level include/exclude. A named profile (for example "space")
+ * replaces the include with its own, adds its excludes, and turns on the rules
+ * that list it in `profiles`. Rules naming a `toolkit_piece` stay warnings until
+ * that piece appears in `toolkit_live_pieces`, then they refuse like errors.
+ */
+export function loadDesignRules({ rulesPath = resolveDesignRulesPath(), profile = 'app' } = {}) {
   let payload = null;
   try {
     const parsed = JSON.parse(readFileSync(rulesPath, 'utf-8'));
@@ -259,31 +339,42 @@ export function loadDesignRules({ rulesPath = resolveDesignRulesPath() } = {}) {
     );
   }
   if (!payload) {
-    return { include: [], exclude: [], extensions: DEFAULT_DESIGN_EXTENSIONS, rules: [], allowDirective: 'notis-design-allow', allowReasonMinLength: 12 };
+    return { profile, include: [], exclude: [], extensions: DEFAULT_DESIGN_EXTENSIONS, rules: [], allowDirective: 'notis-design-allow', allowReasonMinLength: 12 };
   }
+  const profiles = payload.profiles && typeof payload.profiles === 'object' && !Array.isArray(payload.profiles) ? payload.profiles : {};
+  const selected = profile !== 'app' && profiles[profile] && typeof profiles[profile] === 'object' ? profiles[profile] : null;
+  const baseInclude = Array.isArray(payload.include) ? payload.include : ['app/**', 'components/**'];
+  const baseExclude = Array.isArray(payload.exclude) ? payload.exclude : [];
+  const livePieces = new Set(Array.isArray(payload.toolkit_live_pieces) ? payload.toolkit_live_pieces : []);
   return {
-    include: Array.isArray(payload.include) ? payload.include : ['app/**', 'components/**'],
-    exclude: Array.isArray(payload.exclude) ? payload.exclude : [],
+    profile,
+    include: Array.isArray(selected?.include) ? selected.include : baseInclude,
+    exclude: [...baseExclude, ...(Array.isArray(selected?.exclude) ? selected.exclude : [])],
     extensions: Array.isArray(payload.extensions) ? payload.extensions : DEFAULT_DESIGN_EXTENSIONS,
     allowDirective: typeof payload.allow_directive === 'string' ? payload.allow_directive : 'notis-design-allow',
     allowReasonMinLength: Number.isInteger(payload.allow_reason_min_length) ? payload.allow_reason_min_length : 12,
-    rules: (Array.isArray(payload.rules) ? payload.rules : []).map((rule) => ({
-      id: rule.id,
-      severity: rule.severity === 'warn' ? 'warn' : 'error',
-      scope: rule.scope === 'file' ? 'file' : 'line',
-      regex: new RegExp(rule.pattern, rule.scope === 'file' ? '' : 'gm'),
-      message: rule.message,
-      include: Array.isArray(rule.include) ? rule.include : null,
-      exclude: Array.isArray(rule.exclude) ? rule.exclude : [],
-    })),
+    rules: (Array.isArray(payload.rules) ? payload.rules : [])
+      .filter((rule) => !Array.isArray(rule.profiles) || rule.profiles.includes(profile))
+      .map((rule) => ({
+        id: rule.id,
+        severity: typeof rule.toolkit_piece === 'string'
+          ? (livePieces.has(rule.toolkit_piece) ? 'error' : 'warn')
+          : rule.severity === 'warn' ? 'warn' : 'error',
+        toolkitPiece: typeof rule.toolkit_piece === 'string' ? rule.toolkit_piece : null,
+        scope: rule.scope === 'file' ? 'file' : 'line',
+        regex: new RegExp(rule.pattern, rule.scope === 'file' ? '' : 'gm'),
+        message: typeof rule.profile_messages?.[profile] === 'string' ? rule.profile_messages[profile] : rule.message,
+        include: Array.isArray(rule.include) ? rule.include : null,
+        exclude: Array.isArray(rule.exclude) ? rule.exclude : [],
+      })),
   };
 }
 
-function getCompiledDesignRules() {
-  if (!compiledDesignRules) {
-    compiledDesignRules = loadDesignRules();
+function getCompiledDesignRules(profile = 'app') {
+  if (!compiledDesignRules.has(profile)) {
+    compiledDesignRules.set(profile, loadDesignRules({ profile }));
   }
-  return compiledDesignRules;
+  return compiledDesignRules.get(profile);
 }
 
 function lineNumberAt(content, index) {
@@ -312,9 +403,14 @@ export function collectDesignViolationsForFile(relPath, content, config = getCom
   if (!matchesAny(normalized, config.include)) return [];
   if (matchesAny(normalized, config.exclude)) return [];
 
-  const checked = ['.js', '.jsx', '.ts', '.tsx'].includes(extname(normalized))
-    ? maskSerializedJsonData(content, extname(normalized)) : content;
-  const lines = checked.split('\n');
+  const extension = extname(normalized);
+  // Data is masked first so it can neither break a rule nor supply an allow
+  // directive; comments are masked after, for matching only, so a real
+  // directive comment is still read from `lines`.
+  const unserialized = ['.js', '.jsx', '.ts', '.tsx'].includes(extension)
+    ? maskSerializedJsonData(content, extension) : content;
+  const checked = maskComments(unserialized, extension);
+  const lines = unserialized.split('\n');
   const violations = [];
   for (const rule of config.rules) {
     if (rule.include && !matchesAny(normalized, rule.include)) continue;
@@ -362,12 +458,12 @@ export function collectProjectDesignViolations(projectDir, config = getCompiledD
   return files.flatMap((file) => collectDesignViolationsForFile(file.relPath, file.content, config));
 }
 
-export function collectSourceDesignViolations(files, config = getCompiledDesignRules()) {
+export function collectSourceDesignViolations(files, config = getCompiledDesignRules(), { encoding = 'utf-8' } = {}) {
   return Object.entries(files).flatMap(([relPath, rawContent]) => {
     const content = Buffer.isBuffer(rawContent)
       ? rawContent.toString('utf-8')
       : typeof rawContent === 'string'
-        ? rawContent
+        ? (encoding === 'base64' ? Buffer.from(rawContent, 'base64').toString('utf-8') : rawContent)
         : String(rawContent ?? '');
     return collectDesignViolationsForFile(relPath, content, config);
   });
@@ -379,17 +475,7 @@ export function formatDesignViolation(violation) {
   return `${violation.file}:${violation.line} [${violation.ruleId}] ${prefix}: ${violation.message}${suffix}`;
 }
 
-/**
- * Enforce the design rules on an app's source tree.
- *
- * Returns every violation (allowed ones included) so callers can print
- * warnings. When `enforce` is true (build, verify, screenshot, deploy) any
- * unallowed error-severity violation aborts with a usage error that lists the
- * exact file and line to fix. Dev servers pass `enforce: false` so a
- * half-edited page still reloads.
- */
-export function validateProjectDesign(projectDir, { enforce = true, log = null } = {}) {
-  const violations = collectProjectDesignViolations(projectDir);
+function enforceDesign(violations, { enforce, log, subject }) {
   const blocking = violations.filter((violation) => !violation.allowed && violation.severity === 'error');
   const nonBlocking = violations.filter((violation) => !blocking.includes(violation));
   if (typeof log === 'function') {
@@ -398,10 +484,34 @@ export function validateProjectDesign(projectDir, { enforce = true, log = null }
   }
   if (enforce && blocking.length > 0) {
     throw usageError(
-      `Project violates the Notis app design bar (${blocking.length} issue${blocking.length === 1 ? '' : 's'}). `
+      `${subject} violates the Notis ${subject === 'Space' ? 'Spaces' : 'app'} design bar (${blocking.length} issue${blocking.length === 1 ? '' : 's'}). `
       + 'Fix each line below; the only override is an inline "// notis-design-allow: <rule-id> <reason>" comment on the line before.\n'
       + blocking.map((violation) => `  - ${formatDesignViolation(violation)}`).join('\n'),
     );
   }
   return violations;
+}
+
+/**
+ * Enforce the design rules on an app's or a Space's source tree.
+ *
+ * Returns every violation (allowed ones included) so callers can print
+ * warnings. When `enforce` is true (build, verify, screenshot, deploy) any
+ * unallowed error-severity violation aborts with a usage error that lists the
+ * exact file and line to fix. Dev servers pass `enforce: false` so a
+ * half-edited page still reloads. Spaces pass `profile: 'space'`.
+ */
+export function validateProjectDesign(projectDir, { enforce = true, log = null, profile = 'app' } = {}) {
+  const violations = collectProjectDesignViolations(projectDir, getCompiledDesignRules(profile));
+  return enforceDesign(violations, { enforce, log, subject: profile === 'space' ? 'Space' : 'Project' });
+}
+
+/**
+ * The same check on an in-memory source snapshot (the exact bytes a Space
+ * release uploads). The server re-runs it with the same rules file on
+ * source-verify, source-stage and source-publish.
+ */
+export function validateSourceDesign(files, { enforce = true, log = null, profile = 'space', encoding = 'utf-8' } = {}) {
+  const violations = collectSourceDesignViolations(files, getCompiledDesignRules(profile), { encoding });
+  return enforceDesign(violations, { enforce, log, subject: profile === 'space' ? 'Space' : 'Project' });
 }

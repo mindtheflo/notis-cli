@@ -11,7 +11,7 @@ import { spacesCommandSpecs } from '../src/command-specs/spaces.js';
 import { createSpaceFixtureEngine } from '../src/runtime/space-test-server.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-test('collection scaffold is buildable V4 source with a main record param, declared list, native layout and EN/FR copy', async () => {
+test('collection scaffold is buildable V4 source with a main record param, declared list and native layout', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'notis-collection-scaffold-'));
   try {
     await scaffoldSpaceCollection({ projectDir: directory, name: 'Notes', databaseKey: 'notes', path: 'notes' });
@@ -38,10 +38,16 @@ test('collection scaffold is buildable V4 source with a main record param, decla
     assert.equal(manifest.shows.items.open, 'item');
     assert.equal(manifest.resources.items.key, 'notes');
     assert.equal(manifest.memory.attachments, true);
+    // Create and trash go through the linked database's own declared actions, never an account-wide name.
+    assert.deepEqual(Object.fromEntries(Object.entries(manifest.actions).map(([name, action]) => [name, action.tool])), {
+      read: 'LOCAL_NOTIS_DATABASE_QUERY', create: 'LOCAL_NOTIS_DATABASE_INSERT', delete: 'LOCAL_NOTIS_DATABASE_DELETE',
+    });
     const view = readFileSync(join(directory, 'spaces/collection/view.tsx'), 'utf8');
-    for (const expected of ['DocumentPage', 'usePrefetchRecord', 'breadcrumb', 'useViewParams', 'useShown', 'toSpace']) assert.ok(view.includes(expected));
+    for (const expected of ['ListReader', 'DocumentPage', 'useViewParams', 'useShown', 'useNativeMutation', 'openParam="item"', 'search={{', 'readerActions=']) {
+      assert.ok(view.includes(expected), `${expected} is part of the scaffolded view`);
+    }
+    assert.doesNotMatch(view, /PageHeading|<h1|notis-app-shell|toSpace/);
     assert.doesNotMatch(view, /\/documents|\?record=|\?selection=/);
-    assert.match(view, /fr:/);
     const result = await buildSpaceArtifact(directory, 'collection');
     assert.equal(result.manifest.presentation.export_name, 'SpaceView');
     assert.equal(result.manifest.collection.titleProperty, 'title');

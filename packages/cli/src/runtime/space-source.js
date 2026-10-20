@@ -215,14 +215,16 @@ export function collectSelectedSpaceSource(projectDir, selection, { buildInputs 
   }
   ROOT_CONFIGS.filter(path => Object.hasOwn(files, path)).forEach(add);
   const projectPackage = JSON.parse(Buffer.from(files['package.json'] || '', 'base64').toString('utf8'));
-  for (const dependency of Object.values({ ...projectPackage.dependencies, ...projectPackage.devDependencies })) {
+  for (const [name, dependency] of Object.entries({ ...projectPackage.dependencies, ...projectPackage.devDependencies })) {
     if (typeof dependency !== 'string' || !dependency.startsWith('file:')) continue;
     const directory = localPath(dependency.slice(5));
     add(`${directory}/package.json`);
     const metadata = JSON.parse(Buffer.from(files[`${directory}/package.json`], 'base64').toString('utf8'));
-    const declared = value => {
+    // The SDK's `node` targets are its test runtime in dist/: never Space source, never uploaded.
+    const declared = (value, condition) => {
+      if (name === '@notis/sdk' && condition === 'node') return;
       if (typeof value === 'string' && value.startsWith('./')) add(`${directory}/${value.slice(2)}`);
-      else if (value && typeof value === 'object') Object.values(value).forEach(declared);
+      else if (value && typeof value === 'object') Object.entries(value).forEach(([key, item]) => declared(item, key));
     };
     declared(metadata.exports);
     for (const value of [metadata.main, metadata.module, metadata.types]) if (typeof value === 'string') add(`${directory}/${value.replace(/^\.\//, '')}`);

@@ -1,8 +1,8 @@
 /** One authoring project, one selected immutable Space release at a time. */
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { appFilesDigest, buildArtifact, freezeSourceWorkspace, prepareAppRelease, prepareSelectedBuild, saveSelectedBuild, syncEmbeddedSdk } from './app-platform.js';
-import { validateProjectBoundary, validateProjectDesign } from './app-boundary-validator.js';
+import { appFilesDigest, buildArtifact, freezeSourceWorkspace, prepareAppRelease, prepareSelectedBuild, saveSelectedBuild, syncSpaceSdk } from './app-platform.js';
+import { validateProjectBoundary, validateProjectDesign, validateSourceDesign } from './app-boundary-validator.js';
 import { collectSelectedSpaceSource, loadSelectedSpace } from './space-source.js';
 import { viewManifestFields } from './space-view-manifest.js';
 import { usageError } from './errors.js';
@@ -25,9 +25,12 @@ export function generateSpaceManifest(selection) {
   };
 }
 
-function prepareSelectedArtifact(projectDir, selection) {
+function prepareSelectedArtifact(projectDir, selection, { designBar = 'enforce', log = null } = {}) {
   validateProjectBoundary(projectDir);
-  validateProjectDesign(projectDir);
+  // Spaces render inside the Notis host: the app rules plus the Space-only ones. Only the
+  // render boundary check (portal/scripts/spaces-boundary) reports instead of refusing, so it
+  // can still draw a published Space whose source predates a design rule.
+  validateProjectDesign(projectDir, { profile: 'space', enforce: designBar !== 'report', log });
   const entryPath = join(projectDir, '.notis/_entry.tsx');
   const manifestPath = join(projectDir, '.notis/output/manifest.json');
   mkdirSync(dirname(entryPath), { recursive: true });
@@ -42,9 +45,31 @@ function prepareSelectedArtifact(projectDir, selection) {
   writeFileSync(manifestPath, JSON.stringify(generateSpaceManifest(selection), null, 2) + '\n');
 }
 
+// The SDK modules a Space host provides (packages/sdk/src/runtimeModules.ts;
+// test/space-host-sdk.test.js keeps the two lists equal).
+export const SPACE_HOST_SDK_MODULES = Object.freeze(['@notis/sdk', '@notis/sdk/ui']);
+const SDK_IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)(["'])(@notis\/sdk(?:\/[^"'\s]*)?)\1/g;
+
+/**
+ * A Space bundle imports the SDK from its host and never carries SDK code.
+ * Refuses a bundle that contains SDK internals (their `notis.sdk.*` registry
+ * keys) or imports an SDK entry the host does not provide.
+ */
+export function assertSpaceBundleUsesHostSdk(source) {
+  if (/["']notis\.sdk\./.test(source)) {
+    throw usageError('This Space bundle contains Notis SDK code. Spaces import @notis/sdk from the Notis host; reinstall the CLI and build again.');
+  }
+  const foreign = [...new Set([...source.matchAll(SDK_IMPORT)].map(match => match[2]))]
+    .filter(specifier => !SPACE_HOST_SDK_MODULES.includes(specifier));
+  if (foreign.length) {
+    throw usageError(`This Space imports ${foreign.join(', ')}, which the Notis host does not provide. Use ${SPACE_HOST_SDK_MODULES.join(' or ')}.`);
+  }
+}
+
 function finalizeSelectedArtifact(projectDir) {
   const manifestPath = join(projectDir, '.notis/output/manifest.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (manifest.bundle?.js) assertSpaceBundleUsesHostSdk(readFileSync(join(projectDir, '.notis/output', manifest.bundle.js), 'utf8'));
   // A CSS-free Vite entry legitimately emits only JavaScript. Declare actual
   // output before the immutable build receipt, not a nonexistent stylesheet.
   if (manifest.bundle?.css && !existsSync(join(projectDir, '.notis/output', manifest.bundle.css))) {
@@ -59,9 +84,9 @@ function finalizeSelectedArtifact(projectDir) {
  * dependencies; it is not another authoring project or dependency installation.
  * The existing pinned freeze/receipt code owns all staging writes and cleanup.
  */
-export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inherit', refreshSdk = true, runBuild } = {}) {
+export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inherit', refreshSdk = true, runBuild, designBar = 'enforce', designLog = null } = {}) {
   projectDir = assertSourceRoot(projectDir);
-  if (refreshSdk) syncEmbeddedSdk(projectDir);
+  if (refreshSdk) syncSpaceSdk(projectDir);
   const selection = await loadSelectedSpace(projectDir, selectedKey);
   const sourceFiles = collectSelectedSpaceSource(projectDir, selection);
   const sourceHash = appFilesDigest(sourceFiles);
@@ -73,7 +98,7 @@ export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inhe
     }
     const frozenSelection = await loadSelectedSpace(staging.projectDir, selectedKey);
     await buildArtifact(staging.projectDir, { stdio, refreshSdk: false, executable: Boolean(selection.entry),
-      prepare: directory => prepareSelectedArtifact(directory, frozenSelection), finalize: finalizeSelectedArtifact,
+      prepare: directory => prepareSelectedArtifact(directory, frozenSelection, { designBar, log: designLog }), finalize: finalizeSelectedArtifact,
       ...(runBuild ? { runBuild } : {}) });
     const current = await loadSelectedSpace(projectDir, selectedKey);
     if (sourceHash !== appFilesDigest(collectSelectedSpaceSource(projectDir, current))) throw usageError('This Space source changed during the selected build. Build again.');
@@ -101,5 +126,8 @@ export async function prepareSpaceRelease(projectDir, selectedKey) {
   if (release.manifest?.schema !== 'notis-space/v1' || release.manifest.local_key !== selectedKey) {
     release.close(); throw usageError('The saved build belongs to a different Space.');
   }
+  // Verify and deploy check the exact saved source the server will check again.
+  try { validateSourceDesign(release.sourceFiles, { profile: 'space', encoding: 'base64' }); }
+  catch (error) { release.close(); throw error; }
   return { ...release, fixturePath: selection.fixturePath };
 }

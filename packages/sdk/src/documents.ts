@@ -14,6 +14,17 @@ import type {
   DocumentRecord,
   SecretPropertyValue,
 } from './runtime';
+import { pick, type Locale, type Words } from './words/types';
+
+/** The words the document helpers fall back on. */
+export const DOCUMENT_WORDS = Object.freeze({
+  untitled: { en: 'Untitled', fr: 'Sans titre' },
+}) satisfies Readonly<Record<string, Words>>;
+
+/** The locale of the fallback words ("Untitled"). Default English; the SDK hooks pass the Space's locale. */
+export interface DocumentWordsOptions {
+  locale?: Locale;
+}
 
 // ---------------------------------------------------------------------------
 // Value primitives
@@ -113,9 +124,10 @@ function normalizeContentType(value: unknown): DocumentContentType | null {
 /**
  * Normalizes a raw document from a Notis database tool result
  * (LOCAL_NOTIS_DATABASE_QUERY / GET_DOCUMENT / UPSERT_*) into a
- * `DocumentRecord`: camelCases fields and collapses property values.
+ * `DocumentRecord`: camelCases fields and collapses property values. A
+ * document with no title is titled "Untitled" in `options.locale`.
  */
-export function normalizeDocumentRecord(value: unknown): DocumentRecord {
+export function normalizeDocumentRecord(value: unknown, options: DocumentWordsOptions = {}): DocumentRecord {
   const record = asRecord(value) ?? {};
   const rawProperties = asRecord(record.properties) ?? {};
   const properties: Record<string, unknown> = {};
@@ -127,7 +139,7 @@ export function normalizeDocumentRecord(value: unknown): DocumentRecord {
     id: optionalString(record.id) ?? '',
     recordKey: optionalString(record.recordKey) ?? optionalString(record.record_key) ?? undefined,
     revision: typeof record.revision === 'number' ? record.revision : undefined,
-    title: optionalString(record.title) ?? 'Untitled',
+    title: optionalString(record.title) ?? pick(DOCUMENT_WORDS.untitled, options.locale ?? 'en'),
     url: optionalString(record.url),
     properties,
     icon: optionalString(record.icon),
@@ -243,9 +255,10 @@ export function blockNoteToPlainText(blocks: unknown): string {
 
 /**
  * Best-available plain-text preview for a document:
- * plainText -> contentMarkdown -> contentBlocknote -> title.
+ * plainText -> contentMarkdown -> contentBlocknote -> title, else "Untitled"
+ * in `options.locale`.
  */
-export function getDocumentPreview(document: DocumentRecord): string {
+export function getDocumentPreview(document: DocumentRecord, options: DocumentWordsOptions = {}): string {
   if (isPresentString(document.plainText)) {
     return document.plainText.replace(/\s+/g, ' ').trim();
   }
@@ -254,5 +267,5 @@ export function getDocumentPreview(document: DocumentRecord): string {
   }
   const fromBlocks = blockNoteToPlainText(document.contentBlocknote);
   if (fromBlocks) return fromBlocks;
-  return isPresentString(document.title) ? document.title : 'Untitled';
+  return isPresentString(document.title) ? document.title : pick(DOCUMENT_WORDS.untitled, options.locale ?? 'en');
 }

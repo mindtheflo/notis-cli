@@ -79,7 +79,7 @@ export function useUpsertDocument(databaseSlug: string): UseUpsertDocumentResult
         if (!result.document) {
           throw new Error(result.error ?? result.message ?? 'Failed to save document');
         }
-        return normalizeDocumentRecord(result.document);
+        return normalizeDocumentRecord(result.document, { locale: runtime.context?.locale === 'fr' ? 'fr' : 'en' });
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
         setError(e);

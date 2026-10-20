@@ -62,7 +62,7 @@ export const viewsCommandSpecs = [{
       throw usageError('Choose exactly one of --record-key, --database-id, --url, --space-id or --query.');
     }
     const result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_spaces/find-views',
-      body: Object.fromEntries(selected), spacesProtocol: 1 });
+      body: Object.fromEntries(selected), spacesProtocol: true });
     return ctx.output.emitSuccess({ command: 'views find', data: result.payload,
       humanSummary: JSON.stringify(result.payload, null, 2), meta: { mutating: false, request_id: result.requestId } });
   },

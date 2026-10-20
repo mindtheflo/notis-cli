@@ -58,7 +58,7 @@ export function MultiSelectCheckbox({
   };
 
   // When alwaysVisible is false and the row isn't selected, defer the
-  // hover-reveal to the parent — consumers wrap the checkbox in a `.group`
+  // hover-reveal to the parent: consumers wrap the checkbox in a `.group`
   // hover scope and pass `data-notis-hover-reveal` styles via className.
   // Out of the box, we render the checkbox at full opacity if selected,
   // otherwise inherit the parent's reveal state.

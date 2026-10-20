@@ -278,6 +278,8 @@ export interface NotisDocumentPageCrumb {
 export interface NotisDocumentPageMenuItem {
   label: string;
   onSelect: () => void;
+  /** A toolkit icon name (for example 'archive'): drawn before the label in the menu; a host without the menu shows the icon alone, the label as its name and tooltip. */
+  icon?: string;
   destructive?: boolean;
   disabled?: boolean;
 }
@@ -316,8 +318,11 @@ export interface NotisDocumentPageProps extends NotisRecordProps {
    * another Space's view. Off by default: only Spaces whose records were shared on Beta turn it on.
    */
   share?: boolean;
-  /** Which header parts show. `false` hides the whole header (cover, icon and title). */
-  header?: false | { cover?: boolean; icon?: boolean; title?: boolean };
+  /**
+   * Which header parts show. `false` hides the whole header (cover, icon and title). `compact` draws the title at
+   * the reader size (20/28 semibold), for a page shown in a reader pane beside a list.
+   */
+  header?: false | { cover?: boolean; icon?: boolean; title?: boolean; compact?: boolean };
   /** Show the meta strip (Editable or Read only, type, database, dates). Default true. */
   meta?: boolean;
   /** 'panel' (default): properties in the Configure panel under the meta strip. 'hidden': none. Or choose and order them by property name. */
@@ -341,6 +346,20 @@ export interface NotisDocumentPageProps extends NotisRecordProps {
    * On hosts without DocumentPage it is called when a save finishes, with `title` null.
    */
   onSaved?: (record: { recordKey: string; title: string | null }) => void;
+  /**
+   * Put the record's title in the Portal top bar as the last crumb ("Space / Page / Record title") while the page
+   * shows, so the view's page becomes a parent crumb. Default: on when `breadcrumb` lists at least one crumb (the
+   * page is a record opened from the view), off otherwise (a Space that names the leaf itself passes
+   * `breadcrumb={false}` and calls `useTopBarTitleLeaf`). Hosts that do not report the title show no leaf.
+   * While the top bar names the record, the last crumb's `onSelect` is the view crumb's way back and the page
+   * draws its own breadcrumb only where the top bar shows no crumb (narrow screens).
+   */
+  topBarTitle?: boolean;
+  /**
+   * Called by the host with the record's title (empty string when untitled) once it shows and whenever it changes,
+   * edits included. Hosts without DocumentPage never call it.
+   */
+  onTitle?: (title: string) => void;
   /**
    * Rearrange the page. Receives the host-bound parts; the default layout is Toolbar, Header, Meta (with
    * Properties in its panel), Body. With a layout, Meta shows only its strip and Properties shows wherever
@@ -426,7 +445,11 @@ export interface HandoverPayload {
    * host rejects an alias the Space does not link. Omit to hand over plain work.
    */
   skill?: string;
-  /** Space-only selected row context; never overrides the host's access scope. */
+  /**
+   * Space-only selected row context; never overrides the host's access scope. The host reads that row without its
+   * body, so `readAction` is a read-only query action that accepts `include_content: false`, such as the database's
+   * `query_` action; a `read_record_` action fixed to `include_content: true` is refused.
+   */
   record?: { binding: string; recordKey: string; readAction: string };
   /**
    * Submit on an active user gesture when the host supports immediate handover;
@@ -579,6 +602,12 @@ export interface NotisRuntime {
    */
   cloudComputerFacts?(options?: { refresh?: boolean }): Promise<CloudComputerFacts>;
 
+  /**
+   * Ask the host to navigate. Use the hooks rather than calling this directly: `useNotisNavigation()` sends
+   * `space-reference` (a declared alias, checked by the host on every call), `space`, `route` and `app`;
+   * `useViewParams().setParams` sends `view-params` (`{ params, replace? }`): the open Space's own URL params, with the
+   * Space and record kept and no destination lookup.
+   */
   navigate?: (payload: { kind: string; [key: string]: unknown }) => void | Promise<void>;
 
   registerTopBarSearch?: (
@@ -592,6 +621,11 @@ export interface NotisRuntime {
   ) => void;
   setTopBarSearchValue?: (value: string) => void;
   setTopBarSearchLoading?: (loading: boolean) => void;
+  /**
+   * Set or clear the open record's crumb at the end of the top bar title. Use `useTopBarTitleLeaf()`. `onBack`
+   * closes the record: the crumb before the leaf calls it.
+   */
+  setTopBarTitleLeaf?: (leaf: { label: string; onBack?: () => void } | null) => void;
 
   listTools(): Promise<ToolDescriptor[]>;
   callTool<TResult = unknown>(

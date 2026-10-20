@@ -19,7 +19,8 @@ export interface UseQueryResult<T> {
   loading: boolean;
   isFetching: boolean;
   error: Error | null;
-  refetch: () => Promise<void>;
+  /** Reads again; resolves to the read's localized error, or null when it succeeded (never rejects). */
+  refetch: () => Promise<Error | null>;
 }
 
 /** Cached read callback; scope and lifetime are provided by the host, never by app globals. */
@@ -42,11 +43,17 @@ export function useQuery<T>(key: readonly unknown[], read: () => Promise<T>, opt
     if (!enabled) return;
     void fetch().catch(() => {}); // Error belongs to the snapshot; no unhandled rejection.
   }, [enabled, fetch, snapshot.invalidation]);
-  const refetch = useCallback(async () => {
-    if (!enabled) return;
+  const locale = runtime?.context?.locale;
+  const refetch = useCallback(async (): Promise<Error | null> => {
+    if (!enabled) return null;
     client.invalidate(cacheKey);
-    await fetch().catch(() => {});
-  }, [cacheKey, client, enabled, fetch]);
+    try {
+      await fetch();
+      return null;
+    } catch (failure) {
+      return localizeQueryError(failure instanceof Error ? failure : new Error(String(failure)), locale);
+    }
+  }, [cacheKey, client, enabled, fetch, locale]);
   const error = useMemo(() => localizeQueryError(snapshot.error, runtime?.context?.locale), [snapshot.error, runtime?.context?.locale]);
   return {
     data: enabled ? snapshot.data : undefined,

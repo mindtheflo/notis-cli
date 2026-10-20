@@ -13,7 +13,7 @@ async function nativeSkillAuthoring(ctx, body, path = '/portal_skills/native-aut
   // A Space target, destination or link change touches Spaces: declare the protocol.
   const spaceTarget = Boolean(body.target?.space_id || body.destination?.space_id || body.links);
   const result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path, body,
-    ...(spaceTarget ? { spacesProtocol: 1 } : {}) });
+    ...(spaceTarget ? { spacesProtocol: true } : {}) });
   return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data: result.payload,
     humanSummary: JSON.stringify(result.payload, null, 2),
     meta: { mutating: body.operation !== 'read' && !body.dry_run, request_id: result.requestId } });
@@ -329,7 +329,7 @@ export const skillsCommandSpecs = [
       if (ctx.options.remove !== undefined) links.remove = linkEntries(ctx.options.remove, '--remove', ['binding_id', 'binding_revision']);
       if (!Object.keys(links).length) throw usageError('Pass --add and/or --remove.');
       const body = { kind: 'skill', resource_id: ctx.args.skillId, links, request_id: requestKey(ctx) };
-      const result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_spaces/resource-links', body, spacesProtocol: 1 });
+      const result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_spaces/resource-links', body, spacesProtocol: true });
       return ctx.output.emitSuccess({ command: 'skills links', data: result.payload,
         humanSummary: linkChangeSummary(result.payload), meta: { mutating: true, request_id: result.requestId } });
     },

@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import test from 'node:test';
 import { spacesCommandSpecs } from '../src/command-specs/spaces.js';
-import { appFilesDigest } from '../src/runtime/app-platform.js';
+import { appFilesDigest, lockRecordsManifest } from '../src/runtime/app-platform.js';
+
+const spaceSdkDir=join(dirname(fileURLToPath(import.meta.url)),'..','dist','space-sdk');
 
 function archive(files) {
   const entries=Object.entries(files).map(([name,value])=>{
@@ -49,13 +52,14 @@ test('Space pull uses scoped archive transport and roundtrips source without leg
   const result=await ctx.spec.handler(ctx);
   assert.equal(result.data.version,3);
   assert.equal(calls[0].url,'https://fixture.invalid/portal_spaces/source?space_id=fixture-space&format=archive');
-  assert.equal(calls[0].request.headers['X-Notis-Spaces-Protocol'],'1');
+  assert.equal(calls[0].request.headers['X-Notis-Spaces-Protocol'],'2');
   assert.deepEqual(readFileSync(join(ctx.args.dir,'binary.bin')),Buffer.from([0,255,128]));
   assert.equal(readFileSync(join(ctx.args.dir,'view.tsx'),'utf8'),'export default () => null;');
   const state=JSON.parse(readFileSync(join(ctx.args.dir,'.notis/space-source.json'),'utf8'));
   assert.deepEqual(state,{space_id:'fixture-space',api_base:'https://fixture.invalid',source_digest:'a'.repeat(64),local_key:'overview',revision:3});
   assert.equal(existsSync(join(ctx.args.dir,'.notis/state.json')),false);
   assert.ok(!JSON.stringify(state).includes('fixture-token'));
+  assert.equal(result.data.sdk,null,'A Space without packages/sdk has no SDK to refresh');
   assert.equal(calls[1].url,'https://fixture.invalid/portal_spaces/space-links?space_id=fixture-space');
   assert.deepEqual(JSON.parse(readFileSync(join(ctx.args.dir,'resources.json'),'utf8')),[]);
   const lock=JSON.parse(readFileSync(join(ctx.args.dir,'.notis/space-lock.json'),'utf8'));
@@ -95,9 +99,83 @@ test('pull writes the resource list, every editable Skill folder and a lock outs
   assert.deepEqual(reads.map(call=>JSON.parse(call.request.body)),[
     {operation:'read',target:{space_id:'fixture-space',binding_id:'b-guide'},include_files:true},
     {operation:'read',target:{space_id:'fixture-space',binding_id:'b-curated'},include_files:true}],'Unavailable links are never read');
-  assert.ok(reads.every(call=>call.request.headers['X-Notis-Spaces-Protocol']==='1'));
+  assert.ok(reads.every(call=>call.request.headers['X-Notis-Spaces-Protocol']==='2'));
   assert.match(result.humanSummary,/4 linked resources in resources.json, 1 Skill folders/);
   assert.equal(result.warnings.length,1);
+});
+
+// A Space as an earlier CLI published it: packages/sdk with types-only exports and
+// no dist/ (never uploaded), and a lock whose @notis/sdk record is `sdkRecord`.
+function publishedSpace(manifest,sdkRecord){
+  const dependencies={'@notis/sdk':'file:./packages/sdk'};
+  const typesOnly={...manifest,exports:Object.fromEntries(Object.entries(manifest.exports).map(([key,value])=>[key,value?.types??value]))};
+  return {'notis.config.ts':'export default {};','package.json':JSON.stringify({name:'pulled-space',private:true,dependencies}),
+    'package-lock.json':JSON.stringify({name:'pulled-space',lockfileVersion:3,requires:true,packages:{'':{name:'pulled-space',dependencies},
+      'node_modules/@notis/sdk':{resolved:'packages/sdk',link:true},'packages/sdk':sdkRecord}}),
+    'packages/sdk/package.json':JSON.stringify(typesOnly)};
+}
+
+// What npm records for a linked package.
+const lockRecord=manifest=>Object.fromEntries(['name','version','dependencies','devDependencies','optionalDependencies','peerDependencies','peerDependenciesMeta']
+  .filter(field=>manifest[field]!==undefined).map(field=>[field,manifest[field]]));
+
+// Stands in for npm on a machine without network and records each run.
+function offlineNpm(t,root){
+  const bin=join(root,'bin'),ran=join(root,'npm-ran'),pathBefore=process.env.PATH;
+  mkdirSync(bin);
+  writeFileSync(join(bin,'npm'),['#!/bin/sh',`echo run >> "${ran}"`,"echo 'npm error code ENOTFOUND' >&2",
+    "echo 'npm error network request to https://registry.npmjs.org/recharts failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org' >&2",'exit 1'].join('\n'),{mode:0o755});
+  process.env.PATH=`${bin}:${pathBefore}`;
+  t.after(()=>{process.env.PATH=pathBefore;});
+  return ran;
+}
+
+const sdkTests={skip:!existsSync(join(spaceSdkDir,'package.json'))?'build the CLI first':process.platform==='win32'&&'POSIX npm stand-in'};
+const builtManifest=()=>JSON.parse(readFileSync(join(spaceSdkDir,'package.json'),'utf8'));
+
+test('a pulled Space gets the SDK test runtime and a lock npm ci accepts, without running npm',sdkTests,async t=>{
+  const manifest=builtManifest();
+  const {root,ctx}=fixture(t,publishedSpace(manifest,lockRecord(manifest)));
+  const npmRan=offlineNpm(t,root);
+  const result=await ctx.spec.handler(ctx);
+  const pulled=path=>join(ctx.args.dir,path);
+  for(const entry of ['index.js','ui.js'])assert.ok(existsSync(pulled(`packages/sdk/dist/${entry}`)),entry);
+  const sdk=JSON.parse(readFileSync(pulled('packages/sdk/package.json'),'utf8'));
+  assert.deepEqual(sdk,manifest,'The pulled SDK manifest is this CLI\'s, with its node exports');
+  assert.ok(lockRecordsManifest(JSON.parse(readFileSync(pulled('package-lock.json'),'utf8')).packages['packages/sdk'],sdk));
+  assert.equal(existsSync(npmRan),false,'npm never runs for a lock that already records the SDK');
+  assert.equal(result.data.sdk.version,manifest.version);assert.equal(result.data.sdk.lockfile,'current');
+  assert.ok(result.data.sdk.files_updated>=3);
+  assert.ok(result.humanSummary.endsWith(`Skill folders under skills/. Updated embedded @notis/sdk to ${manifest.version} (${result.data.sdk.files_updated} files).`),result.humanSummary);
+  assert.deepEqual(result.warnings,[]);
+});
+
+test('a pull still succeeds when npm cannot bring an older SDK lock record up to date, and says how to repair it',sdkTests,async t=>{
+  const older={name:'@notis/sdk',version:'0.1.0',dependencies:{'react-markdown':'^9.0.0'}};
+  const {root,ctx}=fixture(t,publishedSpace(builtManifest(),older));
+  const npmRan=offlineNpm(t,root);
+  const result=await ctx.spec.handler(ctx);
+  assert.ok(existsSync(join(ctx.args.dir,'packages/sdk/dist/index.js')));
+  assert.equal(readFileSync(npmRan,'utf8'),'run\n');
+  assert.deepEqual(JSON.parse(readFileSync(join(ctx.args.dir,'package-lock.json'),'utf8')).packages['packages/sdk'],older);
+  assert.equal(result.data.sdk.lockfile,'stale');
+  assert.deepEqual(result.warnings,['package-lock.json still records the previous @notis/sdk dependencies, so npm ci will refuse it '
+    +'(network request to https://registry.npmjs.org/recharts failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org). '
+    +'Everything else continues; run npm install in this project once the npm registry is reachable.']);
+});
+
+test('a pull whose SDK cannot be refreshed keeps the pulled source and warns instead of failing',sdkTests,async t=>{
+  const manifest=builtManifest();
+  // dist/ never arrives from an archive, but a source can carry a file where the SDK needs its src/ folder.
+  const {root,ctx}=fixture(t,{...publishedSpace(manifest,lockRecord(manifest)),'packages/sdk/src':'not a folder'});
+  const npmRan=offlineNpm(t,root);
+  const result=await ctx.spec.handler(ctx);
+  assert.equal(result.data.version,3);
+  assert.ok(existsSync(join(ctx.args.dir,'.notis/space-lock.json')));
+  assert.equal(typeof result.data.sdk.error,'string');
+  assert.equal(result.warnings.length,1);
+  assert.match(result.warnings[0],/^packages\/sdk was not refreshed \(.+\); the next notis spaces build retries\.$/);
+  assert.equal(existsSync(npmRan),false);
 });
 
 test('pull refuses Skill files that do not match their link before writing them',async t=>{

@@ -61,14 +61,66 @@ export default defineSpace({
 });
 ```
 
-Use `useViewParams<typeof definition>()`, `useShown('notes')`, and
-`<DocumentPage recordKey={params.note}>` (the whole note page; use `DocumentEditor` only to embed a body
-inside a layout of your own; if `spaces build` reports no `DocumentPage` export, your CLI predates it: use
-`useNotisRuntime().ui?.DocumentPage` with a `DocumentEditor` fallback, see the SDK reference). Keep hooks unconditional; conditional
-record/list branches can be separate components. The SDK reference covers the
-components and exact navigation helpers. The saved `read` action is deliberately
-constrained to one native record for body/Site reads; `shows.notes` owns the
-Editor’s collection list. Keep both tied to the same declared resource.
+The saved `read` action is deliberately constrained to one native record for
+body/Site reads; `shows.notes` owns the Editor's collection list. Keep both tied
+to the same declared resource.
+
+## Write the view
+
+Start from the piece that matches the view. A list beside a reader is one
+`ListReader`:
+
+```tsx
+import { DocumentPage, useAction, useNotisRuntime, useShown } from '@notis/sdk';
+import { ListReader, Row } from '@notis/sdk/ui';
+
+type Note = { record_key: string; title: string; updated_at: string };
+const keys = (items: Note[]) => ({ record_keys: items.map((n) => n.record_key) });
+const copy = { en: { search: 'Search notes' }, fr: { search: 'Rechercher des notes' } };
+
+export default function Notes() {
+  const t = copy[useNotisRuntime()?.context.locale === 'fr' ? 'fr' : 'en'];
+  const notes = useShown<Note>('notes', { allPages: true });
+  const archive = useAction('archive_notes'); // declared write actions
+  const pin = useAction('pin_notes');
+  return (
+    <ListReader
+      label={{ en: 'Notes', fr: 'Notes' }}
+      items={notes.data?.rows ?? []}
+      getId={(n) => n.record_key}
+      openParam="note"
+      search={{ placeholder: t.search,
+        match: (n, query) => n.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) }}
+      row={(n) => <Row title={n.title} time={n.updated_at} />}
+      readerLabel={(n) => n.title}
+      crumbLabel={(n) => n.title}
+      reader={(n) => <DocumentPage recordKey={n.record_key} />}
+      actions={[
+        { id: 'archive', run: (items) => archive.call(keys(items)) },
+        { id: 'pin', key: 'shift+p', label: { en: 'Pin', fr: 'Épingler' },
+          run: (items) => pin.call(keys(items)) },
+      ]}
+    />
+  );
+}
+```
+
+That is the whole view. J/K (wrapping), Enter, Escape, selection with X,
+Shift+J/K and Mod+A, E with Notis's Archive words and toast, the selection bar,
+the `?` sheet, open as Side, Center or Full, the one-pane rule next to chat and the
+phone layout come with it. `openParam` names the declared record param, so the
+open note lives in the link. `search` fills the host top bar search field and
+filters the loaded notes; `crumbLabel` adds the open note to the top bar crumb
+("Notes / Groceries"); `readerLabel` names it in the reader bar. The view draws
+no title, heading or search field of its own. `archive` is a standard action: it
+brings its own words and key. `pin` is the Space's own: it brings its EN and FR
+words and a key the clash check accepts. Add `tabs` for real saved filters and
+`create` for a "+" that makes a record. Other kinds of view start from their own
+piece; see [Design](design.md#pick-the-piece).
+
+Keep hooks unconditional; conditional record/list branches can be separate
+components. The [SDK reference](sdk.md) covers data hooks, record components,
+navigation and the toolkit pieces.
 
 ## Params and declared lists
 

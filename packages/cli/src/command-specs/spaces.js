@@ -1,5 +1,5 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
-import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpaceVerification, spacePublicationIntent } from '../runtime/app-platform.js';
+import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
 import { buildSpaceArtifact, prepareSpaceRelease } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
@@ -7,8 +7,8 @@ import { refreshSpaceAuthoring } from '../runtime/space-database-structures.js';
 import { RESOURCES_FILE, SKILLS_DIR, applyPublication, collectSkillFolders, computeSpaceSourceChanges, describeAppliedChanges,
   lockAfterPull, readResourceList, readSpaceLock, resourceEntries, skillFolderFiles, writeResourceList, writeSkillFolder, writeSpaceLock, isFolderAlias } from '../runtime/space-lock.js';
 import { CliError, usageError } from '../runtime/errors.js';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { httpRequest } from '../runtime/transport.js';
 import { assertSourceRoot } from '../runtime/source-root.js';
 import { parseJson } from './helpers.js';
@@ -48,7 +48,7 @@ function object(value, label) {
 
 async function remote(ctx, operation, { method = 'POST', body, query } = {}) {
   const suffix = query ? `?${new URLSearchParams(Object.entries(query).filter(([, value]) => value != null))}` : '';
-  const result = await httpRequest({ runtime: ctx.runtime, method, path: `/portal_spaces/${operation}${suffix}`, body, spacesProtocol: 1 });
+  const result = await httpRequest({ runtime: ctx.runtime, method, path: `/portal_spaces/${operation}${suffix}`, body, spacesProtocol: true });
   return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data: result.payload,
     humanSummary: JSON.stringify(result.payload, null, 2), meta: { mutating: method !== 'GET' && !body?.dry_run && ctx.spec.mutates !== false, request_id: result.requestId } });
 }
@@ -139,7 +139,7 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       ...(local.changes ? { changes: local.changes } : {}) };
     const sourceDigest = appFilesDigest(release.sourceFiles), artifactDigest = appFilesDigest(release.files);
     const call = (operation, data) => httpRequest({ runtime: { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, 600_000) },
-      method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: 1 });
+      method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: true });
     if (verification && (verification.local_changes_fingerprint ?? null) !== local.fingerprint) {
       throw usageError('This request ID belongs to different Skill folders or list entries. Restore the state you first deployed to retry, or use a new request ID for a new release.');
     }
@@ -192,7 +192,7 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
 async function materializeSpaceLinks(ctx, { projectDir, spaceId, sourceRevision }) {
   const sourceSkillFolders = collectSkillFolders(projectDir);
   const query = new URLSearchParams({ space_id: spaceId });
-  const links = (await httpRequest({ runtime: ctx.runtime, method: 'GET', path: `/portal_spaces/space-links?${query}`, spacesProtocol: 1 })).payload?.links;
+  const links = (await httpRequest({ runtime: ctx.runtime, method: 'GET', path: `/portal_spaces/space-links?${query}`, spacesProtocol: true })).payload?.links;
   const list = Array.isArray(links) ? links : [];
   const skills = {}, skipped = [];
   for (const link of list.filter((entry) => entry?.kind === 'skill')) {
@@ -203,7 +203,7 @@ async function materializeSpaceLinks(ctx, { projectDir, spaceId, sourceRevision 
     }
     let read;
     try {
-      read = (await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_skills/native-authoring', spacesProtocol: 1,
+      read = (await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_skills/native-authoring', spacesProtocol: true,
         body: { operation: 'read', target: { space_id: spaceId, binding_id: link.binding_id }, include_files: true } })).payload;
     } catch (error) {
       // A curated or otherwise read-only Skill stays listed without a folder; the deploy never edits it.
@@ -226,6 +226,28 @@ async function materializeSpaceLinks(ctx, { projectDir, spaceId, sourceRevision 
   writeResourceList(projectDir, resourceEntries(list));
   writeSpaceLock(projectDir, lockAfterPull({ spaceId, apiBase: ctx.runtime.apiBase.replace(/\/$/, ''), sourceRevision, links: list, skills }));
   return { links: resourceEntries(list), skills: Object.keys(skills).sort(), skipped };
+}
+
+/**
+ * A pulled Space runs `npm ci` and `npm test` at once: its packages/sdk becomes
+ * this CLI's Space SDK, with the Node test runtime in dist/ that no upload
+ * carries, and package-lock.json follows it. The source is already written,
+ * so a failure here is a warning; every build refreshes the SDK again.
+ */
+function refreshPulledSdk(projectDir) {
+  if (!existsSync(join(projectDir, 'packages', 'sdk', 'package.json'))) return { sdk: null, notes: [], warnings: [] };
+  const messages = [];
+  let sdk = null;
+  try {
+    const synced = syncSpaceSdk(projectDir, { log: (message) => messages.push(message) });
+    if (!synced.reason) sdk = { version: synced.templateVersion, files_updated: synced.changed.length, lockfile: synced.lockfile };
+  } catch (error) {
+    sdk = { error: error.message };
+    messages.push(`Warning: packages/sdk was not refreshed (${error.message.replace(/\.$/, '')}); the next notis spaces build retries.`);
+  }
+  const warning = /^Warning: /;
+  return { sdk, notes: messages.filter((message) => !warning.test(message)),
+    warnings: messages.filter((message) => warning.test(message)).map((message) => message.replace(warning, '')) };
 }
 
 const idArgument = { token: '<space-id>', key: 'spaceId', description: 'Exact existing Space ID.' };
@@ -387,7 +409,7 @@ export const spacesCommandSpecs = [
           const query = new URLSearchParams({ space_id: ctx.args.spaceId, format: 'archive',
             ...(requestedRevision === null ? {} : { revision: String(requestedRevision) }) });
           const source = (await httpRequest({ runtime: ctx.runtime, method: 'GET',
-            path: `/portal_spaces/source?${query}`, spacesProtocol: 1 })).payload;
+            path: `/portal_spaces/source?${query}`, spacesProtocol: true })).payload;
           if (source?.space_id !== ctx.args.spaceId || source.archive_format !== 'tar-gzip-v1'
             || typeof source.source_archive !== 'string' || !/^[a-f0-9]{64}$/.test(source.source_digest || '')) {
             throw usageError('The server did not return a verified Space source snapshot.');
@@ -406,10 +428,13 @@ export const spacesCommandSpecs = [
       const authoringFiles = refreshSpaceAuthoring(result.projectDir, sourceLink.local_key, { databaseStructures, authoringOverrides });
       const materialized = await materializeSpaceLinks(ctx, { projectDir: result.projectDir, spaceId: ctx.args.spaceId, sourceRevision: result.version });
       const skipped = materialized.skipped.map((entry) => `${entry.alias} (${entry.reason})`);
-      return ctx.output.emitSuccess({ command: 'spaces pull', data: { ...result, space_id: ctx.args.spaceId, ...materialized, authoring_projection_files: authoringFiles },
+      const refreshed = refreshPulledSdk(result.projectDir);
+      return ctx.output.emitSuccess({ command: 'spaces pull',
+        data: { ...result, space_id: ctx.args.spaceId, ...materialized, authoring_projection_files: authoringFiles, sdk: refreshed.sdk },
         humanSummary: `Pulled source revision ${result.version} into ${result.projectDir}: ${materialized.links.length} linked resources in ${RESOURCES_FILE}, `
-          + `${materialized.skills.length} Skill folders under ${SKILLS_DIR}/.${skipped.length ? ` Listed without a folder: ${skipped.join(', ')}.` : ''}`,
-        warnings: skipped.length ? [`Skills listed without an editable folder: ${skipped.join(', ')}.`] : [] });
+          + `${materialized.skills.length} Skill folders under ${SKILLS_DIR}/.${skipped.length ? ` Listed without a folder: ${skipped.join(', ')}.` : ''}`
+          + refreshed.notes.map((note) => ` ${note}`).join(''),
+        warnings: [...(skipped.length ? [`Skills listed without an editable folder: ${skipped.join(', ')}.`] : []), ...refreshed.warnings] });
     },
   },
   ...['verify', 'preview', 'deploy'].map(operation => ({
@@ -444,7 +469,7 @@ export const spacesCommandSpecs = [
     backend_call: { type: 'http', path: `/portal_spaces/source-${operation}` },
     async handler(ctx) {
       const result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path: `/portal_spaces/source-${operation}`,
-        body: { release_id: ctx.args.releaseId }, spacesProtocol: 1 });
+        body: { release_id: ctx.args.releaseId }, spacesProtocol: true });
       if (operation === 'promote' && ctx.args.dir) {
         const directory = resolveProjectDir(ctx.args.dir);
         const lock = readSpaceLock(directory);

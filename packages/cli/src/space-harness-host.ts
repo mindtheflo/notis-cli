@@ -7,11 +7,18 @@ import { SdkPresentation } from '../../sdk/src/presentation';
 import { createPrefetchQueue, createQueryClient } from '../../sdk/src/queryCache';
 import type { NotisRuntime } from '../../sdk/src/runtime';
 import { SPACE_VIEWER_READ_OPERATIONS } from '../../sdk/src/space';
+import * as NotisSDK from '../../sdk/src/index';
+import * as NotisSDKUI from '../../sdk/src/ui/index';
+// The toolkit stylesheet the host adopts into every Space shadow root (esbuild text import).
+import toolkitCss from '../../sdk/src/ui/toolkit.css' with { type: 'text' };
 import type { SpaceActionOptions, SpaceDocumentBodyRequest, SpaceViewerReadOperation } from '../../sdk/src/space';
 
 type Call = { op: string; actionId?: string; ok: boolean | null; error?: string };
 const state = { mounted: false, renderStarted: false, errors: [] as Array<{ phase: string; message: string }>, runtimeCalls: [] as Call[] };
-Object.assign(window, { __harness: state, React, ReactDOM, ReactDOMClient, __ReactJSXRuntime: JSXRuntime });
+// The Space runtime contract (packages/sdk/src/runtimeModules.ts): bundles import React and the SDK from these.
+Object.assign(window, { __harness: state, React, ReactDOM, ReactDOMClient, __ReactJSXRuntime: JSXRuntime,
+  __NotisSDK: NotisSDK, __NotisSDKUI: NotisSDKUI });
+NotisSDKUI.registerToolkitStyles(toolkitCss);
 const diagnostic = (phase: string, reason: unknown) => state.errors.push({ phase,
   message: reason instanceof Error ? reason.message : String(reason || 'Verification failed.') });
 window.addEventListener('error', event => diagnostic('window_error', event.error || event.message));
@@ -67,6 +74,17 @@ async function start() {
       return runFixture({ op: 'documentBody', actionId: request?.readAction, ok: null }, { document_body: request });
     },
     navigate(payload) {
+      // A view changing its own params (useViewParams().setParams): recorded, the view keeps its synthetic params.
+      if (payload.kind === 'view-params') {
+        const params = payload.params;
+        if (!params || typeof params !== 'object' || Array.isArray(params)
+          || Object.keys(payload).some(key => !['kind', 'params', 'replace'].includes(key))
+          || Object.values(params).some(value => !['string', 'number', 'boolean'].includes(typeof value))) {
+          return protocolFailure('View params must be an object of text, number or true/false values.');
+        }
+        state.runtimeCalls.push({ op: 'navigate', actionId: 'view-params', ok: true });
+        return;
+      }
       if (payload.kind !== 'space-reference' || typeof payload.alias !== 'string' || !authority.navigation?.includes(payload.alias)) {
         return protocolFailure('Offline navigation requires a declared synthetic destination.');
       }
@@ -83,6 +101,7 @@ async function start() {
   const host = document.createElement('div'); host.style.cssText = 'min-height:100vh;height:100vh';
   const shadow = host.attachShadow({ mode: 'open' });
   const css = document.createElement('style'); css.textContent = snapshot.css; shadow.appendChild(css);
+  NotisSDKUI.adoptToolkitStyles(shadow);
   const mount = document.createElement('div'); mount.setAttribute('data-notis-app-mount', 'true');
   mount.style.cssText = 'min-height:0;height:100%'; shadow.appendChild(mount);
   document.body.appendChild(host);

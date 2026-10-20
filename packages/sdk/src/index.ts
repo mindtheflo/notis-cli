@@ -20,7 +20,7 @@ export { useNativeDocumentBody } from './hooks/useNativeDocumentBody';
 export { useViewerRead, useViewerReadAvailable, useViewerDatabases, useViewerSkills } from './hooks/useViewerReads';
 export type { UseViewerReadOptions } from './hooks/useViewerReads';
 export { useViewParams, useShown, useShownAvailable, parseViewParams } from './hooks/useViewParams';
-export type { ViewParams, ViewParamsOf, UseShownOptions } from './hooks/useViewParams';
+export type { ViewParams, ViewParamsOf, ViewParamChanges, SetViewParamsOptions, UseShownOptions } from './hooks/useViewParams';
 export { SPACE_VIEW_SPEC_VERSION } from './space';
 export type { SpaceViewParam, SpaceViewParamType, SpaceShows, SpaceShownDescriptor, SpaceShownOptions, SpaceShownResult,
   SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
@@ -61,12 +61,14 @@ export { useCloudComputerShell } from './hooks/useCloudComputerShell';
 export type { UseCloudComputerShellResult } from './hooks/useCloudComputerShell';
 export { useNotisNavigation } from './hooks/useNotisNavigation';
 export { useTopBarSearch } from './hooks/useTopBarSearch';
+export { useTopBarTitleLeaf } from './hooks/useTopBarTitleLeaf';
 export { useBackend } from './hooks/useBackend';
 export { useMultiSelect } from './hooks/useMultiSelect';
 export { useCollectionInteractions, COLLECTION_ITEM_ATTRIBUTE } from './hooks/useCollectionInteractions';
 export { useActiveResource } from './hooks/useActiveResource';
+// ShortcutProvider is not exported here (D2): NotisProvider mounts it for every app; hosts take it from
+// '@notis/sdk/interactions'.
 export {
-  ShortcutProvider,
   SHORTCUT_SCOPE_PRIORITY,
   isEditableShortcutEvent,
   shortcutDisplay,
@@ -79,13 +81,14 @@ export type { MarkdownProps } from './components/Markdown';
 export { DocumentEditor } from './components/DocumentEditor';
 export { DocumentPage, DocumentPageSkeleton, usePrefetchRecord } from './components/DocumentPage';
 export { RecordProperties, HtmlFrame, ReportFrame, ShareControl } from './components/RecordComponents';
-export { RenderChartData } from './components/RenderChartData';
+export { RenderChartData } from './ui/charts/RenderChartData';
 export { MarkdownEditor } from './components/MarkdownEditor';
 export { NotisSelectionBoundary, NOTIS_CONTEXT_CLIPBOARD_TYPE } from './components/NotisSelectionBoundary';
 export type { NotisSelectionBoundaryProps } from './components/NotisSelectionBoundary';
 export {
   asRecord,
   blockNoteToPlainText,
+  DOCUMENT_WORDS,
   extractRichText,
   getDocumentPreview,
   getRelationIds,
@@ -97,6 +100,7 @@ export {
   normalizePropertyValue,
   optionalString,
 } from './documents';
+export type { DocumentWordsOptions } from './documents';
 
 // Multi-select components
 export { Dialog } from './components/Dialog';
@@ -189,7 +193,7 @@ export type {
 
 export { useToolQuery } from './hooks/useToolQuery';
 
-export { Skeleton, ViewSkeleton } from './components/Skeleton';
+export { Skeleton, SKELETON_WORDS, ViewSkeleton } from './components/Skeleton';
 
 export { useLongPressSelection } from './hooks/useLongPressSelection';
 export { isInteractionElementVisible } from './interactions/visibility';

@@ -6,6 +6,7 @@ revision and current target. [Delivery](release.md) owns the release sequence.
 | Failure | Check |
 | --- | --- |
 | Build rejects a view | Required `specVersion`, path, descriptions, params, executable shows and memory; use the file/line diagnostic. |
+| Design check rejects a view | Replace the flagged code with the piece or hook the diagnostic names (`useShortcut` for a key listener, `useLayerRoot` for a portal, tokens for a colour, EN and FR copy for a literal). Do not disable the rule. |
 | Main-view conflict | Inspect current database links/main view. Move the existing claim explicitly or retain it; do not remove main just to publish. |
 | Source creation fails | Check its canonical schema and same-view main record param. Verify creates no resource; promotion is atomic. |
 | View-link warning after a successful write | Use `FIND_VIEWS` with the returned record key. The write is already committed; do not insert again. |

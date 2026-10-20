@@ -1,4 +1,11 @@
 import type { CSSProperties } from 'react';
+import { useNotisRuntime } from '../provider';
+import { pick, type Locale, type Words } from '../words/types';
+
+/** What a loading placeholder says to screen readers. */
+export const SKELETON_WORDS = Object.freeze({
+  loading: { en: 'Loading content', fr: 'Chargement du contenu' },
+}) satisfies Readonly<Record<string, Words>>;
 
 /** Content-shaped placeholder. Never use it to replace a successful cached result. */
 export function Skeleton({ className, style }: { className?: string; style?: CSSProperties }) {
@@ -8,10 +15,17 @@ export function Skeleton({ className, style }: { className?: string; style?: CSS
     borderRadius: 6, background: 'rgba(128,128,128,.18)', ...style }} />;
 }
 
-export function ViewSkeleton({ variant = 'table', rows = 5 }: {
+/** A whole view loading: a title bar and table, cards, graph or detail placeholders, named for screen readers in the Space's language. */
+export function ViewSkeleton({ variant = 'table', rows = 5, label, locale }: {
   variant?: 'table' | 'cards' | 'graph' | 'detail'; rows?: number;
+  /** What loads, said to screen readers ("Loading meetings"). Default "Loading content". */
+  label?: Words | string;
+  /** Default the Space's locale. */
+  locale?: Locale;
 }) {
-  return <div role="status" aria-label="Loading content" aria-busy="true" data-notis-content-skeleton
+  const runtimeLocale = useNotisRuntime()?.context?.locale;
+  const shown = locale ?? (runtimeLocale === 'fr' ? 'fr' : 'en');
+  return <div role="status" aria-label={pick(label ?? SKELETON_WORDS.loading, shown)} aria-busy="true" data-notis-content-skeleton
     style={{ width: '100%', display: 'grid', gap: 16, padding: 24 }}>
     <Skeleton style={{ width: '32%', height: 28 }} />
     {variant === 'graph' ? <Skeleton style={{ height: 420 }} /> :

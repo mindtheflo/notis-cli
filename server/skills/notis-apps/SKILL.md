@@ -9,9 +9,9 @@ mcp_references: ["references/release.md", "references/architecture.md", "referen
 
 # Notis Spaces
 
-Build compact, readable views with Vite, React and `@notis/sdk`. A Space owns its
-presentation; native databases hold its records. Use the pre-authenticated Notis
-CLI: `npx --package @notis_ai/cli@latest -- notis` locally, and the preinstalled
+A Space is a place with views over native databases. Its views are small React
+files built on pieces Notis provides. Use the pre-authenticated Notis CLI:
+`npx --package @notis_ai/cli@latest -- notis` locally, and the preinstalled
 `notis` command on the cloud computer (the same `npx` form if `notis` is not found).
 Discover tools and inspect their live schemas before using them.
 
@@ -22,27 +22,77 @@ Discover tools and inspect their live schemas before using them.
 | Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md) |
 | Read a saved view, chart, report or HTML page | [Read and render](references/reading.md) |
 | Choose a memory policy | [Memory](references/memory.md) |
-| Compose records, navigation or declared reads | [SDK](references/sdk.md) |
+| Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md) |
 | Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
 | Diagnose a failed check or release | [Troubleshooting](references/troubleshooting.md) |
 
 Use ordinary native data tools when they answer the question. For what a page
 actually displays, resolve its current link and render the deployed view.
 
-## Author → verify → deliver
+## Three layers
+
+1. **The Space's own code**, the only layer you write: which data, which fields,
+   the Space's own actions and their EN and FR words.
+2. **The toolkit, `@notis/sdk/ui`**, provided live by the host: list and reader,
+   rows and their states, the selection bar, keycaps and the `?` sheet, open as
+   Side, Center or Full, period picker, calendar, timeline, charts, menus and the
+   standard actions with their EN and FR words. A Space carries no copy of it, so
+   a fix to a piece reaches every Space without a rebuild.
+3. **The Notis host frame**: full height, sidebar and top bar (the Space / view
+   crumb with the open item, search and Share), chat and its one-pane rule,
+   light and dark, the phone layout, one keyboard engine, the Shadow DOM runtime
+   and account permissions.
+
+Behaviour is held by the pieces, not by instructions. Start from the piece that
+matches the view: a list beside a reader is one `ListReader` of about 20 lines
+([the sample](references/views.md#write-the-view)), and keys, selection, panels,
+looks and words come with it. Change only what the Space needs, as shallow as
+possible:
+
+1. **Options**: `density`, `openAs`, `layout`, `look`, `autoOpen`, `search`,
+   `actions`, an action's `key`.
+2. **Slots**: `row`, `reader`, `tabs`, `create`, `viewMenu`, `infoLine`,
+   `readerLabel`, `readerActions`, `crumbLabel`, `renderTile`, `empty`.
+3. **Hooks** on your own layout: `useListKeys`, `useSelection`, `useShortcut`,
+   `usePanels`. Your markup, the same keys and fixes.
+4. **Rewrite** last. It is allowed, and only a rewrite stops receiving that
+   piece's fixes.
+
+## Rules the pieces cannot hold for you
+
+- Standard actions (`archive`, `complete`, `star`, `delete`...) take Notis's
+  words, key and toast: give only `id` and `run`. A Space's own action, label or
+  text brings an `{ en, fr }` pair; no English literal in JSX.
+- Never add `keydown` listeners on `window` or `document`; use `useShortcut` or
+  the hooks above. Never portal to `document.body`; use `Menu`, `Popover`,
+  `Tooltip`, or `useLayerRoot()` as the container.
+- No in-page title: the host top bar shows Space / view and the open item. Never
+  render an `h1`, a page description, a heading block, a centred column
+  (`mx-auto` with `max-w-*`) or a second search field; the Space fills the frame
+  and `ListReader` `search` uses the top bar. Dashboards and forms are full-width
+  `Section` kinds.
+- Colours from theme tokens (`hsl(var(--primary))`, `text-foreground`,
+  `bg-muted`), never hex, palette hues or raw rgb. A highlight is a ring on all
+  four sides, never a coloured or thicker edge on one side. No fixed viewport
+  heights (`h-screen`, `vh`): use `h-full`, `flex-1`, `min-h-0`.
+- The design check (run by every `notis spaces build`, and by the server on
+  publish) and `notis spaces verify` (390 and 1440 px, EN and FR) must pass
+  before any deploy.
+- A Space updates in place: pull it, change it, deploy it to the same Space ID.
+  Never ship a change as a new Space or a Store copy.
+
+## Author, verify, deliver
 
 1. Read the exact existing Space and its resources. Preserve IDs, schemas, data,
    source revision and the deployment lock. A familiar name is not identity.
 2. Pull editable source with `notis spaces pull`. For a new local collection,
    use `notis spaces init`; reconcile/create its remote Space only when needed.
-3. Every view declares `specVersion: 2`, `path`, `description`, `readableContext`,
-   typed `params`, executable `shows` and an explicit `memory` policy. A native
-   record param identifies the database it opens; its one main view declares
-   `main: true`. Use `useViewParams` and `useShown` in the actual page.
-4. Build and verify the selected frozen source. Keep explicit fictional fixtures
-   for all reads. Inspect EN/FR at 390px and 1440px. Fix failed reads, clipping,
-   wrong data and state transitions before release.
-5. Deploy/promote within the user's authorization. Read back the exact published
+3. Declare each view ([View authoring](references/views.md)) and write it on the
+   pieces ([Design](references/design.md)).
+4. Build and verify the selected frozen source with fictional fixtures for every
+   read. Look at EN and FR at 390 and 1440 px; fix failed reads, clipping, wrong
+   data and state transitions before release.
+5. Deploy within the user's authorization. Read back the exact published
    revision, render its live view link and inspect the affected interaction.
    A successful local build is not proof of deployment or live data.
 6. Return the view-qualified link and distinguish local checks, publication to

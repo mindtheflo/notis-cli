@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { createConnection } from 'node:net';
 import test from 'node:test';
@@ -80,6 +81,15 @@ test('offline navigation descriptor retains declared aliases without physical de
   assert.throws(()=>spaceHarnessSnapshot(release,caps,engine),/navigation declaration/);
   caps.navigation=['history'];
   assert.deepEqual(spaceHarnessSnapshot(release,caps,engine).descriptor.space.navigation,['history']);
+});
+
+test('the offline host records a view changing its own params, with no declared destination, and refuses structured values', () => {
+  const host = readFileSync(new URL('../src/space-harness-host.ts', import.meta.url), 'utf8');
+  const branch = host.slice(host.indexOf("if (payload.kind === 'view-params') {"), host.indexOf("if (payload.kind !== 'space-reference'"));
+  assert.ok(branch.length > 0, 'the view-params branch runs before the declared-destination check');
+  assert.ok(branch.includes("Object.keys(payload).some(key => !['kind', 'params', 'replace'].includes(key))"));
+  assert.ok(branch.includes("Object.values(params).some(value => !['string', 'number', 'boolean'].includes(typeof value))"));
+  assert.ok(branch.includes("state.runtimeCalls.push({ op: 'navigate', actionId: 'view-params', ok: true });"));
 });
 
 test('server serves only frozen bytes and exact fixtures for a credentialless Shadow host', async t => {

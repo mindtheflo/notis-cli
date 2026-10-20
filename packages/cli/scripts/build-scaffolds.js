@@ -7,6 +7,8 @@ import { build } from 'esbuild';
 
 import { stageBaseSkills } from './base-skill-stamps.js';
 import { copyBoundaryRules, copyDesignRules } from './copy-boundary-rules.js';
+import { buildSpaceSdk } from './build-space-sdk.js';
+import { buildLegacySdk } from './build-legacy-sdk.js';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, '..');
@@ -28,10 +30,14 @@ const sdkTarget = join(distDir, 'sdk');
 if (!existsSync(join(sdkSource, 'package.json'))) {
   throw new Error(`Canonical SDK source not found at ${sdkSource}`);
 }
-rmSync(sdkTarget, { recursive: true, force: true });
-mkdirSync(sdkTarget, { recursive: true });
-cpSync(join(sdkSource, 'src'), join(sdkTarget, 'src'), { recursive: true });
-cpSync(join(sdkSource, 'package.json'), join(sdkTarget, 'package.json'));
+// Legacy apps vendor and bundle it, without the Spaces toolkit they never use.
+const legacySdk = buildLegacySdk({ sdkDir: sdkSource, targetDir: sdkTarget });
+process.stdout.write(`Built the legacy app SDK (${legacySdk.files.length} files)\n`);
+
+// Spaces get types for the host-provided SDK (the host shares its own copy at
+// runtime) plus a Node-only copy of it for their tests.
+const spaceSdk = await buildSpaceSdk({ sdkDir: sdkSource, targetDir: join(distDir, 'space-sdk') });
+process.stdout.write(`Built the Space SDK types (${spaceSdk.files.length} files, ${spaceSdk.candidates} class candidates) and its test runtime (${spaceSdk.runtime.length} files)\n`);
 
 // One compiled renderer, shared with Portal; no CDN React or credentialed page.
 const require = createRequire(import.meta.url);
@@ -41,6 +47,9 @@ await build({
   entryPoints: { host: join(cliRoot, 'src/space-harness-host.ts') },
   outdir: join(distDir, 'space-harness'), bundle: true, platform: 'browser', format: 'iife', target: 'es2022',
   alias: reactAliases, define: { 'process.env.NODE_ENV': '"production"' }, minify: true,
+  // The host provides the whole SDK to verified Spaces; its dependencies resolve
+  // from the SDK's own install, else from the renderer's.
+  nodePaths: [join(repoRoot, 'packages/sdk/node_modules'), join(repoRoot, 'packages/view-renderer/node_modules')],
 });
 rmSync(join(distDir, 'space-harness/frame.js'), { force: true });
 

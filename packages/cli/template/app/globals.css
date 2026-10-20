@@ -10,7 +10,7 @@
 /* Preserve v3 defaults while keeping the existing Notis theme/config. */
 @theme {
   --default-ring-width: 3px;
-  --default-ring-color: rgb(59 130 246 / 0.5);
+  --default-ring-color: hsl(var(--ring) / 0.5);
 }
 
 @layer base {

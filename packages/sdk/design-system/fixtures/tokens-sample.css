@@ -1,0 +1,40 @@
+/* The shared token fixture: tokens.test.ts and server/tests/test_design_review.py both expect exactly
+   tokens-sample.expected.txt. A comment with braces { and } and a fake declaration --x: 1; is dropped. */
+@import "tailwindcss" source(none);
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif; /* trailing comment { --y: 2; } */
+  --label: "a;b{c}";
+  --quote-single: 'x;y';
+  @media (prefers-color-scheme: dark) {
+    --theme-dark-only: 1px;
+  }
+  --spacing-multi: calc(
+    1rem   +
+    2px
+  );
+}
+
+.card { --not-kept: 1; color: red; }
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    /* --ghost: 1; } a closing brace inside a comment does not close the block */
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.05), /* inline note */ 0 4px 12px rgb(0 0 0 / 0.06);
+    color: black;
+    --last-without-semicolon: 4px
+  }
+  .dark {
+    --background: 222.2 84% 4.9%;
+  }
+  .dark .card {
+    --card-inner: 1;
+  }
+  :root, .dark {
+    --both: 1;
+  }
+}
+
+:root { --top-level-root: red; }
+.dark{--compact:1}

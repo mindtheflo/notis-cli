@@ -37,7 +37,7 @@ export async function uploadNativeRecordFileWithCliRuntime({ runtime, target, re
     name, content_type: contentType, base64: data.toString('base64') };
   // No automatic retry: repeating this command with the same request ID is the
   // exact immutable intent; a mismatched request fails instead of overwriting.
-  const result = (await request({ runtime, method: 'POST', path: '/portal_native_files/upload', spacesProtocol: 1, body, signal })).payload;
+  const result = (await request({ runtime, method: 'POST', path: '/portal_native_files/upload', spacesProtocol: true, body, signal })).payload;
   if (result?.protocol !== 1 || result.record_key !== recordKey || result.request_id !== requestId
     || result.sha256 !== digest || result.size_bytes !== data.length || result.file?.name !== name
     || typeof result.file?.url !== 'string' || !/^https?:\/\//.test(result.file.url) || result.url !== result.file.url) {

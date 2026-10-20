@@ -176,9 +176,9 @@ const value: SpaceDefinition = {name:'Typed'}; export default defineSpace(value 
 test('one selected real Vite build freezes only its source and does not go stale when an unshared sibling changes', async () => {
   const root = fixture();
   try {
-    mkdirSync(join(root, 'packages/sdk'), { recursive: true });
-    cpSync(join(repo, 'packages/sdk/src'), join(root, 'packages/sdk/src'), { recursive: true });
-    cpSync(join(repo, 'packages/sdk/package.json'), join(root, 'packages/sdk/package.json'));
+    // The package a real Space installs: host-module types and build-time entries, no SDK runtime code.
+    cpSync(join(repo, 'packages/cli/dist/space-sdk'), join(root, 'packages/sdk'), { recursive: true });
+    assert.equal(existsSync(join(root, 'packages/sdk/src/provider.tsx')), false);
     mkdirSync(join(root, 'node_modules/@notis'), { recursive: true });
     symlinkSync(join(root, 'packages/sdk'), join(root, 'node_modules/@notis/sdk'), 'dir');
     for (const name of ['vite', 'react', 'react-dom']) symlinkSync(join(repo, 'packages/sdk/node_modules', name), join(root, 'node_modules', name), 'dir');
@@ -187,6 +187,9 @@ test('one selected real Vite build freezes only its source and does not go stale
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'space-build-fixture', type: 'module',
       scripts: { build: 'vite build' }, dependencies: { '@notis/sdk': 'file:./packages/sdk' } }));
     writeFileSync(join(root, 'vite.config.ts'), `import { notisViteConfig } from '@notis/sdk/vite'; import workspace from './notis.config'; export default notisViteConfig(workspace);`);
+    writeFileSync(join(root, 'spaces/a/view.tsx'), `import type { Value } from '../../shared/value'; import '../../shared/style.css';
+import { useNotis } from '@notis/sdk'; import * as ui from '@notis/sdk/ui';
+export default function View() { useNotis(); return Object.keys(ui).length; }`);
     const built = await buildSpaceArtifact(root, 'a', { stdio: 'pipe', refreshSdk: false });
     assert.equal(built.manifest.schema, 'notis-space/v1');
     assert.ok(existsSync(built.receiptPath));
@@ -194,6 +197,11 @@ test('one selected real Vite build freezes only its source and does not go stale
     const release = await prepareSpaceRelease(root, 'a');
     try {
       assert.ok(release.files['bundle/app.js']);
+      // The SDK stays a host import: the bundle names both host modules and carries none of their code.
+      const bundle = Buffer.from(release.files['bundle/app.js'], 'base64').toString();
+      assert.match(bundle, /from\s*["']@notis\/sdk["']/);
+      assert.match(bundle, /from\s*["']@notis\/sdk\/ui["']/);
+      assert.doesNotMatch(bundle, /notis\.sdk\./);
       assert.equal(Object.keys(release.sourceFiles).some(file => file.startsWith('spaces/b/')), false);
       assert.equal(release.manifest.local_key, 'a');
       assert.equal(existsSync(join(release.projectDir, 'spaces/b/view.tsx')), false);

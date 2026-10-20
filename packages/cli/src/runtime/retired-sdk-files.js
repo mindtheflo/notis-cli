@@ -1,4 +1,4 @@
-/** Exact canonical files retired by the one-Shadow-runtime cutover.
+/** Exact canonical files retired from the embedded SDK (one-Shadow-runtime cutover, toolkit move).
  * Modified or additional source is retained for explicit reconciliation. */
 // Host mounting code stays in the canonical SDK and CLI host bundle, not in
 // authored apps' public SDK mirror. It is not a public package export.
@@ -16,5 +16,9 @@ export const RETIRED_SDK_FILES = Object.freeze({
   ],
   "src/frameIsolation.ts": [
     "8b57cb38f618eefc4133ae50fbf2b37bbdef5be02e44b39758d8328fb2a59ab6"
+  ],
+  // Moved to src/ui/charts/RenderChartData.tsx with the Spaces toolkit.
+  "src/components/RenderChartData.tsx": [
+    "a3a8ab3ffe4cd7807e0591b6dace77c24dd08cb556e4170595783e986a513808"
   ]
 });

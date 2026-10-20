@@ -9,15 +9,17 @@
  * export default notisViteConfig(workspace);
  * ```
  *
- * Produces a library-mode ES module bundle with React externalized.
+ * Produces a library-mode ES module bundle with React externalized, and for
+ * Spaces the host-provided SDK too.
  * Output: .notis/output/bundle/app.js + app.css
  */
 
 import * as vite from 'vite';
 import type { SpacesWorkspace } from './space';
 import { notisTailwindContent } from './tailwind';
+import { NOTIS_SDK_HOST_MODULES, REACT_HOST_MODULES } from './runtimeModules';
 
-const externalReact = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'];
+const externalReact: string[] = [...REACT_HOST_MODULES];
 
 // The oldest browsers that support CSS light-dark() natively. With Vite's
 // default CSS target, Lightning CSS (Vite 8) rewrites light-dark(a, b) into
@@ -33,12 +35,15 @@ export const NOTIS_CSS_TARGET = ['chrome123', 'edge123', 'firefox120', 'safari17
  * vite.config.ts can pass its notis.config default export.
  */
 export function notisViteConfig(_workspace: SpacesWorkspace): vite.UserConfig {
+  // A Space bundle never contains the SDK: the host provides `@notis/sdk` and
+  // `@notis/sdk/ui` like React (runtimeModules.ts).
+  const external = [...externalReact, ...Object.keys(NOTIS_SDK_HOST_MODULES)];
   // Vite 8 preserves external require() calls. App bundles run in a browser
   // with an ESM import map, so bundled CommonJS dependencies must import React.
   // Older pulled apps also receive this SDK; their Vite already does this.
   const externalRequirePlugin = 'esmExternalRequirePlugin' in vite
     && typeof vite.esmExternalRequirePlugin === 'function'
-    ? vite.esmExternalRequirePlugin({ external: externalReact })
+    ? vite.esmExternalRequirePlugin({ external })
     : null;
   return {
     plugins: [
@@ -58,7 +63,7 @@ export function notisViteConfig(_workspace: SpacesWorkspace): vite.UserConfig {
       rollupOptions: {
         // On Vite 8 the plugin must own externalization as well as conversion:
         // a top-level external match bypasses its require-to-import transform.
-        external: externalRequirePlugin ? [] : externalReact,
+        external: externalRequirePlugin ? [] : external,
         output: {
           globals: {
             react: 'window.React',
