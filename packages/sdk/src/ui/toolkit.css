@@ -372,6 +372,10 @@ tr.nui-row[data-cursor] { outline: 1px solid hsl(var(--foreground) / .28); outli
    that cannot fold scrolls sideways in its one row instead of overflowing the pane. The 2px pad keeps focus rings in. */
 .nui-section[data-kind="bar"] .nui-section-tabs { flex: 1 1 auto; gap: 8px; margin: -2px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
 .nui-section[data-kind="bar"] .nui-section-tabs::-webkit-scrollbar { display: none; }
+/* A bar that scrolls sideways fades its end edge until it is scrolled to the end, so a cut control reads as more
+   to swipe, never as clipped text. A bar that fits has no scroll timeline, so it gets no fade. */
+@keyframes nui-bar-end-fade { 0%, 96% { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); } 100% { mask-image: none; } }
+@supports (animation-timeline: scroll()) { .nui-section[data-kind="bar"] .nui-section-tabs { animation: nui-bar-end-fade linear both; animation-timeline: scroll(self inline); } }
 .nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow) { flex-shrink: 0; }
 .nui-section[data-kind="bar"] .nui-section-tabs .nui-toggles { flex-wrap: nowrap; }
 .nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 5px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }

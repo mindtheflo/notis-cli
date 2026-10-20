@@ -176,6 +176,9 @@ test('Section: a flat full-width section per kind; its head is an h2 data label 
   assert.match(barSlot, /flex: 1 1 auto;/);
   assert.match(barSlot, /overflow-x: auto;/);
   assert.match(cssRule('.nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow)') ?? '', /flex-shrink: 0;/);
+  // A bar that scrolls fades its end edge until scrolled to the end, so a cut control never reads as clipped text.
+  assert.match(toolkitCss, /@keyframes nui-bar-end-fade \{ 0%, 96% \{ mask-image: linear-gradient\(to right, #000 calc\(100% - 28px\), transparent\); \} 100% \{ mask-image: none; \} \}/);
+  assert.match(toolkitCss, /animation: nui-bar-end-fade linear both; animation-timeline: scroll\(self inline\);/);
   assert.match(cssRule('.nui-section-tabs > .nui-tabrow[data-fold="least"]') ?? '', /min-width: max-content;/);
   assert.match(cssRule('.nui-section[data-kind="chart"]') ?? '', /container: nui-section \/ inline-size;/);
   assert.match(toolkitCss, /@container nui-section \(max-width: 560px\) \{[^@]*\.nui-section-head \{ flex-wrap: wrap; \}[^@]*\.nui-section-tabs \{ flex-basis: 100%; margin-left: 0; \}/);
