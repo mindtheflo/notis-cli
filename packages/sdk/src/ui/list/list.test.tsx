@@ -1467,6 +1467,9 @@ test('reader properties: the plain dl grid never reaches a field list, whose row
   // A pair grouped in a div is one row across both columns, never a single 8rem cell (the FR picker cut).
   assert.match(cssRule('.nui-lr-reader-inner dl:not(.nui-fields-list) > div') ?? '', /grid-column: 1 \/ -1; grid-template-columns: subgrid;/);
   assert.match(cssRule('.nui-lr-reader-inner dl:not(.nui-fields-list) > div > :is(dt, dd)') ?? '', /min-height: 36px/);
+  // A long value (a URL) wraps inside its column: a flex cell's text never runs past the reader's edge.
+  assert.match(cssRule('.nui-lr-reader-inner dl:not(.nui-fields-list) > :is(dt, dd)') ?? '', /overflow-wrap: anywhere/);
+  assert.match(cssRule('.nui-lr-reader-inner dl:not(.nui-fields-list) > div > :is(dt, dd)') ?? '', /overflow-wrap: anywhere/);
 });
 test('row divider: a painted line, never a border, so an open or cursor row keeps a 1px ring on all four sides', () => {
   assert.match(cssRule('div.nui-row + div.nui-row') ?? '', /background-image: linear-gradient\(hsl\(var\(--border\) \/ \.5\)/);

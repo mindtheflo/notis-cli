@@ -242,11 +242,12 @@ tr.nui-row[data-cursor] { outline: 1px solid hsl(var(--foreground) / .28); outli
 @container nui-lr-reader (max-width: 360px) { .nui-lr-reader-inner { padding: 20px 16px max(40px, calc(var(--nui-fab-safe-bottom) + 16px)); } }
 /* Reader properties (RD5) and section heads (RD6). A field list (`.nui-fields-list`) keeps its own rows. */
 .nui-lr-reader-inner dl:not(.nui-fields-list) { display: grid; grid-template-columns: 8rem minmax(0, 1fr); margin: 24px 0 0; }
-.nui-lr-reader-inner dl:not(.nui-fields-list) > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; }
+.nui-lr-reader-inner dl:not(.nui-fields-list) > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .nui-lr-reader-inner dl:not(.nui-fields-list) > dt { font-size: 13px; color: hsl(var(--muted-foreground)); }
+/* A long value (a URL) wraps inside its column instead of running past the reader's edge. */
 /* A dl may group each pair in a div (valid HTML): the group is one row on the same two columns, never a cell. */
 .nui-lr-reader-inner dl:not(.nui-fields-list) > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; gap: 0; align-items: center; min-width: 0; }
-.nui-lr-reader-inner dl:not(.nui-fields-list) > div > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; }
+.nui-lr-reader-inner dl:not(.nui-fields-list) > div > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .nui-lr-reader-inner dl:not(.nui-fields-list) > div > dt { font-size: 13px; color: hsl(var(--muted-foreground)); }
 .nui-lr-reader-inner h3 { margin: 32px 0 0; font-size: 14px; line-height: 20px; font-weight: 500; }
 /* No item open (RD9): one line and the keys to pick one. */
