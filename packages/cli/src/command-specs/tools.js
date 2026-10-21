@@ -480,7 +480,10 @@ async function toolsExecHandler(ctx) {
     meta: {
       mutating: targetMutating,
       mutation_classification: targetMutating === null ? 'unknown' : 'name_hint_only',
-      idempotency_key: idempotencyKey,
+      // The key whose stored answer this is: an unknown native outcome is
+      // retried under a fresh key with the same request_id.
+      idempotency_key: result.idempotencyKey ?? idempotencyKey,
+      attempts: result.attempts ?? 1,
     },
     renderHuman: () => JSON.stringify(result.payload, null, 2),
   });
@@ -514,8 +517,18 @@ async function toolsExecParallelHandler(ctx) {
         mutating: true,
         idempotencyKey: nextIdempotencyKey(ctx.globalOptions),
       })
-        .then((r) => ({ tool_name: call.tool_name, status: 'ok', payload: r.payload }))
-        .catch((e) => ({ tool_name: call.tool_name, status: 'error', error: e.message }))
+        .then((r) => ({
+          tool_name: call.tool_name,
+          status: 'ok',
+          payload: r.payload,
+          attempts: r.attempts ?? 1,
+        }))
+        .catch((e) => ({
+          tool_name: call.tool_name,
+          status: 'error',
+          error: e.message,
+          attempts: e?.details?.attempts ?? 1,
+        }))
     )
   );
 

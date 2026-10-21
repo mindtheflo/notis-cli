@@ -1,6 +1,6 @@
 export { LIST_DRAG_TYPE, LIST_READER_WORDS, ListReader, rankActions, successorOf } from './ListReader';
 export type {
-  ListGroup, ListReaderApi, ListReaderProps, ListSearchProps, OpenChangeReason, OpenChangeVerdict, ReaderAction, ReaderCtx, TileParts,
+  ListGroup, ListReaderApi, ListReaderProps, ListReorder, ListSearchProps, OpenChangeReason, OpenChangeVerdict, ReaderAction, ReaderCtx, TileParts,
   ViewMenuItem, ViewMenuProps,
 } from './ListReader';
 export {
@@ -18,3 +18,5 @@ export {
   SELECTION_BAR_BOOST, SELECTION_BAR_MAX_INLINE, SelectionBar, chooseFit, useSelectionBar,
 } from './SelectionBar';
 export type { SelectionBarFit, SelectionBarProps, SelectionBarState, UseSelectionBarOptions } from './SelectionBar';
+export { REORDER_DRAG_TYPE, REORDER_WORDS, chainReorderProps, dropIndex, useReorder } from './useReorder';
+export type { Reorder, ReorderChange, ReorderItemProps, ReorderOrientation, UseReorderOptions } from './useReorder';

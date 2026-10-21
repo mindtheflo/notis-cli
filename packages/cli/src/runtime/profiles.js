@@ -11,6 +11,7 @@ import { CliError, EXIT_CODES } from './errors.js';
 import { withConfigFileWriteLock } from './config-lock.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import { channelFromProfile, cliCommandForChannel, isReleaseChannel } from './channel.js';
+import { resolveRetryEnabled } from './retry.js';
 
 export const CONFIG_DIR = join(homedir(), '.notis');
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -868,6 +869,8 @@ export function resolveRuntimeProfile(
     nonInteractive,
     outputMode,
     timeoutMs,
+    // Automatic retries of interrupted calls that are safe to repeat.
+    retry: resolveRetryEnabled(globalOptions),
     debugEntitlementOverride,
     worktreeRuntime: devRuntime,
     detachedWorktreeRuntime: devRuntime ? null : worktreeRuntime,

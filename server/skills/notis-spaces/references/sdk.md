@@ -78,7 +78,19 @@ rather than from a copy.
   header slot. `Row` takes `wrap` (title lines) and `now` (a fixed clock for
   relative times). Drag to select is automatic on a list that selects several
   (`selectable` or a bulk action): a drag from empty space selects the rows
-  under it, as in the Manager; `dragSelect={false}` turns it off.
+  under it, as in the Manager; `dragSelect={false}` turns it off. Reorder is
+  off until the view passes `reorder={{ onReorder, canReorder }}`: a row then
+  drags with a line where it lands, or moves with Alt and an arrow key (Alt
+  with Home or End for the ends), and screen readers hear its new place.
+  `onReorder({ item, id, from, to, ids })` gets the moved item, its new index
+  and the whole new order; save `ids` in the view's own order (a position
+  property, for example). The list shows the new order at once and puts the
+  old one back with an error toast if the promise rejects. Pending and
+  disabled rows, and rows `canReorder` refuses, do not move; reorder is off
+  while `search` filters or `groupBy` groups. For a strip of your own (slide
+  thumbnails, a rail), `useReorder({ items, getId, onReorder, orientation })`
+  gives the ordered `items`, `getItemProps(id)` for each element and an
+  `announcer` to render once.
 - **Time and numbers**: `PeriodPicker` with `usePeriod`, `DayPicker`,
   `CalendarView`, `TimelineView`, `Chart`, `StatRow`, `ChartTable`,
   `RenderChartData`. `Chart` stacks bars or areas (`stacked`) and runs bars

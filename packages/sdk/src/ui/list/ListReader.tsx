@@ -19,6 +19,9 @@
  * - Reader bar (48px): close or back, open as, previous, next, the item's label, its actions, More, then Open as full
  *   page (center) or a second close (one pane). Actions past the bar's room fold into More.
  * - Sizing: the list fills its parent (height 100%, flex 1); the page gives it a set height.
+ * - Reorder (`reorder`, off by default): drag a row, or Alt and an arrow key, to move it one item at a time; the new
+ *   order shows at once and goes back if `onReorder` rejects (`useReorder`). Off while a local search filters the list
+ *   or `groupBy` groups it.
  */
 
 import {
@@ -32,7 +35,7 @@ import { useMarqueeSelection } from '../../hooks/useMarqueeSelection';
 import { MultiSelectDragOverlay } from '../../components/MultiSelectDragOverlay';
 import { writeViewParams } from '../../hooks/useViewParams';
 import {
-  DEFAULT_KEYMAP, SHELL_WORDS, isWords, keyList, toWords, w, type ActionOption, type ActionRef,
+  DEFAULT_KEYMAP, SHELL_WORDS, actionErrorReason, isWords, keyList, toWords, w, type ActionOption, type ActionRef,
   type KeySpec, type Words,
 } from '../../words';
 import { ESCAPE_PRIORITY } from '../engine/core';
@@ -61,6 +64,7 @@ import { RowMore } from './Row';
 import { RowIdContext, RowStateContext, type RowState, type RowStateSource } from './rowState';
 import { SelectionBar, useSelectionBar } from './SelectionBar';
 import { ROW_ID_ATTRIBUTE, ROW_INTERACTIVE_SELECTOR, findRow, useListKeys } from './useListKeys';
+import { REORDER_WORDS, chainReorderProps, useReorder, type ReorderChange } from './useReorder';
 import { useSelection, type Selection } from './useSelection';
 
 /** What the reader slot and the header get besides their item. */
@@ -291,6 +295,13 @@ export interface ListReaderProps<T> {
    */
   draggable?: boolean | ((item: T) => boolean);
   onDragStart?: (items: T[], event: ReactDragEvent<HTMLElement>) => void;
+  /**
+   * Rows can be put in a new order (off when left out): drag one, or press Alt and an arrow key (all four in tiles),
+   * Alt+Home or Alt+End. One item moves at a time. The new order shows at once; `onReorder` saves it, and when its
+   * promise rejects the list goes back to `items` and says it could not save (an `ActionError` reason shows under it).
+   * Off while a local search filters the list or `groupBy` groups it. Pending and disabled rows do not move.
+   */
+  reorder?: ListReorder<T>;
   /** The first page is loading: skeleton rows while `items` is empty, a thin bar above the list otherwise. */
   loading?: boolean;
   /** More items can be loaded: a Load more button at the end, loaded as it scrolls into view and by J on the last row. */
@@ -337,6 +348,14 @@ export interface ListReaderProps<T> {
   /** Accessible name of the list. */
   label?: Words | string;
   className?: string;
+}
+
+/** How a ListReader's rows are put in a new order (see `reorder`). */
+export interface ListReorder<T> {
+  /** Save the move: the item, its index before and after, and every id in the new order. */
+  onReorder: (change: ReorderChange<T>) => void | Promise<unknown>;
+  /** Only these items move (all by default). */
+  canReorder?: (item: T) => boolean;
 }
 
 /** Every word ListReader shows, in English and French. */
@@ -600,7 +619,7 @@ function ListReaderInner<T>({
   openParam = 'open', onOpen, open: controlledOpen, onOpenChange, listId = 'list', label, className, openInUrl = true,
   selected: controlledSelected, onSelectedChange, afterAction = 'clear', draggable, onDragStart, loading = false,
   hasMore = false, onLoadMore, loadingMore = false, isPending, isDisabled, collapsible = false,
-  collapsed: controlledCollapsed, onCollapsedChange, groupCounts = true, apiRef, items: allItems,
+  collapsed: controlledCollapsed, onCollapsedChange, groupCounts = true, apiRef, items: naturalItems, reorder,
 }: ListReaderProps<T>) {
   const t = useT();
   const labelled = useLabelValue();
@@ -614,6 +633,19 @@ function ListReaderInner<T>({
   const localSearch = !!search && !search.onChange;
   const query = localSearch ? localQuery.trim() : '';
   const match = search?.match ?? defaultMatch;
+
+  // ---- reorder: the optimistic order comes first, so a search and the keys see the order the list shows ----
+  const notifyRef = useRef<ActionsController<T>['notify'] | null>(null);
+  const reorderer = useReorder<T>({
+    items: naturalItems,
+    getId,
+    enabled: !!reorder && !query && !groupBy,
+    orientation: layout === 'tiles' ? 'both' : 'vertical',
+    canReorder: reorder?.canReorder,
+    onReorder: (change) => reorder?.onReorder(change),
+    onError: (error) => notifyRef.current?.(REORDER_WORDS.failed, { tone: 'danger', reason: actionErrorReason(error) }),
+  });
+  const allItems = reorderer.items;
   const items = useMemo(() => (query ? allItems.filter((item) => match(item, query)) : allItems),
     [allItems, match, query]);
 
@@ -772,6 +804,7 @@ function ListReaderInner<T>({
     if (section && section.id !== openId) setSection(null);
   }, [openId, section]);
   const notify = actionsController.notify;
+  notifyRef.current = notify;
   useImperativeHandle(apiRef, () => ({
     open: (id, options) => {
       // A refused open leaves the open item at the section it shows.
@@ -1175,24 +1208,28 @@ function ListReaderInner<T>({
     const props = getRowProps(id);
     const pending = !!isPending?.(item);
     const disabled = disabledIds.has(id);
-    const extra = {
+    const own = {
+      ...props,
       ...(pending ? { 'data-pending': '', 'aria-busy': true } : {}),
       ...(disabled ? { 'data-disabled': '', 'aria-disabled': true } : {}),
       ...(canDrag(item, id) ? { draggable: true, onDragStart: (event: ReactDragEvent<HTMLElement>) => dragStart(id, event) } : {}),
     };
+    // A blocked row is still a place to drop; it does not move itself.
+    const movable = !blockedIds.has(id) && (!reorder?.canReorder || reorder.canReorder(item));
+    const rowProps = reorder ? chainReorderProps(own, reorderer.getItemProps(id, { movable })) : own;
     const drawn = layout === 'tiles' && renderTile ? <TileContent parts={renderTile(item)} />
       : row(item, stateOf(id));
     const content = <RowIdContext.Provider value={id}>{drawn}</RowIdContext.Provider>;
-    if (layout === 'table') return <tr key={id} className="nui-row" {...props} {...extra}>{content}</tr>;
+    if (layout === 'table') return <tr key={id} className="nui-row" {...rowProps}>{content}</tr>;
     if (layout === 'tiles') {
       return (
-        <div key={id} className="nui-tile" data-variant={tileVariant === 'manager' ? 'manager' : undefined} {...props}
-          {...extra}>
+        <div key={id} className="nui-tile" data-variant={tileVariant === 'manager' ? 'manager' : undefined}
+          {...rowProps}>
           {content}
         </div>
       );
     }
-    return <div key={id} className="nui-row" {...props} {...extra}>{content}</div>;
+    return <div key={id} className="nui-row" {...rowProps}>{content}</div>;
   };
 
   const groupHead = (group: ListGroup, count: number) => {
@@ -1436,6 +1473,7 @@ function ListReaderInner<T>({
       </div>
       {listCovered && toastNode}
       {pickerNode}
+      {reorder && reorderer.announcer}
     </div>
   );
 }

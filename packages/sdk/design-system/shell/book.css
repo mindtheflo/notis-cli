@@ -523,8 +523,8 @@ body {
   background: hsl(var(--ds-change));
 }
 .ds-badge[data-status='same'] {
-  color: hsl(var(--foreground));
-  background: hsl(var(--ds-change) / 0.2);
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted-foreground) / 0.14);
 }
 .ds-badge[data-status='failed'],
 .ds-badge[data-status='timeout'] {
@@ -550,6 +550,50 @@ body {
 }
 .ds-state.ds-ring[data-ds-ring='failed'] {
   box-shadow: 0 0 0 6px hsl(var(--muted)), 0 0 0 8px hsl(var(--destructive)), 0 0 0 12px hsl(var(--destructive) / 0.18);
+}
+/* Each changed part of a state, circled over its stage (review.ts markChanges). Sized in screen pixels. */
+.ds-marks {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.ds-mark {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid hsl(var(--ds-change));
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px hsl(var(--ds-change) / 0.22), inset 0 0 0 1px hsl(var(--background) / 0.6);
+}
+.ds-mark-number {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  transform: translateY(-60%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  font: 600 10px/1 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--background));
+  background: hsl(var(--ds-change));
+  box-shadow: 0 0 0 2px hsl(var(--background));
+}
+.ds-mark[data-side='bottom'] .ds-mark-number {
+  top: auto;
+  bottom: 0;
+  transform: translateY(60%);
+}
+.ds-marks-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--ds-change));
+  white-space: nowrap;
 }
 .ds-old {
   grid-column: 1 / -1;

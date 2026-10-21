@@ -216,6 +216,56 @@ function CrumbDemo({ ctx }: { ctx: Ctx }) {
   );
 }
 
+/** Drag to reorder (`reorder`): the page keeps its own order, the list moves a row at once and calls back. */
+function ReorderDemo({ ctx, id, layout }: { ctx: Ctx; id: string; layout?: 'tiles' }) {
+  const [items, setItems] = useState<readonly Ticket[]>(() => TICKETS.slice(0, 6));
+  return (
+    <TicketsDemo ctx={ctx} id={id} withTabs={false} title={{ text: LIST_COPY.tickets }} fixedItems={items}
+      openAs={layout ? ['center', 'full'] : undefined} layout={layout}
+      renderTile={layout ? (ticket) => ticketTileParts(ticket, ctx.t, ctx.lang) : undefined}
+      reorder={{ onReorder: ({ ids }) => { setItems(ids.map(ticketById)); } }} />
+  );
+}
+
+/** Starts a drag on the `from` item and holds it over the `over` item's far half, so the drop line shows. */
+async function dragOver(root: HTMLElement, from: number, over: number, horizontal = false): Promise<void> {
+  const items = await waitFor(root, '[data-reorder]').then(() => root.querySelectorAll<HTMLElement>('[data-reorder]'));
+  const source = items[from]!;
+  const target = items[over]!;
+  const view = root.ownerDocument.defaultView!;
+  const dataTransfer = new DataTransfer();
+  const box = target.getBoundingClientRect();
+  const at = { bubbles: true, cancelable: true, composed: true,
+    clientX: horizontal ? box.right - 4 : box.left + box.width / 2, clientY: horizontal ? box.top + box.height / 2 : box.bottom - 4 };
+  // A browser builds a DragEvent; a test page without one gets a mouse event carrying the same data.
+  const drag = (type: string): Event => {
+    if (typeof view.DragEvent === 'function') return new view.DragEvent(type, { ...at, dataTransfer });
+    const event = new view.MouseEvent(type, at);
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    return event;
+  };
+  source.dispatchEvent(drag('dragstart'));
+  target.dispatchEvent(drag('dragenter'));
+  target.dispatchEvent(drag('dragover'));
+  await waitFor(root, '[data-drop]');
+  await settle(4);
+}
+
+/** Moves the `index` item down by one with Alt and the arrow key, as a keyboard does. */
+async function altDown(root: HTMLElement, index: number, times: number): Promise<void> {
+  await waitFor(root, '[data-reorder]');
+  const view = root.ownerDocument.defaultView!;
+  let row = root.querySelectorAll<HTMLElement>('[data-reorder]')[index]!;
+  const id = row.getAttribute('data-nui-item');
+  for (let i = 0; i < times; i += 1) {
+    row = root.querySelector<HTMLElement>(`[data-nui-item="${id}"]`)!;
+    row.focus();
+    row.dispatchEvent(new view.KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', altKey: true, bubbles: true, cancelable: true, composed: true }));
+    await settle(2);
+  }
+  await settle(4);
+}
+
 /** autoOpen beside the list: the first ticket opens by itself, and after a close the reader says how to pick one. */
 function AutoOpenDemo({ ctx, id }: { ctx: Ctx; id: string }) {
   const { t } = ctx;
@@ -649,6 +699,33 @@ export const specimen = defineSpecimen({
       width: 390,
       height: 720,
       render: (ctx) => <TicketsDemo ctx={ctx} id="phone-selected" height={720} initialSelected={['NB-418', 'NB-417', 'NB-413']} />,
+    },
+    {
+      id: 'reorder',
+      label: 'Reorder on: the rows can be dragged or moved with Alt and an arrow key',
+      height: 480,
+      render: (ctx) => <ReorderDemo ctx={ctx} id="reorder" />,
+    },
+    {
+      id: 'reorder-drag',
+      label: 'Reorder: dragging NB-418 over NB-416, the line shows where it lands',
+      height: 480,
+      render: (ctx) => <ReorderDemo ctx={ctx} id="reorder-drag" />,
+      interact: async (root) => { await dragOver(root, 0, 2); },
+    },
+    {
+      id: 'reorder-keyboard',
+      label: 'Reorder from the keyboard: Alt and Down twice moved NB-418 to the third place, focus stays on it',
+      height: 480,
+      render: (ctx) => <ReorderDemo ctx={ctx} id="reorder-keyboard" />,
+      interact: async (root) => { await altDown(root, 0, 2); },
+    },
+    {
+      id: 'reorder-tiles',
+      label: 'Reorder tiles: the line stands beside the tile it lands next to',
+      height: TALL,
+      render: (ctx) => <ReorderDemo ctx={ctx} id="reorder-tiles" layout="tiles" />,
+      interact: async (root) => { await dragOver(root, 0, 1, true); },
     },
     {
       id: 'dark',

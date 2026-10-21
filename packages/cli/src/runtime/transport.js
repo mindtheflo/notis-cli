@@ -13,6 +13,15 @@ import {
 } from './profiles.js';
 import { createExpiredAuthError, createInvalidAuthHints } from './auth-recovery.js';
 import { refreshOAuthCredential } from './oauth.js';
+import {
+  callCarriesToolRequestId,
+  canReplayRequest,
+  findToolOutcomeUnknown,
+  isTransientFailure,
+  retriesEnabled,
+  waitForNextAttempt,
+  withAttempts,
+} from './retry.js';
 
 function escapeMultipartHeaderValue(value) {
   return String(value ?? '')
@@ -278,6 +287,8 @@ export async function httpRequest({
   multipart = false,
   requireAuth = true,
   spacesProtocol,
+  // This attempt's own limit; defaults to the whole --timeout-ms budget.
+  timeoutMs = runtime.timeoutMs,
 }) {
   // Refresh before spending the credential rather than after a rejection: the
   // rotating refresh token is shared with every other `notis` process reading
@@ -301,12 +312,12 @@ export async function httpRequest({
   }
 
   let controller = new AbortController();
-  let timeout = setTimeout(() => controller.abort(), runtime.timeoutMs);
+  let timeout = setTimeout(() => controller.abort(), timeoutMs);
   const requestId = `req_${randomUUID().replace(/-/g, '')}`;
   const resetTimeout = () => {
     clearTimeout(timeout);
     controller = new AbortController();
-    timeout = setTimeout(() => controller.abort(), runtime.timeoutMs);
+    timeout = setTimeout(() => controller.abort(), timeoutMs);
   };
 
   const headers = {
@@ -399,7 +410,10 @@ export async function httpRequest({
       ) {
         throw createExpiredAuthError(runtime);
       }
-      throw normalizeBackendError(response.status, payload, runtime);
+      const backendError = normalizeBackendError(response.status, payload, runtime);
+      // Kept off the serialized error; the retry policy reads the HTTP status.
+      backendError.httpStatus = response.status;
+      throw backendError;
     }
 
     // A successful status is not a successful tool call until its response
@@ -451,11 +465,11 @@ export async function callTool({
   idempotencyKey,
   fileBindings = [],
 }) {
-  const requestId = idempotencyKey || (runtime.mutating ? randomUUID() : null);
-  const payload = {
+  const firstKey = idempotencyKey || (runtime.mutating ? randomUUID() : null);
+  const buildPayload = (key) => ({
     tool_name: toolName,
     arguments: argumentsPayload,
-    idempotency_key: requestId,
+    idempotency_key: key,
     cli_context: {
       output_mode: runtime.outputMode,
       profile: runtime.profileName,
@@ -466,29 +480,78 @@ export async function callTool({
         ? { debug_entitlement_override: runtime.debugEntitlementOverride }
         : {}),
     },
-  };
+  });
 
-  if (Array.isArray(fileBindings) && fileBindings.length) {
-    const bindingMetadata = fileBindings.map((binding) => {
+  const hasFiles = Array.isArray(fileBindings) && fileBindings.length > 0;
+  const bindingMetadata = hasFiles
+    ? fileBindings.map((binding) => {
       const {
         contentType,
         localPath,
         ...metadata
       } = binding;
       return metadata;
-    });
+    })
+    : [];
 
-    return httpRequest({
+  const send = (key, timeoutMs) => (hasFiles
+    ? httpRequest({
       runtime,
       path: '/cli_tools',
-      body: () => createMultipartFileUpload(payload, bindingMetadata, fileBindings),
+      // A function, so every attempt streams the files again from the start.
+      body: () => createMultipartFileUpload(buildPayload(key), bindingMetadata, fileBindings),
       multipart: true,
-    });
+      timeoutMs,
+    })
+    : httpRequest({
+      runtime,
+      path: '/cli_tools',
+      body: buildPayload(key),
+      timeoutMs,
+    }));
+
+  if (!retriesEnabled(runtime)) {
+    let result;
+    try {
+      result = await send(firstKey, runtime.timeoutMs);
+    } catch (error) {
+      throw isTransientFailure(error) ? withAttempts(error, 1) : error;
+    }
+    return { ...result, idempotencyKey: firstKey, attempts: 1 };
   }
 
-  return httpRequest({
-    runtime,
-    path: '/cli_tools',
-    body: payload,
-  });
+  // --timeout-ms bounds the whole call, every attempt included.
+  const budgetMs = runtime.timeoutMs;
+  const deadline = Date.now() + budgetMs;
+  let key = firstKey;
+  for (let attempt = 1; ; attempt += 1) {
+    let result;
+    try {
+      result = await send(key, Math.max(1, deadline - Date.now()));
+    } catch (error) {
+      const transient = isTransientFailure(error);
+      if (
+        transient
+        && canReplayRequest({ mutating: runtime.mutating, idempotencyKey: key })
+        && await waitForNextAttempt({ attempt, deadline, budgetMs })
+      ) {
+        continue;
+      }
+      throw transient ? withAttempts(error, attempt) : error;
+    }
+
+    // The stored answer under this key is the unknown outcome itself, so only
+    // a fresh key reaches the tool again; its request_id receipt dedupes it.
+    if (
+      runtime.mutating
+      && key
+      && findToolOutcomeUnknown(result.payload)
+      && callCarriesToolRequestId(argumentsPayload)
+      && await waitForNextAttempt({ attempt, deadline, budgetMs })
+    ) {
+      key = randomUUID();
+      continue;
+    }
+    return { ...result, idempotencyKey: key, attempts: attempt };
+  }
 }

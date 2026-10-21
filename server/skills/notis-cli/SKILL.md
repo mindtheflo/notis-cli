@@ -110,6 +110,9 @@ use `--timeout-ms 90000` for `tools toolkits`, `tools search`, `tools describe`,
 and schema-only discovery calls. If a discovery call returns `network_timeout`,
 retry that same command once with `--timeout-ms 90000`; do not start a new
 query, invent a tool name, or loop on the default 30-second command.
+The CLI itself retries dropped connections and gateway errors when repeating a
+call is safe, within that same budget, so never wrap a CLI call in your own
+retry loop ([details](references/troubleshooting.md)).
 
 Discovery is idempotent but should be bounded: run the toolkit listing once per
 task, run one natural-language search per distinct capability, and cache the

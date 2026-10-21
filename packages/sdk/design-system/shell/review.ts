@@ -244,6 +244,84 @@ export function paintDifference(
   return changed;
 }
 
+export interface ChangeBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Groups the pixels that differ between two RGBA buffers of the same size into boxes, so a reviewer sees each
+ * changed part on its own: changed pixels closer than `gap` px share a box, and boxes that touch are merged.
+ */
+export function changeBoxes(head: Uint8ClampedArray, base: Uint8ClampedArray, width: number, height: number, gap = 24): ChangeBox[] {
+  const cell = 8;
+  const columns = Math.ceil(width / cell);
+  const rows = Math.ceil(height / cell);
+  const hit = new Uint8Array(columns * rows);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      if (head[i] !== base[i] || head[i + 1] !== base[i + 1] || head[i + 2] !== base[i + 2] || head[i + 3] !== base[i + 3]) {
+        hit[Math.floor(y / cell) * columns + Math.floor(x / cell)] = 1;
+      }
+    }
+  }
+  const reach = Math.max(1, Math.ceil(gap / cell));
+  const seen = new Uint8Array(columns * rows);
+  let boxes: ChangeBox[] = [];
+  for (let start = 0; start < hit.length; start += 1) {
+    if (!hit[start] || seen[start]) continue;
+    seen[start] = 1;
+    const queue = [start];
+    let left = columns, top = rows, right = 0, bottom = 0;
+    while (queue.length) {
+      const index = queue.pop() as number;
+      const cx = index % columns;
+      const cy = Math.floor(index / columns);
+      left = Math.min(left, cx);
+      top = Math.min(top, cy);
+      right = Math.max(right, cx);
+      bottom = Math.max(bottom, cy);
+      for (let ny = Math.max(0, cy - reach); ny <= Math.min(rows - 1, cy + reach); ny += 1) {
+        for (let nx = Math.max(0, cx - reach); nx <= Math.min(columns - 1, cx + reach); nx += 1) {
+          const next = ny * columns + nx;
+          if (hit[next] && !seen[next]) {
+            seen[next] = 1;
+            queue.push(next);
+          }
+        }
+      }
+    }
+    const x = left * cell;
+    const y = top * cell;
+    boxes.push({ x, y, width: Math.min(width, (right + 1) * cell) - x, height: Math.min(height, (bottom + 1) * cell) - y });
+  }
+  // Two boxes whose outlines would overlap read as one change.
+  for (let merged = true; merged;) {
+    merged = false;
+    const next: ChangeBox[] = [];
+    for (const box of boxes) {
+      const other = next.find((item) => box.x < item.x + item.width + gap && item.x < box.x + box.width + gap
+        && box.y < item.y + item.height + gap && item.y < box.y + box.height + gap);
+      if (!other) {
+        next.push({ ...box });
+        continue;
+      }
+      const right = Math.max(other.x + other.width, box.x + box.width);
+      const bottom = Math.max(other.y + other.height, box.y + box.height);
+      other.x = Math.min(other.x, box.x);
+      other.y = Math.min(other.y, box.y);
+      other.width = right - other.x;
+      other.height = bottom - other.y;
+      merged = true;
+    }
+    boxes = next;
+  }
+  return boxes.sort((a, b) => a.y - b.y || a.x - b.x);
+}
+
 // The review layer ---------------------------------------------------------------------------------------------
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
@@ -325,6 +403,17 @@ interface ModeControl {
   token: number;
 }
 
+interface Marks {
+  specimen: string;
+  state: string;
+  stage: HTMLElement;
+  layer: HTMLElement;
+  label: HTMLElement;
+  boxes: ChangeBox[];
+  width: number;
+  token: number;
+}
+
 interface RemovedFrame {
   specimen: string;
   state: RemovedSpecimen['states'][number];
@@ -340,6 +429,8 @@ class Review {
   private cleanups: Array<() => void> = [];
   private readonly specimens = new Map<string, BookSpecimen>();
   private readonly modes = new Map<string, ModeControl>();
+  private readonly marks = new Map<string, Marks>();
+  private readonly boxCache = new Map<string, Promise<{ boxes: ChangeBox[]; width: number }>>();
   private removedFrames: RemovedFrame[] = [];
   private baseManifest: { url: string; specimens: RemovedSpecimen[] } | null = null;
   private commentOn = false;
@@ -359,6 +450,7 @@ class Review {
     for (const specimen of book.manifest.specimens) this.specimens.set(specimen.id, specimen);
     this.resizeObserver = new ResizeObserver(() => {
       this.layoutRemoved();
+      this.layoutMarks();
       this.schedulePins();
     });
   }
@@ -448,7 +540,8 @@ class Review {
         this.badge(slot, entry.status, entry.label);
       }
       const article = this.book.specimenElement(specimen.id);
-      if (article) this.ring(article, failed);
+      // A specimen whose shots match the base pixel for pixel has nothing to look at: it keeps its badge only.
+      if (article && entry.status !== 'same') this.ring(article, failed);
       const states = entry.states ?? {};
       // A new specimen has no per state statuses (nothing to compare with), yet every one of its states is new:
       // each gets the ring and the "New state" badge, unless its own status (a failed shot) says otherwise.
@@ -463,6 +556,7 @@ class Review {
         if (head) this.badge(head, status, STATE_STATUS_LABEL[status] ?? status, head.querySelector('.ds-state-actions'));
         if (status === 'changed' && this.data.base) {
           this.modeControl(specimen.id, state.id, holder);
+          this.markChanges(specimen.id, state.id, holder);
           keep.add(`${specimen.id}/${state.id}`);
         }
       }
@@ -509,6 +603,100 @@ class Review {
     this.onCleanup(() => group.remove());
     this.updateModeButtons(control);
     if (control.mode !== 'after') this.setMode(control, control.mode, true);
+  }
+
+  /** Circles each part of a changed state that looks different from the base, over whichever view is shown. */
+  private markChanges(specimen: string, state: string, holder: HTMLElement): void {
+    const stage = holder.querySelector<HTMLElement>('.ds-stage');
+    const head = holder.querySelector('.ds-state-head');
+    if (!stage || !head) return;
+    const key = `${specimen}/${state}`;
+    const layer = el('div', 'ds-marks');
+    layer.setAttribute('aria-hidden', 'true');
+    const label = el('span', 'ds-marks-label');
+    stage.append(layer);
+    head.querySelector('.ds-state-actions')?.before(label);
+    const marks: Marks = { specimen, state, stage, layer, label, boxes: [], width: 0, token: 0 };
+    this.marks.set(key, marks);
+    this.resizeObserver.observe(stage);
+    this.onCleanup(() => {
+      layer.remove();
+      label.remove();
+      this.resizeObserver.unobserve(stage);
+      if (this.marks.get(key) === marks) this.marks.delete(key);
+    });
+    this.updateMarks(marks);
+  }
+
+  private updateMarks(marks: Marks): void {
+    marks.token += 1;
+    const token = marks.token;
+    marks.boxes = [];
+    marks.layer.replaceChildren();
+    const shot = this.shot(marks.specimen, marks.state);
+    if (!shot?.head || !shot.base) {
+      marks.label.textContent = `Changes are circled at ${CELLS_TEXT}`;
+      return;
+    }
+    marks.label.textContent = 'Finding the changes';
+    const cacheKey = `${shot.head}|${shot.base}`;
+    let found = this.boxCache.get(cacheKey);
+    if (!found) {
+      found = this.findBoxes(shot.head, shot.base);
+      this.boxCache.set(cacheKey, found);
+    }
+    found.then((result) => {
+      if (marks.token !== token) return;
+      marks.boxes = result.boxes;
+      marks.width = result.width;
+      const count = result.boxes.length;
+      marks.label.textContent = count === 0 ? 'No visible change at this setting' : count === 1 ? '1 change circled' : `${count} changes circled`;
+      result.boxes.forEach((_, index) => {
+        const mark = el('div', 'ds-mark');
+        mark.append(el('span', 'ds-mark-number', String(index + 1)));
+        marks.layer.append(mark);
+      });
+      this.layoutMarks();
+    }, () => {
+      if (marks.token === token) marks.label.textContent = 'The shots did not load';
+    });
+  }
+
+  private async findBoxes(headUrl: string, baseUrl: string): Promise<{ boxes: ChangeBox[]; width: number }> {
+    const [head, base] = await Promise.all([loadImage(headUrl), loadImage(baseUrl)]);
+    const width = Math.max(head.naturalWidth, base.naturalWidth);
+    const height = Math.max(head.naturalHeight, base.naturalHeight);
+    return { boxes: changeBoxes(pixels(head, width, height), pixels(base, width, height), width, height), width };
+  }
+
+  /** Places the circles in screen pixels, so their outline keeps one width whatever the stage scale. */
+  private layoutMarks(): void {
+    for (const marks of this.marks.values()) {
+      if (!marks.width) continue;
+      const scale = this.book.stageScale(marks.specimen, marks.state);
+      const pad = 6;
+      Array.from(marks.layer.children).forEach((child, index) => {
+        const box = marks.boxes[index];
+        const mark = child as HTMLElement;
+        if (!box) return;
+        // The stage clips its content, so a circle at an edge is pulled inside it rather than cut.
+        const room = { width: marks.stage.clientWidth, height: marks.stage.clientHeight };
+        const width = Math.min(room.width - 2, Math.max(28, box.width * scale + pad * 2));
+        const height = Math.min(room.height - 2, Math.max(28, box.height * scale + pad * 2));
+        const left = box.x * scale + (box.width * scale) / 2 - width / 2;
+        const top = box.y * scale + (box.height * scale) / 2 - height / 2;
+        const x = Math.max(1, Math.min(room.width - width - 1, left));
+        const y = Math.max(1, Math.min(room.height - height - 1, top));
+        Object.assign(mark.style, {
+          left: `${x}px`,
+          top: `${y}px`,
+          width: `${width}px`,
+          height: `${height}px`,
+        });
+        // The number sits on the circle's top edge, so it never hides the changed part; on its bottom edge when the top would be cut.
+        mark.dataset.side = y >= 10 ? 'top' : 'bottom';
+      });
+    }
   }
 
   private toggleFor(specimen: string, state: string, toggles: Toggles = this.book.toggles()): Toggles {
@@ -852,6 +1040,7 @@ class Review {
       else if (control.mode === 'difference') this.setMode(control, 'difference', true);
       else this.updateModeButtons(control);
     }
+    for (const marks of this.marks.values()) this.updateMarks(marks);
     this.updateRemovedFrames();
     this.post({ type: 'ds-toggles', theme: toggles.theme, lang: toggles.lang, width: toggles.width });
     this.schedulePins();

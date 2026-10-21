@@ -128,8 +128,9 @@ The CLI defaults to \`json\` output in agent or non-TTY contexts and \`table\` o
 - \`--non-interactive\` — Disable prompts
 - \`--profile <name>\` — Run as a stored profile instead of the active one
 - \`--api-base <url>\` — Override the API base for one invocation
-- \`--timeout-ms <n>\` — HTTP timeout in milliseconds
+- \`--timeout-ms <n>\` — Time limit in milliseconds for each call, automatic retries included
 - \`--idempotency-key <key>\` — Override the generated idempotency key for mutating commands
+- \`--no-retry\` (or \`NOTIS_NO_RETRY=1\`): turn off automatic retries. By default the CLI retries an interrupted tool call (network error, timeout, 502, 503 or 504) when repeating it is safe: a read, or a write with an idempotency key. It makes up to 3 attempts within \`--timeout-ms\` and reports the count in \`meta.attempts\`, or \`error.details.attempts\` on a failure.
 
 ## Authentication
 

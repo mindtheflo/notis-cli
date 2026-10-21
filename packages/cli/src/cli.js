@@ -232,8 +232,9 @@ export function createProgram(launchContext = {}) {
     // `notis profile use`, pinning all commands to the default profile.
     .option('--profile <name>', 'CLI profile to run as (defaults to the active profile)')
     .option('--api-base <url>', 'Override the API base URL for this invocation')
-    .option('--timeout-ms <n>', 'HTTP timeout in milliseconds')
+    .option('--timeout-ms <n>', 'Time limit in milliseconds for each call, automatic retries included')
     .option('--idempotency-key <key>', 'Override the generated idempotency key for mutating commands')
+    .option('--no-retry', 'Turn off automatic retries of interrupted calls that are safe to repeat (or set NOTIS_NO_RETRY=1)')
     .addOption(new Option('--notis-managed-agent-hook').hideHelp());
 
   const parentMap = new Map([['', program]]);
