@@ -2178,6 +2178,21 @@ test('drag to select: a press on a row or a control never starts a marquee', asy
   assert.deepEqual(selectedIds(), [], 'nor does a drag from a button in the list');
 });
 
+test('drag to select: a press on the leading strip of a row starts a marquee, its checkbox does not', async () => {
+  await mount(list({ selectable: true }));
+  layOutRows();
+  const lead = q('[data-nui-item="a"] .nui-row-lead')!;
+  assert.ok(lead, 'a selectable row has a leading strip');
+  const live = await marquee(lead, [4, 10], [100, 100], q('[data-nui-item="c"]')!);
+  assert.deepEqual(live.selected, ['a', 'b', 'c'], 'a full list still has a place to start a marquee');
+  assert.ok(live.overlay);
+  assert.equal(q('#reader'), null, 'the click that ends the drag opens nothing');
+  await mount(list({ selectable: true }));
+  layOutRows();
+  await marquee(q('[data-nui-item="a"] .nui-row-check')!, [10, 10], [100, 100]);
+  assert.equal(q('.nui-marquee'), null, 'the checkbox stays a checkbox');
+});
+
 test('drag to select: pending and disabled rows are skipped', async () => {
   await mount(list({ selectable: true, isPending: (t) => t.id === 'b', isDisabled: (t) => t.id === 'c' }));
   layOutRows();

@@ -40,6 +40,9 @@ export interface UseMarqueeSelectionOptions {
   /** Distance in px before a press becomes a drag. Default 5. */
   threshold?: number;
   interactiveSelector?: string;
+  /** A part of an item a drag may also start from (a row's leading strip), so a list with no empty space left still
+   *  has a place to start one. A plain click there still reaches the item. Default: empty space only. */
+  startSelector?: string;
 }
 
 export interface MarqueeSelection {
@@ -79,7 +82,9 @@ export function itemsInMarquee(
 }
 
 export function useMarqueeSelection(options: UseMarqueeSelectionOptions): MarqueeSelection {
-  const { enabled, itemAttribute, threshold = 5, interactiveSelector = MARQUEE_INTERACTIVE_SELECTOR } = options;
+  const {
+    enabled, itemAttribute, threshold = 5, interactiveSelector = MARQUEE_INTERACTIVE_SELECTOR, startSelector,
+  } = options;
   const latest = useRef(options);
   latest.current = options;
   const [rect, setRect] = useState<SelectionMarqueeRect | null>(null);
@@ -108,12 +113,17 @@ export function useMarqueeSelection(options: UseMarqueeSelectionOptions): Marque
       return;
     }
     clickShouldClearRef.current = !itemTarget;
-    if (itemTarget) return;
+    if (itemTarget) {
+      const startTarget = startSelector ? target.closest(startSelector) : null;
+      if (!startTarget || !itemTarget.contains(startTarget)) return;
+      // Neither the item's own drag nor a text selection starts from the strip.
+      event.preventDefault();
+    }
     containerRef.current = event.currentTarget as HTMLElement;
     pendingRef.current = true;
     startRef.current = { x: event.clientX, y: event.clientY };
     currentRef.current = { x: event.clientX, y: event.clientY };
-  }, [enabled, interactiveSelector, itemAttribute]);
+  }, [enabled, interactiveSelector, itemAttribute, startSelector]);
 
   const onClickCapture = useCallback((event: ReactMouseEvent) => {
     if (!suppressNextClickRef.current) return;

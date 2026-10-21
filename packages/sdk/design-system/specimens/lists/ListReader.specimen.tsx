@@ -303,6 +303,27 @@ export const specimen = defineSpecimen({
       },
     },
     {
+      id: 'marquee-strip',
+      label: 'Drag to select in a full list: a marquee from a row\'s leading strip',
+      height: TALL,
+      render: (ctx) => <TicketsDemo ctx={ctx} id="marquee-strip" />,
+      interact: async (root) => {
+        // A full list has no empty space under its rows: press beside the first row's icon and drag down over three.
+        const scroll = await waitFor(root, '.nui-lr-scroll');
+        const rows = scroll.querySelectorAll<HTMLElement>('[data-nui-item]');
+        const lead = rows[0]!.querySelector<HTMLElement>('.nui-row-lead')!.getBoundingClientRect();
+        const third = rows[2]!.getBoundingClientRect();
+        const view = root.ownerDocument.defaultView!;
+        const at = (x: number, y: number) => ({ bubbles: true, cancelable: true, composed: true, button: 0, clientX: x, clientY: y });
+        const from: [number, number] = [lead.left - 8, lead.top + lead.height / 2];
+        rows[0]!.querySelector('.nui-row-lead')!.dispatchEvent(new view.MouseEvent('mousedown', at(...from)));
+        root.ownerDocument.dispatchEvent(new view.MouseEvent('mousemove', at(from[0] + 6, from[1] + 8)));
+        root.ownerDocument.dispatchEvent(new view.MouseEvent('mousemove', at(from[0] + 160, third.top + third.height / 2)));
+        await waitFor(root, '.nui-marquee');
+        await settle(4);
+      },
+    },
+    {
       id: 'selected-open',
       label: 'Selection while a ticket is open',
       height: TALL,

@@ -965,6 +965,8 @@ function ListReaderInner<T>({
     enabled: canSelect && dragSelect && !centerOpen && !fullOpen,
     itemAttribute: ROW_ID_ATTRIBUTE,
     interactiveSelector: ROW_INTERACTIVE_SELECTOR,
+    // A full list leaves no empty space below its rows: a drag may start on a row's leading strip too.
+    startSelector: '.nui-row-lead',
     isSelectable: (id) => !blockedIds.has(id) && byId.has(id),
     onSelect: (next) => selectionRef.current.set(next),
     onClear: () => { if (selectionRef.current.count > 0) selectionRef.current.clear(); },

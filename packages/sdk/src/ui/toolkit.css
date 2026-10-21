@@ -79,29 +79,24 @@
   position: relative; outline: none; cursor: default; user-select: none; -webkit-user-select: none;
   background: var(--nui-row-rest, transparent);
   --nui-row-hover: hsl(var(--muted) / .4);
-  /* Never an edge or stripe on one side (Flo, 16 Oct): the cursor is a ring on all four sides, the rest are fills. */
-  --nui-row-cursor: transparent;
-  --nui-row-cursor-shadow: inset 0 0 0 1px hsl(var(--foreground) / .28);
+  /* Fills only, like the Manager's rows (Flo, 21 Oct): the cursor (active) row takes the open row's light blue, a
+     selected row a lighter one; never a ring, an edge or a stripe. Keyboard focus alone keeps an outline. */
   --nui-row-open: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .10));
-  --nui-row-open-shadow: 0 0 #0000;
   --nui-row-sel: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05));
   --nui-row-selopen: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-selopen, .15));
   --nui-row-focus: hsl(var(--nui-blue, 217 91% 60%) / .8);
 }
 .nui-row:hover:not([data-open]):not([data-selected]):not([data-cursor]) { background: var(--nui-row-hover); }
-.nui-row[data-cursor] { background: var(--nui-row-cursor); box-shadow: var(--nui-row-cursor-shadow); }
 .nui-row[data-selected] { background: var(--nui-row-sel); }
-.nui-row[data-open] { background: var(--nui-row-open); box-shadow: var(--nui-row-open-shadow); }
-.nui-row[data-open][data-selected] { background: var(--nui-row-selopen); }
-.nui-row[data-open][data-cursor] { box-shadow: var(--nui-row-open-shadow), var(--nui-row-cursor-shadow); }
-.nui-row[data-selected][data-cursor] { box-shadow: var(--nui-row-cursor-shadow); }
+.nui-row:is([data-open], [data-cursor]) { background: var(--nui-row-open); }
+.nui-row:is([data-open], [data-cursor])[data-selected] { background: var(--nui-row-selopen); }
 .nui-row:focus-visible:not([data-cursor]) { outline: 2px solid var(--nui-row-focus); outline-offset: -2px; }
 
 /* Row anatomy. */
 div.nui-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px 6px 16px; box-sizing: border-box; }
 [data-density="compact"] div.nui-row { min-height: 40px; padding-top: 4px; padding-bottom: 4px; }
-/* The divider is a 1px line painted at the top, not a border: an open or cursor row's ring is then 1px on all four
-   sides, and the line above and below it steps aside (a state background replaces it on the row itself). */
+/* The divider is a 1px line painted at the top, not a border: it steps aside around an open or cursor row, whose
+   fill replaces it on the row itself. */
 div.nui-row + div.nui-row { background-image: linear-gradient(hsl(var(--border) / .5), hsl(var(--border) / .5)); background-size: 100% 1px; background-repeat: no-repeat; }
 div.nui-row + div.nui-row[data-open], div.nui-row + div.nui-row[data-cursor],
 div.nui-row[data-open] + div.nui-row, div.nui-row[data-cursor] + div.nui-row { background-image: none; }
@@ -111,13 +106,21 @@ div.nui-row:has(> .nui-row-main[data-wrap]) > .nui-row-trail, div.nui-row[data-w
 div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap] .nui-row-more { margin-top: -4px; }
 .nui-row-lead { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; }
 .nui-row-icon { display: inline-flex; font-size: 16px; line-height: 1; color: hsl(var(--muted-foreground)); }
-.nui-row-check { display: none; width: 16px; height: 16px; padding: 0; border-radius: 4px; align-items: center; justify-content: center; color: transparent; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .35); cursor: pointer; }
+/* The checkbox shows like the Manager's: over the leading strip (the lead and the gutter before it), on a selected
+   row, or on every row once one is selected; never on a hover of the rest of the row. A press on the strip that
+   drags draws the selection rectangle, so a full list still has a place to start one. */
+.nui-row-lead::before { content: ""; position: absolute; top: -14px; bottom: -14px; left: -16px; right: -6px; }
+[data-density="compact"] .nui-row-lead::before { top: -10px; bottom: -10px; }
+.nui-row-check { display: none; position: relative; width: 16px; height: 16px; padding: 0; border-radius: 4px; align-items: center; justify-content: center; color: transparent; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .35); cursor: pointer; }
 .nui-row-check svg { width: 12px; height: 12px; }
-.nui-row:hover .nui-row-check, .nui-row[data-selected] .nui-row-check, [data-has-selection] .nui-row .nui-row-check, .nui-row-lead:not(:has(.nui-row-icon)) .nui-row-check { display: inline-flex; }
-.nui-row:hover .nui-row-icon, .nui-row[data-selected] .nui-row-icon, [data-has-selection] .nui-row .nui-row-icon { display: none; }
+.nui-row-lead:not(:has(.nui-row-icon)) .nui-row-check { display: inline-flex; opacity: 0; }
+@media (hover: hover) {
+  .nui-row-lead:hover .nui-row-check { display: inline-flex; opacity: 1; }
+  .nui-row-lead:hover .nui-row-icon { display: none; }
+}
+.nui-row-lead .nui-row-check:focus-visible, .nui-row[data-selected] .nui-row-check, [data-has-selection] .nui-row .nui-row-check { display: inline-flex; opacity: 1; }
+.nui-row[data-selected] .nui-row-icon, [data-has-selection] .nui-row .nui-row-icon { display: none; }
 .nui-row[data-selected] .nui-row-check { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; color: #fff; }
-[data-touch] .nui-row:hover .nui-row-check { display: none; }
-[data-touch] .nui-row:hover .nui-row-icon { display: inline-flex; }
 [data-touch] [data-has-selection] .nui-row .nui-row-check, [data-touch][data-has-selection] .nui-row .nui-row-check { display: inline-flex; }
 [data-touch] [data-has-selection] .nui-row .nui-row-icon, [data-touch][data-has-selection] .nui-row .nui-row-icon { display: none; }
 .nui-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
@@ -154,9 +157,8 @@ tr.nui-row > td { height: 40px; padding: 0 12px; border-top: 1px solid hsl(var(-
 /* A table's edge cells sit 24px in, like the page head and a data section's table (lb deck). */
 .nui-table :is(th, td):first-child:not(.nui-group-head) { padding-left: 24px; }
 .nui-table :is(th, td):last-child:not(.nui-group-head) { padding-right: 24px; }
-/* TBL4: fills only, never an inset on the first cell; the cursor is a ring on all four sides of the row. */
+/* TBL4: fills only, never an inset on the first cell or a ring; the cursor row takes the open row's fill. */
 tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-shadow: none; }
-tr.nui-row[data-cursor] { outline: 1px solid hsl(var(--foreground) / .28); outline-offset: -1px; }
 
 /* Tiles: a ring on all four sides for every state, never an edge on one side. */
 .nui-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 12px; padding: 16px 24px 32px; }
