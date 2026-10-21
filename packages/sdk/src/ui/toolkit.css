@@ -991,6 +991,18 @@ div.nui-row:not(.nui-lr-list div.nui-row) { container: nui-row / inline-size; }
 .nui-field-input[readonly]:hover, .nui-field-input[readonly]:focus, .nui-field-textarea[readonly]:hover,
 .nui-field-textarea[readonly]:focus { background: transparent; box-shadow: none; }
 .nui-field-input::placeholder, .nui-field-textarea::placeholder, .nui-field-placeholder { color: hsl(var(--muted-foreground)); }
+/* A filled list (a visitor's form): labels above, every field shows its box at rest, and the list keeps a
+ * reading width on a wide page. */
+.nui-fields[data-filled] { max-width: 36rem; }
+.nui-fields[data-filled] .nui-fields-list { gap: 12px; }
+.nui-fields[data-filled] .nui-field-row { grid-template-columns: minmax(0, 1fr); padding: 0; }
+.nui-fields[data-filled] .nui-field-label { min-height: 0; }
+.nui-fields[data-filled] :is(.nui-field-input, .nui-field-textarea, .nui-field-trigger) { margin: 0; background: hsl(var(--foreground) / .05); }
+.nui-fields[data-filled] :is(.nui-field-input, .nui-field-textarea) { width: 100%; }
+.nui-fields[data-filled] .nui-field-trigger { max-width: 100%; }
+.nui-fields[data-filled] .nui-field-textarea { min-height: 96px; }
+.nui-fields[data-filled] :is(.nui-field-input, .nui-field-textarea, .nui-field-trigger):hover { background: hsl(var(--foreground) / .08); }
+.nui-fields[data-filled] :is(.nui-field-input, .nui-field-textarea)[aria-invalid="true"] { background: hsl(var(--destructive) / .08); }
 .nui-field-caret { flex-shrink: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
 .nui-field-static { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .nui-field-panel { display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 6px 0 8px; }

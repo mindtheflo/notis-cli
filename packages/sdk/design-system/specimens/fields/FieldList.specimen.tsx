@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { defineSpecimen, type SpecimenRenderContext } from '../../specimen';
-import { FIELD_WORDS, FieldList, FieldMultiSelect, FieldRow, FieldSelect } from '../../../src/ui';
+import { Button, FIELD_WORDS, FieldList, FieldLongText, FieldMultiSelect, FieldRow, FieldSelect, FieldText } from '../../../src/ui';
 import { LONG_TEXT, LONG_TITLE, fixtureRecords } from '../../fixtures';
 import {
   LABELS, LABEL_OPTIONS, Pane, TASK_ESTIMATE, TASK_NOTES, TASK_PRIORITY_OPTIONS, TASK_STATUS_OPTIONS, dayText,
@@ -78,13 +78,47 @@ function TaskSheet({ ctx, task: start, live = false }: { ctx: Ctx; task: Task; l
   );
 }
 
+/** A visitor's signup form, the words it shows in English and French. */
+const SIGNUP = {
+  name: { en: 'Name', fr: 'Nom' },
+  namePlaceholder: { en: 'Ada Lovelace', fr: 'Ada Lovelace' },
+  email: { en: 'Email', fr: 'E-mail' },
+  emailPlaceholder: { en: 'ada@example.com', fr: 'ada@exemple.fr' },
+  idea: { en: 'What will you build first?', fr: 'Que vas-tu construire en premier ?' },
+  ideaPlaceholder: { en: 'A CRM for my clients, a reading list...', fr: 'Un CRM pour mes clients, une liste de lecture...' },
+  required: { en: 'Fill this in.', fr: 'Remplis ce champ.' },
+  submit: { en: 'Join the beta', fr: 'Rejoindre la bêta' },
+};
+
+/** A form a visitor fills in from empty: every field shows its box, labels above (`invalid` shows a missing email). */
+function SignupForm({ ctx, invalid = false }: { ctx: Ctx; invalid?: boolean }) {
+  const [values, setValues] = useState({ name: invalid ? 'Ada Lovelace' : '', email: '', idea: '' });
+  const set = (key: keyof typeof values) => (value: string) => setValues({ ...values, [key]: value });
+  return (
+    <Pane width={480}>
+      <FieldList filled>
+        <FieldRow label={SIGNUP.name}>
+          <FieldText label={SIGNUP.name} value={values.name} placeholder={SIGNUP.namePlaceholder} onChange={set('name')} />
+        </FieldRow>
+        <FieldRow label={SIGNUP.email} invalid={invalid} hint={invalid ? ctx.t(SIGNUP.required) : undefined}>
+          <FieldText label={SIGNUP.email} value={values.email} placeholder={SIGNUP.emailPlaceholder} onChange={set('email')} />
+        </FieldRow>
+        <FieldRow label={SIGNUP.idea} stacked>
+          <FieldLongText label={SIGNUP.idea} value={values.idea} placeholder={SIGNUP.ideaPlaceholder} onChange={set('idea')} />
+        </FieldRow>
+      </FieldList>
+      <div><Button variant="primary">{ctx.t(SIGNUP.submit)}</Button></div>
+    </Pane>
+  );
+}
+
 export const specimen = defineSpecimen({
   id: 'field-list',
   name: 'FieldList',
   group: 'fields',
   from: '@notis/sdk/ui',
   covers: ['FieldList'],
-  summary: 'Rows laid out as in a form, without Save and Cancel: a read-only sheet, or facts that save on their own.',
+  summary: 'Rows laid out as in a form, without Save and Cancel: a read-only sheet, facts that save on their own, or a visitor\'s form (filled).',
   states: [
     {
       id: 'sheet',
@@ -114,6 +148,22 @@ export const specimen = defineSpecimen({
           notes: `${ctx.t(TASK_NOTES)} ${ctx.t(LONG_TEXT)}`,
         }} />
       ),
+    },
+    {
+      id: 'filled',
+      label: 'Filled: a visitor\'s form, labels above and every field boxed at rest',
+      render: (ctx) => <SignupForm ctx={ctx} />,
+    },
+    {
+      id: 'filled-invalid',
+      label: 'Filled, invalid: a missing email tints its box and says what to do',
+      render: (ctx) => <SignupForm ctx={ctx} invalid />,
+    },
+    {
+      id: 'filled-narrow',
+      label: 'Filled in a narrow pane (320px)',
+      width: 320,
+      render: (ctx) => <SignupForm ctx={ctx} />,
     },
     {
       id: 'narrow',

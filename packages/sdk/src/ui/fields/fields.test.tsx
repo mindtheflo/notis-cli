@@ -390,6 +390,22 @@ test('FieldList lays rows out as in a form, without Save and Cancel; the field r
     /@container nui-fields \(min-width: 340px\) \{\s*\.nui-field-row:not\(\[data-stacked\]\) \{ grid-template-columns: 9\.5rem/);
 });
 
+test("a filled FieldList (a visitor's form) puts labels above boxed fields and keeps a reading width", async () => {
+  await mount(
+    <FieldList filled>
+      <FieldRow label="Email"><FieldText label="Email" value="" placeholder="ada@example.com" onChange={() => undefined} /></FieldRow>
+    </FieldList>,
+  );
+  assert.ok(doc.querySelector('.nui-fields[data-filled]'), 'the list marks itself filled');
+  await mount(<FieldList><FieldRow label="Owner">Flo</FieldRow></FieldList>);
+  assert.equal(doc.querySelector('.nui-fields')!.hasAttribute('data-filled'), false, 'a sheet stays unmarked');
+  assert.match(cssRule('.nui-fields[data-filled]') ?? '', /max-width: 36rem;/, 'a wide page keeps a reading width');
+  // One column at every width: this selector outranks the 340px container rule that puts labels beside values.
+  assert.match(cssRule('.nui-fields[data-filled] .nui-field-row') ?? '', /grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(cssRule('.nui-fields[data-filled] :is(.nui-field-input, .nui-field-textarea, .nui-field-trigger)') ?? '',
+    /background: hsl\(var\(--foreground\) \/ \.05\);/, 'an empty field shows its box at rest');
+});
+
 test('a long text field is one line tall for one line and grows with its text', async () => {
   await mount(
     <FieldList>

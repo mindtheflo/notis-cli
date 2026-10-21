@@ -154,6 +154,11 @@ export function EditableFields({
 export interface FieldListProps {
   /** Accessible name of the rows (a group); leave it out when a heading next to them already names them. */
   label?: Text;
+  /**
+   * A form a visitor fills in from empty (a signup on a Site): each label sits above its field and every input shows
+   * its box at rest, so an empty field never reads as a value.
+   */
+  filled?: boolean;
   children: ReactNode;
   className?: string;
 }
@@ -162,10 +167,11 @@ export interface FieldListProps {
  * `FieldRow`s laid out as in a form, without Save and Cancel: facts that save on their own (a select that applies at
  * once) or a read-only sheet. The rows take the same columns and the same narrow-width stacking as in a form.
  */
-export function FieldList({ label, children, className }: FieldListProps) {
+export function FieldList({ label, filled, children, className }: FieldListProps) {
   const t = useT();
   return (
-    <div className={cx('nui-fields', className)} role={label ? 'group' : undefined} aria-label={label ? t(label) : undefined}>
+    <div className={cx('nui-fields', className)} data-filled={flag(filled)} role={label ? 'group' : undefined}
+      aria-label={label ? t(label) : undefined}>
       <dl className="nui-fields-list">{children}</dl>
     </div>
   );
