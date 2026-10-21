@@ -3,6 +3,15 @@ import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { usageError } from '../runtime/errors.js';
 import {
+  canPrompt,
+  createStderrPrompter,
+  extractToolResult,
+  findConfirmationPreview,
+  renderPreview,
+  resolveConfirmation,
+} from '../runtime/tool-confirmation.js';
+import { findUpsell, renderUpsell } from '../runtime/upsell.js';
+import {
   COMPOSIO_GET_TOOL_SCHEMAS,
   COMPOSIO_MULTI_EXECUTE_TOOL,
   COMPOSIO_SEARCH_TOOLS,
@@ -472,20 +481,94 @@ async function toolsExecHandler(ctx) {
     requestId: result.requestId,
   });
 
+  const meta = {
+    mutating: targetMutating,
+    mutation_classification: targetMutating === null ? 'unknown' : 'name_hint_only',
+    idempotency_key: result.idempotencyKey ?? idempotencyKey,
+    attempts: result.attempts ?? 1,
+  };
+  const preview = findConfirmationPreview(result.payload);
+  if (preview) {
+    return confirmAndApply(ctx, { requestedToolName, args, preview, result, idempotencyKey, fileBindings, meta });
+  }
+  return emitToolResult(ctx, { requestedToolName, result, meta });
+}
+
+function toolResultUpsell(payload) {
+  const toolResult = extractToolResult(payload);
+  return toolResult ? findUpsell(toolResult) : null;
+}
+
+function emitToolResult(ctx, { requestedToolName, result, meta, humanSummary }) {
+  const upsellBody = toolResultUpsell(result.payload);
+  const rendered = upsellBody ? renderUpsell(upsellBody, { apiBase: ctx.runtime.apiBase }) : null;
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
     data: result.payload,
-    humanSummary: `Executed tool ${requestedToolName}`,
+    humanSummary: rendered ? rendered.message : (humanSummary || `Executed tool ${requestedToolName}`),
     requestId: result.requestId,
-    meta: {
-      mutating: targetMutating,
-      mutation_classification: targetMutating === null ? 'unknown' : 'name_hint_only',
-      // The key whose stored answer this is: an unknown native outcome is
-      // retried under a fresh key with the same request_id.
-      idempotency_key: result.idempotencyKey ?? idempotencyKey,
-      attempts: result.attempts ?? 1,
-    },
-    renderHuman: () => JSON.stringify(result.payload, null, 2),
+    hints: rendered ? rendered.hints : [],
+    meta: rendered ? { ...meta, upsell: rendered.upsell } : meta,
+    renderHuman: () => (rendered ? rendered.text : JSON.stringify(result.payload, null, 2)),
+  });
+}
+
+function confirmationKey(idempotencyKey, globalOptions) {
+  // A key the caller chose must not replay the preview, so the confirming call
+  // gets a derived key; a generated key is simply replaced by a fresh one.
+  return globalOptions.idempotencyKey ? `${idempotencyKey}.confirm` : nextIdempotencyKey({});
+}
+
+async function confirmAndApply(ctx, { requestedToolName, args, preview, result, idempotencyKey, fileBindings, meta }) {
+  const yes = Boolean(ctx.options.yes);
+  const interactive = canPrompt({ runtime: ctx.runtime, output: ctx.output });
+  const previewText = renderPreview(preview);
+  if (interactive && !yes) {
+    process.stderr.write(`${previewText}\n`);
+  }
+  const prompter = interactive && !yes ? createStderrPrompter() : null;
+  let decision;
+  try {
+    decision = await resolveConfirmation({ preview, args, yes, interactive, ask: (question) => prompter.ask(question) });
+  } finally {
+    prompter?.close();
+  }
+
+  if (decision.decision !== 'apply') {
+    const reason = decision.decision === 'not_interactive'
+      ? 'Nothing has changed. Run the same command with --yes to apply it.'
+      : decision.reason;
+    const rerunArgs = decision.decision === 'needs_input' ? { ...args, [decision.field]: '<value>' } : args;
+    return ctx.output.emitSuccess({
+      command: ctx.spec.command_path.join(' '),
+      data: result.payload,
+      humanSummary: reason,
+      requestId: result.requestId,
+      hints: decision.decision === 'declined' ? [] : [{
+        command: `notis tools exec ${requestedToolName} --arguments '${JSON.stringify(rerunArgs)}' --yes`,
+        reason: 'Apply this change',
+      }],
+      meta: { ...meta, confirmation: decision.decision, applied: false },
+      renderHuman: () => (interactive && !yes ? reason : `${previewText}\n\n${reason}`),
+    });
+  }
+
+  const confirmKey = confirmationKey(idempotencyKey, ctx.globalOptions);
+  ctx.output.emitProgress({ phase: 'execute', message: `Applying ${requestedToolName}` });
+  const applied = await runToolCommand({
+    runtime: ctx.runtime,
+    toolName: COMPOSIO_MULTI_EXECUTE_TOOL,
+    arguments_: { tools: [{ tool_slug: requestedToolName, arguments: decision.arguments }] },
+    mutating: true,
+    idempotencyKey: confirmKey,
+    fileBindings,
+  });
+  ctx.output.emitProgress({ phase: 'complete', message: `Finished ${requestedToolName}`, requestId: applied.requestId });
+  return emitToolResult(ctx, {
+    requestedToolName,
+    result: applied,
+    humanSummary: `Applied ${requestedToolName}`,
+    meta: { ...meta, idempotency_key: applied.idempotencyKey ?? confirmKey, attempts: applied.attempts ?? 1, preview_idempotency_key: result.idempotencyKey ?? idempotencyKey, confirmation: 'confirmed', applied: true },
   });
 }
 
@@ -645,6 +728,7 @@ export const toolsCommandSpecs = [
         { flags: '--file <argument-path=local-path>', description: 'Upload a local file into a file-uploadable tool argument. Repeatable.', collect: true },
         { flags: '--get-schema', description: 'Display the tool parameter schema without executing.' },
         { flags: '--dry-run', description: 'Validate arguments against the tool schema without executing.' },
+        { flags: '--yes', description: 'Apply a change that asks for confirmation without the Continue? [y/N] prompt.' },
       ],
     },
     examples: [

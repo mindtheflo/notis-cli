@@ -784,6 +784,7 @@ Options:
 - `--file <argument-path=local-path>` — Upload a local file into a file-uploadable tool argument. Repeatable.
 - `--get-schema` — Display the tool parameter schema without executing.
 - `--dry-run` — Validate arguments against the tool schema without executing.
+- `--yes` — Apply a change that asks for confirmation without the Continue? [y/N] prompt.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"database_slug":"tasks","query":{}}'`

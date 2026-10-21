@@ -13,6 +13,7 @@ import {
 } from './profiles.js';
 import { createExpiredAuthError, createInvalidAuthHints } from './auth-recovery.js';
 import { refreshOAuthCredential } from './oauth.js';
+import { findUpsell, renderUpsell } from './upsell.js';
 import {
   callCarriesToolRequestId,
   canReplayRequest,
@@ -143,6 +144,19 @@ export function normalizeBackendError(status, payload, runtime) {
   }
 
   if (status === 403) {
+    const upsellBody = findUpsell(payload);
+    if (upsellBody) {
+      // Same code as every 403 so callers that treat a refusal as "not
+      // available" keep working; the message and hints are the shared upsell.
+      const rendered = renderUpsell(upsellBody, { apiBase: runtime?.apiBase });
+      return new CliError({
+        code: 'forbidden',
+        message: rendered.text,
+        exitCode: EXIT_CODES.auth,
+        details: { ...(payload || {}), upsell: rendered.upsell },
+        hints: rendered.hints,
+      });
+    }
     return new CliError({
       code: 'forbidden',
       message,
