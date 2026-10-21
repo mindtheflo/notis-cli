@@ -24,6 +24,7 @@ function shownListParams(where, params) {
   const walk=node=>{
     if(!object(node)) return;
     for(const group of ['and','or']) if(Array.isArray(node[group])) { node[group].forEach(walk); return; }
+    if(typeof node.when==='string' && Object.hasOwn(declared,node.when)) names.add(node.when);
     for(const value of Array.isArray(node.value)?node.value:[node.value]) {
       const match=typeof value==='string' ? /^\{([a-z][A-Za-z0-9_]{0,63})(?:\.([^{}.\s][^{}]{0,199}))?\}$/.exec(value) : null;
       const name=match?.[1]==='record' ? single : match?.[1];

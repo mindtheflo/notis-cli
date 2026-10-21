@@ -10,16 +10,19 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const BASE_SKILL_NAMES = Object.freeze([
-  'notis-apps',
+  'notis-spaces',
   'notis-query',
   'notis-cli',
 ]);
+// Earlier CLIs linked these names. Only links this installer created are retired.
+export const RETIRED_BASE_SKILL_NAMES = Object.freeze(['notis-apps', 'notis-reports']);
 
 /**
  * The npm package and Desktop build write this file into each skill folder
@@ -73,6 +76,11 @@ function sameLinkTarget(linkPath, expectedTarget) {
   } catch {
     return false;
   }
+}
+
+/** True only for a link into this installer's base copy of `name`. */
+export function isBaseSkillLink(linkPath, name, { home = homedir() } = {}) {
+  return sameLinkTarget(linkPath, join(getBaseSkillPaths({ home }).baseRoot, name));
 }
 
 function backupConflict(linkPath, backupRoot, targetLabel, skillName, now) {
@@ -204,6 +212,12 @@ export function reconcileBaseSkills({
   for (const targetRoot of paths.targetRoots) {
     mkdirSync(targetRoot, { recursive: true, mode: 0o700 });
     const targetLabel = relative(home, targetRoot).replaceAll('/', '_') || 'home';
+    // Retire only links this installer owns. A personal skill with an old
+    // product name remains untouched; name alone is never deletion authority.
+    for (const retired of RETIRED_BASE_SKILL_NAMES) {
+      const oldLink = join(targetRoot, retired);
+      if (sameLinkTarget(oldLink, join(paths.baseRoot, retired))) unlinkSync(oldLink);
+    }
     for (const name of BASE_SKILL_NAMES) {
       const skillTarget = join(paths.baseRoot, name);
       const linkPath = join(targetRoot, name);
@@ -227,6 +241,12 @@ export function reconcileBaseSkills({
       );
       result.linked += 1;
     }
+  }
+
+  // Keep the old managed bytes recoverable, outside every agent's skill scan.
+  for (const retired of RETIRED_BASE_SKILL_NAMES) {
+    const oldRoot = join(paths.baseRoot, retired);
+    if (existsSync(oldRoot)) result.backups.push(backupConflict(oldRoot, paths.backupRoot, 'base', retired, now));
   }
 
   return result;

@@ -69,7 +69,7 @@ test('stamps each base skill with the time of the newest commit that changed it'
   writeFileSync(join(repo, 'README.md'), 'unrelated\n');
   commitAll(repo, 'Unrelated change', T1 + 200);
 
-  assert.deepEqual(baseSkillStamp({ repoRoot: repo, name: 'notis-apps' }), { schema: 1, stamp: T1, commit: first });
+  assert.deepEqual(baseSkillStamp({ repoRoot: repo, name: 'notis-spaces' }), { schema: 1, stamp: T1, commit: first });
   assert.deepEqual(
     baseSkillStamp({ repoRoot: repo, name: 'notis-query' }),
     { schema: 1, stamp: T1 + 100, commit: second },
@@ -93,16 +93,16 @@ test('a merge that brings new skill text counts as newer than the change it carr
     baseSkillStamp({ repoRoot: repo, name: 'notis-cli' }),
     { schema: 1, stamp: T1 + 300, commit: promotion },
   );
-  assert.equal(baseSkillStamp({ repoRoot: repo, name: 'notis-apps' }).stamp, T1);
+  assert.equal(baseSkillStamp({ repoRoot: repo, name: 'notis-spaces' }).stamp, T1);
 });
 
 test('a skill folder with uncommitted edits is stamped with the build time', async (t) => {
   const { repo } = await repository(t);
-  writeFileSync(join(repo, 'server', 'skills', 'notis-apps', 'draft.md'), 'not committed\n');
+  writeFileSync(join(repo, 'server', 'skills', 'notis-spaces', 'draft.md'), 'not committed\n');
   writeSkill(repo, 'notis-cli', '# notis-cli\nedited\n');
   const now = (T1 + 5_000) * 1000 + 999;
 
-  assert.deepEqual(baseSkillStamp({ repoRoot: repo, name: 'notis-apps', now }), { schema: 1, stamp: T1 + 5_000, commit: null });
+  assert.deepEqual(baseSkillStamp({ repoRoot: repo, name: 'notis-spaces', now }), { schema: 1, stamp: T1 + 5_000, commit: null });
   assert.deepEqual(baseSkillStamp({ repoRoot: repo, name: 'notis-cli', now }), { schema: 1, stamp: T1 + 5_000, commit: null });
   assert.equal(baseSkillStamp({ repoRoot: repo, name: 'notis-query', now }).stamp, T1);
 });
@@ -115,16 +115,16 @@ test('refuses a shallow checkout, whose history would hide newer commits', async
   t.after(() => rm(shallow, { recursive: true, force: true }));
   execFileSync('git', ['clone', '-q', '--depth', '1', pathToFileURL(repo).href, shallow]);
 
-  assert.throws(() => baseSkillStamp({ repoRoot: shallow, name: 'notis-apps' }), /fetch-depth: 0/);
+  assert.throws(() => baseSkillStamp({ repoRoot: shallow, name: 'notis-spaces' }), /fetch-depth: 0/);
 });
 
 test('refuses a source folder without git history', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'notis-stamp-plain-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
-  writeSkill(folder, 'notis-apps', '# notis-apps\n');
+  writeSkill(folder, 'notis-spaces', '# notis-spaces\n');
 
   assert.throws(
-    () => baseSkillStamp({ repoRoot: folder, name: 'notis-apps' }),
+    () => baseSkillStamp({ repoRoot: folder, name: 'notis-spaces' }),
     /build from a git checkout/,
   );
 });
@@ -146,8 +146,8 @@ test('stages the three base skills with their stamp files and clears old copies'
     JSON.parse(readFileSync(join(target, 'notis-cli', BASE_SKILL_STAMP_FILE), 'utf8')),
     { schema: 1, stamp: T1 + 100, commit: second },
   );
-  assert.equal(readBaseSkillStamp(join(target, 'notis-apps')), T1);
-  assert.equal(stamps['notis-apps'].commit, first);
+  assert.equal(readBaseSkillStamp(join(target, 'notis-spaces')), T1);
+  assert.equal(stamps['notis-spaces'].commit, first);
 });
 
 test('an older build reconciled after a newer one keeps the newer skill', async (t) => {

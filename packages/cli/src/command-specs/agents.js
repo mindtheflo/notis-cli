@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
-import { basename } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
 
-import { installAgentSetup, shouldInstallLocalAgentSetup } from '../runtime/agent-setup.js';
+import {
+  installAgentSetup,
+  installRecallOnlyAgentHooks,
+  shouldInstallLocalAgentSetup,
+} from '../runtime/agent-setup.js';
 import {
   completePendingTurn,
   freshRecallItems,
@@ -42,7 +46,54 @@ export function installLocalAgentContext(
   });
 }
 
+/**
+ * Recall-only install for a hosted coding agent. The local guard against
+ * hosted environments does not apply: this mode is asked for explicitly, binds
+ * to the session's injected credential instead of a stored profile, and
+ * writes only into the agent's own config folder.
+ */
+export function installRecallOnlyAgentContext(ctx, env = process.env) {
+  const options = ctx.options || {};
+  if (options.memoryHooks === false) {
+    throw usageError('--recall-only installs memory hooks; it cannot be combined with --no-memory-hooks');
+  }
+  if (options.envFile !== undefined && (typeof options.envFile !== 'string' || !isAbsolute(options.envFile))) {
+    throw usageError('--env-file must be an absolute path');
+  }
+  const agents = selectedAgents(options);
+  if (ctx.runtime.credentialKind !== 'env' || !ctx.runtime.jwt) {
+    return agents.map((agent) => ({ agent, status: 'skipped_requires_session_credential' }));
+  }
+  return agents.map((agent) => {
+    const configDir = agent === 'codex' ? env.CODEX_HOME : env.CLAUDE_CONFIG_DIR;
+    if (typeof configDir !== 'string' || !isAbsolute(configDir)) {
+      return { agent, status: 'skipped_requires_agent_config_dir' };
+    }
+    return installRecallOnlyAgentHooks({ agentId: agent, configDir, envFile: options.envFile || null });
+  });
+}
+
 async function agentsInstallHandler(ctx) {
+  if (ctx.options?.recallOnly) {
+    const results = installRecallOnlyAgentContext(ctx);
+    const installed = results.filter((result) => result.mode === 'recall_only'
+      && result.memory_hook?.status !== 'error');
+    const hookErrors = results.filter((result) => result.memory_hook?.status === 'error');
+    return ctx.output.emitSuccess({
+      command: 'agents install',
+      data: { mode: 'recall_only', agents: results },
+      humanSummary: installed.length
+        ? `Installed recall-only Notis memory hooks for ${installed.length} coding agent${installed.length === 1 ? '' : 's'}.`
+        : 'Skipped recall-only coding-agent memory hooks.',
+      warnings: hookErrors.map((result) => result.memory_hook.message),
+      hints: [],
+      renderHuman: () => results.map((result) => (
+        result.mode === 'recall_only'
+          ? `${result.agent}: recall-only memory hook ${result.memory_hook?.status || 'skipped'}`
+          : `${result.agent}: ${result.status}`
+      )).join('\n'),
+    });
+  }
   const results = installLocalAgentContext(ctx);
   const hookErrors = results.filter((result) => result.memory_hook?.status === 'error');
   const configuredCount = results.filter((result) => result.instructions).length;
@@ -132,10 +183,12 @@ export function formatMemoryContext(data, { sessionStart = false } = {}) {
   return lines.join('\n');
 }
 
-function withFreshResults(input, data) {
+function withFreshResults(input, data, home) {
   const results = Array.isArray(data?.results) ? data.results : [];
   const texts = results.map(memoryText);
-  const freshTexts = new Set(freshRecallItems(input, texts.filter(Boolean)));
+  const freshTexts = new Set(home === undefined
+    ? freshRecallItems(input, texts.filter(Boolean))
+    : freshRecallItems(input, texts.filter(Boolean), home));
   const emitted = new Set();
   return {
     ...data,
@@ -146,6 +199,45 @@ function withFreshResults(input, data) {
       return true;
     }),
   };
+}
+
+const WORKER_CONTEXT_PREFIX = 'Current worker context for this turn.';
+const INJECTED_BLOCK_PATTERN = /<(system_instruction|notis_[a-z_]+|delegated_provider|interaction_id|relevant_memory|instructions)>[\s\S]*?<\/\1>/g;
+
+function withoutInjectedBlocks(text) {
+  return text.replace(INJECTED_BLOCK_PATTERN, '\n');
+}
+
+/**
+ * The user's own request inside a delegated Notis turn. A hosted coding agent
+ * receives the Notis contract, earlier history, delivery receipts and a worker
+ * context snapshot in the same message; searching all of that would recall
+ * memories about the contract instead of the request. Each request follows its
+ * `<interaction_id>` tag and ends before the next tag or the worker context.
+ */
+export function delegatedRequestText(prompt) {
+  const text = typeof prompt === 'string' ? prompt : '';
+  const workerAt = text.indexOf(WORKER_CONTEXT_PREFIX);
+  const head = workerAt >= 0 ? text.slice(0, workerAt) : text;
+  const tagPattern = /<interaction_id>[\s\S]*?<\/interaction_id>/g;
+  const tags = [...head.matchAll(tagPattern)];
+  let request = '';
+  if (tags.length) {
+    request = tags.map((tag, index) => {
+      const start = tag.index + tag[0].length;
+      const end = index + 1 < tags.length ? tags[index + 1].index : head.length;
+      return withoutInjectedBlocks(head.slice(start, end)).trim();
+    }).filter(Boolean).join('\n');
+  } else {
+    request = withoutInjectedBlocks(text)
+      .replace(/Current worker context for this turn\.[^\n]*(?:\n\{[^\n]*\})?/g, '\n')
+      .trim();
+  }
+  if (!request) {
+    const goal = /<goal>([\s\S]*?)<\/goal>/.exec(text);
+    request = goal ? goal[1].trim() : '';
+  }
+  return request.replace(/\n{3,}/g, '\n\n').slice(0, 12000);
 }
 
 function memoryStateInput(input, runtime) {
@@ -166,7 +258,19 @@ export async function agentContextHandler(ctx, {
   // Hook failures are deliberately silent and fail-open. A temporary Notis
   // outage must not prevent the user's Codex or Claude prompt from running.
   try {
-    const input = await readInput();
+    const recallOnly = ctx.options?.recallOnly === true;
+    const stateDir = recallOnly && typeof ctx.options?.stateDir === 'string' && isAbsolute(ctx.options.stateDir)
+      ? ctx.options.stateDir
+      : undefined;
+    if (recallOnly) {
+      // Recall-only hooks never capture, so no turn is held for a Stop hook.
+      rememberPending = () => {};
+      clearPending = () => {};
+    }
+    const rawInput = await readInput();
+    const input = recallOnly && rawInput?.hook_event_name === 'UserPromptSubmit'
+      ? { ...rawInput, prompt: delegatedRequestText(rawInput.prompt) }
+      : rawInput;
     const stateInput = memoryStateInput(input, ctx.runtime);
     const event = input?.hook_event_name;
     if (!['SessionStart', 'UserPromptSubmit'].includes(event)) return 0;
@@ -194,7 +298,7 @@ export async function agentContextHandler(ctx, {
         include_profile: event === 'SessionStart',
       },
     });
-    const data = withFreshResults(stateInput, unwrapToolPayload(result.payload));
+    const data = withFreshResults(stateInput, unwrapToolPayload(result.payload), stateDir);
     const additionalContext = formatMemoryContext(data, { sessionStart: event === 'SessionStart' });
     if (!additionalContext) return 0;
     process.stdout.write(`${JSON.stringify({
@@ -333,13 +437,15 @@ export const agentsCommandSpecs = [
     command_path: ['agents', 'install'],
     summary: 'Install Notis instructions and recall/capture hooks for local Codex and Claude Code.',
     when_to_use:
-      'Run after login to give local coding agents durable Notis CLI guidance, session-start profile context, deduplicated relevant recall, and automatic completed-turn capture. Hosted Notis sandboxes already receive prompt context and are skipped.',
+      'Run after login to give local coding agents durable Notis CLI guidance, session-start profile context, deduplicated relevant recall, and automatic completed-turn capture. Hosted Notis sandboxes are skipped unless --recall-only is given: that mode installs only recall hooks into the hosted agent\'s own config folder, signed in with the session\'s injected credential.',
     args_schema: {
       arguments: [],
       options: [
         { flags: '--codex-only', description: 'Configure only Codex.' },
         { flags: '--claude-only', description: 'Configure only Claude Code.' },
         { flags: '--no-memory-hooks', description: 'Install static instructions and remove Notis recall/capture hooks.' },
+        { flags: '--recall-only', description: 'Hosted coding agents: install only recall hooks (no capture, no instructions) into CODEX_HOME or CLAUDE_CONFIG_DIR, signed in with the injected NOTIS_JWT.' },
+        { flags: '--env-file <path>', description: 'With --recall-only: a shell file each hook sources first to pick up the current injected sign-in.' },
       ],
     },
     examples: [
@@ -347,6 +453,7 @@ export const agentsCommandSpecs = [
       'notis agents install --codex-only',
       'notis agents install --claude-only',
       'notis agents install --no-memory-hooks',
+      'notis agents install --recall-only --codex-only',
     ],
     output_schema: 'Returns each configured agent, instruction file path/status, memory-hook file path/status, and profile binding.',
     mutates: true,
@@ -360,7 +467,13 @@ export const agentsCommandSpecs = [
     command_path: ['agent-context'],
     summary: 'Internal hook adapter that injects relevant Notis memory.',
     when_to_use: 'Called by installed Codex and Claude Code UserPromptSubmit hooks; not intended for direct use.',
-    args_schema: { arguments: [], options: [] },
+    args_schema: {
+      arguments: [],
+      options: [
+        { flags: '--recall-only', description: 'Hosted recall: search only the user request inside a delegated turn and never hold a turn for capture.' },
+        { flags: '--state-dir <dir>', description: 'Folder for per-session recall state instead of the home folder.' },
+      ],
+    },
     examples: [],
     output_schema: 'Emits vendor-compatible hook JSON with additionalContext, or no output when context is unavailable.',
     mutates: false,

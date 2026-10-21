@@ -9,6 +9,11 @@ export interface BaseSkillReconcileResult {
 }
 
 export const BASE_SKILL_NAMES: readonly string[];
+export const RETIRED_BASE_SKILL_NAMES: readonly string[];
+
+export function isBaseSkillLink(linkPath: string, name: string, options?: {
+  home?: string;
+}): boolean;
 
 export const BASE_SKILL_STAMP_FILE: string;
 

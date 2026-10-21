@@ -146,7 +146,7 @@ ${skillSpecs.map(renderCommandBlock).join('\n')}
 
 ## Spaces
 
-Build, verify and publish Space views, their linked Skills and resources. The product \`notis-apps\` skill owns the workflow and the consequences of links, moves and the bin.
+Build, verify and publish Space views, their linked Skills and resources. The product \`notis-spaces\` skill owns the workflow and the consequences of links, moves and the bin.
 
 ${spaceSpecs.map(renderCommandBlock).join('\n')}
 
@@ -156,7 +156,7 @@ ${viewSpecs.map(renderCommandBlock).join('\n')}
 
 ## Reports and saved HTML
 
-Create independently authored interactive reports as Space views with the product \`notis-reports\` and \`notis-apps\` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
+Create independently authored interactive reports as Space views with the product \`notis-spaces\` guidance and its reports reference. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
 
 Save self-contained HTML pages and reports in Notis Notes with the Save HTML Skill that comes with it; pages and reports saved before Spaces open there too. Its generic file upload is attached to an existing note with a separate revision-checked write; a raw download URL is not a saved page link.
 
@@ -200,7 +200,7 @@ function renderAppsSkillDoc() {
   return `# Notis CLI: Space Development Workflow
 
 When running outside the Notis container, use the \`notis\` CLI to build Notis Spaces locally. Space views are
-Vite + React source using \`@notis/sdk\`. The product \`notis-apps\` skill and its release guide own the workflow;
+Vite + React source using \`@notis/sdk\`. The product \`notis-spaces\` skill and its release guide own the workflow;
 this file lists the commands generated from the CLI's own help.
 
 Create and edit requests authorize delivery to the installed Space after checks; explicit read-only, preview-only
@@ -276,5 +276,5 @@ function syncFile(path, content, checkOnly) {
 const checkOnly = process.argv.includes('--check');
 
 syncFile(resolve(cliRoot, 'README.md'), renderReadme(), checkOnly);
-syncFile(resolve(repoRoot, 'packages/cli/skills/notis-apps/cli.md'), renderAppsSkillDoc(), checkOnly);
+syncFile(resolve(repoRoot, 'packages/cli/skills/notis-spaces/cli.md'), renderAppsSkillDoc(), checkOnly);
 syncFile(resolve(repoRoot, 'packages/cli/skills/notis-query/cli.md'), renderDbSkillDoc(), checkOnly);

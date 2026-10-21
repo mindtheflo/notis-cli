@@ -2,7 +2,8 @@
 
 Use native data tools for precise structured records. Render when the question
 concerns what a view shows: its charts, filters, live figures, HTML or a report.
-The user does not need Portal or Desktop open.
+When the user asks to see or screenshot a Notis page, render it first, never with
+a third-party screenshot tool or a shell. The user does not need Portal or Desktop open.
 
 ## Resolve the current destination
 
@@ -31,7 +32,12 @@ current viewer, blocks writes, expands the full page including inner scroll area
 and rechecks access before returning anything. The result carries the resolved
 view/record/params and capture time, with readable Markdown and/or a PNG image.
 CLI outputs include artifact paths; open those files to inspect them. A JSON
-success envelope without the expected image/content is not inspection.
+success envelope without the expected image/content is not inspection. Rendering
+grants no upload, record edit, provider write or another viewer's access.
+
+The tool's screenshot is shown to you; it is not a file to attach. Answer from
+what it showed and cite the view link. When the user needs the image file itself,
+say the screenshot cannot be attached.
 
 Read labels, units, periods and table headers with values. Chart semantics use the
 authored data table; do not estimate sensitive numbers from geometry. A size-limit

@@ -144,7 +144,7 @@ export type SpaceResourceReference = {
 
 /** Optional V4 marker. Presentations always require path, description and memory at build time. */
 export const SPACE_VIEW_SPEC_VERSION = 2;
-export type SpaceViewParamType = 'record' | 'enum' | 'text' | 'number' | 'date' | 'boolean';
+export type SpaceViewParamType = 'record' | 'enum' | 'text' | 'number' | 'date' | 'period' | 'boolean';
 /** A declared URL param; unknown params are dropped and every param is described for agents. */
 export interface SpaceViewParam {
   type: SpaceViewParamType;
@@ -167,13 +167,17 @@ export interface SpaceViewParam {
    * page only. The server checks the rule; it never reaches the browser.
    */
   page?: { where: NativeFilter };
+  /** IANA timezone for relative dates/periods (UTC if omitted). */
+  timezone?: string;
 }
 /**
  * Notis data the view lists: exactly this native filter over a declared database, with `{param}`,
  * `{param.property}`, `{record}` and `{record.property}` placeholders. Anything else is described.
  */
+export type SpaceViewFilter = { and: SpaceViewFilter[] } | { or: SpaceViewFilter[] }
+  | (Extract<NativeFilter, { field: unknown }> & { /** Apply only when this boolean param is true. */ when?: string });
 export type SpaceShows =
-  | { database: string; where: NativeFilter | Record<string, never>; open?: string }
+  | { database: string; where: SpaceViewFilter | Record<string, never>; open?: string }
   | { about: string; services?: readonly string[] };
 /** When view snapshots go to memory: on render, on a UTC cron (fixed minute), or after changes settle. */
 export type SpaceMemorySnapshot = 'on_render' | { scheduled: string } | { on_change: { debounceSeconds: number } };
@@ -218,6 +222,8 @@ export interface SpaceDefinition {
   specVersion?: typeof SPACE_VIEW_SPEC_VERSION;
   /** Words used in this view's links, such as `notes` or `seo/keywords`. */
   path?: string;
+  /** Questions this view can answer; used by agents when choosing an existing view. */
+  questions?: string[];
   params?: Record<string, SpaceViewParam>;
   shows?: Record<string, SpaceShows>;
   memory?: SpaceMemoryPolicy;

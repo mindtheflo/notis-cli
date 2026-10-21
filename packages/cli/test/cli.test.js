@@ -13,6 +13,7 @@ import { collectProjectBoundaryViolations } from '../src/runtime/app-boundary-va
 import { doctorChannelSummary, DOCTOR_TOOL_ROUNDTRIP_TIMEOUT_MS, doctorToolRoundtripRuntime } from '../src/command-specs/meta.js';
 
 import { getApiBase, normalizeConfig, parseDebugEntitlementOverride } from '../src/runtime/profiles.js';
+import { SPACES_PROTOCOL } from '../src/runtime/transport.js';
 import { COMMAND_SPECS } from '../src/command-specs/index.js';
 import { validateArguments } from '../src/command-specs/helpers.js';
 import { classifyToolMutation } from '../src/command-specs/tools.js';
@@ -2618,6 +2619,78 @@ test('tools exec gives image generation tools a long-running timeout floor', asy
     });
   }
 });
+
+test('history list sends the returned cursor with the Spaces protocol and rejects invalid cursors before network', async () => {
+  const spaceId = '3f1d2c4b-5a6e-4f70-8a9b-0c1d2e3f4a5b';
+  const requests = [];
+  const server = createHttpServer(async (req, res) => {
+    requests.push({ method: req.method, url: req.url, protocol: req.headers['x-notis-spaces-protocol'] });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ versions: [], next_before: null }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const env = { NOTIS_API_BASE: `http://127.0.0.1:${server.address().port}`, NOTIS_JWT: makeJwt() };
+    const result = await runCliAsync(['--json', 'spaces', 'history', 'list', spaceId, '--before', '7'], env);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(requests, [{ method: 'GET', url: `/portal_spaces/history?space_id=${spaceId}&before=7`, protocol: String(SPACES_PROTOCOL) }]);
+    for (const cursor of ['abc', '-1', '1.5']) {
+      const invalid = await runCliAsync(['--json', 'spaces', 'history', 'list', spaceId, '--before', cursor], env);
+      assert.notEqual(invalid.status, 0);
+      assert.match(invalid.stderr + invalid.stdout, /numeric --before cursor/);
+    }
+    assert.equal(requests.length, 1);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('the documented history restore example reaches the restore endpoint', async () => {
+  // The root program owns -V/--version, so the saved version needs its own flag.
+  const spaceId = '3f1d2c4b-5a6e-4f70-8a9b-0c1d2e3f4a5b';
+  const spec = COMMAND_SPECS.find((item) => item.command_path.join(' ') === 'spaces history restore');
+  const argv = spec.examples[0].split(' ').slice(1).map((part) => (part === '<space-id>' ? spaceId : part));
+  const requests = [];
+  const server = createHttpServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requests.push({ method: req.method, url: req.url, protocol: req.headers['x-notis-spaces-protocol'],
+      body: JSON.parse(Buffer.concat(chunks).toString('utf-8') || 'null') });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'dry_run', target_revision: 2 }));
+  });
+  await new Promise((resolvePromise, rejectPromise) => {
+    server.once('error', rejectPromise);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', rejectPromise);
+      resolvePromise();
+    });
+  });
+
+  try {
+    const { port } = server.address();
+    const result = await runCliAsync(['--json', ...argv], {
+      NOTIS_API_BASE: `http://127.0.0.1:${port}`,
+      NOTIS_JWT: makeJwt(),
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(JSON.parse(result.stdout).data.target_revision, 2);
+    assert.deepEqual(requests, [{
+      method: 'POST',
+      url: '/portal_spaces/history-restore',
+      protocol: String(SPACES_PROTOCOL),
+      body: { space_id: spaceId, target_revision: 2, revision: 5, request_id: 'undo-last-change', dry_run: true },
+    }]);
+  } finally {
+    await new Promise((resolvePromise, rejectPromise) => {
+      server.close((error) => {
+        if (error) rejectPromise(error);
+        else resolvePromise();
+      });
+    });
+  }
+});
+
+
 
 test('the retired apps command group is not registered', () => {
   const commandPaths = COMMAND_SPECS.map((spec) => spec.command_path.join(' '));

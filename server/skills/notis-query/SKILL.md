@@ -28,8 +28,8 @@ shows. The live tool `inputSchema` is authoritative.
    view link is not a failed write and does not justify repeating it.
 
 In authored Space code use `useShown` or declared actions, not account-wide tool
-calls. Load `notis-apps` for [Space authoring](../notis-apps/references/views.md);
-its hosted reference is `notis://docs/notis-apps/references/views.md`.
+calls. Load `notis-spaces` for [Space authoring](../notis-spaces/references/views.md);
+its hosted reference is `notis://docs/notis-spaces/references/views.md`.
 
 ## Guides
 

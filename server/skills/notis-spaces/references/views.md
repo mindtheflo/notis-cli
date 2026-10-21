@@ -136,12 +136,18 @@ navigation and the toolkit pieces.
   fixed values over `record_key`/`id`, `content_type`/`file_type`/`title` and select,
   status or checkbox properties; it never reaches the browser. Viewers still get the
   view, so keep its own HTML/report rendering. The full rules live under Record pages
-  in the platform reference (`docs/notis-apps-platform.md`).
+  in the platform reference (`docs/notis-spaces-platform.md`).
 - `path` is descriptive lowercase words, up to four slash-separated segments;
   do not put IDs, credentials or reserved product routes in it.
 - `shows` for native data is `{database, where, open?}`. `where` is the native filter
   grammar and is what `useShown` executes, not commentary beside a different query.
   `open` names a record param over the same database.
+- A condition may add `when: 'late'`, naming a boolean param. It is included
+  only when that setting is true; absent/false drops it before pagination.
+  This also gates `is_empty` for unplanned tasks. `tasksViewFilter` pairs with
+  `tasksViewParams`; bind their property names and Done status to the actual schema.
+  Its `today` date param defaults to the declared timezone's today; pin it for
+  dated answers. Clear conflicting date/period/late/unplanned settings in controls.
 - A project-scoped task list can use
   `{field: {property: 'Project'}, op: 'contains', value: '{project}'}` with a declared
   project record param. `{project.Status}` reads a property of that authorized record.

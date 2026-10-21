@@ -37,7 +37,7 @@ test('reconciles all three base skills into every agent and user mirror', async 
   t.after(() => rm(root, { recursive: true, force: true }));
 
   const result = reconcileBaseSkills({ home, sourceRoot, userId: 'user-123', now: 1 });
-  assert.deepEqual(result.skills, ['notis-apps', 'notis-query', 'notis-cli']);
+  assert.deepEqual(result.skills, ['notis-spaces', 'notis-query', 'notis-cli']);
   assert.equal(result.installed, 3);
   assert.equal(result.linked, 15);
 
@@ -151,12 +151,12 @@ test('replaces an installed base skill that has no version stamp', async (t) => 
   const { root, home, sourceRoot } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
   reconcileBaseSkills({ home, sourceRoot, now: 1 });
-  assert.equal(readBaseSkillStamp(installedSkill(home, 'notis-apps')), null);
+  assert.equal(readBaseSkillStamp(installedSkill(home, 'notis-spaces')), null);
 
   stampAll(sourceRoot, 100);
   const stamped = reconcileBaseSkills({ home, sourceRoot, now: 2 });
   assert.equal(stamped.installed, 3);
-  assert.equal(readBaseSkillStamp(installedSkill(home, 'notis-apps')), 100);
+  assert.equal(readBaseSkillStamp(installedSkill(home, 'notis-spaces')), 100);
 
   const again = reconcileBaseSkills({ home, sourceRoot, now: 3 });
   assert.equal(again.installed, 0);
@@ -198,7 +198,7 @@ test('a source checkout without stamps writes only when the files differ', async
 
   const fromCheckout = reconcileBaseSkills({ home, sourceRoot, now: 2 });
   assert.equal(fromCheckout.installed, 3);
-  assert.equal(readBaseSkillStamp(installedSkill(home, 'notis-apps')), null);
+  assert.equal(readBaseSkillStamp(installedSkill(home, 'notis-spaces')), null);
 
   const unchanged = reconcileBaseSkills({ home, sourceRoot, now: 3 });
   assert.equal(unchanged.installed, 0);
@@ -220,4 +220,22 @@ test('reads only whole positive version stamps', async (t) => {
     writeFileSync(join(folder, BASE_SKILL_STAMP_FILE), raw);
     assert.equal(readBaseSkillStamp(folder), expected, raw);
   }
+});
+
+test('retires managed old names but preserves same-named personal skills', async (t) => {
+  const { root, home, sourceRoot } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const oldBase = join(home, '.notis', 'skills', 'base', 'notis-apps');
+  mkdirSync(oldBase, { recursive: true });
+  writeFileSync(join(oldBase, 'SKILL.md'), 'old managed bytes');
+  mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
+  symlinkSync(oldBase, join(home, '.codex', 'skills', 'notis-apps'));
+  const personal = join(home, '.claude', 'skills', 'notis-apps');
+  mkdirSync(personal, { recursive: true });
+  writeFileSync(join(personal, 'SKILL.md'), 'personal');
+  const result = reconcileBaseSkills({ home, sourceRoot, now: 10 });
+  assert.equal(existsSync(join(home, '.codex', 'skills', 'notis-apps')), false);
+  assert.equal(readFileSync(join(personal, 'SKILL.md'), 'utf8'), 'personal');
+  assert.equal(readFileSync(join(result.backups[0], 'SKILL.md'), 'utf8'), 'old managed bytes');
+  assert.equal(existsSync(join(home, '.codex', 'skills', 'notis-spaces', 'SKILL.md')), true);
 });

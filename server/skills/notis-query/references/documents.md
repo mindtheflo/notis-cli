@@ -49,7 +49,8 @@ an existing shared retry object. Preserve previous files unless the user asked
 for their removal.
 
 For HTML pages and reports, use the Save HTML Skill that comes with Notis Notes,
-which owns their complete save/update/sharing workflow (see `notis-reports`).
+which owns their complete save/update/sharing workflow (see the reports guidance
+in `notis-spaces`).
 Suggest installing Notis Notes when absent. Deliver the note's Notes link, not the
 raw file storage location.
 

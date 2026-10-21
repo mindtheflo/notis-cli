@@ -20,7 +20,7 @@ Until then, bare record links open the Space and write results carry `view_warni
 **Space source.** Declare `resources.<alias> = {kind: 'database', create: {name,
 schema, starterRows?}}` and a main record param for that alias in the same view.
 Promotion creates the database/link/main/source atomically. Build/verify does not
-create anything. See [View authoring](../../notis-apps/references/views.md).
+create anything. See [View authoring](../../notis-spaces/references/views.md).
 
 Every database keeps a main view and at least one Space. To move it, add the new
 link and remove the old one in a single resource mutation; unlinking the final
@@ -28,7 +28,7 @@ Space is refused with `database_last_space`. Moving into another Space tree also
 sets `main_view` in the added Space and needs an Editor of both Spaces; the main
 view stays pending (`view_warning`) until that Space deploys it. Reuse the current
 IDs instead of making an equivalent duplicate. Explain who gains or loses access
-first ([consequences](../../notis-apps/references/architecture.md#consequences-to-explain-before-acting)).
+first ([consequences](../../notis-spaces/references/architecture.md#consequences-to-explain-before-acting)).
 
 ## Schema edits
 

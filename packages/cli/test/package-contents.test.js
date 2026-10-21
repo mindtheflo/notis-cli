@@ -36,11 +36,11 @@ test('npm pack includes the bin entry and the app boundary rules (0.2.2 boot-cra
     'dist/skill-sync/index.js',
     'dist/skill-sync-worker.mjs',
     'dist/agent-hooks/notis-agent-hook.mjs',
-    'dist/base-skills/notis-apps/SKILL.md',
+    'dist/base-skills/notis-spaces/SKILL.md',
     'dist/base-skills/notis-query/SKILL.md',
     'dist/base-skills/notis-cli/SKILL.md',
     // The version stamps that let a newer installed copy win over this one.
-    'dist/base-skills/notis-apps/.notis-base-skill.json',
+    'dist/base-skills/notis-spaces/.notis-base-skill.json',
     'dist/base-skills/notis-query/.notis-base-skill.json',
     'dist/base-skills/notis-cli/.notis-base-skill.json',
   ]) {

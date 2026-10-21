@@ -11,10 +11,12 @@ import portalRouteRoots from '../../config/portal-route-roots.json' with { type:
 const RESERVED_PATHS = new Set(portalRouteRoots);
 
 export const VIEW_SPEC_VERSION = 2;
-export const VIEW_DEFINITION_FIELDS = Object.freeze(['specVersion', 'path', 'params', 'shows', 'memory', 'chrome', 'markdown']);
-export const VIEW_PARAM_TYPES = Object.freeze(['record', 'enum', 'text', 'number', 'date', 'boolean']);
+export const VIEW_DEFINITION_FIELDS = Object.freeze(['specVersion', 'path', 'params', 'shows', 'memory', 'chrome', 'markdown', 'questions']);
+export const VIEW_PARAM_TYPES = Object.freeze(['record', 'enum', 'text', 'number', 'date', 'period', 'boolean']);
+const RELATIVE_DATES = ['today', 'tomorrow'];
+const PERIODS = [...RELATIVE_DATES, 'this_week', 'last_week', 'this_month', 'last_month'];
 const RESERVED_PARAMS = new Set(['record', 'assistantThread']);
-const PAGE_ONLY = ['params', 'shows', 'memory', 'chrome', 'markdown'];
+const PAGE_ONLY = ['params', 'shows', 'memory', 'chrome', 'markdown', 'questions'];
 const NAME = /^[a-z][A-Za-z0-9_]{0,63}$/;
 // Credentials never ride in links, so no view param may look like one (the Portal drops these names).
 const CREDENTIAL_PARAM = /^(?:jwt|code|state|key)$|token|secret|password|credential|session|auth|api_?key/i;
@@ -42,7 +44,7 @@ const DEBOUNCE = [60, 86400];
 
 const plain = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const text = (value, limit) => typeof value === 'string' && value.trim().length >= 1 && value.trim().length <= limit && !CONTROL.test(value);
-const isoDate = value => typeof value === 'string' && DATE.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+const isoDate = value => typeof value === 'string' && DATE.test(value) && !value.startsWith('0000-') && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
   && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 // A text filter value the database can store (no NUL, no lone surrogate), as native queries accept it.
 const filterText = value => typeof value === 'string' && value.length <= 16384 && !value.includes('\u0000') && value.isWellFormed();
@@ -116,7 +118,12 @@ export function viewParamValue(declaration, value) {
     case 'enum': return typeof value === 'string' && (declaration.values || []).includes(value);
     case 'number': return typeof value === 'number' && Number.isFinite(value);
     case 'boolean': return typeof value === 'boolean';
-    case 'date': return isoDate(value);
+    case 'date': return RELATIVE_DATES.includes(value) || isoDate(value);
+    case 'period': {
+      if (PERIODS.includes(value)) return true;
+      const parts = typeof value === 'string' ? value.split('/') : [];
+      return parts.length === 2 && parts.every(isoDate) && parts[0] <= parts[1];
+    }
     case 'record': return typeof value === 'string' && RECORD_KEY.test(value);
     default: return false;
   }
@@ -124,11 +131,17 @@ export function viewParamValue(declaration, value) {
 
 function validateParam(name, declaration, resources) {
   if (!NAME.test(name) || RESERVED_PARAMS.has(name) || CREDENTIAL_PARAM.test(name)) throw usageError(`Param names are camelCase words; "${name}" is not available.`);
-  const allowed = new Set(['type', 'description', 'required', 'default', 'values', 'database', 'main', 'slugProperty', 'page']);
+  const allowed = new Set(['type', 'description', 'required', 'default', 'values', 'database', 'main', 'slugProperty', 'page', 'timezone']);
   if (!plain(declaration) || Object.keys(declaration).some(field => !allowed.has(field)) || !VIEW_PARAM_TYPES.includes(declaration.type)) {
     throw usageError(`Declare param "${name}" as { type, description, ... } with type ${VIEW_PARAM_TYPES.join(', ')}.`);
   }
   if (!text(declaration.description, 500)) throw usageError(`Describe param "${name}": what it selects, for agents and people.`);
+  if ('timezone' in declaration) {
+    try {
+      if (!['date', 'period'].includes(declaration.type) || typeof declaration.timezone !== 'string' || !declaration.timezone) throw new Error();
+      new Intl.DateTimeFormat('en', { timeZone: declaration.timezone });
+    } catch { throw usageError(`Param "${name}": timezone is an IANA timezone for a date or period.`); }
+  }
   if ('required' in declaration && typeof declaration.required !== 'boolean') throw usageError(`Param "${name}": required is true or false.`);
   if (declaration.type === 'enum') {
     const values = declaration.values;
@@ -165,6 +178,10 @@ function checkPlaceholder(value, params, collection, where) {
     throw usageError('Use {record} only in a view with exactly one record param (or a collection); otherwise name the param, such as {project}.');
   }
   if (!Object.hasOwn(params, name)) throw usageError(`${where}: "{${name}}" names no declared param.`);
+  if (params[name].type === 'period') {
+    if (!['start', 'end'].includes(property)) throw usageError(`${where}: compare {${name}.start} or {${name}.end} with a date.`);
+    return;
+  }
   if (property !== undefined && params[name].type !== 'record') throw usageError(`${where}: only record params have properties, such as {${name}}.`);
 }
 
@@ -181,7 +198,7 @@ function walkFilter(node, visit, where, depth = 0, budget = { left: 200 }) {
     return;
   }
   const field = node.field;
-  if (Object.keys(node).some(key => !['field', 'op', 'value'].includes(key)) || !('field' in node) || !('op' in node)
+  if (Object.keys(node).some(key => !['field', 'op', 'value', 'when'].includes(key)) || !('field' in node) || !('op' in node)
     || !plain(field) || Object.keys(field).length !== 1 || !FIELD_KEYS.includes(Object.keys(field)[0])
     || typeof Object.values(field)[0] !== 'string' || !OPS.has(node.op)) {
     throw usageError(`${where}: each condition is { field: { property }, op, value } in the native filter language.`);
@@ -277,6 +294,9 @@ function validateShows(name, declaration, params, resources, collection) {
     throw usageError(`${where}: open names a record param over the same database.`);
   }
   walkFilter(declaration.where, condition => {
+    if ('when' in condition && (typeof condition.when !== 'string' || params[condition.when]?.type !== 'boolean')) {
+      throw usageError(`${where}: when names a declared boolean param.`);
+    }
     if (!('value' in condition)) return;
     const values = condition.op === 'in' && Array.isArray(condition.value) ? condition.value : [condition.value];
     values.forEach(value => checkPlaceholder(value, params, collection, where));
@@ -301,6 +321,11 @@ export function viewManifestFields(definition, { entry, resources }) {
     if (!text(definition.description, 300)) throw usageError('Describe this view in one line (up to 300 characters).');
   }
   if (definition.path !== undefined) validateViewPath(definition.path);
+  if (definition.questions !== undefined && (!Array.isArray(definition.questions) || !definition.questions.length
+    || definition.questions.length > 30 || definition.questions.some(value => !text(value, 300))
+    || new Set(definition.questions).size !== definition.questions.length)) {
+    throw usageError('List up to 30 distinct questions this view answers (300 characters each).');
+  }
   const params = definition.params ?? {};
   if (definition.params !== undefined) {
     if (!plain(params) || Object.keys(params).length > 50) throw usageError('Declare params as { name: { type, description, ... } }.');
@@ -333,6 +358,7 @@ export function viewManifestFields(definition, { entry, resources }) {
   return {
     ...(version !== undefined ? { spec_version: version } : {}),
     ...(definition.path !== undefined ? { path: definition.path } : {}),
+    ...(definition.questions !== undefined ? { questions: definition.questions } : {}),
     ...(definition.params !== undefined ? { params } : {}),
     ...(definition.shows !== undefined ? { shows: definition.shows } : {}),
     ...(definition.memory !== undefined ? { memory: definition.memory } : {}),

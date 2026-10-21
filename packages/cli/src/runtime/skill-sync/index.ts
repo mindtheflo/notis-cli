@@ -72,7 +72,7 @@ export interface RunSkillSyncOptions {
   linkAgentFolders?: boolean;
 }
 
-const BASE_SKILL_NAMES = new Set(['notis-apps', 'notis-query', 'notis-cli']);
+const BASE_SKILL_NAMES = new Set(['notis-spaces', 'notis-query', 'notis-cli']);
 
 function withoutBaseSkills(pullResponse: SyncPullResponse): SyncPullResponse {
   return {

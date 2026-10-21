@@ -1,7 +1,7 @@
 # Space delivery
 
-Use the canonical `notis-apps` skill's entrypoint and [release guide](../../notis-apps/references/release.md).
-For hosted MCP fetch `notis://docs/notis-apps` and `notis://docs/notis-apps/references/release.md`.
+Use the canonical `notis-spaces` skill's entrypoint and [release guide](../../notis-spaces/references/release.md).
+For hosted MCP fetch `notis://docs/notis-spaces` and `notis://docs/notis-spaces/references/release.md`.
 User/repository no-deploy and explicit-consent policies take precedence over default delivery.
 
 ## IMPORTANT: When NOT to use tool access for Space development

@@ -4,8 +4,11 @@ Workspace runs released Space source. Use the same workflow locally through
 `npx --package @notis_ai/cli@latest -- notis` and on the cloud computer through
 its preinstalled `notis` command, or the same `npx` form if `notis` is not found.
 A create/edit request authorizes the checked installed-Space update unless the
-user or applicable policy says preview-only/no-deploy. Store publication is a
-separate action. Preserve exact identity and prior authorization.
+user or applicable policy says preview-only/read-only/no-deploy; that request
+stops at local artifacts and checks, with no remote mutation. Store publication
+is a separate action that needs the user's explicit approval. Preserve exact
+identity and prior authorization. Prepare only the resource changes the source
+needs, and keep them backward compatible.
 Ordinary data and resource edits apply immediately; only source needs a release.
 
 ## Update one Space
@@ -24,7 +27,8 @@ Ordinary data and resource edits apply immediately; only source needs a release.
    is a failure, not a passing empty page. Inspect both locales and intended states.
    Missing browser tooling blocks release: install `agent-browser` and make it
    available on PATH.
-4. **Publish source.** Use `spaces deploy <dir> --space <key> --space-id <space-id>
+4. **Publish source.** Deploy the frozen, verified snapshot, not edits made after
+   verification: `spaces deploy <dir> --space <key> --space-id <space-id>
    --request-id <stable-id>`. Or `spaces preview` seals a candidate, and
    `spaces promote <release-id> <dir>` publishes that exact candidate. Preview
    authoring never silently gains live record-edit authority. Deployment updates
@@ -36,13 +40,15 @@ Ordinary data and resource edits apply immediately; only source needs a release.
    does not prove data, access, collaboration or Site revocation.
 6. **Report.** Return the canonical view link and the exact completed boundary:
    local-only, deployed/verified, deployed/unverified, failed-before-publication,
-   or outcome-unknown. After an uncertain response, read the same release/request
+   or outcome-unknown. A committed release whose live verification failed is
+   deployed but unverified. After an uncertain response, read the same release/request
    identity before retrying. Never bypass source checks with direct Storage writes.
 
 ## Create without duplicates
 
-Start locally with `spaces init`, then build. Discover/list existing Spaces before
-creating the intended remote identity with `LOCAL_NOTIS_MANAGE_SPACE`. Use a stable
+Start locally with `spaces init`, then build. Discover/list existing Spaces and
+reconcile the exact identity and parent Space before creating the intended remote
+identity with `LOCAL_NOTIS_MANAGE_SPACE`, only when it is absent. Use a stable
 UUID and reconcile an uncertain creation. Read back its revision and resources,
 then verify/deploy with `--space-id`. If that first release fails, retry it into
 the same Space; never create a second one. A source-created database is committed with

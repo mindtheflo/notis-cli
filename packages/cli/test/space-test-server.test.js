@@ -223,3 +223,11 @@ test('V4 declared lists render from explicit shown fixtures; the descriptor carr
     shown: { tasks: [{ params: {}, result: { rows: [] } }] } });
   assert.throws(() => createSpaceFixtureEngine(undeclared), /only for lists this view declares/);
 });
+
+test('a boolean-gated empty-date filter participates in the SDK query cache key', () => {
+  const release = fixture();
+  release.manifest.params = { notPlanned: { type: 'boolean', description: 'Unplanned tasks' } };
+  release.manifest.shows = { tasks: { database: 'rows', where: { field: { property: 'Due' }, op: 'is_empty', when: 'notPlanned' } } };
+  const snapshot = spaceHarnessSnapshot(release, capabilities(), createSpaceFixtureEngine(release));
+  assert.deepEqual(snapshot.descriptor.space.shows.tasks.params, ['notPlanned']);
+});

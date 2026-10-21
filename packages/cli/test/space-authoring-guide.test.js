@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import { generateSpaceManifest } from '../src/runtime/space-platform.js';
-const guide = new URL('../../../server/skills/notis-apps/references/views.md', import.meta.url);
+const guide = new URL('../../../server/skills/notis-spaces/references/views.md', import.meta.url);
 
 test('the shipped complete Space declaration builds its manifest unchanged', () => {
   const snippets = [...readFileSync(guide, 'utf8').matchAll(/```ts\n([\s\S]*?)\n```/g)].map(match => match[1]);

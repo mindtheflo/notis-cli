@@ -27,7 +27,7 @@ test('shared skill orchestration keeps base skills current when account sync is 
         linked: 12,
         unchanged: 0,
         backups: [],
-        skills: ['notis-apps', 'notis-query', 'notis-cli'],
+        skills: ['notis-spaces', 'notis-query', 'notis-cli'],
       };
     },
   });
@@ -36,7 +36,7 @@ test('shared skill orchestration keeps base skills current when account sync is 
   assert.equal(calls[0][1].userId, 'canonical-user');
   assert.equal(calls[1][0], 'account');
   assert.equal(result.syncEnabled, false);
-  assert.deepEqual(result.baseSkills, ['notis-apps', 'notis-query', 'notis-cli']);
+  assert.deepEqual(result.baseSkills, ['notis-spaces', 'notis-query', 'notis-cli']);
   assert.equal(result.baseInstalled, 3);
 });
 

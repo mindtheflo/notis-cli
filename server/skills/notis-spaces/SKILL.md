@@ -1,10 +1,10 @@
 ---
-name: notis-apps
-description: Explain Notis Spaces, sharing, resource links and lifecycle; build or update their views and linked Skills, or inspect a saved view with its current data.
+name: notis-spaces
+description: Explain Notis Spaces, sharing, resource links and lifecycle; build or update their views and linked Skills, inspect a saved view with its current data, or choose whether text, a view, a Notes page or a Space answers a request.
 feature_flag: spaces
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW"]
-mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md"]
+mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md"]
 ---
 
 # Notis Spaces
@@ -15,12 +15,71 @@ files built on pieces Notis provides. Use the pre-authenticated Notis CLI:
 `notis` command on the cloud computer (the same `npx` form if `notis` is not found).
 Discover tools and inspect their live schemas before using them.
 
+## Choose the answer surface
+
+Use the smallest surface that answers: text for a simple fact, then an existing
+view, an addition to the Space that owns the work, a page in Notes, one new Space,
+or several Spaces.
+
+- Prefer an existing view. Read its declared questions and settings and put the
+  exact state in its link. A dated answer pins exact dates in the user's timezone;
+  a moving dashboard may keep relative ones.
+- Using an existing view, adding to an unshared Space or saving a one-off page in
+  Notes needs one line saying so. Changing a shared Space, removing anything,
+  changing behavior or creating a Space needs the user's approval unless they
+  already asked for it.
+- Your intelligence level limits what you build: Low answers with text and
+  existing links and says what is missing; Medium works in one Space; High may
+  work across several. Never hand work above your level to another agent or
+  thread: return it to the orchestrator, which runs it at the level it needs. A
+  higher level is not the user's approval.
+- Search Notes and memories for similar requests. Offer a Space of its own on the
+  second similar request, or the first when memories show lasting interest: one
+  offer, with a rough size in words. Remember a no and do not offer again
+  unprompted. Once approved, copy earlier reports into it and keep the originals.
+  Never decide from remaining credit.
+- Before delivery, a Low sub-agent renders the exact saved link and inspects it;
+  ask the orchestrator for one when you cannot start it. A failed or partial
+  render is not verified.
+- Return the link first, with its dates, settings and verification.
+
+## Dates and selections in a view
+
+Every new or updated view lists `questions`. Use a `period` param for calendar
+ranges and a `date` param for a due date, with the user's IANA `timezone`.
+Relative values: `today`, `tomorrow`, `this_week`, `last_week`, `this_month`,
+`last_month`; dates accept the first two. An exact period is
+`YYYY-MM-DD/YYYY-MM-DD` (inclusive). Weeks start Monday. Dated answers pin exact
+dates; moving dashboards may keep relative values. Compare `{period.start}` and
+`{period.end}` in `shows`. Use `resolveViewPeriod` from the SDK for displayed
+range labels, in the same timezone as the declaration.
+
+Tasks expose due date/period, late, not planned, project and status selections;
+Journal exposes period. Extend the actual owning view without changing its
+schema or unrelated behavior. Preserve active selections in declared URL params.
+The SDK's `tasksViewParams({timezone, projectDatabase, statuses})` and
+`journalViewParams(timezone)` supply the standard declarations; connect them to
+real controls and filters, not just a manifest. When not planned is selected,
+clear date/period and late; choosing an exact due date clears period and vice versa.
+
+## History and undo
+
+Read `notis spaces history list <space-id>` before a source change and retain the
+published version alongside its publication receipt. For "undo that", select
+the version immediately before your last change, not another Editor's latest
+version. Restore with `notis spaces history restore <space-id> --target-revision
+<saved> --revision <current> --request-id <stable-id>`, first with `--dry-run`. This
+republishes views/settings only: records, Skills, links and credentials stay
+current. Reconcile a stale revision instead of overwriting intervening work.
+If your last action created the Space, archive it through the lifecycle tool.
+
 ## Choose the workflow
 
 | Task | Read |
 | --- | --- |
 | Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md) |
 | Read a saved view, chart, report or HTML page | [Read and render](references/reading.md) |
+| Save or revise a Notes report or interactive report | [Reports](references/reports.md) |
 | Choose a memory policy | [Memory](references/memory.md) |
 | Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md) |
 | Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
@@ -133,9 +192,7 @@ from deploying an installed Space and requires the user's explicit authority.
 ## Reports, HTML and context
 
 Existing report rows render through `<ReportFrame>` in their database's view.
-Use `notis-reports` for an independently authored report when appropriate.
-
-Save HTML pages and reports through `notis-reports`.
+Follow [Reports](references/reports.md) for saved pages and interactive reports.
 
 [Context sharing](references/context.md) keeps selected text and annotations as
 unsent reference context. Page context, memory hits and source content are not

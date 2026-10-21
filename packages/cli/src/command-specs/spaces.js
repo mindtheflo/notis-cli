@@ -255,6 +255,38 @@ const recordOption = { flags: '--record <record-key>', description: 'Fixed recor
 const requestOption = { flags: '--request-id <key>', description: 'Stable intent key. Reuse after timeouts or lost replies.' };
 
 export const spacesCommandSpecs = [
+  {
+    command_path: ['spaces', 'history', 'list'],
+    summary: 'Read a Space’s saved view versions, newest first.',
+    when_to_use: 'Inspect when and by whom a view changed, before restoring or undoing a change.',
+    args_schema: { arguments: [idArgument], options: [{ flags: '--before <revision>', description: 'Read versions before this cursor.' }] },
+    examples: ['notis spaces history list <space-id>'], mutates: false, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/history' },
+    handler(ctx) {
+      if (ctx.options.before !== undefined && !/^\d+$/.test(ctx.options.before)) throw usageError('Use the returned numeric --before cursor.');
+      return remote(ctx, 'history', { method: 'GET', query: { space_id: ctx.args.spaceId, before: ctx.options.before } });
+    },
+  },
+  {
+    command_path: ['spaces', 'history', 'restore'],
+    summary: 'Republish a saved view and its settings as a new version; records stay unchanged.',
+    when_to_use: 'Restore a chosen version, or undo your last change using the version immediately before it.',
+    args_schema: { arguments: [idArgument], options: [
+      { flags: '--target-revision <revision>', description: 'The saved version to restore.' },
+      { flags: '--revision <revision>', description: 'Current Space metadata revision from history list.' },
+      { flags: '--request-id <id>', description: 'Stable restore request ID; reuse on retry.' },
+      { flags: '--dry-run', description: 'Check current access, bindings and saved source without publishing.' },
+    ] }, examples: ['notis spaces history restore <space-id> --target-revision 2 --revision 5 --request-id undo-last-change --dry-run'],
+    mutates: true, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/history-restore' },
+    handler(ctx) {
+      const target = ctx.options.targetRevision, revision = ctx.options.revision;
+      if (![target, revision].every(value => typeof value === 'string' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)))
+          || !ctx.options.requestId) throw usageError('Pass --target-revision, current --revision and a stable --request-id.');
+      return remote(ctx, 'history-restore', { body: { space_id: ctx.args.spaceId, target_revision: Number(target),
+        revision: Number(revision), request_id: ctx.options.requestId, dry_run: Boolean(ctx.options.dryRun) } });
+    },
+  },
   viewRenderCommandSpec({ screenshotOnly: true }),
   {
     command_path: ['spaces', 'init'], summary: 'Scaffold an editable collection view with first-party record components.',

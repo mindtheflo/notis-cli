@@ -22,7 +22,7 @@ export type { UseViewerReadOptions } from './hooks/useViewerReads';
 export { useViewParams, useShown, useShownAvailable, parseViewParams } from './hooks/useViewParams';
 export type { ViewParams, ViewParamsOf, ViewParamChanges, SetViewParamsOptions, UseShownOptions } from './hooks/useViewParams';
 export { SPACE_VIEW_SPEC_VERSION } from './space';
-export type { SpaceViewParam, SpaceViewParamType, SpaceShows, SpaceShownDescriptor, SpaceShownOptions, SpaceShownResult,
+export type { SpaceViewParam, SpaceViewParamType, SpaceViewFilter, SpaceShows, SpaceShownDescriptor, SpaceShownOptions, SpaceShownResult,
   SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
 export { SPACE_VIEWER_READ_OPERATIONS } from './space';
 export { SPACE_CLOUD_COMPUTER_OPERATIONS, spaceCloudComputerAllows } from './space';
@@ -202,3 +202,5 @@ export type { AgentContextContent, AgentContextItem, ContextAttachment } from '.
 export { useAgentContext } from './hooks/useAgentContext';
 export { NotisCommentBoundary, NotisCommentBox } from './components/NotisCommentBoundary';
 export type { NotisCommentBoundaryProps, NotisCommentBoxProps } from './components/NotisCommentBoundary';
+export { VIEW_PERIODS, isViewDate, isViewPeriod, resolveViewPeriod } from './viewPeriod';
+export { journalViewParams, tasksViewParams, tasksViewFilter } from './standardViewParams';

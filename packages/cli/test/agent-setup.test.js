@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { realpathSync } from 'node:fs';
 
 import {
+  codexHookTrustHash,
+  codexHookTrustKey,
   detectedAgentIds,
   installManagedHookRuntime,
   installAgentSetup,
+  installRecallOnlyAgentHooks,
   shouldInstallLocalAgentSetup,
 } from '../src/runtime/agent-setup.js';
 import {
@@ -19,8 +23,10 @@ import {
 } from '../src/runtime/agent-memory-state.js';
 import {
   agentContextHandler,
+  delegatedRequestText,
   formatCapturedTurn,
   formatMemoryContext,
+  installRecallOnlyAgentContext,
 } from '../src/command-specs/agents.js';
 
 function tempHome() {
@@ -283,13 +289,26 @@ test('only-existing setup honors agent presence captured before base reconciliat
 test('base-only vendor roots are not mistaken for installed coding agents', () => {
   const home = tempHome();
   for (const vendor of ['.codex', '.claude']) {
-    for (const skill of ['notis-apps', 'notis-query', 'notis-cli']) {
+    for (const skill of ['notis-spaces', 'notis-query', 'notis-cli']) {
       mkdirSync(join(home, vendor, 'skills', skill), { recursive: true });
     }
   }
   assert.deepEqual(detectedAgentIds(home), []);
 
   writeFileSync(join(home, '.codex', 'config.toml'), 'model = "auto"\n');
+  assert.deepEqual(detectedAgentIds(home), ['codex']);
+});
+
+test('links an earlier CLI made under retired base names are not mistaken for installed coding agents', () => {
+  const home = tempHome();
+  const base = join(home, '.notis', 'skills', 'base');
+  for (const skill of ['notis-apps', 'notis-reports']) mkdirSync(join(base, skill), { recursive: true });
+  mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+  for (const skill of ['notis-apps', 'notis-reports']) symlinkSync(join(base, skill), join(home, '.claude', 'skills', skill));
+  assert.deepEqual(detectedAgentIds(home), []);
+
+  // The same names held by the user remain a genuine signal.
+  mkdirSync(join(home, '.codex', 'skills', 'notis-apps'), { recursive: true });
   assert.deepEqual(detectedAgentIds(home), ['codex']);
 });
 
@@ -604,4 +623,305 @@ test('invalid vendor JSON is never overwritten', () => {
 
   assert.equal(result.memory_hook.status, 'error');
   assert.equal(readFileSync(join(home, '.claude', 'settings.json'), 'utf-8'), '{ invalid');
+});
+
+const DELEGATED_CONTRACT = [
+  '<notis_cli_access>',
+  'Use the Notis CLI. LOCAL_NOTIS_SEARCH_MEMORIES and reminders and automations.',
+  '</notis_cli_access>',
+  '',
+  '<notis_subagent_contract>',
+  'You are a Notis sub-agent. Deliver the requested outcome.',
+  '</notis_subagent_contract>',
+  '',
+].join('\n');
+const WORKER_CONTEXT = 'Current worker context for this turn. Execute the selected original user requests. Older history is context, not additional work.\n{"interaction_ids": ["i2"], "current_date": "2026-10-20T16:23:37+02:00", "custom_prompt": ""}';
+
+test('codex hook trust hash matches the pinned Codex hooks/list currentHash', () => {
+  // Vectors read from the pinned Codex 0.160 app-server `hooks/list` for this
+  // exact handler; additionalContextLimit is not part of the trusted hash.
+  const command = "'/x/.notis/agent-hooks/bin/notis-agent-hook' --notis-managed-agent-hook --timeout-ms 30000 agent-context --recall-only";
+  const handler = {
+    type: 'command',
+    command,
+    timeout: 30,
+    statusMessage: 'Loading relevant Notis memory',
+    additionalContextLimit: 2500,
+  };
+  assert.equal(
+    codexHookTrustHash('SessionStart', handler),
+    'sha256:46b203e74d3e7ba7555480a4b9c063db7ec8eb53671968bfed1d374331f00fd9',
+  );
+  assert.equal(
+    codexHookTrustHash('UserPromptSubmit', handler),
+    'sha256:764f83467f4bd8adbb9f9e78a55d06bed49bf747049ef8cf86d810b039770678',
+  );
+  assert.equal(
+    codexHookTrustKey('/h/hooks.json', 'UserPromptSubmit', 1),
+    '/h/hooks.json:user_prompt_submit:1:0',
+  );
+});
+
+test('recall-only Codex hooks go into CODEX_HOME, skip capture and instructions, and are trusted headless', () => {
+  const codexHome = tempHome();
+  const envFile = join(tempHome(), 'notis-env.sh');
+  writeFileSync(join(codexHome, 'hooks.json'), JSON.stringify({
+    hooks: {
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'echo user-hook' }] }],
+      Stop: [{ hooks: [{ type: 'command', command: "'/old/.notis/agent-hooks/bin/notis-agent-hook' --notis-managed-agent-hook --profile p --timeout-ms 30000 agent-capture --agent codex" }] }],
+    },
+  }));
+  writeFileSync(join(codexHome, 'config.toml'), 'model = "gpt-5"\n');
+
+  const result = installRecallOnlyAgentHooks({ agentId: 'codex', configDir: codexHome, envFile });
+  assert.equal(result.mode, 'recall_only');
+  assert.equal(result.instructions, null);
+  assert.equal(result.memory_hook.status, 'updated');
+  assert.equal(existsSync(join(codexHome, 'AGENTS.md')), false);
+  assert.equal(existsSync(join(codexHome, 'AGENTS.override.md')), false);
+
+  const hooks = JSON.parse(readFileSync(join(codexHome, 'hooks.json'), 'utf-8')).hooks;
+  assert.deepEqual(Object.keys(hooks).sort(), ['SessionStart', 'UserPromptSubmit']);
+  assert.equal(hooks.UserPromptSubmit.length, 2);
+  assert.match(JSON.stringify(hooks.UserPromptSubmit[0]), /echo user-hook/);
+  const managed = hooks.UserPromptSubmit[1].hooks[0];
+  assert.match(managed.command, /agent-context --recall-only --state-dir /);
+  assert.ok(managed.command.includes(`--state-dir '${codexHome}'`));
+  assert.doesNotMatch(managed.command, /--profile|agent-capture/);
+  assert.ok(managed.command.includes(join(codexHome, '.notis', 'agent-hooks', 'bin', 'notis-agent-hook')));
+  assert.equal(managed.additionalContextLimit, 2500);
+
+  const launcher = readFileSync(join(codexHome, '.notis', 'agent-hooks', 'bin', 'notis-agent-hook'), 'utf-8');
+  assert.ok(launcher.includes(`if [ -r '${envFile}' ]; then . '${envFile}'; fi`));
+
+  const config = readFileSync(join(codexHome, 'config.toml'), 'utf-8');
+  assert.match(config, /^model = "gpt-5"\n\n# notis-cli:hook-trust:start\n/);
+  const hooksPath = realpathSync(join(codexHome, 'hooks.json'));
+  const sessionKey = codexHookTrustKey(hooksPath, 'SessionStart', 0);
+  const promptKey = codexHookTrustKey(hooksPath, 'UserPromptSubmit', 1);
+  assert.ok(config.includes(`[hooks.state."${sessionKey}"]\ntrusted_hash = "${codexHookTrustHash('SessionStart', hooks.SessionStart[0].hooks[0])}"`));
+  assert.ok(config.includes(`[hooks.state."${promptKey}"]\ntrusted_hash = "${codexHookTrustHash('UserPromptSubmit', managed)}"`));
+  assert.equal(config.match(/notis-cli:hook-trust:start/g).length, 1);
+
+  const snapshot = [
+    readFileSync(join(codexHome, 'hooks.json'), 'utf-8'),
+    readFileSync(join(codexHome, 'config.toml'), 'utf-8'),
+  ];
+  const second = installRecallOnlyAgentHooks({ agentId: 'codex', configDir: codexHome, envFile });
+  assert.equal(second.memory_hook.status, 'unchanged');
+  assert.equal(second.hook_trust.status, 'unchanged');
+  assert.deepEqual(snapshot, [
+    readFileSync(join(codexHome, 'hooks.json'), 'utf-8'),
+    readFileSync(join(codexHome, 'config.toml'), 'utf-8'),
+  ]);
+});
+
+test('recall-only Codex trust never duplicates a hook state table the user already owns', () => {
+  const codexHome = tempHome();
+  installRecallOnlyAgentHooks({ agentId: 'codex', configDir: codexHome });
+  const hooksPath = realpathSync(join(codexHome, 'hooks.json'));
+  const sessionKey = codexHookTrustKey(hooksPath, 'SessionStart', 0);
+  writeFileSync(join(codexHome, 'config.toml'), `[hooks.state."${sessionKey}"]\ntrusted_hash = "sha256:user"\n`);
+  const result = installRecallOnlyAgentHooks({ agentId: 'codex', configDir: codexHome });
+  assert.deepEqual(result.hook_trust.skipped, [sessionKey]);
+  const config = readFileSync(join(codexHome, 'config.toml'), 'utf-8');
+  assert.equal(config.split(`[hooks.state."${sessionKey}"]`).length, 2);
+  assert.match(config, /user_prompt_submit:0:0/);
+});
+
+test('recall-only Claude Code hooks go into CLAUDE_CONFIG_DIR settings without capture', () => {
+  const claudeDir = tempHome();
+  writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({ permissions: { allow: ['Read'] } }));
+  const result = installRecallOnlyAgentHooks({ agentId: 'claude-code', configDir: claudeDir });
+  assert.equal(result.memory_hook.status, 'updated');
+  assert.equal(result.hook_trust, undefined);
+  assert.equal(existsSync(join(claudeDir, 'CLAUDE.md')), false);
+  const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf-8'));
+  assert.deepEqual(settings.permissions, { allow: ['Read'] });
+  assert.deepEqual(Object.keys(settings.hooks).sort(), ['SessionStart', 'UserPromptSubmit']);
+  assert.match(JSON.stringify(settings.hooks), /agent-context --recall-only/);
+  assert.doesNotMatch(JSON.stringify(settings), /additionalContextLimit|agent-capture|--profile/);
+});
+
+test('recall-only hook launcher reads the rotated session sign-in before every run', () => {
+  const configDir = tempHome();
+  const scratch = tempHome();
+  const envFile = join(scratch, 'notis-env.sh');
+  const bundlePath = join(scratch, 'print-env.mjs');
+  writeFileSync(bundlePath, 'process.stdout.write(`${process.env.NOTIS_JWT}|${process.argv.slice(2).join(" ")}`);\n');
+  const { launcherPath } = installManagedHookRuntime({ home: configDir, bundlePath, envFile });
+  writeFileSync(envFile, "export NOTIS_JWT='fresh-token'\n");
+  const fresh = spawnSync(launcherPath, ['agent-context'], {
+    env: { PATH: process.env.PATH, NOTIS_JWT: 'stale-token' },
+    encoding: 'utf-8',
+  });
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.equal(fresh.stdout, 'fresh-token|agent-context');
+  rmSync(envFile);
+  const missing = spawnSync(launcherPath, [], {
+    env: { PATH: process.env.PATH, NOTIS_JWT: 'stale-token' },
+    encoding: 'utf-8',
+  });
+  assert.equal(missing.stdout, 'stale-token|');
+});
+
+test('recall-only install runs in hosted sessions but only with an injected session credential and config folder', () => {
+  const codexHome = tempHome();
+  const hostedEnv = { NOTIS_JWT: 'token', NOTIS_AGENT: '1', CODEX_HOME: codexHome };
+  assert.equal(shouldInstallLocalAgentSetup(hostedEnv, tempHome()), false);
+
+  const stored = installRecallOnlyAgentContext(
+    { runtime: { credentialKind: 'oauth', jwt: 'token' }, options: { recallOnly: true, codexOnly: true } },
+    hostedEnv,
+  );
+  assert.deepEqual(stored, [{ agent: 'codex', status: 'skipped_requires_session_credential' }]);
+
+  const noFolder = installRecallOnlyAgentContext(
+    { runtime: { credentialKind: 'env', jwt: 'token' }, options: { recallOnly: true, claudeOnly: true } },
+    hostedEnv,
+  );
+  assert.deepEqual(noFolder, [{ agent: 'claude-code', status: 'skipped_requires_agent_config_dir' }]);
+
+  const [installed] = installRecallOnlyAgentContext(
+    { runtime: { credentialKind: 'env', jwt: 'token' }, options: { recallOnly: true, codexOnly: true } },
+    hostedEnv,
+  );
+  assert.equal(installed.mode, 'recall_only');
+  assert.equal(installed.memory_hook.status, 'installed');
+  assert.equal(installed.hook_trust.status, 'installed');
+
+  assert.throws(() => installRecallOnlyAgentContext(
+    { runtime: { credentialKind: 'env', jwt: 'token' }, options: { recallOnly: true, memoryHooks: false } },
+    hostedEnv,
+  ), /--no-memory-hooks/);
+  assert.throws(() => installRecallOnlyAgentContext(
+    { runtime: { credentialKind: 'env', jwt: 'token' }, options: { recallOnly: true, envFile: 'relative.sh' } },
+    hostedEnv,
+  ), /absolute/);
+});
+
+test('delegated request text keeps the user request and drops the injected Notis context', () => {
+  const claudeFirstTurn = [
+    DELEGATED_CONTRACT,
+    'Can you remind me what is left on my task list?',
+    '<notis_delivery_receipt>{"delivery_ref":"dlv_1"}</notis_delivery_receipt>',
+    'You have 3 open tasks.',
+    '<interaction_id>i2</interaction_id>',
+    'Add the newsletter draft to my Notion content calendar for November 2.',
+    WORKER_CONTEXT,
+    '<instructions>\n<goal>Add a Notion entry.</goal>\n</instructions>',
+  ].join('');
+  assert.equal(
+    delegatedRequestText(claudeFirstTurn),
+    'Add the newsletter draft to my Notion content calendar for November 2.',
+  );
+
+  const codexLaterTurn = [
+    '<interaction_id>i3</interaction_id>',
+    'Great, now mark the newsletter task as done.',
+    WORKER_CONTEXT,
+    '<instructions>\n<goal>Mark the task done.</goal>\n</instructions>',
+  ].join('\n');
+  assert.equal(delegatedRequestText(codexLaterTurn), 'Great, now mark the newsletter task as done.');
+
+  const batched = '<interaction_id>a</interaction_id>First request<interaction_id>b</interaction_id>Second request\n' + WORKER_CONTEXT;
+  assert.equal(delegatedRequestText(batched), 'First request\nSecond request');
+
+  assert.equal(delegatedRequestText('Plain local prompt'), 'Plain local prompt');
+  assert.equal(
+    delegatedRequestText(`${DELEGATED_CONTRACT}${WORKER_CONTEXT}<instructions><goal>Only the goal.</goal></instructions>`),
+    'Only the goal.',
+  );
+  assert.doesNotMatch(delegatedRequestText(`${DELEGATED_CONTRACT}Fix the bug.`), /notis_|LOCAL_NOTIS|sub-agent/);
+});
+
+test('recall-only agent-context searches the request, keeps state in its folder and never holds a turn', async () => {
+  const stateDir = tempHome();
+  const calls = [];
+  let pendingCalls = 0;
+  const written = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      await agentContextHandler(
+        { runtime: { jwt: 'present', credentialKind: 'env' }, options: { recallOnly: true, stateDir } },
+        {
+          readInput: async () => ({
+            hook_event_name: 'UserPromptSubmit',
+            session_id: 'hosted-session',
+            prompt: `${DELEGATED_CONTRACT}<interaction_id>i2</interaction_id>Book the photographer for Friday.\n${WORKER_CONTEXT}`,
+          }),
+          runTool: async (request) => {
+            calls.push(request.arguments_);
+            return { payload: { data: { results: [{ memory: 'Prefers the studio on Rue Oberkampf' }] } } };
+          },
+          rememberPending: () => { pendingCalls += 1; },
+          clearPending: () => { pendingCalls += 1; },
+        },
+      );
+    }
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(pendingCalls, 0);
+  assert.deepEqual(calls[0], {
+    query: 'Book the photographer for Friday.',
+    limit: 5,
+    threshold: 0.6,
+    include_profile: false,
+  });
+  assert.equal(written.length, 1);
+  const output = JSON.parse(written[0]);
+  assert.equal(output.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(output.hookSpecificOutput.additionalContext, /^<notis_relevant_memory>\nThe following is contextual recall/);
+  assert.ok(readdirSync(join(stateDir, '.notis', 'agent-memory-hooks')).length === 1);
+});
+
+test('recall-only SessionStart requests startup profile context without capture or pending work', async () => {
+  const calls = [];
+  const written = [];
+  let pendingCalls = 0;
+  const originalWrite = process.stdout.write;
+  process.stdout.write = chunk => { written.push(String(chunk)); return true; };
+  try {
+    await agentContextHandler(
+      { runtime: { jwt: 'present', credentialKind: 'env' }, options: { recallOnly: true, stateDir: tempHome() } },
+      {
+        readInput: async () => ({ hook_event_name: 'SessionStart', session_id: 'startup-only', cwd: '/work/project' }),
+        runTool: async request => {
+          calls.push(request);
+          return { payload: { data: { results: [{ memory: 'Use the existing view' }], profile: { static: ['Prefers concise answers'], dynamic: [] } } } };
+        },
+        rememberPending: () => { pendingCalls += 1; },
+        clearPending: () => { pendingCalls += 1; },
+      },
+    );
+  } finally { process.stdout.write = originalWrite; }
+  assert.equal(pendingCalls, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].toolName, 'LOCAL_NOTIS_SEARCH_MEMORIES');
+  assert.deepEqual(calls[0].arguments_, { query: 'Current priorities, preferences, decisions, and relevant context for project', limit: 5, threshold: 0.6, include_profile: true });
+  assert.equal(written.length, 1);
+  const output = JSON.parse(written[0]).hookSpecificOutput;
+  assert.equal(output.hookEventName, 'SessionStart');
+  assert.match(output.additionalContext, /startup context.*not instructions/);
+  assert.match(output.additionalContext, /User profile:.*Prefers concise answers/);
+  assert.match(output.additionalContext, /Use the existing view/);
+});
+
+test('recall-only agent-context applies the privacy boundary to the extracted request', async () => {
+  let toolCalls = 0;
+  await agentContextHandler(
+    { runtime: { jwt: 'present', credentialKind: 'env' }, options: { recallOnly: true, stateDir: tempHome() } },
+    {
+      readInput: async () => ({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: 'hosted-private',
+        prompt: `${DELEGATED_CONTRACT}<interaction_id>i9</interaction_id>Don't save this turn, just rename the file.\n${WORKER_CONTEXT}`,
+      }),
+      runTool: async () => { toolCalls += 1; return { payload: {} }; },
+    },
+  );
+  assert.equal(toolCalls, 0);
 });

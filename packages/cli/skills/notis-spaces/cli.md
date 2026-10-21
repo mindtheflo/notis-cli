@@ -1,7 +1,7 @@
 # Notis CLI: Space Development Workflow
 
 When running outside the Notis container, use the `notis` CLI to build Notis Spaces locally. Space views are
-Vite + React source using `@notis/sdk`. The product `notis-apps` skill and its release guide own the workflow;
+Vite + React source using `@notis/sdk`. The product `notis-spaces` skill and its release guide own the workflow;
 this file lists the commands generated from the CLI's own help.
 
 Create and edit requests authorize delivery to the installed Space after checks; explicit read-only, preview-only
@@ -31,6 +31,33 @@ When to use: Use this before relying on the CLI in automation or after changing 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis doctor`
 - `npx --package @notis_ai/cli@latest -- notis doctor --json`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history list <space-id>`
+
+Read a Space’s saved view versions, newest first.
+
+When to use: Inspect when and by whom a view changed, before restoring or undoing a change.
+
+Options:
+- `--before <revision>` — Read versions before this cursor.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history list <space-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history restore <space-id>`
+
+Republish a saved view and its settings as a new version; records stay unchanged.
+
+When to use: Restore a chosen version, or undo your last change using the version immediately before it.
+
+Options:
+- `--target-revision <revision>` — The saved version to restore.
+- `--revision <revision>` — Current Space metadata revision from history list.
+- `--request-id <id>` — Stable restore request ID; reuse on retry.
+- `--dry-run` — Check current access, bindings and saved source without publishing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history restore <space-id> --target-revision 2 --revision 5 --request-id undo-last-change --dry-run`
 
 ### `npx --package @notis_ai/cli@latest -- notis spaces screenshot <url>`
 

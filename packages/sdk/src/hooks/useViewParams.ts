@@ -6,6 +6,7 @@ import type { NotisRuntime } from '../runtime';
 import { useQuery, type UseQueryResult } from './useQuery';
 import { SdkQueryError } from '../queryErrors';
 import type { SpaceDefinition, SpaceShownOptions, SpaceShownResult, SpaceViewParam } from '../space';
+import { isViewDate, isViewPeriod } from '../viewPeriod';
 
 type ParamValue<P> = P extends { type: 'enum'; values: readonly (infer V)[] } ? V
   : P extends { type: 'number' } ? number : P extends { type: 'boolean' } ? boolean : string;
@@ -51,10 +52,9 @@ function parseValue(declaration: SpaceViewParam, raw: string): string | number |
     case 'number': { const value = Number(raw); return NUMBER.test(raw) && Number.isFinite(value) ? value : undefined; }
     case 'boolean': return raw === 'true' ? true : raw === 'false' ? false : undefined;
     case 'date': {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
-      const parsed = new Date(`${raw}T00:00:00Z`);
-      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === raw ? raw : undefined;
+      return ['today', 'tomorrow'].includes(raw) || isViewDate(raw) ? raw : undefined;
     }
+    case 'period': return isViewPeriod(raw) ? raw : undefined;
     case 'record': {
       if (!RECORD_KEY.test(raw)) return undefined;
       const hex = raw.replaceAll('-', '').toLowerCase();

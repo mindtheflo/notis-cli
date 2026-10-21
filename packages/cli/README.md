@@ -111,18 +111,21 @@ Examples:
 
 Install Notis instructions and recall/capture hooks for local Codex and Claude Code.
 
-When to use: Run after login to give local coding agents durable Notis CLI guidance, session-start profile context, deduplicated relevant recall, and automatic completed-turn capture. Hosted Notis sandboxes already receive prompt context and are skipped.
+When to use: Run after login to give local coding agents durable Notis CLI guidance, session-start profile context, deduplicated relevant recall, and automatic completed-turn capture. Hosted Notis sandboxes are skipped unless --recall-only is given: that mode installs only recall hooks into the hosted agent's own config folder, signed in with the session's injected credential.
 
 Options:
 - `--codex-only` — Configure only Codex.
 - `--claude-only` — Configure only Claude Code.
 - `--no-memory-hooks` — Install static instructions and remove Notis recall/capture hooks.
+- `--recall-only` — Hosted coding agents: install only recall hooks (no capture, no instructions) into CODEX_HOME or CLAUDE_CONFIG_DIR, signed in with the injected NOTIS_JWT.
+- `--env-file <path>` — With --recall-only: a shell file each hook sources first to pick up the current injected sign-in.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis agents install`
 - `npx --package @notis_ai/cli@latest -- notis agents install --codex-only`
 - `npx --package @notis_ai/cli@latest -- notis agents install --claude-only`
 - `npx --package @notis_ai/cli@latest -- notis agents install --no-memory-hooks`
+- `npx --package @notis_ai/cli@latest -- notis agents install --recall-only --codex-only`
 
 
 ## Skills
@@ -235,7 +238,34 @@ Examples:
 
 ## Spaces
 
-Build, verify and publish Space views, their linked Skills and resources. The product `notis-apps` skill owns the workflow and the consequences of links, moves and the bin.
+Build, verify and publish Space views, their linked Skills and resources. The product `notis-spaces` skill owns the workflow and the consequences of links, moves and the bin.
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history list <space-id>`
+
+Read a Space’s saved view versions, newest first.
+
+When to use: Inspect when and by whom a view changed, before restoring or undoing a change.
+
+Options:
+- `--before <revision>` — Read versions before this cursor.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history list <space-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history restore <space-id>`
+
+Republish a saved view and its settings as a new version; records stay unchanged.
+
+When to use: Restore a chosen version, or undo your last change using the version immediately before it.
+
+Options:
+- `--target-revision <revision>` — The saved version to restore.
+- `--revision <revision>` — Current Space metadata revision from history list.
+- `--request-id <id>` — Stable restore request ID; reuse on retry.
+- `--dry-run` — Check current access, bindings and saved source without publishing.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history restore <space-id> --target-revision 2 --revision 5 --request-id undo-last-change --dry-run`
 
 ### `npx --package @notis_ai/cli@latest -- notis spaces screenshot <url>`
 
@@ -667,7 +697,7 @@ Examples:
 
 ## Reports and saved HTML
 
-Create independently authored interactive reports as Space views with the product `notis-reports` and `notis-apps` guidance. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
+Create independently authored interactive reports as Space views with the product `notis-spaces` guidance and its reports reference. Build and verify the selected source, deploy within the user's authorization, then render its current view link.
 
 Save self-contained HTML pages and reports in Notis Notes with the Save HTML Skill that comes with it; pages and reports saved before Spaces open there too. Its generic file upload is attached to an existing note with a separate revision-checked write; a raw download URL is not a saved page link.
 

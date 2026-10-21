@@ -21,7 +21,7 @@ const WATCHED_PATHS = Object.freeze([
   'packages/sdk',
   'packages/view-renderer',
   'portal/src/lib/blockNote.ts',
-  'server/skills/notis-apps',
+  'server/skills/notis-spaces',
   'server/skills/notis-query',
   'server/skills/notis-cli',
   'server/config/notis_app_boundary_rules.json',
