@@ -123,6 +123,17 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row[data-selected] .nui-row-check { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; color: #fff; }
 [data-touch] [data-has-selection] .nui-row .nui-row-check, [data-touch][data-has-selection] .nui-row .nui-row-check { display: inline-flex; }
 [data-touch] [data-has-selection] .nui-row .nui-row-icon, [data-touch][data-has-selection] .nui-row .nui-row-icon { display: none; }
+/* Enlarge the actual touch control inside the lead slot; paint the same 16px square at its centre. */
+@media (any-pointer: coarse) {
+  [data-has-selection] .nui-row .nui-row-check { position: absolute; width: 44px; height: 44px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 0; background: transparent; box-shadow: none; }
+  [data-has-selection] .nui-row-check::before { content: ""; position: absolute; width: 16px; height: 16px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 4px; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .35); }
+  [data-has-selection] .nui-row[data-selected] .nui-row-check::before { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; }
+  [data-has-selection] .nui-row-check svg { position: relative; }
+  /* Keep targets inside compact rows and rows whose lead aligns to the first title line. */
+  [data-density="compact"][data-has-selection] .nui-row-check,
+  [data-has-selection] .nui-row[data-wrap] .nui-row-check,
+  [data-has-selection] .nui-row:has(> .nui-row-main[data-wrap]) .nui-row-check { height: 40px; }
+}
 .nui-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .nui-row-title { font-size: 14px; line-height: 20px; color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nui-row-title[data-lines="2"] { white-space: normal; text-wrap: pretty; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
