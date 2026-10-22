@@ -619,7 +619,7 @@ export const spacesCommandSpecs = [
   },
   {
     command_path: ['spaces', 'store', 'publish'], summary: 'Publish a Space and its sub-Spaces as the next Store version.',
-    when_to_use: 'Share a Space as an installable template: team listings publish at once, public ones wait for review.',
+    when_to_use: 'Share a Space you own as an installable template: team listings publish at once, public ones wait for review. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.',
     args_schema: { arguments: [idArgument], options: [{ flags: '--channel <team|public>', description: 'Where to publish.' },
       { flags: '--metadata <json>', description: 'Listing name, tagline, description, category, icon, accent.' },
       { flags: '--starter <json>', description: 'Starter row IDs per database ({"<database-id>":["<record-key>"]}).' },

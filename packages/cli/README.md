@@ -581,7 +581,7 @@ Examples:
 
 Publish a Space and its sub-Spaces as the next Store version.
 
-When to use: Share a Space as an installable template: team listings publish at once, public ones wait for review.
+When to use: Share a Space you own as an installable template: team listings publish at once, public ones wait for review. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.
 
 Options:
 - `--channel <team|public>` — Where to publish.

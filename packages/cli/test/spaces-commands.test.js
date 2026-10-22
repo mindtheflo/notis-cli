@@ -424,3 +424,33 @@ test('viewer-read runs one read as the signed-in caller, with no request key, gr
   }
   assert.equal(calls.length, 1);
 });
+
+test('store publish forwards only the request and shows server refusals for findings and the Owner check as plain messages', async t => {
+  const refusals = [
+    { status: 409, code: 'conflict', payload: { error: 'store_findings_open',
+      message: 'Fix the open safety findings and answer the privacy questions on the submission page before publishing.' } },
+    { status: 403, code: 'forbidden', payload: { error: 'store_owner_required',
+      message: 'Only the owner of this Space can publish it to the Store.' } },
+  ];
+  const calls = [];
+  let next = 0;
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    calls.push({ url, body: JSON.parse(request.body) });
+    const refusal = refusals[next++];
+    return new Response(JSON.stringify(refusal.payload), { status: refusal.status, headers: { 'content-type': 'application/json' } });
+  });
+  for (const refusal of refusals) {
+    const ctx = context('spaces store publish', { channel: 'team', requestId: 'publish-1' }, { spaceId: 'root-space' });
+    await assert.rejects(() => ctx.spec.handler(ctx), error => {
+      assert.equal(error.code, refusal.code);
+      assert.equal(error.message, refusal.payload.message);
+      assert.equal(error.details.error, refusal.payload.error);
+      return true;
+    });
+  }
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.url, 'https://fixture.invalid/portal_spaces/store-publish');
+    assert.deepEqual(call.body, { space_id: 'root-space', channel: 'team', request_id: 'publish-1', dry_run: false });
+  }
+});

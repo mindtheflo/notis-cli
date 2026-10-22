@@ -4,7 +4,7 @@ description: Explain Notis Spaces, sharing, resource links and lifecycle; build 
 feature_flag: spaces
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW"]
-mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md"]
+mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md", "references/store.md"]
 ---
 
 # Notis Spaces
@@ -84,6 +84,7 @@ If your last action created the Space, archive it through the lifecycle tool.
 | Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md) |
 | Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
 | Diagnose a failed check or release | [Troubleshooting](references/troubleshooting.md) |
+| Publish a Space or its update in the Store | [Store publishing](references/store.md) |
 
 Use ordinary native data tools when they answer the question. For what a page
 actually displays, resolve its current link and render the deployed view.
@@ -188,7 +189,8 @@ conflicts require a fresh pull and merge. Use the Skill writer for renaming.
 Sites are standalone, scoped view websites, not memberships. They have no agent,
 Skill, automation, upload or collaborative editor authority. Store installations
 are independent copies with three-way updates. Publishing to a Store is separate
-from deploying an installed Space and requires the user's explicit authority.
+from deploying an installed Space and requires the user's explicit authority;
+you prepare it and only the submission page's Publish button publishes.
 
 ## Reports, HTML and context
 

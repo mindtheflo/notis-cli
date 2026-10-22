@@ -81,7 +81,9 @@ a new revision. Source restoration does not revert user data or provider effects
 
 ## Publication privacy and portability gate
 
-Before an explicitly authorized Store publication:
+When the user asks Notis to publish, follow [Store publishing](store.md): you
+prepare a submission and the user publishes from its page. This gate applies to
+an explicitly authorized direct CLI publication:
 
 1. Review the complete snapshot: source, listing text and icon, schema, selected
    starter rows, linked Skills/helpers and automations. Exclude personal data, account
