@@ -2053,14 +2053,17 @@ function ReaderPane({ paneRef, ctx, allowed, itemId, sectionSeq, label, actions 
             const busy = running.has(action.id);
             const labelled = action.labelled ?? !!action.key;
             if (labelled) {
+              // The tooltip carries the name once a narrow reader (under 560px) hides the label beside the icon.
               return (
-                <button key={action.id} type="button" className="nui-lr-act" data-action={action.id}
-                  aria-label={t(action.label)} aria-busy={busy || undefined} aria-disabled={action.disabled || undefined}
-                  onClick={() => runAction(action)}>
-                  <Icon name={action.icon} />
-                  <span className="nui-lr-act-label">{t(action.label)}</span>
-                  {action.key !== undefined && !keysHidden && <Keycap keys={keyList(action.key)} />}
-                </button>
+                <Tooltip key={action.id} label={action.label} keys={keysHidden ? undefined : action.key}>
+                  <button type="button" className="nui-lr-act" data-action={action.id}
+                    aria-label={t(action.label)} aria-busy={busy || undefined} aria-disabled={action.disabled || undefined}
+                    onClick={() => runAction(action)}>
+                    <Icon name={action.icon} />
+                    <span className="nui-lr-act-label">{t(action.label)}</span>
+                    {action.key !== undefined && !keysHidden && <Keycap keys={keyList(action.key)} />}
+                  </button>
+                </Tooltip>
               );
             }
             return (

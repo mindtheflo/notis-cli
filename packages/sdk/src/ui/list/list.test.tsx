@@ -1830,6 +1830,12 @@ test('reader bar: a keyed action shows its label and key, runs on its key, and a
   assert.equal(reply.querySelector('.nui-lr-act-label')!.textContent, 'Reply');
   assert.ok(reply.querySelector('.nui-kbd-group, kbd'), 'its key shows');
   assert.equal(q('[data-action="pin"]')!.className, 'nui-om-btn', 'an unkeyed action is an icon with a tooltip');
+  const hover = new doc.defaultView!.MouseEvent('pointerover', { bubbles: true });
+  Object.defineProperty(hover, 'pointerType', { value: 'mouse' });
+  await act(async () => { reply.dispatchEvent(hover); await new Promise((r) => setTimeout(r, 520)); });
+  assert.equal(q('[role="tooltip"]')?.textContent?.startsWith('Reply'), true,
+    'a labelled action names itself in a tooltip too: a narrow reader hides the label beside its icon');
+  await act(async () => { reply.dispatchEvent(new doc.defaultView!.MouseEvent('pointerout', { bubbles: true })); });
   await press('r');
   assert.equal(runs, 1);
   assert.equal(reply.getAttribute('aria-busy'), 'true');
