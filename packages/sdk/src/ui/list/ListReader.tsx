@@ -400,7 +400,7 @@ function refusalOf(verdict: OpenChangeVerdict): Words | null {
 export const LIST_DRAG_TYPE = 'application/x-notis-items';
 
 /** How many skeleton rows the first load shows. */
-const SKELETON_ROWS = 6;
+const SKELETON_ROWS = 8;
 
 /** The string `title`, else `name`, of an item, else null. */
 function textOf(item: unknown): string | null {
@@ -615,6 +615,37 @@ function guardSelection(selection: Selection, blocked: (id: string) => boolean, 
 }
 
 /** A list beside a reader, with the Manager's keys, selection, actions and open modes (see the file header). */
+export interface ListSkeletonProps {
+  /** Draw a group head first, for a list that groups its rows. */
+  grouped?: boolean;
+  rows?: number;
+}
+
+/**
+ * The list while its first page loads, drawn like the rows it stands for: a group head when the list
+ * groups, then a lead mark and a title over a meta line. Pages use it for their own route fallbacks so
+ * the page does not shift when the real list arrives.
+ */
+export function ListSkeleton({ grouped = false, rows = SKELETON_ROWS }: ListSkeletonProps) {
+  const t = useT();
+  return (
+    <div className="nui-lr-scroll" role="status" aria-busy="true" aria-label={t(LIST_READER_WORDS.loading)}>
+      {grouped && (
+        <div className="nui-group-head" aria-hidden="true"><span className="nui-skel nui-skel-head" /></div>
+      )}
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className="nui-row nui-row-skel" aria-hidden="true">
+          <span className="nui-skel nui-skel-dot" />
+          <span className="nui-row-main">
+            <span className="nui-skel nui-skel-line" style={{ width: `${44 - ((index * 13) % 22)}%` }} />
+            <span className="nui-skel nui-skel-meta" style={{ width: `${22 + ((index * 7) % 12)}%` }} />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ListReader<T>(props: ListReaderProps<T>) {
   const parent = useShortcutOwner();
   const autoId = useStableId('list');
@@ -1601,14 +1632,7 @@ function ListReaderInner<T>({
       {toolbarNode}
       {infoLine !== undefined && infoLine !== null && <div className="nui-lr-info">{infoLine}</div>}
       {showSkeleton ? (
-        <div className="nui-lr-scroll" role="status" aria-busy="true" aria-label={t(LIST_READER_WORDS.loading)}>
-          {Array.from({ length: SKELETON_ROWS }, (_, index) => (
-            <div key={index} className="nui-row nui-row-skel" aria-hidden="true">
-              <span className="nui-skel nui-skel-dot" />
-              <span className="nui-skel nui-skel-line" style={{ width: `${62 - ((index * 13) % 30)}%` }} />
-            </div>
-          ))}
-        </div>
+        <ListSkeleton grouped={Boolean(groupBy)} />
       ) : items.length === 0 && !boardOn ? (
         <div className="nui-lr-empty">{empty ?? <EmptyState />}</div>
       ) : (

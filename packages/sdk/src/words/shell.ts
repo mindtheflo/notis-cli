@@ -10,6 +10,8 @@ export const SHELL_WORDS = Object.freeze({
   next: { en: 'Next', fr: 'Suivant' },
   more: { en: 'More', fr: 'Plus' },
   clear: { en: 'Clear', fr: 'Effacer' },
+  removeNamed: { en: 'Remove {name}', fr: 'Retirer {name}' },
+  savingNamed: { en: 'Saving {name}', fr: 'Enregistrement de {name}' },
   clearSelection: { en: 'Clear selection', fr: 'Effacer la sélection' },
   undo: { en: 'Undo', fr: 'Annuler' },
   select: { en: 'Select', fr: 'Sélectionner' },

@@ -16,6 +16,7 @@ export * from './board';
 export * from './actions';
 export * from './open';
 export * from './blocks';
+export * from './gallery';
 export { Icon, hasIcon, renderIcon } from './icons';
 export { adoptToolkitStyles, getToolkitStyleSheet, getToolkitStyleText, registerToolkitStyles } from './styles';
 // A3: dates and charts (toolkit spec 2.11). periods' own range type is exported as PeriodRange, so DateRange stays

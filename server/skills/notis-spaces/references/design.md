@@ -19,6 +19,7 @@ Space's data, and change only what the Space needs (the four rungs in
 | One record as the page | `DocumentPage` (see [SDK](sdk.md#first-party-record-components)). Pick its `width` for the page: `standard` (the default) is a centred 900 px reading column for a page read as text, `wide` (1200 px) or `full` for a record that is a working surface such as a wide table or board |
 | A form or settings page | `Section kind="form"`, `Button`, `NativeSelect`, `SegmentedControl`, `Notice`, `EmptyState` |
 | A list on your own layout | `useListKeys`, `useSelection`, `Row`, `SelectionBar`, `Panels` |
+| Files or pictures attached to an item, or a picture to open full screen | `AttachmentGallery` (opens `ImageViewer` on its images); `ImageViewer` alone for one picture ([SDK](sdk.md#toolkit-pieces)) |
 
 Floating UI comes from `Menu`, `Popover` and `Tooltip`; they open inside the
 Space and pick up its theme. Open as Side, Center or Full belongs to the list

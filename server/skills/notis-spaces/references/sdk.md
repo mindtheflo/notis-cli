@@ -114,6 +114,15 @@ rather than from a copy.
   sparkline `null` is a gap. `PeriodPicker` without the `custom` preset offers
   presets only.
 - **Floating**: `Menu`, `Popover`, `Tooltip`.
+- **Files and pictures**: `AttachmentGallery` and `ImageViewer`, the ones
+  Notis conversations use. `AttachmentGallery` draws a row of file cards
+  (`items`: `url`, `name`, `type` or `kind`, `size`, `thumbnailUrl`); an
+  image card opens `ImageViewer` on the gallery's images (zoom, pan, arrows,
+  copy, download, Escape), and any other card goes to `onOpen` (a new tab by
+  default). `renderOpener` swaps a card's opener, `itemAction` adds a corner
+  button, `viewerActions` adds viewer buttons (class `nui-viewer-btn`) and
+  `onNotice` hears copy and download results. Use `ImageViewer` alone for a
+  picture that opens full screen. Do not build your own lightbox.
 - **Blocks**: `Section`, `Badge`, `Button`, `ToggleGroup`, `SegmentedControl`,
   `NativeSelect`, `EmptyState`, `Notice`, `Metric`. A page is a stack of
   `Section`s, full width and without boxes: `kind` is `bar` (period and

@@ -941,7 +941,7 @@ test('reader bar: in the center dialog an action key acts on the open item throu
 
 test('loading: skeleton rows first, Load more at the end, J on the last row loads more', async () => {
   await mount(list({ items: [], loading: true }));
-  assert.equal(doc.querySelectorAll('.nui-row-skel').length, 6);
+  assert.equal(doc.querySelectorAll('.nui-row-skel').length, 8);
   assert.equal(q('.nui-lr-scroll')!.getAttribute('aria-busy'), 'true');
   let loads = 0;
   const render = await mount(list({ reader: undefined, hasMore: true, onLoadMore: () => { loads += 1; } }));
@@ -1565,6 +1565,19 @@ test('rows: the labels shrink before the meta start, so a narrow row keeps who a
   const shrink = (selector: string) => Number(/flex: 0 (\d+) auto/.exec(cssRule(selector) ?? '')?.[1]);
   assert.equal(shrink('.nui-row-meta-start'), 1);
   assert.ok(shrink('.nui-row-labels') >= 100, 'the labels give way about a hundred times faster than the meta start');
+});
+
+test('row tags: a tag still being saved shows a spinner where the x goes, a busy one keeps a disabled x', async () => {
+  await mount(<Row title="Digest" tags={[
+    { id: 'a', label: 'Work', onRemove: () => undefined, busy: true },
+    { id: 'b', label: 'Home', pending: true },
+  ]} />);
+  const [kept, saving] = [...doc.querySelectorAll('.nui-row-tag')];
+  assert.equal(kept!.querySelector<HTMLButtonElement>('.nui-row-tag-x')!.disabled, true);
+  assert.ok(!saving!.querySelector('.nui-row-tag-x'));
+  assert.equal(saving!.querySelector('.nui-row-tag-spin')!.getAttribute('aria-label'), 'Saving Home');
+  assert.ok(saving!.hasAttribute('data-removable'), 'the spinner takes the x slot, so the chip keeps its width');
+  assert.match(cssRule('.nui-row-tag-spin::after') ?? '', /animation: nui-spin/);
 });
 
 test('footer: none, or a falsy one, draws nothing', async () => {

@@ -5,7 +5,7 @@
  */
 
 import { useContext, type ReactNode } from 'react';
-import { SHELL_WORDS, pick, type Locale, type Words } from '../../words';
+import { SHELL_WORDS, fillWords, pick, type Locale, type Words } from '../../words';
 import { useToolkitLocale } from '../engine/hooks';
 import { Icon, renderIcon } from '../icons';
 import { cx, flag, useT } from '../util';
@@ -14,6 +14,23 @@ import { IDLE_ROW_STATE, RowIdContext, RowStateContext, useRowState, type RowSta
 export type Tone = 'default' | 'info' | 'success' | 'warning' | 'danger';
 
 export type RowLabel = string | { label: Words | string; tone?: Tone };
+
+/**
+ * One thing the row is linked to (a Space, an inbox), drawn as a chip after the title. With `onRemove` the chip ends
+ * in an x that unlinks it without opening the row.
+ */
+export interface RowTag {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  onRemove?: () => void;
+  /** The x's accessible name. Default "Remove {label}". */
+  removeLabel?: string;
+  /** The removal is under way: the x is disabled. */
+  busy?: boolean;
+  /** The link is still being saved: a spinner stands where the x goes. */
+  pending?: boolean;
+}
 
 export interface RowOwner {
   name: string;
@@ -33,6 +50,8 @@ export interface RowProps {
    * its tone.
    */
   labels?: readonly RowLabel[];
+  /** Links as chips between the title and the trail; they shrink, then clip, before the title does. */
+  tags?: readonly RowTag[];
   /** A 24px avatar after the time. */
   owner?: RowOwner;
   /**
@@ -257,6 +276,14 @@ function Check() {
   );
 }
 
+function TagX() {
+  return (
+    <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+      <path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** A warning or danger label (Overdue, Failed): it leads the labels, so a narrow row keeps it when the meta truncates. */
 function isUrgentLabel(entry: RowLabel): boolean {
   return typeof entry !== 'string' && (entry.tone === 'warning' || entry.tone === 'danger');
@@ -269,7 +296,7 @@ function isStatusIcon(icon: unknown): icon is { status: string } {
 
 /** One list row: lead icon, a title over a meta line, then the trail (trailing, time, avatar, More). */
 export function Row({
-  icon, title, meta, snippet, labels, owner, time, dateOnly, now, trailing, more, state, wrap, className,
+  icon, title, meta, snippet, labels, tags, owner, time, dateOnly, now, trailing, more, state, wrap, className,
 }: RowProps) {
   const locale = useToolkitLocale();
   const source = useContext(RowStateContext);
@@ -325,6 +352,26 @@ export function Row({
         {snippet !== undefined && snippet !== null && snippet !== false
           && <span className="nui-row-snippet">{snippet}</span>}
       </span>
+      {tags?.length ? (
+        <span className="nui-row-tags">
+          {tags.map((tag) => (
+            <span key={tag.id} className="nui-row-tag" data-removable={tag.onRemove || tag.pending ? '' : undefined} title={tag.label}>
+              {tag.icon && <span className="nui-row-tag-icon" aria-hidden="true">{renderIcon(tag.icon)}</span>}
+              <span className="nui-row-tag-label">{tag.label}</span>
+              {tag.pending ? (
+                <span className="nui-row-tag-spin" role="status"
+                  aria-label={pick(fillWords(SHELL_WORDS.savingNamed, { name: tag.label }), locale)} />
+              ) : tag.onRemove && (
+                <button type="button" className="nui-row-tag-x" tabIndex={-1} disabled={tag.busy}
+                  aria-label={tag.removeLabel ?? pick(fillWords(SHELL_WORDS.removeNamed, { name: tag.label }), locale)}
+                  onClick={(event) => { event.stopPropagation(); tag.onRemove!(); }}>
+                  <TagX />
+                </button>
+              )}
+            </span>
+          ))}
+        </span>
+      ) : null}
       {(owner || hasTime || trailing || showMore) && (
         <span className="nui-row-trail">
           {trailing}

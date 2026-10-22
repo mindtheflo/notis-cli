@@ -55,6 +55,14 @@ const SHAPES: Record<string, Shape> = {
   'check-circle-fill': <g><circle {...F} cx="8" cy="8" r="6.5" /><path d="M5 8.2l2 2 4-4" fill="none" stroke="hsl(var(--background))" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" /></g>,
   'minus-circle': <g {...S}><circle cx="8" cy="8" r="6" /><path d="M5.5 8h5" /></g>,
   'x-circle-fill': <g><circle {...F} cx="8" cy="8" r="6.5" /><path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" fill="none" stroke="hsl(var(--background))" strokeWidth={1.5} strokeLinecap="round" /></g>,
+  'magnifying-glass-plus': <path {...S} d="M7 12A5 5 0 107 2a5 5 0 000 10zM10.6 10.6L14 14M5 7h4M7 5v4" />,
+  'magnifying-glass-minus': <path {...S} d="M7 12A5 5 0 107 2a5 5 0 000 10zM10.6 10.6L14 14M5 7h4" />,
+  'download-simple': <path {...S} d="M8 2.5v7.5M4.5 6.5L8 10l3.5-3.5M2.5 10v3a.5.5 0 00.5.5h10a.5.5 0 00.5-.5v-3" />,
+  link: <path {...S} d="M6.8 9.2l2.4-2.4M7.6 4.6l1.2-1.2a2.8 2.8 0 014 4l-1.2 1.2M8.4 11.4l-1.2 1.2a2.8 2.8 0 01-4-4l1.2-1.2" />,
+  file: <path {...S} d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" />,
+  'file-image': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M3.5 12l3-3 2 2 1.5-1.5 2.5 2.5" /><circle cx="6.5" cy="6.75" r=".75" /></g>,
+  'file-video': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M6.5 8v3.5L9.5 9.75z" /></g>,
+  'file-audio': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M6 9.5v1.5h1.25L9 12.25v-4.5L7.25 9H6M10.5 8.5a1.8 1.8 0 010 2.5" /></g>,
 };
 
 export function hasIcon(name: string): boolean {
