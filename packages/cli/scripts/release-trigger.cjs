@@ -38,6 +38,7 @@ const RELEASE_INPUT_PATHS = Object.freeze([
   'scripts/render_infrastructure.py',
   'scripts/render_post_release_jobs.py',
   'infra',
+  'packages/view-renderer',
   '.github/scripts/sync_voice_agent_prompt.py',
   '.depot/workflows/temporal-release.yml',
 ]);
