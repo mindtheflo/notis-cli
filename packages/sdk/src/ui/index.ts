@@ -12,6 +12,7 @@ export * from './engine';
 export * from './keycap';
 export * from './overlay';
 export * from './list';
+export * from './board';
 export * from './actions';
 export * from './open';
 export * from './blocks';

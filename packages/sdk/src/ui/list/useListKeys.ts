@@ -66,6 +66,11 @@ export interface UseListKeysOptions {
    * J/K still step one tile.
    */
   grid?: boolean;
+  /**
+   * A board: the ids of each column, in order (implies `grid`). Up and Down move inside the column (no wrap), Left and
+   * Right go to the nearest column that has tiles, at the same height or its last tile.
+   */
+  board?: readonly (readonly string[])[];
 }
 
 export interface RowDomProps {
@@ -102,6 +107,24 @@ const GRID_WORDS = Object.freeze({
   up: { en: 'Tile above', fr: 'Tuile au-dessus' },
   down: { en: 'Tile below', fr: 'Tuile en dessous' },
 }) satisfies Readonly<Record<string, Words>>;
+
+/**
+ * The next tile on a board from `current` (`lanes` = the ids of each column, in order). Up and Down stay in the column
+ * and hold at its edge; Left and Right skip empty columns and land at the same index or the column's last tile. Null
+ * when the key has nowhere to go.
+ */
+export function boardStep(lanes: readonly (readonly string[])[], current: string | null, dir: 'left' | 'right' | 'up' | 'down'): string | null {
+  const lane = current === null ? -1 : lanes.findIndex((ids) => ids.includes(current));
+  if (lane === -1) return lanes.find((ids) => ids.length > 0)?.[0] ?? null;
+  const index = lanes[lane]!.indexOf(current!);
+  if (dir === 'up' || dir === 'down') return lanes[lane]![index + (dir === 'up' ? -1 : 1)] ?? null;
+  const delta = dir === 'left' ? -1 : 1;
+  for (let next = lane + delta; next >= 0 && next < lanes.length; next += delta) {
+    const ids = lanes[next]!;
+    if (ids.length > 0) return ids[Math.min(index, ids.length - 1)]!;
+  }
+  return null;
+}
 
 /** Tiles in the first row of a grid (same top edge as the first tile); 1 when it cannot tell. */
 export function gridColumns(container: HTMLElement | null, ids: readonly string[]): number {
@@ -218,7 +241,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
       id: entry.id, keys: [...entry.keys], scope, label: entry.label, when: live, ...(owner ? { owner } : {}),
     });
     // In a grid the arrows belong to the grid moves below; J/K keep stepping one tile.
-    const gridOn = !!latest.current.grid;
+    const gridOn = !!latest.current.grid || !!latest.current.board;
     const noArrows = (def: ReturnType<typeof base>) => (gridOn
       ? { ...def, keys: [def.keys].flat().filter((spec: string) => !/^arrow(up|down)$/i.test(spec)) } : def);
     const list: ShortcutDef[] = [
@@ -264,6 +287,15 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
         const visible = visibleIds();
         const index = current === null ? -1 : visible.indexOf(current);
         if (index === -1) return moveTo(visible[0] ?? null, false);
+        const board = latest.current.board;
+        if (board) {
+          const shown = new Set(visible);
+          const next = boardStep(board.map((ids) => ids.filter((id) => shown.has(id))), current, dir);
+          // The edge holds (the key is still taken, so the page does not scroll).
+          if (next === null || next === current) return true;
+          sel?.navigate(next);
+          return moveTo(next, open !== null && next !== open);
+        }
         const columns = gridColumns(containerRef.current, visible);
         const delta = dir === 'left' ? -1 : dir === 'right' ? 1 : dir === 'up' ? -columns : columns;
         const target = index + delta;
@@ -282,7 +314,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, owner, !!selection, enabled, !!options.grid]);
+  }, [scope, owner, !!selection, enabled, !!options.grid || !!options.board]);
 
   useShortcuts(enabled ? defs : [], [enabled]);
 

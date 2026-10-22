@@ -1,5 +1,5 @@
 [
-  {"key": "lists", "title": "Lists and actions", "owns": ["ui/list/", "ui/actions/"]},
+  {"key": "lists", "title": "Lists and actions", "owns": ["ui/list/", "ui/board/", "ui/actions/"]},
   {"key": "layout-engine", "title": "Layout, keyboard and keycaps", "owns": ["ui/layout/", "ui/engine/", "ui/keycap/"]},
   {"key": "overlays-open", "title": "Overlays and open modes", "owns": ["ui/overlay/", "ui/open/"]},
   {"key": "fields", "title": "Fields", "owns": ["ui/fields/"]},

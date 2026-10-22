@@ -60,6 +60,8 @@ import { Keycap } from '../keycap/Keycap';
 import { OpenAsMenu } from '../open/OpenAsMenu';
 import { normalizeAllowed, useOpenMode, useOpenModeKey } from '../open/useOpenMode';
 import type { OpenMode } from '../open/openModeStore';
+import { boardOrder, dropIndex, neighbourColumn, type BoardColumn, type ListBoard } from '../board/boardModel';
+import { BOARD_WORDS } from '../board/boardWords';
 import { RowMore } from './Row';
 import { RowIdContext, RowStateContext, type RowState, type RowStateSource } from './rowState';
 import { SelectionBar, useSelectionBar } from './SelectionBar';
@@ -214,8 +216,13 @@ export interface ListReaderProps<T> {
   openAs?: OpenMode | readonly OpenMode[];
   /** 48px (default) or 40px rows. */
   density?: 'comfortable' | 'compact';
-  /** 'table': `row` returns the cells; `columns` gives the header cells. */
-  layout?: 'list' | 'table' | 'tiles';
+  /**
+   * 'table': `row` returns the cells; `columns` gives the header cells. 'board': one column per stage of `board`
+   * (BoardView sets it), each drawing its tiles with `renderTile`.
+   */
+  layout?: 'list' | 'table' | 'tiles' | 'board';
+  /** Board layout: the columns, each item's column and how tiles move. Ignored by the other layouts. */
+  board?: ListBoard<T>;
   /** Tiles layout: draws each tile from its parts instead of `row`. */
   renderTile?: (item: T) => TileParts;
   /** Tiles layout: 'manager' tiles keep a 152px minimum height. */
@@ -453,6 +460,13 @@ export function successorOf(previous: readonly string[], now: readonly string[],
 }
 
 /** A run that did not happen (no such action, a picker closed unchosen). */
+/** Same board columns: same ids, labels and tones in the same order. */
+function sameColumns(a: readonly BoardColumn[], b: readonly BoardColumn[]): boolean {
+  const label = (value: BoardColumn['label']) => (typeof value === 'string' ? value : `${value.en}\u0001${value.fr}`);
+  return a === b || (a.length === b.length && a.every((column, index) => column.id === b[index]!.id
+    && column.tone === b[index]!.tone && label(column.label) === label(b[index]!.label)));
+}
+
 function cancelledOutcome<T>(): ActionOutcome<T> {
   return { status: 'cancelled', done: [], failed: [] };
 }
@@ -615,11 +629,11 @@ export function ListReader<T>(props: ListReaderProps<T>) {
 function ListReaderInner<T>({
   getId = defaultGetId, row, reader, actions = [], handlers, openAs, density = 'comfortable', layout = 'list',
   columns, groupBy, selectable, dragSelect = true, wrap = true, empty, title, tabs, toolbarActions, create, viewMenu, infoLine, search, footer,
-  readerLabel, readerActions, crumbLabel = defaultCrumbLabel, autoOpen = false, renderTile, tileVariant, look = 'plain',
+  readerLabel, readerActions, crumbLabel = defaultCrumbLabel, autoOpen: autoOpenProp = false, renderTile, tileVariant, look = 'plain',
   openParam = 'open', onOpen, open: controlledOpen, onOpenChange, listId = 'list', label, className, openInUrl = true,
   selected: controlledSelected, onSelectedChange, afterAction = 'clear', draggable, onDragStart, loading = false,
   hasMore = false, onLoadMore, loadingMore = false, isPending, isDisabled, collapsible = false,
-  collapsed: controlledCollapsed, onCollapsedChange, groupCounts = true, apiRef, items: naturalItems, reorder,
+  collapsed: controlledCollapsed, onCollapsedChange, groupCounts = true, apiRef, items: naturalItems, reorder, board,
 }: ListReaderProps<T>) {
   const t = useT();
   const labelled = useLabelValue();
@@ -639,15 +653,38 @@ function ListReaderInner<T>({
   const reorderer = useReorder<T>({
     items: naturalItems,
     getId,
-    enabled: !!reorder && !query && !groupBy,
+    enabled: !!reorder && !query && !groupBy && layout !== 'board',
     orientation: layout === 'tiles' ? 'both' : 'vertical',
     canReorder: reorder?.canReorder,
     onReorder: (change) => reorder?.onReorder(change),
     onError: (error) => notifyRef.current?.(REORDER_WORDS.failed, { tone: 'danger', reason: actionErrorReason(error) }),
   });
   const allItems = reorderer.items;
-  const items = useMemo(() => (query ? allItems.filter((item) => match(item, query)) : allItems),
+  const filtered = useMemo(() => (query ? allItems.filter((item) => match(item, query)) : allItems),
     [allItems, match, query]);
+
+  // ---- board: the items column by column, so J/K, Shift+J/K and Mod+A walk them as the board shows them ----
+  const boardOn = layout === 'board' && !!board;
+  // A board opens nothing on its own (BRD5: with nothing open it runs full width).
+  const autoOpen = autoOpenProp && !boardOn;
+  const boardItems = useRef<T[]>([]);
+  const boardColumns = useRef<readonly BoardColumn[]>([]);
+  let items: readonly T[] = filtered;
+  if (boardOn) {
+    const ordered = boardOrder(filtered, board!.columns, board!.getColumn);
+    const previous = boardItems.current;
+    // A page that moves items in place (same items, same order) keeps the same array, so the memos below hold.
+    if (ordered.length !== previous.length || ordered.some((item, index) => item !== previous[index])) {
+      boardItems.current = ordered;
+    }
+    items = boardItems.current;
+  }
+  const columnKey = boardOn ? items.map((item) => board!.getColumn(item)).join('\u0001') : '';
+  /** Each item's column, in `items` order: a new array only when one changes. */
+  const itemColumns = useMemo(() => columnKey.split('\u0001'), [columnKey]);
+  // A page that writes its columns inline keeps the same array while no id, label or tone changes.
+  if (boardOn && !sameColumns(board!.columns, boardColumns.current)) boardColumns.current = board!.columns;
+  const boardCols = boardColumns.current;
 
   const ids = useMemo(() => items.map(getId), [items, getId]);
   const byId = useMemo(() => {
@@ -686,7 +723,8 @@ function ListReaderInner<T>({
   }, [groupBy, ids, items]);
   const [collapsedLocal, setCollapsedLocal] = useState<readonly string[]>([]);
   const collapsedList = controlledCollapsed ?? collapsedLocal;
-  const collapsedSet = useMemo(() => new Set(collapsible ? collapsedList : []), [collapsible, collapsedList]);
+  const collapsedSet = useMemo(() => new Set(collapsible && !boardOn ? collapsedList : []),
+    [boardOn, collapsible, collapsedList]);
   const toggleGroup = useCallback((id: string) => {
     const next = collapsedList.includes(id) ? collapsedList.filter((entry) => entry !== id) : [...collapsedList, id];
     if (controlledCollapsed === undefined) setCollapsedLocal(next);
@@ -700,8 +738,44 @@ function ListReaderInner<T>({
   const selectableIds = useMemo(() => (blockedIds.size ? ids.filter((id) => !blockedIds.has(id)) : ids),
     [blockedIds, ids]);
 
+  /** The board's columns with their tiles (empty columns too); `laneIds` is what the arrows walk. */
+  const lanes = useMemo(() => {
+    if (!boardOn) return [];
+    const map = new Map<string, Array<{ item: T; id: string }>>(boardCols.map((column) => [column.id, []]));
+    items.forEach((item, index) => map.get(itemColumns[index]!)?.push({ item, id: ids[index]! }));
+    return boardCols.map((column) => ({ column, entries: map.get(column.id)! }));
+  }, [boardOn, boardCols, itemColumns, ids, items]);
+  const laneIds = useMemo(() => lanes.map((lane) => lane.entries.map((entry) => entry.id)), [lanes]);
+
+  // ---- board moves: the 'move' action (M, the selection bar, More) gets the columns as its choices ----
+  /** The drop index a drag hands to the next move run (read and cleared by the run). */
+  const pendingIndex = useRef<number | undefined>(undefined);
+  /** The tile the cursor follows to its new column until the page shows it there. */
+  const landing = useRef<{ id: string; column: string; focus: boolean } | null>(null);
+  const moveRun = useRef<(targets: T[], choice?: ActionOption) => unknown>(() => undefined);
+  const boardMove = boardOn && !!board!.onMove;
+  const boardRef = useLatest(board);
+  const listActions = useMemo<readonly ActionRef<T>[]>(() => {
+    if (!boardMove) return actions;
+    const def = {
+      id: 'move',
+      bulk: true,
+      options: () => boardRef.current!.columns.map((column) => ({ value: column.id, label: column.label })),
+      value: (targets: T[]) => {
+        const first = targets[0] ? boardRef.current!.getColumn(targets[0]) : null;
+        return first !== null && targets.every((item) => boardRef.current!.getColumn(item) === first) ? first : null;
+      },
+      run: (targets: T[], choice?: ActionOption) => moveRun.current(targets, choice),
+    };
+    const at = actions.findIndex((ref) => (typeof ref === 'string' ? ref : ref.id) === 'move');
+    if (at === -1) return [def as ActionRef<T>, ...actions];
+    const listed = actions[at]!;
+    const merged = (typeof listed === 'string' ? def : { ...listed, ...def }) as ActionRef<T>;
+    return actions.map((ref, index) => (index === at ? merged : ref));
+  }, [actions, boardMove, boardRef, moveRun]);
+
   // ---- open id, cursor, mode ----
-  const actionsController = useActions(actions, handlers);
+  const actionsController = useActions(listActions, handlers);
   const [openId, setOpenId] = useOpenId(openParam, controlledOpen, onOpenChange, openInUrl, actionsController.notify);
   // The item the reader last showed: an open item that leaves the list while the page keeps it open (unsaved edits)
   // stays in the reader until it closes.
@@ -858,6 +932,8 @@ function ListReaderInner<T>({
     const failedIds = outcome.failed.map((item) => getId(item));
     const ranOnSelection = !!start?.onSelection || (sel.count > 0 && items.some((item) => sel.isSelected(getId(item))));
     const moveOn = keyList(action.key).some((key) => key.toLowerCase() === 'e');
+    // A board move leaves the selection selected, so the next move takes it on (as Shift+Left/Right does).
+    const keep = afterAction === 'keep' || (boardMove && action.id === 'move');
     // Items still marked pending come back too: the page clears its marks as the run ends, maybe after this.
     const restore = (next: Iterable<string>) => {
       const wanted = new Set(next);
@@ -865,7 +941,7 @@ function ListReaderInner<T>({
       if (kept.length !== sel.count || kept.some((id) => !sel.isSelected(id))) rawSelection.set(kept);
     };
     if (ranOnSelection || moveOn) {
-      if (afterAction === 'clear' || moveOn) {
+      if (!keep || moveOn) {
         if (failedIds.length) restore(failedIds);
         else sel.clear();
       } else {
@@ -881,7 +957,7 @@ function ListReaderInner<T>({
     noteFollow(next);
     setCursor(next);
     if (opened !== null && doneIds.includes(opened)) open(next, { quiet: true });
-  }, [afterAction, getId, latest, noteFollow, open, rawSelection, selectionRef]);
+  }, [afterAction, boardMove, getId, latest, noteFollow, open, rawSelection, selectionRef]);
 
   // ---- pickers (Move to, Assign): a menu of the action's options at the button, row or reader bar ----
   const [picker, setPicker] = useState<{ action: ResolvedAction<T>; items: T[]; anchor: HTMLElement | null } | null>(null);
@@ -991,6 +1067,7 @@ function ListReaderInner<T>({
     ids: navIds, cursor, setCursor, onOpen: open, wrap: wraps, containerRef: scrollRef, selection: listSelection,
     openId: readerOpen ? openId : null, enabled: !centerOpen && !fullOpen,
     onReachEnd: hasMore && onLoadMore ? loadMore : undefined, grid: layout === 'tiles',
+    board: boardOn ? laneIds : undefined,
   });
 
   // ---- drag to select: a marquee from empty space selects the rows under it (Manager `enableDragSelect`) ----
@@ -1055,6 +1132,174 @@ function ListReaderInner<T>({
     ];
   }, [centerOpen, fullOpen, readerOpen, step]);
   useShortcuts(coverDefs);
+
+  // ---- board moves: the move run, Shift+Left/Right, drag and drop, and the cursor that follows a moved tile ----
+  const laneIdsRef = useLatest(laneIds);
+  const controllerRef = useLatest(controller);
+  moveRun.current = (targets, choice) => {
+    const index = pendingIndex.current;
+    pendingIndex.current = undefined;
+    const current = boardRef.current;
+    if (!choice || !current?.onMove || !targets.length) return { cancelled: true };
+    const to = choice.value;
+    const targetIds = targets.map(getId);
+    const at = current.columns.findIndex((column) => column.id === to);
+    if (at === -1) return { cancelled: true };
+    if (index === undefined) {
+      if (targets.every((item) => current.getColumn(item) === to)) return { cancelled: true };
+    } else {
+      // A drop that leaves the column as it was changes nothing.
+      const lane = laneIdsRef.current[at] ?? [];
+      const rest = lane.filter((id) => !targetIds.includes(id));
+      const next = [...rest.slice(0, index), ...targetIds, ...rest.slice(index)];
+      if (next.length === lane.length && next.every((id, position) => id === lane[position])) return { cancelled: true };
+    }
+    const { cursor: currentCursor } = latest.current;
+    const lead = currentCursor !== null && targetIds.includes(currentCursor) ? currentCursor : targetIds[0]!;
+    const { active, body } = focusOf(rootRef.current);
+    landing.current = {
+      id: lead, column: to, focus: !active || active === body || containsComposed(listRef.current, active),
+    };
+    setCursor(lead);
+    const words = toWords(current.columns[at]!.label);
+    const moved: Words = {
+      en: BOARD_WORDS.moved.en.replace('{column}', words.en), fr: BOARD_WORDS.moved.fr.replace('{column}', words.fr),
+    };
+    const settle = (result: unknown) => {
+      if (typeof result === 'function') return { undo: result as () => void, toast: moved };
+      if (result && typeof result === 'object') {
+        const detail = result as { cancelled?: boolean; failed?: readonly unknown[]; undo?: unknown; toast?: unknown };
+        if (detail.cancelled || detail.failed?.length) landing.current = null;
+        if (typeof detail.undo === 'function' && !('toast' in detail)) return { ...detail, toast: moved };
+      }
+      return result;
+    };
+    let result: unknown;
+    try {
+      result = current.onMove(targetIds, to, index);
+    } catch (error) {
+      landing.current = null;
+      throw error;
+    }
+    if (!result || typeof (result as Promise<unknown>).then !== 'function') return settle(result);
+    return (result as Promise<unknown>).then(settle, (error) => {
+      landing.current = null;
+      throw error;
+    });
+  };
+
+  /** Moves the selection, else the cursor tile, one column left or right (Shift+Left/Right). */
+  const moveBy = useCallback((delta: -1 | 1): boolean => {
+    const current = boardRef.current;
+    if (!current?.onMove) return false;
+    const sel = selectionRef.current;
+    const { ids: list, cursor: currentCursor, openId: opened } = latest.current;
+    let targets: T[] = [];
+    if (sel.count > 0) {
+      targets = list.filter((id) => sel.isSelected(id)).map((id) => getItem(id)).filter((item): item is T => item !== undefined);
+    }
+    if (!targets.length) {
+      const id = currentCursor ?? opened;
+      const item = id !== null ? getItem(id) : undefined;
+      if (item !== undefined) targets = [item];
+    }
+    if (!targets.length) return false;
+    const lead = targets.find((item) => getId(item) === currentCursor) ?? targets[0]!;
+    const to = neighbourColumn(current.columns, current.getColumn(lead), delta);
+    if (to === null) return true;
+    const column = current.columns.find((entry) => entry.id === to)!;
+    // The selection stays as it was, so Shift+Right again moves it on.
+    void controllerRef.current.run('move', targets, { value: to, label: column.label })
+      .finally(() => { runStarts.current.delete('move'); });
+    return true;
+  }, [boardRef, controllerRef, getId, getItem, latest, selectionRef]);
+  const boardDefs = useMemo<ShortcutDef[]>(() => {
+    if (!boardMove || centerOpen || fullOpen) return [];
+    const live = () => {
+      const scroll = scrollRef.current;
+      return listVisible() && !!scroll && isVisibleComposed(scroll) && !scroll.closest('[inert]');
+    };
+    return [
+      { id: 'list.board.moveLeft', keys: ['shift+arrowleft'], scope: 'collection', label: BOARD_WORDS.moveLeft,
+        repeat: true, when: live, run: () => moveBy(-1) },
+      { id: 'list.board.moveRight', keys: ['shift+arrowright'], scope: 'collection', label: BOARD_WORDS.moveRight,
+        repeat: true, when: live, run: () => moveBy(1) },
+    ];
+  }, [boardMove, centerOpen, fullOpen, listVisible, moveBy]);
+  useShortcuts(boardDefs);
+
+  // The moved tile keeps the cursor: once the page shows it in its new column, focus (if it was in the list) and the
+  // scroll follow it there.
+  useIsoLayoutEffect(() => {
+    const target = landing.current;
+    if (!target || !boardOn) return;
+    const item = byId.get(target.id);
+    if (!item) { landing.current = null; return; }
+    if (board!.getColumn(item) !== target.column) return;
+    landing.current = null;
+    setCursor(target.id);
+    const rowEl = findRow(scrollRef.current, target.id);
+    if (!rowEl) return;
+    const { active, body } = focusOf(rootRef.current);
+    if (target.focus && (!active || active === body || containsComposed(listRef.current, active))) {
+      rowEl.focus({ preventScroll: true });
+    }
+    rowEl.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [items, columnKey]);
+
+  // Drag and drop between columns: the line shows where the tiles land.
+  const [drop, setDrop] = useState<{ column: string; before: string | null; index: number } | null>(null);
+  const dragIds = useRef<string[]>([]);
+  const dropAt = useCallback((columnId: string, event: ReactDragEvent<HTMLElement>) => {
+    const lane = laneIdsRef.current[boardRef.current?.columns.findIndex((column) => column.id === columnId) ?? -1] ?? [];
+    const container = event.currentTarget;
+    const tiles = lane.filter((id) => !dragIds.current.includes(id)).flatMap((id) => {
+      const el = findRow(container, id);
+      if (!el) return [];
+      const rect = el.getBoundingClientRect();
+      return [{ id, top: rect.top, height: rect.height }];
+    });
+    return { column: columnId, ...dropIndex(tiles, event.clientY) };
+  }, [boardRef, laneIdsRef]);
+  const isListDrag = (event: ReactDragEvent<HTMLElement>) => Array.from(event.dataTransfer?.types ?? []).includes(LIST_DRAG_TYPE);
+  const onColumnDragOver = (columnId: string) => (event: ReactDragEvent<HTMLElement>) => {
+    if (!boardMove || !isListDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const next = dropAt(columnId, event);
+    setDrop((previous) => (previous && previous.column === next.column && previous.before === next.before
+      && previous.index === next.index ? previous : next));
+  };
+  const onColumnDragLeave = (event: ReactDragEvent<HTMLElement>) => {
+    const related = event.relatedTarget as Node | null;
+    if (related && event.currentTarget.contains(related)) return;
+    setDrop(null);
+  };
+  const onColumnDrop = (columnId: string) => (event: ReactDragEvent<HTMLElement>) => {
+    if (!boardMove || !isListDrag(event)) return;
+    event.preventDefault();
+    const place = dropAt(columnId, event);
+    setDrop(null);
+    let dropped: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(event.dataTransfer.getData(LIST_DRAG_TYPE) || '[]');
+      if (Array.isArray(parsed)) dropped = parsed.filter((id): id is string => typeof id === 'string');
+    } catch { /* another list's data: fall back to this list's own drag */ }
+    if (!dropped.length) dropped = dragIds.current;
+    dragIds.current = [];
+    const targets = dropped.map((id) => getItem(id)).filter((item): item is T => item !== undefined);
+    const column = boardRef.current?.columns.find((entry) => entry.id === columnId);
+    const action = controllerRef.current.actions.find((entry) => entry.id === 'move');
+    if (!targets.length || !column || !action) return;
+    pendingIndex.current = place.index;
+    void choose(action, targets, { value: columnId, label: column.label });
+    // A busy move never read it.
+    pendingIndex.current = undefined;
+  };
+  const onTileDragEnd = () => {
+    dragIds.current = [];
+    setDrop(null);
+  };
 
   const visible = () => {
     const root = rootRef.current;
@@ -1184,18 +1429,21 @@ function ListReaderInner<T>({
     more: controller.actions.length ? rowMore : null,
   }), [canSelect, controller.actions.length, rowMore, selection.toggle, stateOf]);
 
-  const canDrag = (item: T, id: string) => !!draggable && !blockedIds.has(id)
-    && (typeof draggable === 'function' ? draggable(item) : true);
+  // A board that moves tiles drags them unless `draggable` says otherwise.
+  const dragOn = draggable ?? boardMove;
+  const canDrag = (item: T, id: string) => !!dragOn && !blockedIds.has(id)
+    && (typeof dragOn === 'function' ? dragOn(item) : true);
   const dragStart = (id: string, event: ReactDragEvent<HTMLElement>) => {
     const sel = selectionRef.current;
-    const dragIds = canSelect && sel.isSelected(id)
+    const carried = canSelect && sel.isSelected(id)
       ? ids.filter((entry) => sel.isSelected(entry) && !blockedIds.has(entry)) : [id];
-    const dragged = dragIds.map((entry) => byId.get(entry)).filter((entry): entry is T => entry !== undefined);
+    dragIds.current = carried;
+    const dragged = carried.map((entry) => byId.get(entry)).filter((entry): entry is T => entry !== undefined);
     const data = event.dataTransfer;
     if (data) {
       try {
-        data.setData(LIST_DRAG_TYPE, JSON.stringify(dragIds));
-        data.setData('text/plain', dragIds.join('\n'));
+        data.setData(LIST_DRAG_TYPE, JSON.stringify(carried));
+        data.setData('text/plain', carried.join('\n'));
         data.effectAllowed = 'copyMove';
       } catch {
         // Some hosts lock the data store; the callback still gets the items.
@@ -1212,16 +1460,20 @@ function ListReaderInner<T>({
       ...props,
       ...(pending ? { 'data-pending': '', 'aria-busy': true } : {}),
       ...(disabled ? { 'data-disabled': '', 'aria-disabled': true } : {}),
-      ...(canDrag(item, id) ? { draggable: true, onDragStart: (event: ReactDragEvent<HTMLElement>) => dragStart(id, event) } : {}),
+      ...(canDrag(item, id) ? {
+        draggable: true, onDragStart: (event: ReactDragEvent<HTMLElement>) => dragStart(id, event),
+        ...(boardOn ? { onDragEnd: onTileDragEnd } : {}),
+      } : {}),
+      ...(boardOn && drop?.before === id ? { 'data-drop-before': '' } : {}),
     };
     // A blocked row is still a place to drop; it does not move itself.
     const movable = !blockedIds.has(id) && (!reorder?.canReorder || reorder.canReorder(item));
     const rowProps = reorder ? chainReorderProps(own, reorderer.getItemProps(id, { movable })) : own;
-    const drawn = layout === 'tiles' && renderTile ? <TileContent parts={renderTile(item)} />
+    const drawn = (layout === 'tiles' || boardOn) && renderTile ? <TileContent parts={renderTile(item)} />
       : row(item, stateOf(id));
     const content = <RowIdContext.Provider value={id}>{drawn}</RowIdContext.Provider>;
     if (layout === 'table') return <tr key={id} className="nui-row" {...rowProps}>{content}</tr>;
-    if (layout === 'tiles') {
+    if (layout === 'tiles' || boardOn) {
       return (
         <div key={id} className="nui-tile" data-variant={tileVariant === 'manager' ? 'manager' : undefined}
           {...rowProps}>
@@ -1252,7 +1504,29 @@ function ListReaderInner<T>({
   };
 
   let body: ReactNode;
-  if (layout === 'table') {
+  if (boardOn) {
+    // BRD3: one column per stage, each scrolling on its own; a tone puts a dot before the label, never an edge.
+    body = lanes.map(({ column, entries }) => {
+      const tone = column.tone && column.tone !== 'default' ? column.tone : undefined;
+      const dropHere = drop?.column === column.id;
+      return (
+        <section key={column.id} className="nui-board-col" role="group" aria-label={t(column.label)}
+          data-column={column.id} data-drop={flag(dropHere)}>
+          <div className="nui-group-head nui-board-head" role="presentation">
+            {tone && <span className="nui-board-dot" data-tone={tone} aria-hidden="true" />}
+            <span className="nui-group-label">{t(column.label)}</span>
+            {groupCounts && <span className="nui-group-count">{entries.length}</span>}
+          </div>
+          <div className="nui-board-body" role="presentation" data-drop={dropHere && drop!.before === null ? 'end' : undefined}
+            onDragOver={onColumnDragOver(column.id)} onDragLeave={onColumnDragLeave} onDrop={onColumnDrop(column.id)}>
+            {entries.length
+              ? entries.map(({ item, id }) => renderRow(item, id))
+              : <div className="nui-board-empty">{t(board!.emptyColumn ?? BOARD_WORDS.emptyColumn)}</div>}
+          </div>
+        </section>
+      );
+    });
+  } else if (layout === 'table') {
     body = (
       <table className="nui-table" role="presentation">
         {columns && <thead role="presentation"><tr role="presentation">{columns}</tr></thead>}
@@ -1335,10 +1609,10 @@ function ListReaderInner<T>({
             </div>
           ))}
         </div>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && !boardOn ? (
         <div className="nui-lr-empty">{empty ?? <EmptyState />}</div>
       ) : (
-        <div ref={scrollRef} className="nui-lr-scroll" role="listbox" aria-label={t(label ?? LIST_READER_WORDS.list)}
+        <div ref={scrollRef} className={cx('nui-lr-scroll', boardOn && 'nui-board')} role="listbox" aria-label={t(label ?? LIST_READER_WORDS.list)}
           aria-multiselectable={canSelect || undefined} aria-busy={loading || loadingMore || undefined}
           data-notis-engine-list="" data-marquee={flag(marquee.rect !== null)}
           onMouseDown={marquee.onMouseDown} onClickCapture={marquee.onClickCapture}>

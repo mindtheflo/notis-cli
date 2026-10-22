@@ -91,6 +91,16 @@ rather than from a copy.
   thumbnails, a rail), `useReorder({ items, getId, onReorder, orientation })`
   gives the ordered `items`, `getItemProps(id)` for each element and an
   `announcer` to render once.
+- **Boards**: `BoardView` is a Kanban board (a funnel, a pipeline): one
+  column per stage (`columns`, each `{ id, label, tone? }`, with `getColumn`
+  saying where an item sits) and a tile per item (`renderTile`, the same
+  `TileParts` as tiles). It is `ListReader` underneath, so `reader`, the open
+  modes, `actions`, selection and `search` work the same; a tile opens on
+  Enter or a click and nothing opens on its own. `onMove(ids, toColumnId,
+  index?)` moves tiles by drag and drop, Shift+Left/Right and M (Move to):
+  update the items in the page (optimistically if you like) and return an
+  undo function for Undo in the toast. Leave `onMove` out for a board that
+  only reads. Use it rather than columns of your own.
 - **Time and numbers**: `PeriodPicker` with `usePeriod`, `DayPicker`,
   `CalendarView`, `TimelineView`, `Chart`, `StatRow`, `ChartTable`,
   `RenderChartData`. `Chart` stacks bars or areas (`stacked`) and runs bars

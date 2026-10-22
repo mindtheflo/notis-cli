@@ -104,7 +104,8 @@ actually displays, resolve its current link and render the deployed view.
 
 Behaviour is held by the pieces, not by instructions. Start from the piece that
 matches the view: a list beside a reader is one `ListReader` of about 20 lines
-([the sample](references/views.md#write-the-view)), and keys, selection, panels,
+([the sample](references/views.md#write-the-view)), items by stage are one
+`BoardView` (a column per stage, `onMove` to move tiles), and keys, selection, panels,
 looks and words come with it. Change only what the Space needs, as shallow as
 possible:
 

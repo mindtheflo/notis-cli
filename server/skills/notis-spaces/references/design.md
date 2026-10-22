@@ -14,6 +14,7 @@ Space's data, and change only what the Space needs (the four rungs in
 | A gallery where each item has a picture or a mark (competitors, integrations, skills to discover) | `ListReader` with `layout: 'tiles'` and `renderTile`; every other list stays rows |
 | Items on dates | `CalendarView` (month, week, agenda) |
 | Items over time, by lane | `TimelineView` |
+| Items by stage, moved from one stage to the next (a sales funnel, a production pipeline) | `BoardView`: one column per stage, `onMove` to move tiles |
 | Numbers over a period | `Section kind="bar"` with `PeriodPicker`, `StatRow`, `Section kind="chart"` with `Chart`, `Section kind="data"` with `ChartTable`, top to bottom, full width |
 | One record as the page | `DocumentPage` (see [SDK](sdk.md#first-party-record-components)). Pick its `width` for the page: `standard` (the default) is a centred 900 px reading column for a page read as text, `wide` (1200 px) or `full` for a record that is a working surface such as a wide table or board |
 | A form or settings page | `Section kind="form"`, `Button`, `NativeSelect`, `SegmentedControl`, `Notice`, `EmptyState` |

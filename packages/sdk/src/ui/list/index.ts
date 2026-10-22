@@ -10,7 +10,7 @@ export {
 export type { RowLabel, RowOwner, RowProps, StatusGroup, Tone } from './Row';
 export { IDLE_ROW_STATE, RowIdContext, RowStateContext, useRowState } from './rowState';
 export type { RowState, RowStateSource } from './rowState';
-export { ROW_ID_ATTRIBUTE, ROW_INTERACTIVE_SELECTOR, findRow, gridColumns, useListKeys } from './useListKeys';
+export { ROW_ID_ATTRIBUTE, ROW_INTERACTIVE_SELECTOR, boardStep, findRow, gridColumns, useListKeys } from './useListKeys';
 export type { RowDomProps, UseListKeysOptions } from './useListKeys';
 export { EMPTY_SELECTION, rangeBetween, selectionReducer, useSelection } from './useSelection';
 export type { Selection, SelectionAction, SelectionState, UseSelectionOptions } from './useSelection';
