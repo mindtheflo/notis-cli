@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { changeBoxes } from './review.ts';
+import { changeBoxes } from './review';
 
 function canvas(width: number, height: number): Uint8ClampedArray {
   return new Uint8ClampedArray(width * height * 4).fill(255);
