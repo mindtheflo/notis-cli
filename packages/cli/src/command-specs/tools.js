@@ -26,6 +26,23 @@ import {
   validateArguments,
 } from './helpers.js';
 
+// The backend's META_BRIDGE_TOOL_NAMES are router helpers, not batch targets.
+const ROUTER_HELPERS = new Set([
+  COMPOSIO_SEARCH_TOOLS,
+  COMPOSIO_GET_TOOL_SCHEMAS,
+  COMPOSIO_MULTI_EXECUTE_TOOL,
+  'COMPOSIO_MANAGE_CONNECTIONS',
+  'COMPOSIO_WAIT_FOR_CONNECTIONS',
+  'COMPOSIO_REMOTE_WORKBENCH',
+  'COMPOSIO_REMOTE_BASH_TOOL',
+]);
+
+function executionRequest(toolName, arguments_) {
+  return ROUTER_HELPERS.has(toolName)
+    ? { toolName, arguments_ }
+    : { toolName: COMPOSIO_MULTI_EXECUTE_TOOL, arguments_: { tools: [{ tool_slug: toolName, arguments: arguments_ }] } };
+}
+
 export async function resolveJsonInput(value, label) {
   if (!value) return undefined;
 
@@ -464,10 +481,7 @@ async function toolsExecHandler(ctx) {
 
   const result = await runToolCommand({
     runtime: ctx.runtime,
-    toolName: COMPOSIO_MULTI_EXECUTE_TOOL,
-    arguments_: {
-      tools: [{ tool_slug: requestedToolName, arguments: args }],
-    },
+    ...executionRequest(requestedToolName, args),
     // The server is authoritative about provider/MCP effects. A tool name that
     // looks like a read is not proof of read-only behavior, so generic
     // executions always carry a key and use mutation-safe transport retries.
@@ -558,8 +572,7 @@ async function confirmAndApply(ctx, { requestedToolName, args, preview, result, 
   ctx.output.emitProgress({ phase: 'execute', message: `Applying ${requestedToolName}` });
   const applied = await runToolCommand({
     runtime: ctx.runtime,
-    toolName: COMPOSIO_MULTI_EXECUTE_TOOL,
-    arguments_: { tools: [{ tool_slug: requestedToolName, arguments: decision.arguments }] },
+    ...executionRequest(requestedToolName, decision.arguments),
     mutating: true,
     idempotencyKey: confirmKey,
     fileBindings,
@@ -594,10 +607,7 @@ async function toolsExecParallelHandler(ctx) {
     calls.map((call) =>
       runToolCommand({
         runtime: ctx.runtime,
-        toolName: COMPOSIO_MULTI_EXECUTE_TOOL,
-        arguments_: {
-          tools: [{ tool_slug: localNotisToolSlug(call.tool_name), arguments: call.arguments || {} }],
-        },
+        ...executionRequest(localNotisToolSlug(call.tool_name), call.arguments || {}),
         mutating: true,
         idempotencyKey: nextIdempotencyKey(ctx.globalOptions),
       })
