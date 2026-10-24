@@ -159,6 +159,10 @@ possible:
    source revision and the deployment lock. A familiar name is not identity.
 2. Pull editable source with `notis spaces pull`. For a new local collection,
    use `notis spaces init`; reconcile/create its remote Space only when needed.
+   Set `icon` in `space.config.ts` to a Phosphor icon that fits what the Space is
+   about (`phosphor:<kebab-name>`, for example `phosphor:calendar-check`) or an
+   https image URL. New Spaces start with an empty icon and deploy or preview
+   refuses until it is set.
 3. Declare each view ([View authoring](references/views.md)) and write it on the
    pieces ([Design](references/design.md)).
 4. Build and verify the selected frozen source with fictional fixtures for every

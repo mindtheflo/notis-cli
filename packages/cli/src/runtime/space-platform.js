@@ -8,10 +8,19 @@ import { viewManifestFields } from './space-view-manifest.js';
 import { usageError } from './errors.js';
 import { assertSourceRoot } from './source-root.js';
 
+const SPACE_ICON = /^(phosphor:[a-z0-9]+(-[a-z0-9]+)*|https:\/\/\S{1,2000})$/;
+
+/** Publication requires a chosen icon: the manifest carries an empty one until the agent sets it. */
+export function requireSpaceIcon(manifest, key) {
+  if (typeof manifest?.icon === 'string' && SPACE_ICON.test(manifest.icon.trim())) return;
+  throw usageError(`Set icon in the ${key} Space's space.config.ts before deploying: a Phosphor icon that fits what the Space is about, `
+    + "written 'phosphor:<kebab-name>' (for example 'phosphor:calendar-check'), or an https image URL. Nothing was published.");
+}
+
 export function generateSpaceManifest(selection) {
   const definition = selection.definition;
   return { schema: 'notis-space/v1', kind: selection.entry ? 'presentation' : 'container', local_key: selection.key,
-    name: definition.name, description: definition.description || '', icon: definition.icon || null, accent: definition.accent || null,
+    name: definition.name, description: definition.description || '', icon: definition.icon || '', accent: definition.accent || null,
     resources: definition.resources || {}, actions: definition.actions || {},
     ...(definition.navigation ? { navigation: definition.navigation } : {}),
     // Absent when none, so manifests without viewer reads stay byte-identical.

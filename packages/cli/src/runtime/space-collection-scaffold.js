@@ -15,7 +15,8 @@ export async function scaffoldSpaceCollection({ projectDir, name, databaseKey, p
   mkdirSync(join(projectDir, 'spaces', 'collection'), { recursive: true });
   writeFileSync(join(projectDir, 'notis.config.ts'), `import { defineSpaces } from '@notis/sdk/config';
 export default defineSpaces({ spaces: { collection: { definition: 'spaces/collection/space.config.ts' } } });\n`);
-  const definition = { specVersion: 2, name, description: `Browse and edit ${name} records.`, path, entry: './view.tsx', layout: '../../app/layout.tsx',
+  // icon stays empty until the agent picks one (phosphor:<kebab-name>): deploy refuses an empty icon.
+  const definition = { specVersion: 2, name, description: `Browse and edit ${name} records.`, icon: '', path, entry: './view.tsx', layout: '../../app/layout.tsx',
     readableContext: `Browse ${name} records. The item parameter opens one record with its properties, collaborative body and sharing controls.`,
     verificationFixtures: './verification.json',
     resources: { [databaseKey]: { kind: 'database', key: databaseKey } },

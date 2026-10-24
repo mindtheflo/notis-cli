@@ -112,7 +112,7 @@ async function sourceFixture(t) {
   symlinkSync(join(repo, 'packages/sdk/node_modules/typescript'), join(root, 'node_modules/typescript'), 'dir');
   writeFileSync(join(root, 'package.json'), '{"name":"source-fixture","type":"module"}');
   writeFileSync(join(root, 'notis.config.ts'), "export default {spaces:{one:{definition:'one.ts'}}};");
-  writeFileSync(join(root, 'one.ts'), "export default {name:'One'};");
+  writeFileSync(join(root, 'one.ts'), "export default {name:'One',icon:'phosphor:cube'};");
   await buildSpaceArtifact(root, 'one', { stdio: 'pipe', refreshSdk: false });
   return root;
 }
@@ -140,7 +140,7 @@ test('interrupted source deployment keeps the original verification CAS and exac
     assert.equal(call.headers['X-Notis-Spaces-Protocol'], '2');
   }
   const before = calls.length;
-  writeFileSync(join(root, 'one.ts'), "export default {name:'New intent'};");
+  writeFileSync(join(root, 'one.ts'), "export default {name:'New intent',icon:'phosphor:cube'};");
   await buildSpaceArtifact(root, 'one', { stdio: 'pipe', refreshSdk: false });
   await assert.rejects(ctx.spec.handler(ctx), /different source/);
   assert.equal(calls.length, before);
@@ -453,4 +453,16 @@ test('store publish forwards only the request and shows server refusals for find
     assert.equal(call.url, 'https://fixture.invalid/portal_spaces/store-publish');
     assert.deepEqual(call.body, { space_id: 'root-space', channel: 'team', request_id: 'publish-1', dry_run: false });
   }
+});
+
+test('deploy and preview refuse a Space whose icon is still empty, before any request', async t => {
+  const root = await sourceFixture(t), calls = [];
+  writeFileSync(join(root, 'one.ts'), "export default {name:'One',icon:''};");
+  await buildSpaceArtifact(root, 'one', { stdio: 'pipe', refreshSdk: false });
+  t.mock.method(globalThis, 'fetch', async url => { calls.push(url); return new Response('{}'); });
+  for (const name of ['spaces deploy', 'spaces preview']) {
+    const ctx = context(name, { space: 'one', spaceId: 'fixture-space', requestId: 'no-icon' }, { dir: root });
+    await assert.rejects(ctx.spec.handler(ctx), /Set icon in the one Space's space\.config\.ts/);
+  }
+  assert.deepEqual(calls, []);
 });

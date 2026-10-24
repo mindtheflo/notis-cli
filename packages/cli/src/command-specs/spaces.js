@@ -1,6 +1,6 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
 import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
-import { buildSpaceArtifact, prepareSpaceRelease } from '../runtime/space-platform.js';
+import { buildSpaceArtifact, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
 import { refreshSpaceAuthoring } from '../runtime/space-database-structures.js';
@@ -130,6 +130,7 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
   const intentKey = publish ? requestId(ctx) : null;
   const release = await prepareSpaceRelease(directory, key);
   try {
+    if (publish) requireSpaceIcon(release.manifest, key);
     const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, ctx.options.spaceId, intentKey];
     let verification = publish && !ctx.options.dryRun ? spacePublicationIntent(directory, identity) : null;
     const local = intentChanges(directory, ctx.options.spaceId, release.manifest,

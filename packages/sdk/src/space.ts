@@ -232,6 +232,7 @@ export interface SpaceDefinition {
   /** Source-relative module whose default export `(input: SpaceMarkdownInput) => string` renders this view as Markdown. */
   markdown?: string;
   description?: string;
+  /** Required to deploy or preview: `phosphor:<kebab-name>` (for example `phosphor:calendar-check`) or an https image URL. */
   icon?: string;
   accent?: string;
   /** No entry means a container; it needs no dummy JavaScript artifact. */

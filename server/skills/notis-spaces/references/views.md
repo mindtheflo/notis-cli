@@ -44,6 +44,7 @@ import { defineSpace } from '@notis/sdk/config';
 export default defineSpace({
   specVersion: 2,
   name: 'Notes',
+  icon: 'phosphor:notebook',
   path: 'notes',
   description: 'Browse notes and open one with its files.',
   readableContext: 'The note parameter opens one note. The list shows all notes available through this Space.',
