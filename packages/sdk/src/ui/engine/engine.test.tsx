@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { ESCAPE_PRIORITY, KeyboardEngineCore, SEQUENCE_TIMEOUT_MS } from './core';
+import { defaultStrict, ESCAPE_PRIORITY, KeyboardEngineCore, SEQUENCE_TIMEOUT_MS } from './core';
 import { HelpSheet } from './HelpSheet';
 import { useEscapeBlocker, useEscapeLayer, useShortcut, useToolkitLocale } from './hooks';
 import { KeyboardEngine, ShortcutScope } from './KeyboardEngine';
@@ -319,6 +319,23 @@ test('production mode drops a clashing def and logs once; strict throws', () => 
   core.configure({ strict: true });
   assert.throws(() => core.register(def('b', 'e', 'collection', () => {}), 'tickets'), /NotisKeyClash/);
   detach();
+});
+
+test('a production build is not strict, so a reserved key drops instead of blanking the view', () => {
+  const previous = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    assert.equal(defaultStrict(), false);
+    const logs: string[] = [];
+    const core = new KeyboardEngineCore({ platform: 'mac', locale: 'en', onClash: (message) => logs.push(message) });
+    core.defineOwner('catalogue');
+    assert.equal(core.register(def('review.comment', 'c', 'route', () => {}), 'catalogue'), null);
+    assert.equal(logs.length, 1);
+    process.env.NODE_ENV = 'development';
+    assert.equal(defaultStrict(), true);
+  } finally {
+    process.env.NODE_ENV = previous;
+  }
 });
 
 // ---- React ----

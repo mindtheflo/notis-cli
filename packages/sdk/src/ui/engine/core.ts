@@ -46,9 +46,15 @@ export function detectLocale(): Locale {
   return /^fr\b/i.test(lang) ? 'fr' : 'en';
 }
 
-function defaultStrict(): boolean {
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
-  return env?.NODE_ENV !== 'production';
+// Bundlers replace only the literal `process.env.NODE_ENV`, so a production
+// build drops a clashing shortcut instead of throwing and blanking the view.
+// Where nothing replaces it and no `process` exists, stay strict.
+export function defaultStrict(): boolean {
+  try {
+    return process.env.NODE_ENV !== 'production';
+  } catch {
+    return true;
+  }
 }
 
 function consume(event: KeyboardEvent, immediate = false): void {
