@@ -7,6 +7,8 @@ export const ACTION_TOAST_MS = 6000;
 
 export const ACTION_WORDS = Object.freeze({
   failed: w('That did not work. Try again.', 'Ça n’a pas marché. Réessaie.'),
+  resultUnknown: w('We could not confirm the result. Check before trying again.',
+    'Impossible de confirmer le résultat. Vérifie avant de réessayer.'),
   undone: w('Undone.', 'Annulé.'),
   undoing: w('Undoing…', 'Annulation…'),
   undoFailed: w('Could not undo that.', 'Impossible d’annuler.'),

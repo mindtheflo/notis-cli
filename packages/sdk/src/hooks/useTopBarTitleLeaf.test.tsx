@@ -76,6 +76,27 @@ test('a way back reaches the top bar and always calls the newest handler', async
   assert.equal(sent.at(-1), null);
 });
 
+test('the record key the leaf shows reaches the host, trimmed, and a new key is sent again', async () => {
+  const sent: Array<{ label: string; recordKey?: string } | null> = [];
+  const runtime = runtimeWith((leaf) => { sent.push(leaf); });
+  function Deck({ label, recordKey }: { label: string; recordKey?: string | null }) {
+    useTopBarTitleLeaf(label, undefined, { recordKey }); return null;
+  }
+  document.body.innerHTML = '<div id="app"></div>';
+  const root = createRoot(document.getElementById('app')!);
+  const render = (recordKey?: string | null) => root.render(<NotisProvider runtime={runtime}><Deck label="Deck" recordKey={recordKey} /></NotisProvider>);
+  await act(async () => { render(' d1 '); });
+  assert.deepEqual(sent, [{ label: 'Deck', recordKey: 'd1' }]);
+  await act(async () => { render('d1'); });
+  assert.equal(sent.length, 1, 'the same key is not sent again');
+  await act(async () => { render('d2'); });
+  assert.deepEqual(sent.at(-1), { label: 'Deck', recordKey: 'd2' });
+  await act(async () => { render('  '); });
+  assert.deepEqual(sent.at(-1), { label: 'Deck' }, 'a blank key sends the leaf alone');
+  await act(async () => { root.unmount(); });
+  assert.equal(sent.at(-1), null);
+});
+
 test('without a host that takes a leaf, the hook does nothing', async () => {
   document.body.innerHTML = '<div id="app"></div>';
   const root = createRoot(document.getElementById('app')!);

@@ -197,7 +197,7 @@ function readJsonFile(path) {
   }
 }
 
-function findUp(filename, startDir = process.cwd()) {
+function findUp(filename, startDir = process.cwd(), boundary = null) {
   let current = resolve(startDir);
   const root = parse(current).root;
   while (true) {
@@ -205,7 +205,7 @@ function findUp(filename, startDir = process.cwd()) {
     if (existsSync(candidate)) {
       return candidate;
     }
-    if (current === root) {
+    if (current === root || current === boundary) {
       return null;
     }
     current = dirname(current);
@@ -234,8 +234,11 @@ export function resolveWorktreeRuntime(startDir = process.cwd()) {
   ) {
     return null;
   }
-  const runtimePath = findUp(WORKTREE_RUNTIME_FILENAME, startDir);
   const routingPath = findUp(WORKTREE_ROUTING_FILENAME, startDir);
+  // A nested worktree's persistent policy survives its lease. Never cross that
+  // boundary and borrow a still-running ancestor worktree's credential/route.
+  const boundary = routingPath ? dirname(dirname(routingPath)) : null;
+  const runtimePath = findUp(WORKTREE_RUNTIME_FILENAME, startDir, boundary);
   const routing = routingPath ? readJsonFile(routingPath) : null;
 
   if (!runtimePath) {

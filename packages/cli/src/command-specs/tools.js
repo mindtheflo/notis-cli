@@ -306,18 +306,19 @@ function ensureLongRunningToolTimeout(ctx, toolNames) {
 }
 
 async function toolsToolkitsHandler(ctx) {
-  const toolkits = await fetchToolkits(ctx.runtime);
+  const { toolkits, coverage, warnings } = await fetchToolkits(ctx.runtime);
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
-    data: { toolkits },
-    humanSummary: `Found ${toolkits.length} toolkits`,
+    data: { toolkits, coverage },
+    warnings,
+    humanSummary: `Found ${toolkits.length} toolkits${coverage.complete ? '' : ' (incomplete inventory)'}`,
     hints: [
       { command: 'notis tools search <query>', reason: 'Search canonical tools and schemas' },
     ],
     renderHuman: () =>
       toolkits
         .map((entry) => {
-          const status = entry.has_active_connection ? 'connected' : 'needs auth';
+          const status = entry.availability === 'not_probed' ? 'configured' : entry.has_active_connection ? 'connected' : 'needs auth';
           return `${entry.id}  ${status}  ${entry.description}`;
         })
         .join('\n'),
@@ -677,11 +678,11 @@ export const toolsCommandSpecs = [
     when_to_use: 'Use this to inspect connection state before searching or executing generic tools.',
     args_schema: { arguments: [], options: [] },
     examples: ['notis tools toolkits', 'notis tools toolkits --json'],
-    output_schema: 'Returns toolkit_connection_statuses from COMPOSIO_SEARCH_TOOLS, rendered as toolkit rows.',
+    output_schema: 'Returns deterministic toolkit namespaces, connection statuses and explicit completeness coverage.',
     mutates: false,
     idempotent: true,
     related_commands: ['notis tools search <query>', 'notis tools describe <tool-name>'],
-    backend_call: { type: 'tool', name: COMPOSIO_SEARCH_TOOLS },
+    backend_call: { type: 'toolkit_inventory', method: 'POST', path: '/cli_tools' },
     handler: toolsToolkitsHandler,
   },
   {

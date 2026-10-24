@@ -45,6 +45,19 @@ export interface ReviewStatus {
   states?: Record<string, StateStatus>;
 }
 
+/**
+ * The specimen statuses the changes-only view hides, because nothing differs on screen: unchanged ones, and code
+ * changes whose shots match the base pixel for pixel. `code` stays, as its shots are not taken yet.
+ */
+export const LOOKS_UNCHANGED: ReadonlySet<SpecimenStatus> = new Set<SpecimenStatus>(['unchanged', 'same']);
+
+/** The states of a shown specimen that the changes-only view hides: those whose shots match the base. */
+export function quietStates(entry: ReviewStatus | undefined, stateIds: string[]): string[] {
+  if (!entry || entry.status === 'new' || entry.status === 'code' || !entry.states) return [];
+  if (Object.keys(entry.states).length === 0) return [];
+  return stateIds.filter((id) => !entry.states?.[id]);
+}
+
 export interface ShotUrls {
   head: string | null;
   base: string | null;
@@ -324,6 +337,38 @@ export function changeBoxes(head: Uint8ClampedArray, base: Uint8ClampedArray, wi
 
 // The review layer ---------------------------------------------------------------------------------------------
 
+const SVG = 'http://www.w3.org/2000/svg';
+let shadeCount = 0;
+
+/** A layer that dims its stage except where `layoutShade` cuts holes, one per circled change. */
+function shadeLayer(): SVGSVGElement {
+  shadeCount += 1;
+  const id = `ds-shade-${shadeCount}`;
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('class', 'ds-shade');
+  const mask = document.createElementNS(SVG, 'mask');
+  mask.id = id;
+  const rect = document.createElementNS(SVG, 'rect');
+  rect.setAttribute('class', 'ds-shade-fill');
+  rect.setAttribute('mask', `url(#${id})`);
+  svg.append(mask, rect);
+  return svg;
+}
+
+function layoutShade(svg: SVGSVGElement, width: number, height: number, holes: Array<{ x: number; y: number; width: number; height: number }>): void {
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  const mask = svg.querySelector('mask');
+  const fill = svg.querySelector('.ds-shade-fill');
+  if (!mask || !fill) return;
+  const rect = (x: number, y: number, w: number, h: number, color: string, radius = 0) => {
+    const item = document.createElementNS(SVG, 'rect');
+    for (const [name, value] of Object.entries({ x, y, width: w, height: h, fill: color, rx: radius })) item.setAttribute(name, String(value));
+    return item;
+  };
+  mask.replaceChildren(rect(0, 0, width, height, 'white'), ...holes.map((hole) => rect(hole.x, hole.y, hole.width, hole.height, 'black', 12)));
+  for (const [name, value] of Object.entries({ x: 0, y: 0, width, height })) fill.setAttribute(name, String(value));
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -409,6 +454,7 @@ interface Marks {
   stage: HTMLElement;
   layer: HTMLElement;
   label: HTMLElement;
+  shade: SVGSVGElement | null;
   boxes: ChangeBox[];
   width: number;
   token: number;
@@ -616,7 +662,7 @@ class Review {
     const label = el('span', 'ds-marks-label');
     stage.append(layer);
     head.querySelector('.ds-state-actions')?.before(label);
-    const marks: Marks = { specimen, state, stage, layer, label, boxes: [], width: 0, token: 0 };
+    const marks: Marks = { specimen, state, stage, layer, label, shade: null, boxes: [], width: 0, token: 0 };
     this.marks.set(key, marks);
     this.resizeObserver.observe(stage);
     this.onCleanup(() => {
@@ -632,6 +678,7 @@ class Review {
     marks.token += 1;
     const token = marks.token;
     marks.boxes = [];
+    marks.shade = null;
     marks.layer.replaceChildren();
     const shot = this.shot(marks.specimen, marks.state);
     if (!shot?.head || !shot.base) {
@@ -651,6 +698,11 @@ class Review {
       marks.width = result.width;
       const count = result.boxes.length;
       marks.label.textContent = count === 0 ? 'No visible change at this setting' : count === 1 ? '1 change circled' : `${count} changes circled`;
+      // Everything outside the circles is dimmed, so the eye lands on what changed.
+      if (count > 0) {
+        marks.shade = shadeLayer();
+        marks.layer.append(marks.shade);
+      }
       result.boxes.forEach((_, index) => {
         const mark = el('div', 'ds-mark');
         mark.append(el('span', 'ds-mark-number', String(index + 1)));
@@ -675,9 +727,9 @@ class Review {
       if (!marks.width) continue;
       const scale = this.book.stageScale(marks.specimen, marks.state);
       const pad = 6;
-      Array.from(marks.layer.children).forEach((child, index) => {
+      const holes: Array<{ x: number; y: number; width: number; height: number }> = [];
+      Array.from(marks.layer.querySelectorAll<HTMLElement>(':scope > .ds-mark')).forEach((mark, index) => {
         const box = marks.boxes[index];
-        const mark = child as HTMLElement;
         if (!box) return;
         // The stage clips its content, so a circle at an edge is pulled inside it rather than cut.
         const room = { width: marks.stage.clientWidth, height: marks.stage.clientHeight };
@@ -693,9 +745,12 @@ class Review {
           width: `${width}px`,
           height: `${height}px`,
         });
-        // The number sits on the circle's top edge, so it never hides the changed part; on its bottom edge when the top would be cut.
-        mark.dataset.side = y >= 10 ? 'top' : 'bottom';
+        // The number sits on the circle's top edge, so it never hides the changed part; on its bottom edge when the top would be cut,
+        // and inside the top corner when the circle fills the stage and both edges would be cut.
+        mark.dataset.side = y >= 10 ? 'top' : room.height - (y + height) >= 10 ? 'bottom' : 'inside';
+        holes.push({ x, y, width, height });
       });
+      if (marks.shade) layoutShade(marks.shade, marks.stage.clientWidth, marks.stage.clientHeight, holes);
     }
   }
 
@@ -847,13 +902,19 @@ class Review {
     const statuses = this.statuses();
     if (!this.data.changed_only || Object.keys(statuses).length === 0) return;
     const { manifest } = this.book;
+    let anyShown = false;
     for (const group of manifest.groups) {
       const specimens = manifest.specimens.filter((specimen) => specimen.group === group.key);
       let shown = 0;
       for (const specimen of specimens) {
-        const status = statuses[specimen.id]?.status ?? 'unchanged';
-        if (status !== 'unchanged') {
+        const entry = statuses[specimen.id];
+        if (!LOOKS_UNCHANGED.has(entry?.status ?? 'unchanged')) {
           shown += 1;
+          const quiet = quietStates(entry, specimen.states.map((state) => state.id));
+          for (const state of quiet) {
+            const holder = this.book.stateElement(specimen.id, state);
+            if (holder) this.filter(holder);
+          }
           continue;
         }
         const article = this.book.specimenElement(specimen.id);
@@ -862,24 +923,35 @@ class Review {
         if (item) this.filter(item);
       }
       const section = document.getElementById(`group-${group.key}`);
-      if (section) {
-        for (const missing of section.querySelectorAll('.ds-missing')) this.filter(missing);
-        if (shown === 0) {
-          const note = el('p', 'ds-filtered-empty', 'Nothing changed in this group since the base.');
-          section.append(note);
-          this.onCleanup(() => note.remove());
-        }
-      }
+      if (section) for (const missing of section.querySelectorAll('.ds-missing')) this.filter(missing);
+      // A group where nothing looks different goes entirely, its heading and its index entry included.
+      if (shown === 0) this.filterSection(`group-${group.key}`, this.book.indexItem(`group-${group.key}`)?.parentElement ?? null);
+      else anyShown = true;
     }
-    this.filterRows('tokens', '.ds-token-row', 'No token changed since the base.');
-    this.filterRows('words', '.ds-words-row', 'No word changed since the base.');
-    this.filterRows('api', '.ds-api-row', 'No export changed since the base.');
+    if (this.filterRows('tokens', '.ds-token-row')) anyShown = true;
+    if (this.filterRows('words', '.ds-words-row')) anyShown = true;
+    // An export of the toolkit is code, not something to look at: the changes-only view leaves it out.
+    this.filterSection('api');
+    if (!anyShown) {
+      const overview = document.getElementById('overview');
+      const note = el('p', 'ds-filtered-empty', 'Nothing looks different since the base.');
+      overview?.append(note);
+      this.onCleanup(() => note.remove());
+    }
   }
 
-  /** Hides the unchanged rows of a section, and each block (a heading and its rows, or a words table) left empty. */
-  private filterRows(sectionId: string, rowSelector: string, empty: string): void {
+  /** Hides a whole section of the book and its index entry. */
+  private filterSection(id: string, indexEntry: Element | null = this.book.indexItem(id)): void {
+    for (const element of [document.getElementById(id), indexEntry]) if (element) this.filter(element);
+  }
+
+  /**
+   * Hides the unchanged rows of a section, and each block (a heading and its rows, or a words table) left empty; the
+   * whole section when nothing in it changed. Returns whether anything is left to see.
+   */
+  private filterRows(sectionId: string, rowSelector: string): boolean {
     const section = document.getElementById(sectionId);
-    if (!section) return;
+    if (!section) return false;
     const blocks: Element[][] = [];
     let current: Element[] = [];
     for (const child of Array.from(section.children)) {
@@ -906,11 +978,8 @@ class Review {
       if (changed.length === 0) for (const element of block) this.filter(element);
       else any = true;
     }
-    if (!any) {
-      const note = el('p', 'ds-filtered-empty', empty);
-      section.append(note);
-      this.onCleanup(() => note.remove());
-    }
+    if (!any) this.filterSection(sectionId);
+    return any;
   }
 
   // Removed ---------------------------------------------------------------------------------------------------

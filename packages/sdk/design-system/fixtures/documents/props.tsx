@@ -1,6 +1,6 @@
 /**
  * Props tables for the host-delegated components (DocumentEditor, DocumentPage, MarkdownEditor, RecordProperties,
- * HtmlFrame, ReportFrame, ShareControl). The Portal host draws the real thing, so the book shows the SDK fallback
+ * HtmlFrame, ReportFrame, ShareControl, SpacePageFrame). The Portal host draws the real thing, so the book shows the SDK fallback
  * and what a Space can pass. The rows follow the prop types in packages/sdk/src/runtime.ts (the API index has no
  * per-prop data); each table names the declaration it was read from. Inline styles only (fixtures are not scanned
  * by Tailwind); spacing, no rules or borders.
@@ -195,9 +195,26 @@ export const SHARE_CONTROL_PROPS: PropsSpec = {
   ],
 };
 
+export const SPACE_PAGE_FRAME_PROPS: PropsSpec = {
+  title: 'NotisSpacePageFrameProps',
+  source: `${RUNTIME}:275`,
+  rows: [
+    { name: 'href', type: 'string', required: true, doc: {
+      en: 'A Space page link: a path such as /slides/decks?deck=..., or the same link with the current Notis address. Any other link shows a card with Open page.',
+      fr: 'Le lien d’une page de Space\u202f: un chemin comme /slides/decks?deck=..., ou le même lien avec l’adresse Notis actuelle. Tout autre lien affiche une carte avec Ouvrir la page.',
+    } },
+    { name: 'title', type: 'string', doc: { en: 'The frame’s accessible title, also shown on the card.', fr: 'Le titre accessible du cadre, aussi affiché sur la carte.' } },
+    { name: 'interactive', type: 'boolean', doc: {
+      en: 'Off by default: clicks and keys stay with the view around the page (a deck keeps its arrows). On: the viewer uses the page in place.',
+      fr: 'Désactivé par défaut\u202f: les clics et les touches restent à la vue autour de la page (un diaporama garde ses flèches). Activé\u202f: on utilise la page sur place.',
+    } },
+    className,
+  ],
+};
+
 export const DOCUMENT_PAGE_PROPS: PropsSpec = {
   title: 'NotisDocumentPageProps',
-  source: `${RUNTIME}:307`,
+  source: `${RUNTIME}:326`,
   rows: [
     recordKey,
     { name: 'breadcrumb', type: '{ label; onSelect? }[] | false', doc: {
@@ -255,7 +272,7 @@ export const DOCUMENT_PAGE_PROPS: PropsSpec = {
 
 export const MARKDOWN_EDITOR_PROPS: PropsSpec = {
   title: 'NotisMarkdownEditorProps',
-  source: `${RUNTIME}:366`,
+  source: `${RUNTIME}:384`,
   rows: [
     { name: 'value', type: 'string', required: true, doc: { en: 'The Markdown to edit.', fr: 'Le Markdown à modifier dans l’éditeur.' } },
     { name: 'resourceKey', type: 'string', doc: {

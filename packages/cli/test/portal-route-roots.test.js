@@ -5,6 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildSync } from 'esbuild';
 import { validateViewPath } from '../src/runtime/space-view-manifest.js';
 
 test('every consumer uses the generated current Portal route ownership list', () => {
@@ -42,14 +43,22 @@ test('a hidden folder in the Portal app tree adds no route root', () => {
   }
 });
 
-test('the Portal Space view rewrite holds back exactly the listed first words', () => {
+test('the Portal Space view rewrite holds back exactly the listed first words', async () => {
   const read = (path) => readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), 'utf8');
-  const config = read('portal/next.config.ts');
-  assert.match(config, /^import portalRouteRoots from '\.\/src\/generated\/portalRouteRoots\.json';$/m);
-  const rewrite = config.match(/\{ source: `\/:viewPath\((.*)\)`, destination: '\/space-view' \}/);
-  assert.ok(rewrite, 'portal/next.config.ts has no Space view rewrite');
+  // Execute the real config, including its generated JSON and any shared source
+  // constants. A source-layout regex misses a rewrite refactored into a constant.
+  const compiled = buildSync({
+    entryPoints: [fileURLToPath(new URL('../../../portal/next.config.ts', import.meta.url))],
+    bundle: true, platform: 'node', format: 'esm', write: false,
+    define: { 'process.env.NOTIS_PORTAL_TARGET': '"portal"' },
+  });
+  const { default: config } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+  const rewrites = (await config.rewrites()).filter(rewrite => rewrite.destination === '/space-view');
+  assert.equal(rewrites.length, 1, 'portal/next.config.ts must have one Space view rewrite');
+  const rewrite = rewrites[0].source.match(/^\/:viewPath\((.*)\)$/);
+  assert.ok(rewrite, rewrites[0].source);
   const roots = JSON.parse(read('portal/src/generated/portalRouteRoots.json'));
-  const pattern = rewrite[1].replace("${portalRouteRoots.join('|')}", roots.join('|'));
+  const pattern = rewrite[1];
   assert.ok(!pattern.includes('${'), pattern);
   // Next compiles a rewrite source made of one named parameter with its own pattern with
   // path-to-regexp (strict and case-insensitive), then lets one trailing slash through

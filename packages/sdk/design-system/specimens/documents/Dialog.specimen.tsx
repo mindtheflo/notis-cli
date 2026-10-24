@@ -49,11 +49,11 @@ function DeleteSpace({ t }: { t: T }) {
         {t(COPY.deleteSpace)}
       </Button>
       <Readout label={t(COPY.lastChoice)}>{choice}</Readout>
-      <Dialog open={open} role="alertdialog" title={t(COPY.deleteTitle)} description={t(COPY.deleteBody)}
+      <Dialog open={open} role="alertdialog" nativeOnTouch title={t(COPY.deleteTitle)} description={t(COPY.deleteBody)}
         onClose={() => { setOpen(false); setChoice(t(COPY.closedByEscape)); }}>
         <div className={actions}>
-          <Button variant="ghost" onClick={() => { setOpen(false); setChoice(t(COPY.closedByEscape)); }}>{FIELD_WORDS.cancel}</Button>
-          <Button variant="danger" data-ds-confirm="" onClick={() => { setOpen(false); setChoice(t(COPY.deleted)); }}>
+          <Button variant="ghost" data-dialog-cancel="" onClick={() => { setOpen(false); setChoice(t(COPY.closedByEscape)); }}>{FIELD_WORDS.cancel}</Button>
+          <Button variant="danger" data-ds-confirm="" data-dialog-confirm="" onClick={() => { setOpen(false); setChoice(t(COPY.deleted)); }}>
             {t(COPY.deleteSpace)}
           </Button>
         </div>
@@ -155,7 +155,7 @@ export const specimen = defineSpecimen({
   group: 'documents',
   from: '@notis/sdk',
   covers: ['Dialog'],
-  summary: 'A native modal dialog in the top layer with a title and an optional description; the Space owns its actions.',
+  summary: 'A native modal dialog in the top layer with a title and an optional description; the Space owns its actions. With nativeOnTouch, phones and tablets confirm through the operating system dialog instead.',
   states: [
     {
       id: 'closed',

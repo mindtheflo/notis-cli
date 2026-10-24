@@ -291,6 +291,23 @@ test('Escape layers see dialogs inside a Space shadow root and let them close th
   detach();
 });
 
+test('Escape on an open Select list inside a dialog closes only the list, not the reader under it', () => {
+  const { core, detach } = setup();
+  const calls: string[] = [];
+  core.addEscapeLayer('detail', () => { calls.push('detail'); return true; }, ESCAPE_PRIORITY.detail);
+  // A modal Radix Select hides everything else, the dialog included, from assistive tech.
+  doc.body.innerHTML = '<div aria-hidden="true"><div role="dialog" data-state="open"></div></div>'
+    + '<div><div role="listbox" data-state="open"><div role="option" id="opt" tabindex="0">a</div></div></div>';
+  const event = press(doc.getElementById('opt')!, { key: 'Escape' });
+  assert.deepEqual(calls, [], 'the open list owns this Escape');
+  assert.equal(event.defaultPrevented, false);
+  // A list that is always on the page (the rows) never takes Escape from the reader.
+  doc.body.innerHTML = '<div role="listbox"><div role="option" id="row" tabindex="0">a</div></div>';
+  press(doc.getElementById('row')!, { key: 'Escape' });
+  assert.deepEqual(calls, ['detail']);
+  detach();
+});
+
 test('production mode drops a clashing def and logs once; strict throws', () => {
   const logs: string[] = [];
   const { core, detach } = setup({ strict: false, onClash: (message) => logs.push(message) });

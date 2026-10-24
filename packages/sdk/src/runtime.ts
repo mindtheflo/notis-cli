@@ -264,9 +264,40 @@ export interface NotisRecordPropertiesProps extends NotisRecordProps {
 export type NotisHtmlFrameProps = ({ recordKey: string; html?: never } | { html: string; recordKey?: never }) & {
   title?: string;
   className?: string;
+  /**
+   * Called once each time the frame's page has loaded and painted, or when the record cannot load, so a view
+   * (a slide deck) can wait for a frame before showing it.
+   */
+  onReady?: () => void;
+  /**
+   * Presentation mode: the pointer inside the page becomes a laser dot and the page stays clickable. The
+   * presenter's keys pressed inside the page (arrows, Page Up and Down, Space, Enter, Home, End, Escape), a plain
+   * click outside its links, buttons and fields, and a right click reach `onAction`; keys typed into the page's own
+   * fields stay there. The page itself can also send these actions, so treat them as navigation only.
+   */
+  presentation?: { onAction: (action: NotisHtmlFramePresentAction) => void };
 };
+/** What the presenter asked for inside a presented HtmlFrame. */
+export type NotisHtmlFramePresentAction = 'next' | 'previous' | 'first' | 'last' | 'stop';
 export interface NotisReportFrameProps extends NotisRecordProps {}
 export interface NotisShareControlProps extends NotisRecordProps {}
+
+/**
+ * Another Space page (a Space view or record page link on the current Notis origin) shown live inside this view.
+ * The host loads only links to a Space page of its own origin; any other link shows a card with an Open link.
+ */
+export interface NotisSpacePageFrameProps {
+  /** A Space page link: a path such as '/slides/decks?deck=...' or the same link with the current Notis origin. */
+  href: string;
+  /** Names the frame for assistive technology and the fallback card. */
+  title?: string;
+  className?: string;
+  /**
+   * False (the default) ignores clicks and keys inside the page, so the view around it (for example a slide
+   * deck) keeps its own navigation. True lets the viewer use the page in place.
+   */
+  interactive?: boolean;
+}
 
 /** One breadcrumb before the record title; the title is always the last crumb. */
 export interface NotisDocumentPageCrumb {
@@ -414,6 +445,7 @@ export interface NotisRuntimeUI {
   HtmlFrame?: ComponentType<NotisHtmlFrameProps>;
   ReportFrame?: ComponentType<NotisReportFrameProps>;
   ShareControl?: ComponentType<NotisShareControlProps>;
+  SpacePageFrame?: ComponentType<NotisSpacePageFrameProps>;
   /** Starts reading a record (and the page's code) before it opens, for example when a list row is hovered. */
   prefetchRecord?: (recordKey: string) => void;
 }
@@ -623,9 +655,10 @@ export interface NotisRuntime {
   setTopBarSearchLoading?: (loading: boolean) => void;
   /**
    * Set or clear the open record's crumb at the end of the top bar title. Use `useTopBarTitleLeaf()`. `onBack`
-   * closes the record: the crumb before the leaf calls it.
+   * closes the record: the crumb before the leaf calls it. `recordKey` names the Space collection record the leaf
+   * shows, so the host can offer to rename it there.
    */
-  setTopBarTitleLeaf?: (leaf: { label: string; onBack?: () => void } | null) => void;
+  setTopBarTitleLeaf?: (leaf: { label: string; onBack?: () => void; recordKey?: string } | null) => void;
 
   listTools(): Promise<ToolDescriptor[]>;
   callTool<TResult = unknown>(

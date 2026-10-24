@@ -25,30 +25,44 @@ export function createSpaceFixtureBroker({ release, capabilities, width, outputs
     async snapshot() { return structuredClone(value); },
     async read(request) {
       let result;
-      const log = { operation: request?.operation, ...(request?.action_id ? { actionId: request.action_id } : {}), ok: false };
+      const log = { operation: request?.operation, ...(request?.action_id ? { actionId: request.action_id } : {}),
+        ...(typeof request?.record_key === 'string' ? { recordKey: request.record_key } : {}), ok: false };
       calls.push(log);
-      if (calls.length > 256) throw usageError('The offline fixture read limit was reached.');
-      if (request?.operation === 'action' && exact(request, ['operation', 'action_id', 'inputs', 'request_id'])) {
-        if (frozen.descriptor.space.actions[request.action_id]?.readOnly !== true) throw usageError('Offline verification never runs write actions.');
-        result = engine.execute(request.action_id, request.inputs);
-      } else if (request?.operation === 'shown' && exact(request, ['operation', 'name', 'params', 'options'])) {
-        result = engine.executeShown(request.name, request.params, request.options);
-      } else if (request?.operation === 'viewer_read' && exact(request, ['operation', 'name', 'input'])) {
-        result = engine.executeViewerRead(request.name, request.input);
-      } else if (request?.operation === 'document_body' && exact(request, ['operation', 'record_key', 'binding', 'read_action'])) {
-        if (frozen.descriptor.space.actions[request.read_action]?.readOnly !== true) throw usageError('This document read action is unavailable.');
-        result = engine.executeBody({ operation: 'read', recordKey: request.record_key, binding: request.binding, readAction: request.read_action });
-      } else if (['record', 'html', 'report'].includes(request?.operation) && exact(request, ['operation', 'record_key'])) {
-        result = engine.executeRecordView(request.operation, request.record_key);
-      } else {
-        throw usageError('Only declared read-only synthetic fixtures are available.');
+      try {
+        result = readFixture(request);
+      } catch (error) {
+        // Keep the reason with the call so verify reports which read failed and what the fixture lacks.
+        log.error = String(error?.message || error).slice(0, 2000);
+        throw error;
       }
       log.ok = true;
       return result;
     },
     async finish() {
-      if (calls.some(value => !value.ok)) throw usageError('A synthetic fixture read failed.');
+      const failed = calls.find(value => !value.ok);
+      if (failed) throw usageError(failed.error ? `A synthetic fixture read failed: ${failed.error}` : 'A synthetic fixture read failed.');
       return { valid: true };
     },
   };
+
+  function readFixture(request) {
+    let result;
+    if (calls.length > 256) throw usageError('The offline fixture read limit was reached.');
+    if (request?.operation === 'action' && exact(request, ['operation', 'action_id', 'inputs', 'request_id'])) {
+      if (frozen.descriptor.space.actions[request.action_id]?.readOnly !== true) throw usageError('Offline verification never runs write actions.');
+      result = engine.execute(request.action_id, request.inputs);
+    } else if (request?.operation === 'shown' && exact(request, ['operation', 'name', 'params', 'options'])) {
+      result = engine.executeShown(request.name, request.params, request.options);
+    } else if (request?.operation === 'viewer_read' && exact(request, ['operation', 'name', 'input'])) {
+      result = engine.executeViewerRead(request.name, request.input);
+    } else if (request?.operation === 'document_body' && exact(request, ['operation', 'record_key', 'binding', 'read_action'])) {
+      if (frozen.descriptor.space.actions[request.read_action]?.readOnly !== true) throw usageError('This document read action is unavailable.');
+      result = engine.executeBody({ operation: 'read', recordKey: request.record_key, binding: request.binding, readAction: request.read_action });
+    } else if (['record', 'html', 'report'].includes(request?.operation) && exact(request, ['operation', 'record_key'])) {
+      result = engine.executeRecordView(request.operation, request.record_key);
+    } else {
+      throw usageError('Only declared read-only synthetic fixtures are available.');
+    }
+    return result;
+  }
 }

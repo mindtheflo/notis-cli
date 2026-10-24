@@ -1,15 +1,17 @@
 import type { ReactNode } from 'react';
 import { defineSpecimen, type SpecimenCopy } from '../../specimen';
-import { HtmlFrame, RecordProperties, ReportFrame, ShareControl } from '../../../src';
+import { HtmlFrame, RecordProperties, ReportFrame, ShareControl, SpacePageFrame } from '../../../src';
 import { fixtureRecords } from '../../fixtures';
 import { InLanguages } from '../../fixtures/documents/runtimes';
 import { Code, Example, Outline, Stack } from '../../fixtures/documents/layout';
 import {
-  HTML_FRAME_PROPS, PropsTables, RECORD_PROPERTIES_PROPS, REPORT_FRAME_PROPS, SHARE_CONTROL_PROPS,
+  HTML_FRAME_PROPS, PropsTables, RECORD_PROPERTIES_PROPS, REPORT_FRAME_PROPS, SHARE_CONTROL_PROPS, SPACE_PAGE_FRAME_PROPS,
 } from '../../fixtures/documents/props';
 
 const TASK_KEY = 'tasks:task-1';
 const REPORT_KEY = 'notes:note-weekly-report';
+/** A Space page link, as a deck's Page property holds it. */
+const SPACE_PAGE = '/product/roadmap?view=quarter';
 
 /** A small page a declared Site read action returns, for HtmlFrame's html prop. */
 const PRICING_HTML = '<main><h1>Pricing</h1><p>Team plan, 12 dollars per seat each month.</p></main>';
@@ -32,6 +34,7 @@ function AllFallbacks() {
       <Fallback code={'<HtmlFrame html={page} title="Pricing" />'}><HtmlFrame html={PRICING_HTML} title="Pricing" /></Fallback>
       <Fallback code={`<ReportFrame recordKey="${REPORT_KEY}" />`}><ReportFrame recordKey={REPORT_KEY} /></Fallback>
       <Fallback code={`<ShareControl recordKey="${TASK_KEY}" />`}><ShareControl recordKey={TASK_KEY} /></Fallback>
+      <Fallback code={`<SpacePageFrame href="${SPACE_PAGE}" title="Roadmap" />`}><SpacePageFrame href={SPACE_PAGE} title="Roadmap" /></Fallback>
     </Stack>
   );
 }
@@ -41,8 +44,8 @@ export const specimen = defineSpecimen({
   name: 'RecordProperties',
   group: 'documents',
   from: '@notis/sdk',
-  covers: ['RecordProperties', 'HtmlFrame', 'ReportFrame', 'ShareControl'],
-  summary: 'Host-drawn parts of one record a Space can place anywhere: its properties, an HTML or report frame, and Share.',
+  covers: ['RecordProperties', 'HtmlFrame', 'ReportFrame', 'ShareControl', 'SpacePageFrame'],
+  summary: 'Host-drawn parts a Space can place anywhere: a record’s properties, an HTML or report frame, Share, and another Space page shown live.',
   states: [
     {
       id: 'fallbacks',
@@ -84,7 +87,7 @@ export const specimen = defineSpecimen({
       id: 'props',
       label: 'Props a Space can pass (the host draws each part)',
       render: ({ lang }) => (
-        <PropsTables specs={[RECORD_PROPERTIES_PROPS, HTML_FRAME_PROPS, REPORT_FRAME_PROPS, SHARE_CONTROL_PROPS]} lang={lang} />
+        <PropsTables specs={[RECORD_PROPERTIES_PROPS, HTML_FRAME_PROPS, REPORT_FRAME_PROPS, SHARE_CONTROL_PROPS, SPACE_PAGE_FRAME_PROPS]} lang={lang} />
       ),
     },
   ],

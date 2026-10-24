@@ -435,6 +435,38 @@
     "any_allowed": false
   },
   {
+    "name": "CSS comment naming html and body is not a selector",
+    "path": "app/global.css",
+    "source": "/* html or body */\n.sl-kind-html { color: inherit; }\n.sl-page-body { color: inherit; }",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "CSS comment with selector-shaped text is not a selector",
+    "path": "app/global.css",
+    "source": ".a { color: inherit; }\n/* the html { rule\n   and body { reset */\n.b { color: inherit; }",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "CSS comment naming :root and portal attributes is not a selector",
+    "path": "app/global.css",
+    "source": "/* no :root, [data-notis-shell] or [data-sidebar] here */\n.a { color: inherit; }",
+    "boundary": false,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
+    "name": "CSS comment before a real body selector still fails",
+    "path": "app/global.css",
+    "source": "/* reset */\nbody { margin: 0; }",
+    "boundary": true,
+    "design_ids": [],
+    "any_allowed": false
+  },
+  {
     "name": "data cannot supply allow directive",
     "path": "app/page.tsx",
     "source": "const data=\"{\\\"note\\\": \\\"notis-design-allow: no-border-box old historical directive with reason\\\"}\";\nconst Page=()=> <div className=\"border\"/>;",

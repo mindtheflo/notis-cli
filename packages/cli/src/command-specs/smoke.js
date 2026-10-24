@@ -28,7 +28,7 @@ function discoveryNames(payload) {
   )];
 }
 
-function selectDropboxTools(payloads) {
+function selectDropboxTools(payloads, { allowIncomplete = false } = {}) {
   const names = [...new Set(payloads.flatMap(discoveryNames))];
   const find = (preferred, ...needles) => (
     names.find((name) => name.toUpperCase() === preferred)
@@ -47,7 +47,7 @@ function selectDropboxTools(payloads) {
     delete: find('DROPBOX_DELETE_FILE', 'DELETE', 'FILE'),
   };
   const missing = Object.entries(tools).filter(([, value]) => !value).map(([key]) => key);
-  if (missing.length) {
+  if (missing.length && !allowIncomplete) {
     throw usageError(`Dropbox smoke could not discover: ${missing.join(', ')}.`);
   }
   return tools;
@@ -93,13 +93,16 @@ async function executeDropboxTool(ctx, toolName, args, {
   phase,
 }) {
   ctx.output.emitProgress({ phase, message: `${phase} via ${toolName}` });
-  const baseIdempotencyKey = mutating ? nextIdempotencyKey(ctx.globalOptions) : null;
+  const baseIdempotencyKey = nextIdempotencyKey(ctx.globalOptions);
+  const phaseKey = `${baseIdempotencyKey}:${phase}`;
   const result = await runToolCommand({
     runtime: ctx.runtime,
     toolName: COMPOSIO_MULTI_EXECUTE_TOOL,
     arguments_: { tools: [{ tool_slug: toolName, arguments: args }] },
     mutating,
-    idempotencyKey: baseIdempotencyKey ? `${baseIdempotencyKey}:${phase}` : null,
+    idempotencyKey: phaseKey.length <= 160 ? phaseKey : createHash('sha256').update(phaseKey).digest('hex'),
+    // The batch wrapper is server-classified as unknown even for a read.
+    sendIdempotencyKeyWhenReading: true,
     fileBindings,
   });
   return result;
@@ -162,6 +165,15 @@ async function smokeFileUploadHandler(ctx) {
         'path, parent_rev',
       ),
     ];
+    // Broad semantic matches may omit an accessible reader. Resolve that
+    // missing capability once, before parity, file transfer or provider writes.
+    if (!selectDropboxTools(discoveries, { allowIncomplete: true }).read) {
+      discoveries.push(await fetchDiscoveryWithRetry(
+        ctx,
+        'Read a Dropbox file by its exact path and return its bytes or a temporary download URL',
+        'path',
+      ));
+    }
     tools = selectDropboxTools(discoveries);
     const uploadSchema = await fetchToolSchema(ctx.runtime, tools.upload);
     if (uploadSchema.parameters?.properties?.content?.file_uploadable !== true) {

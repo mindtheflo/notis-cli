@@ -11,6 +11,25 @@ import { spacesCommandSpecs } from '../src/command-specs/spaces.js';
 import { createSpaceFixtureEngine } from '../src/runtime/space-test-server.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+test('collection scaffold binds its records and actions to the supplied database link alias', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'notis-collection-alias-'));
+  try {
+    await scaffoldSpaceCollection({ projectDir: directory, name: 'Rows', databaseKey: 'rows' });
+    const manifest = generateSpaceManifest(await loadSelectedSpace(directory, 'collection'));
+    assert.deepEqual(manifest.resources, { rows: { kind: 'database', key: 'rows' } });
+    assert.equal(manifest.collection.database, 'rows');
+    assert.equal(manifest.params.item.database, 'rows');
+    assert.equal(manifest.shows.items.database, 'rows');
+    for (const action of Object.values(manifest.actions)) {
+      assert.deepEqual(action.arguments.database_id, { $asset: 'rows' });
+    }
+    const view = readFileSync(join(directory, 'spaces/collection/view.tsx'), 'utf8');
+    assert.match(view, /useShown<Item>\('items',/);
+    assert.match(view, /useNativeMutation\("rows", 'insert'\)/);
+    assert.match(view, /useNativeMutation\("rows", 'delete'\)/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('collection scaffold is buildable V4 source with a main record param, declared list and native layout', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'notis-collection-scaffold-'));
   try {
@@ -36,7 +55,7 @@ test('collection scaffold is buildable V4 source with a main record param, decla
     assert.equal(manifest.spec_version, 2);
     assert.equal(manifest.params.item.main, true);
     assert.equal(manifest.shows.items.open, 'item');
-    assert.equal(manifest.resources.items.key, 'notes');
+    assert.equal(manifest.resources.notes.key, 'notes');
     assert.equal(manifest.memory.attachments, true);
     // Create and trash go through the linked database's own declared actions, never an account-wide name.
     assert.deepEqual(Object.fromEntries(Object.entries(manifest.actions).map(([name, action]) => [name, action.tool])), {
@@ -58,6 +77,16 @@ test('collection scaffold is buildable V4 source with a main record param, decla
       assert.deepEqual(fixture.executeShown('items', {}).rows, []);
     } finally { release.close(); }
     await assert.rejects(scaffoldSpaceCollection({ projectDir: directory, name: 'Overwrite', databaseKey: 'notes' }), /empty|exists|configured/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('collection scaffold rejects an invalid database alias before writing source', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'notis-collection-invalid-alias-'));
+  try {
+    for (const databaseKey of ['Rows', 'two words', 'a'.repeat(101)]) {
+      await assert.rejects(scaffoldSpaceCollection({ projectDir: directory, name: 'Rows', databaseKey }), /linked database alias/);
+      assert.deepEqual(readdirSync(directory), []);
+    }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

@@ -103,9 +103,16 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
   }
   const definitionPath = localPath(reference.definition);
   const definition = await loadAppConfig(projectDir, { file: definitionPath });
-  if (!definition || typeof definition !== 'object' || Array.isArray(definition) || Object.keys(definition).some(name => !CONFIG_FIELDS.has(name))
-    || typeof definition.name !== 'string' || !definition.name.trim() || definition.name.length > 200) {
-    throw usageError('Use a named Space definition with explicit entry, resources and actions.');
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+    throw usageError('Export a Space definition object with defineSpace.');
+  }
+  const unsupported = Object.keys(definition).filter(name => !CONFIG_FIELDS.has(name)).sort();
+  if (unsupported.length) {
+    const hint = unsupported.includes('settings') ? ' Define URL-visible controls with params.' : '';
+    throw usageError(`Unsupported Space definition fields: ${unsupported.join(', ')}.${hint}`);
+  }
+  if (typeof definition.name !== 'string' || !definition.name.trim() || definition.name.length > 200) {
+    throw usageError('Give the Space a name of 1 to 200 characters.');
   }
   const resolveDefinitionPath = value => {
     if (typeof value !== 'string' || !value || value.startsWith('/') || value.includes('\\') || value.includes('\0')) throw usageError('Use a workspace-relative source path.');

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { verifySpaceRelease } from '../src/runtime/space-verification.js';
 import { createSpaceFixtureBroker } from '../src/runtime/space-fixture-broker.js';
+import { createSpaceFixtureEngine } from '../src/runtime/space-test-server.js';
 import * as renderer from '../../view-renderer/src/index.js';
 
 const b = value => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64');
@@ -128,4 +129,71 @@ test('hidden-chrome flex HtmlFrame captures its full content instead of a 900px 
     assert.ok(result.screenshot.height >= 1800, `Actual screenshot height ${result.screenshot.height}`);
     assert.match(result.markdown, /Frame tail proof/);
   } finally { await pool.close(); }
+});
+
+test('a list row HtmlFrame renders its HTML fixture in the live sandbox, sized by the Space className', async () => {
+  // A Slides-like view: each row's HTML file shows through HtmlFrame in a 16:9 box, with no record param.
+  // The fixture HTML reports what it sees from inside the frame: its origin, the viewer CSP and its own shape.
+  const probe = "<script>document.addEventListener('DOMContentLoaded',()=>{const csp=document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]');"
+    + "document.body.insertAdjacentHTML('beforeend','<p>origin '+String(window.origin)+'</p><p>csp '+(csp&&csp.content.includes(\"default-src 'none'\")?'present':'missing')+'</p><p>ratio '+Math.round(innerWidth/innerHeight*100)+'</p>')})</script>";
+  const release = fixture(`export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);return R.createElement('main',null,R.createElement(runtime.ui.HtmlFrame,{recordKey:'${record}',className:'slide-frame'}))}`);
+  release.manifest.bundle.css = 'bundle/app.css';
+  release.files['bundle/app.css'] = b('.slide-frame{width:100%;aspect-ratio:16/9}');
+  release.manifest.resources = { slides: { kind: 'database', key: 'slides' } };
+  release.fixturePath = 'fixtures.json';
+  release.sourceFiles['fixtures.json'] = b({ actions: {}, recordViews: [
+    { operation: 'html', record_key: record, result: { record_key: record, html: `<h1>Fictional slide</h1>${probe}`, title: 'Slide 1' } },
+  ] });
+  const capabilities = { actions: {}, bindings: { slides: { kind: 'database' } } };
+  const result = await verifySpaceRelease(release, { capabilities, loadRenderer });
+  assert.equal(result.status, 'passed', JSON.stringify(result));
+  assert.ok(result.runtimeCalls.length > 0 && result.runtimeCalls.every(value => value.operation === 'html'));
+  const pool = renderer.createBrowserPool();
+  try {
+    const broker = createSpaceFixtureBroker({ release, capabilities, width: 1440, outputs: ['markdown'] });
+    const { markdown } = await renderer.renderView({ broker, pool, width: 1440, outputs: ['markdown'] });
+    assert.match(markdown, /Fictional slide/);
+    assert.match(markdown, /origin null/); // allow-scripts without allow-same-origin, as live
+    assert.match(markdown, /csp present/); // the live viewer CSP is the first element of the srcdoc
+    const ratio = Number(/ratio (\d+)/.exec(markdown)?.[1]);
+    assert.ok(Math.abs(ratio - 178) <= 2, `The frame fills the 16:9 className box, not a fixed 900px frame (ratio ${ratio})`);
+  } finally { await pool.close(); }
+});
+
+test('an HtmlFrame reports ready in the preview once its page has loaded, so a view waiting on it is not left blank', async () => {
+  // A deck-like view keeps the slide hidden until onReady, as live.
+  const release = fixture(`export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);`
+    + `const [ready,setReady]=R.useState([]);const mark=k=>()=>setReady(v=>v.includes(k)?v:[...v,k]);`
+    + `return R.createElement('main',null,R.createElement('p',null,'ready '+(ready.slice().sort().join(',')||'none')),`
+    + `R.createElement(runtime.ui.HtmlFrame,{recordKey:'${record}',onReady:mark('slide'),presentation:{onAction:()=>{}}}))}`);
+  release.manifest.resources = { slides: { kind: 'database', key: 'slides' } };
+  release.fixturePath = 'fixtures.json';
+  release.sourceFiles['fixtures.json'] = b({ actions: {}, recordViews: [
+    { operation: 'html', record_key: record, result: { record_key: record, html: '<h1>Fictional slide</h1>', title: 'Slide 1' } },
+  ] });
+  const capabilities = { actions: {}, bindings: { slides: { kind: 'database' } } };
+  const pool = renderer.createBrowserPool();
+  try {
+    const broker = createSpaceFixtureBroker({ release, capabilities, width: 1440, outputs: ['markdown'] });
+    const { markdown } = await renderer.renderView({ broker, pool, width: 1440, outputs: ['markdown'] });
+    assert.match(markdown, /ready slide/);
+    assert.match(markdown, /Fictional slide/);
+  } finally { await pool.close(); }
+});
+
+test('record view fixtures need a declared native database resource, not a record param', () => {
+  const html = { operation: 'html', record_key: record, result: { record_key: record, html: '<h1>Fixture</h1>', title: 'Fixture' } };
+  const withFixtures = (resources, params, recordViews) => {
+    const release = fixture(); release.manifest.resources = resources; release.manifest.params = params;
+    release.fixturePath = 'fixtures.json'; release.sourceFiles['fixtures.json'] = b({ actions: {}, recordViews });
+    return release;
+  };
+  const engine = createSpaceFixtureEngine(withFixtures({ slides: { kind: 'database', key: 'slides' } }, {}, [html]));
+  assert.equal(engine.executeRecordView('html', record).html, '<h1>Fixture</h1>');
+  assert.throws(() => engine.executeRecordView('html', '22222222-2222-4222-8222-222222222222'), /recordViews|record view fixture/);
+  assert.throws(() => createSpaceFixtureEngine(withFixtures({}, {}, [html])), /declared native database resource/);
+  assert.throws(() => createSpaceFixtureEngine(withFixtures({ slides: { kind: 'database', key: 'slides' } },
+    { slide: { type: 'record', database: 'missing' } }, [html])), /declared native database resource/);
+  assert.throws(() => createSpaceFixtureEngine(withFixtures({ slides: { kind: 'database', key: 'slides' } }, {},
+    [{ ...html, result: { ...html.result, title: 3 } }])), /optional title/);
 });

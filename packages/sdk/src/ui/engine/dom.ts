@@ -168,9 +168,14 @@ export function modalLayerOf(element: Element | null): Element | null {
   return null;
 }
 
-/** Floating layers that handle Escape themselves (Radix, native dialogs). Toolkit layers mark `data-notis-escape-owned`. */
+/**
+ * Floating layers that handle Escape themselves (Radix, native dialogs). Toolkit layers mark `data-notis-escape-owned`.
+ * An open Radix Select list counts too: it hides the dialog under it from assistive tech, so without it the dialog
+ * would look closed and Escape would also close the reader.
+ */
 const FLOATING_LAYER = 'dialog[open], [role="dialog"]:not([data-state="closed"]), '
-  + '[role="alertdialog"]:not([data-state="closed"]), [role="menu"]:not([data-state="closed"])';
+  + '[role="alertdialog"]:not([data-state="closed"]), [role="menu"]:not([data-state="closed"]), '
+  + '[role="listbox"][data-state="open"]';
 
 export function foreignFloatingLayers(doc: Document, event?: Event): Element[] {
   return queryAllComposed(doc, FLOATING_LAYER, event)

@@ -194,6 +194,19 @@ test('skills list sends only the inventory filters and renders one line per Skil
   assert.equal(calls.length, 2);
 });
 
+test('skills list preserves continuation through an empty filtered page', async t => {
+  const page = { skills: [], has_more: true, next: 'raw-hidden-cursor' };
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(page)));
+  const ctx = context('skills list');
+  const result = await ctx.spec.handler(ctx);
+  assert.deepEqual(result.data, page);
+  assert.match(result.humanSummary, /More Skills: rerun with --after raw-hidden-cursor/);
+  page.has_more = false;
+  page.next = null;
+  const terminal = await ctx.spec.handler(ctx);
+  assert.equal(terminal.humanSummary, 'No Skills match.');
+});
+
 test('skills links posts one resource-owned link change with a stable key through the Spaces protocol', async t => {
   const calls = [];
   const outcome = { kind: 'skill', resource_id: 'shared', added: [{ space_id: 'to', alias: 'research', binding_id: 'b2' }],

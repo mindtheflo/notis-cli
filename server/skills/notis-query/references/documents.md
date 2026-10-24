@@ -22,6 +22,15 @@ access before acting. It is not permission to change a record or run a provider.
    shapes are not guessed. A stale revision requires a merge, not blind replacement.
    A relation value takes the related record's `record_key` or row ID; one you
    cannot resolve answers `invalid_relation_value` naming the property.
+   To create a record with its body, send `input.content_markdown` (at most
+   2,000,000 characters, never with `body`) on `LOCAL_NOTIS_DATABASE_INSERT`
+   with a direct Editor or standalone target: the record is created, then its
+   body is saved like an UPDATE body. `record_body_not_saved` or
+   `record_body_outcome_unknown` means the record exists; the error names its
+   `record_key` and `revision`. Repeat the exact call with the same request ID
+   (it replays the same record and resumes the body), or save the body with
+   `LOCAL_NOTIS_DATABASE_UPDATE`. Never insert again with a new ID. A declared
+   insert action takes no body: insert, then save through its update action.
 3. On an unknown outcome, recover the original receipt using the same intent.
    Do not repeat an insert with a new ID. Read back the same row afterward.
    `space_temporarily_unavailable` (503) is load, not a refusal: retry the same

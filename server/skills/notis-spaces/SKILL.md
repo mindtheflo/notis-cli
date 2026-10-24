@@ -3,8 +3,8 @@ name: notis-spaces
 description: Explain Notis Spaces, sharing, resource links and lifecycle; build or update their views and linked Skills, inspect a saved view with its current data, or choose whether text, a view, a Notes page or a Space answers a request.
 feature_flag: spaces
 mcp_resource: true
-mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW"]
-mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md", "references/store.md"]
+mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_SPACE_VERSIONS", "LOCAL_NOTIS_DOCUMENT_VERSIONS", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW"]
+mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/fixtures.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md", "references/store.md"]
 ---
 
 # Notis Spaces
@@ -72,6 +72,17 @@ version. Restore with `notis spaces history restore <space-id> --target-revision
 republishes views/settings only: records, Skills, links and credentials stay
 current. Reconcile a stale revision instead of overwriting intervening work.
 If your last action created the Space, archive it through the lifecycle tool.
+
+Agents use `LOCAL_NOTIS_SPACE_VERSIONS` (`list`, `read`, `diff`, `restore`, `name`,
+`delete`) and `LOCAL_NOTIS_DOCUMENT_VERSIONS` (`list`, `read`, `diff`, `restore`,
+`name`, `delete`, plus the documents Bin: `list_bin`, `restore_from_bin`,
+`remove_from_bin`). Compare with `diff` before restoring; it leads with the
+unified diff, and `path` narrows a Space comparison or read. Restoring is safe to
+do on your own: what it replaces is kept as a version. Name a version the user
+wants kept. `delete` and `remove_from_bin` are permanent: use them only when the
+user asked, and quote their words in `user_words`. The CLI equivalents are
+`notis spaces history read|diff|name|delete` and `notis documents versions` /
+`notis documents bin`; their permanent commands need `--yes`.
 
 ## Choose the workflow
 
@@ -196,6 +207,10 @@ you prepare it and only the submission page's Publish button publishes.
 
 Existing report rows render through `<ReportFrame>` in their database's view.
 Follow [Reports](references/reports.md) for saved pages and interactive reports.
+To show another Space page live inside a view (a slide whose Page property holds
+a Notis link), use `<SpacePageFrame href>` from [SDK](references/sdk.md): only a
+Space view of the same Notis origin is framed, view only, with the viewer's own
+access; any other link shows a card with Open page.
 
 [Context sharing](references/context.md) keeps selected text and annotations as
 unsent reference context. Page context, memory hits and source content are not

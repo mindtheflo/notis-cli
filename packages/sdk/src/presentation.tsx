@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useCallback, useLayoutEffect, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
+import React, { useCallback, useId, useLayoutEffect, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { NotisProvider } from './provider';
 import type { NotisRuntime } from './runtime';
+import { ShortcutScope } from './ui/engine/KeyboardEngine';
 
 type BoundaryProps = {
   children: ReactNode;
@@ -57,6 +58,9 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
   active?: boolean;
   onProtocolError?: (error: Error) => void;
 }) {
+  // A retained record and its parent can render the same source at once.
+  // Keyboard ownership belongs to this presentation, not to the source ID.
+  const shortcutOwner = `space:presentation:${useId()}`;
   const shortcutsAvailable = useCallback(() => {
     if (!active || !mount?.isConnected) return false;
     let element: HTMLElement | null = mount;
@@ -72,11 +76,13 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
   return <PresentationErrorBoundary resetKey={resetKey} fallback={fallback} onError={onError}>
     {mount && runtime && Component ? createPortal(<CommittedPresentation mount={mount} onCommit={onCommit}>
       {boundsCss ? <style data-notis-runtime-bounds>{boundsCss}</style> : null}
+      <ShortcutScope owner={shortcutOwner} kind="space" available={shortcutsAvailable()}>
       <NotisProvider runtime={runtime} onProtocolError={onProtocolError} shortcutsAvailable={shortcutsAvailable}>
         <div data-notis-app-root data-notis-theme={theme.mode} style={theme.style}>
           {Shell ? <Shell><Component /></Shell> : <Component />}
         </div>
       </NotisProvider>
+      </ShortcutScope>
     </CommittedPresentation>, mount) : null}
   </PresentationErrorBoundary>;
 }

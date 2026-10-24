@@ -213,6 +213,19 @@ test('row states: cursor, open and selected land on the row element; a lone Row 
   await act(async () => { lone.unmount(); });
 });
 
+test('row links: each row names the page it opens, for the desktop link menu; itemHref overrides, controlled lists opt in', async () => {
+  const href = (id: string) => q(`[data-nui-item="${id}"]`)!.getAttribute('data-notis-href');
+  await mount(list());
+  assert.equal(href('b'), '/space?open=b');
+  await mount(list({ itemHref: (ticket) => (ticket.id === 'c' ? null : `/tickets/${ticket.id}`) }));
+  assert.equal(href('a'), '/tickets/a');
+  assert.equal(href('c'), null);
+  await mount(list({ open: null, onOpenChange: () => {} }));
+  assert.equal(href('a'), null);
+  await mount(list({ openInUrl: false }));
+  assert.equal(href('a'), null);
+});
+
 // ---- selection ----
 
 test('selection keys: X toggles, Shift+J extends, Mod+A selects all, Esc clears', async () => {
@@ -322,6 +335,33 @@ test('focus follows the cursor when an action moves on: E on rows that stay, a r
   assert.equal(q('#reader')!.textContent, 'Ticket D');
   assert.equal(cursorId(), 'd');
   assert.ok(doc.activeElement?.classList.contains('nui-lr-reader'), 'focus stays in the reader');
+});
+
+test('filtering a Shadow list preserves focus in the host search field', async () => {
+  if (root) await act(async () => { root!.unmount(); root = null; });
+  doc.body.innerHTML = '<input id="host-search" /><div id="shadow"></div>';
+  const shadow = doc.getElementById('shadow')!.attachShadow({ mode: 'open' });
+  const mountNode = doc.createElement('div'); shadow.appendChild(mountNode);
+  root = createRoot(mountNode);
+  engine = new KeyboardEngineCore();
+  const api: { current: ListReaderApi | null } = { current: null };
+  const search = doc.getElementById('host-search')!;
+  const render = (items: Ticket[]) => act(async () => {
+    root!.render(<KeyboardEngine host="portal" locale="en" platform="mac" engine={engine} document={doc} strict>
+      {list({ items, apiRef: api, openInUrl: false })}
+    </KeyboardEngine>);
+  });
+  try {
+    await render([...TICKETS]);
+    await act(async () => { api.current!.focus('a'); api.current!.open('a'); search.focus(); });
+    await render(TICKETS.slice(1));
+    assert.equal(doc.activeElement, search, 'the first filtered-out row must not take typing focus from the host');
+    assert.equal(shadow.querySelector('.nui-row[data-cursor]')?.getAttribute('data-nui-item'), 'b');
+    await render(TICKETS.slice(2));
+    assert.equal(doc.activeElement, search, 'typing stays in search as further rows leave the list');
+  } finally {
+    await act(async () => { root!.unmount(); root = null; });
+  }
 });
 
 test('undo: an action that returns an UndoFn offers Undo, and Z undoes it', async () => {

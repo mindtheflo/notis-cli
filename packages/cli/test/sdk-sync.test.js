@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { buildArtifact, npmFailureReason, reconcileSdkLockfile, syncEmbeddedSdk, syncSpaceSdk } from '../src/runtime/app-platform.js';
 import { collectProjectBoundaryViolations, collectArtifactBoundaryViolations } from '../src/runtime/app-boundary-validator.js';
@@ -194,7 +195,7 @@ test('SDK refresh rejects a parent-directory swap before any outside write', () 
 // The 0.2.0 legacy copy of the chart data table before it moved into the Spaces toolkit.
 const LEGACY_RENDER_CHART_DATA = "'use client';\n\nimport type { ReactNode } from 'react';\n\n/** A chart's data, available to view Markdown without adding a second visible table.\n * Keep labels/values identical to the chart. The renderer recognizes this semantic\n * table inside Shadow DOM; snapshots never infer numbers from SVG geometry.\n */\nexport function RenderChartData({ title, columns, rows, children }: {\n  title: string;\n  columns: readonly string[];\n  rows: readonly (readonly (string | number | boolean | null)[])[];\n  children?: ReactNode;\n}) {\n  return <>{children}<table hidden data-notis-render=\"chart-data\" aria-label={title}>\n    <thead><tr>{columns.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>\n    <tbody>{rows.map((row, index) => <tr key={index}>{columns.map((_, column) => <td key={column}>{row[column] == null ? '' : String(row[column])}</td>)}</tr>)}</tbody>\n  </table></>;\n}\n";
 
-test('a legacy app refresh retires the moved chart table and vendors no Spaces toolkit', t => {
+test('a legacy app refresh retires the moved chart table and vendors exactly the legacy dependency closure', t => {
   const root = mkdtempSync(join(tmpdir(), 'notis-legacy-sdk-refresh-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const projectDir = join(root, 'app'); markSource(projectDir);
@@ -207,8 +208,20 @@ test('a legacy app refresh retires the moved chart table and vendors no Spaces t
   assert.ok(result.changed.includes('src/components/RenderChartData.tsx'));
   assert.deepEqual(result.foreign, []);
   assert.equal(existsSync(join(sdk, 'src/ui/charts/RenderChartData.tsx')), true);
-  for (const toolkit of ['src/ui/index.ts', 'src/ui/toolkit.css', 'src/words/index.ts']) {
+  for (const toolkit of ['src/ui/index.ts', 'src/ui/toolkit.css', 'src/ui/list/ListReader.tsx', 'src/ui/board/BoardView.tsx']) {
     assert.equal(existsSync(join(sdk, toolkit)), false, toolkit);
+  }
+  // Dialog's shared utility reaches the keyboard types and pure words. They
+  // belong to the legacy dependency closure without exposing the Spaces UI entry.
+  const files = (root, prefix = '') => readdirSync(join(root, prefix), { withFileTypes: true })
+    .flatMap(entry => entry.isDirectory() ? files(root, join(prefix, entry.name)) : [join(prefix, entry.name)])
+    .sort();
+  const templateSource = fileURLToPath(new URL('../dist/sdk/src/', import.meta.url));
+  const expected = files(templateSource);
+  assert.ok(expected.includes(join('words', 'index.ts')));
+  assert.deepEqual(files(join(sdk, 'src')), expected);
+  for (const file of expected) {
+    assert.equal(readFileSync(join(sdk, 'src', file), 'utf8'), readFileSync(join(templateSource, file), 'utf8'), file);
   }
   assert.deepEqual(collectProjectBoundaryViolations(projectDir), []);
 });

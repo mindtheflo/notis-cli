@@ -11,7 +11,7 @@ export { NotisProvider, useNotisRuntime } from './provider';
 
 // Hooks
 export { useAction, useActionQuery } from './hooks/useAction';
-export { useNativeDocuments, useNativeMutation } from './hooks/useNativeDocuments';
+export { useNativeDocuments, useNativeMutation, useNativeDelete, type NativeDeleteManyResult } from './hooks/useNativeDocuments';
 export type { NativeField, NativeFilter, NativeQuery, NativeInsert, NativeUpdate, NativeDelete, NativeMutationReceipt } from './nativeData';
 export type { SpaceDatabaseCreate, SpaceResourceReference } from './space';
 export type { SpaceActionTemplate, SpaceActionDescriptor, SpaceRuntimeDescriptor, SpaceActionOptions } from './space';
@@ -35,7 +35,7 @@ export type { SpaceActionFailureDetails } from './space';
 export { useQuery, useQueryClient } from './hooks/useQuery';
 export type { UseQueryOptions, UseQueryResult } from './hooks/useQuery';
 export { createQueryClient, createPrefetchQueue, queryKey } from './queryCache';
-export type { NotisQueryClient, QuerySnapshot, QueryFetchOptions } from './queryCache';
+export type { NotisQueryClient, QuerySnapshot, QueryFetchOptions, HiddenRecords } from './queryCache';
 export { useNotis } from './hooks/useNotis';
 export { useDocuments } from './hooks/useDocuments';
 export type { UseDocumentsOptions, UseDocumentsResult } from './hooks/useDocuments';
@@ -80,7 +80,7 @@ export { Markdown } from './components/Markdown';
 export type { MarkdownProps } from './components/Markdown';
 export { DocumentEditor } from './components/DocumentEditor';
 export { DocumentPage, DocumentPageSkeleton, usePrefetchRecord } from './components/DocumentPage';
-export { RecordProperties, HtmlFrame, ReportFrame, ShareControl } from './components/RecordComponents';
+export { RecordProperties, HtmlFrame, ReportFrame, ShareControl, SpacePageFrame } from './components/RecordComponents';
 export { RenderChartData } from './ui/charts/RenderChartData';
 export { MarkdownEditor } from './components/MarkdownEditor';
 export { NotisSelectionBoundary, NOTIS_CONTEXT_CLIPBOARD_TYPE } from './components/NotisSelectionBoundary';
@@ -173,8 +173,10 @@ export type {
   NotisRecordProps,
   NotisRecordPropertiesProps,
   NotisHtmlFrameProps,
+  NotisHtmlFramePresentAction,
   NotisReportFrameProps,
   NotisShareControlProps,
+  NotisSpacePageFrameProps,
   NotisMarkdownEditorProps,
   NotisMarkdownEditorSavePayload,
   NotisMarkdownEditorSaveResult,

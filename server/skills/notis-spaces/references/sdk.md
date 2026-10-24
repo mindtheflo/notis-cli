@@ -1,5 +1,9 @@
 # SDK reference for Space views
 
+For offline verification, read [the fixture contract](fixtures.md) before
+creating a `verificationFixtures` file. That short reference contains the exact
+list-case format and every required initial-read fixture.
+
 | Import | Holds |
 | --- | --- |
 | `@notis/sdk` | Data hooks, navigation, host interactions and record components |
@@ -12,6 +16,12 @@ copy or deep-import them (`@notis/sdk/src/...`), and never import the toolkit
 stylesheet; the host adopts it. The host runtime is scoped: source never owns an
 account credential or backend transport.
 
+For a toolkit select, import `NativeSelect` from `@notis/sdk/ui` and pass
+`options={[{value: 'all', label: {en: 'All', fr: 'Tous'}}]}`, `value`,
+`onChange={value => ...}` and an accessible `label`. Its callback receives the
+selected string, not a DOM event; its options come from `options`, not child
+`<option>` elements. Keep the visible field label in the surrounding layout.
+
 ## Records and declared reads
 
 | API | Use |
@@ -20,7 +30,8 @@ account credential or backend transport.
 | `useShown<Row>(name, options?)` | Execute the native list in `shows[name]` with current params. Options: `sorts`, `pageSize`, `offset`, `includeContent`, `allPages` (every page, for a whole count or a local search); rows are in `data?.rows` and the schema revision a write needs in `data?.schema_revision`, with `loading`, `hasData`, `isFetching`, `error`, `refetch` (resolves to the read's error, or null when it succeeded; it never rejects). |
 | `useShownAvailable(name)` | Check whether this host exposes the declared native list. A record Site can expose only its exact server-pinned row scope. |
 | `useAction<Inputs, Result>(name)` / `useActionQuery<Result>(name, inputs)` | Call a declared action (`call(inputs, options)`); read the result of a declared read action. Never call account-wide tools from a Space. |
-| `useNativeMutation(binding, operation)` | Insert, update or delete one row of a linked database through the action that declares `LOCAL_NOTIS_DATABASE_INSERT`, `_UPDATE` or `_DELETE` on that binding with `request: { $input: 'request' }`. `mutate(input, {schemaRevision, requestId})` returns the receipt (`record_key`, `revision`); a delete moves the record to the bin. One new request ID per effect. |
+| `useNativeMutation(binding, operation)` | Insert, update or delete one row of a linked database through the action that declares `LOCAL_NOTIS_DATABASE_INSERT`, `_UPDATE` or `_DELETE` on that binding with `request: { $input: 'request' }`. `mutate(input, {schemaRevision, requestId})` returns the receipt (`record_key`, `revision`); a delete moves the record to the bin, leaves every list at once and comes back if the write fails. One new request ID per effect. An insert action takes no `content_markdown`: insert, then save the body with `useNativeDocumentBody` and the record's revision. |
+| `useNativeDelete(binding)` | Trash many rows of one linked database (a deck and its slides, a multi-select). `deleteMany(inputs, {schemaRevision, requestId})` hides every row from the lists at once, runs the writes a few at a time, each with the request ID `${requestId}:${record_key}` (a retry with the same `requestId` replays instead of trashing twice), refreshes the lists once at the end and brings back the rows whose write failed. It never throws for a failed row: it resolves to `{done, failed}`; say how many failed. Use it rather than a loop of `mutate`. |
 | `useNativeDocumentBody(binding, recordKey, {readAction, writeAction?, enabled?})` | Markdown body adapter. Keep drafts in the view; save with the original content, record/schema revisions and stable request ID. Rich editing normally uses `DocumentEditor`. |
 | `useNotis()` | Host resource, Space labels, route and ready state. Use `resource.id` for the current Space identity. |
 
@@ -48,9 +59,10 @@ user data.
 | `<DocumentPage recordKey>` | A record as the view's main content: save state, menu, cover, icon, title, meta, properties that save automatically, collaborative body. Slots `breadcrumb`, `actions`, `menuItems`, `aboveBody`, `belowBody`; toggles `share` (off by default, never for a report record), `header`, `meta`, `properties`, `width` (`standard` 900 px centred column by default, `wide` 1200 px, `full`); `viewer: 'html'` shows a record whose one stored `.html` file is the page; `onSaved`; `layout`. Pair with `DocumentPageSkeleton` and `usePrefetchRecord()`. It is the usual `reader` slot of `ListReader`; there it takes no `breadcrumb`, because the top bar crumb already names the open record. A page with a `breadcrumb` (a record opened from the view) names the top bar crumb leaf with its title itself; `topBarTitle` overrides that, and `onTitle` hears the title. |
 | `<DocumentEditor recordKey>` | Native collaborative body, properties, images and attachments. With separate properties use `showProperties={false}`. |
 | `<RecordProperties recordKey>` | Native revision-checked property editing. |
-| `<HtmlFrame recordKey>` | Attached HTML under viewer CSP and an opaque-origin sandbox. Source cannot relax that boundary. |
+| `<HtmlFrame recordKey>` | Attached HTML under viewer CSP and an opaque-origin sandbox. Source cannot relax that boundary. `onReady` is called once per page after it has loaded and painted, or when the record cannot load: keep a slide hidden until then instead of showing a half-drawn page. `presentation={{ onAction }}` turns the pointer into a laser dot inside the page, keeps its buttons and links clickable, and hands the presenter's keys and plain clicks back as `next`, `previous`, `first`, `last` or `stop`; the page can send the same actions, so treat them as navigation only. |
 | `<ReportFrame recordKey>` | A report row's saved independent implementation in its database's current view. |
 | `<ShareControl recordKey>` | Private/shared record Site, copy link and revoke. |
+| `<SpacePageFrame href>` | Another Notis Space page, live in this view: `href` is a Notis link (a path or a full link of this origin, such as a Page property). The Portal shows only that page's view (no sidebar, top bar or chat) with the viewer's own session and permissions. `interactive` (default `false`) lets it take clicks and keys; off, the view around it (a deck's arrows and swipes) keeps them. `title`, `className` (sizes the box it fills). Any other link, and every verify or build preview, shows a card with the title, the path and Open page. |
 
 In its own Space's view, a record's Site is a row of the top bar Share panel, not
 a toolbar button. The published Space declares the database binding; the server
@@ -123,6 +135,20 @@ rather than from a copy.
   button, `viewerActions` adds viewer buttons (class `nui-viewer-btn`) and
   `onNotice` hears copy and download results. Use `ImageViewer` alone for a
   picture that opens full screen. Do not build your own lightbox.
+- **Presenting on a second screen**: `useAudienceScreen({ onAction, onClose,
+  title })` works like PowerPoint. `secondScreen` says whether another screen
+  is connected; call `open(anchor)` from the Present press itself. It answers
+  `opened` (the audience window is on the other screen), `one-screen` (present
+  full screen in this window, as before), `press-again` (the browser just asked
+  for permission and used up the press: show `PRESENT_WORDS.pressAgain`) or
+  `blocked` (pop-ups blocked: show `PRESENT_WORDS.blocked`). Render the
+  audience view with `portal(<Slide ... />)` from the same component, so both
+  windows share one state: the current slide, next and previous, and a
+  presented `HtmlFrame`'s laser all stay in sync. Keys, clicks and right clicks
+  in the audience window come back through `onAction` (`next`, `previous`,
+  `first`, `last`, `stop`); the presenter window keeps the normal view (notes,
+  previews, a timer). The browser asks once to place windows on screens; the
+  desktop app never asks. Leaving the view closes the audience window.
 - **Blocks**: `Section`, `Badge`, `Button`, `ToggleGroup`, `SegmentedControl`,
   `NativeSelect`, `EmptyState`, `Notice`, `Metric`. A page is a stack of
   `Section`s, full width and without boxes: `kind` is `bar` (period and
@@ -147,7 +173,10 @@ rather than from a copy.
   `useLayerRoot` (container for anything floating), `useEscapeLayer`.
 
 A standard action is an id (`archive`, `complete`, `star`, `later`, `move`,
-`assign`, `read`, `delete`...) plus `run`; without `run` it is hidden. An own
+`assign`, `read`, `delete`...) plus `run`; without `run` it is hidden. The standard
+`delete` hides its records from the lists while `run` works, keeps hidden the
+ones it removed and brings back the ones in `failed` (or all of them when `run`
+throws, and on Undo): return `{ failed }` rather than refetching yourself. An own
 action is `{ id, label: { en, fr }, icon?, key?, tone?, bulk?, appliesTo?, run }`.
 A standard id with a `label` keeps its key, icon and toast: `unarchive` reads
 Move to triage, and a Space whose first stop has a name passes
@@ -222,22 +251,23 @@ extracts tables, lists, controls and visible document/HTML content automatically
   fills the host search field; a Space never wires its own search. The open
   item joins the crumb through `ListReader` `crumbLabel`, or
   `useTopBarTitleLeaf(label, onBack)` on your own layout; the view crumb then
-  calls `onBack`. A `DocumentPage` breadcrumb moves into the top bar on wide
+  calls `onBack`. When the item is a record of the Space's `collection`, pass
+  `useTopBarTitleLeaf(label, onBack, { recordKey })` so Editors rename it from
+  the crumb; read its name from your data, which refreshes after the rename. A
+  `DocumentPage` breadcrumb moves into the top bar on wide
   screens and stays in the page only on narrow ones, so never draw your own
   title or breadcrumb row. Do not duplicate host chrome.
 - `useActiveResource` publishes the current resource; `useAgentContext`,
   `NotisSelectionBoundary`, `NotisCommentBoundary` and `NotisCommentBox` support
   explicit reference context. [Context sharing](context.md) owns the contract.
 - `Dialog` supplies a themed modal with focus handling; while it is open, only
-  its own keys and Escape work.
+  its own keys and Escape work. For a confirmation (delete, discard), pass
+  `nativeOnTouch` and mark the buttons `data-dialog-confirm` and
+  `data-dialog-cancel`: phones and tablets then ask with the system dialog.
 - `MarkdownEditor` is for a view-owned Markdown draft/persistence adapter. Native
   documents use `DocumentEditor` so collaboration and file authority stay with Notis.
 
 ## Offline fixtures
 
-Declare a `verificationFixtures` JSON source with `actions` and optional `context`,
-`shown`, `viewerReads`, `documentBodies`, `recordViews`. Cases match exact action
-inputs/list params. Record views use `{operation: 'record'|'html'|'report', record_key,
-result}`; native record snapshots require `writable: false` and no authoring target.
-Keep every fixture fictional and include every load-time read. Failed or missing
-fixtures fail verification; there is no fallback to the user's real account.
+Read the complete [offline fixture contract](fixtures.md). Keep every fixture
+fictional; verification never falls back to the user's real account.

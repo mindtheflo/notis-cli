@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { COMPOSIO_SEARCH_TOOLS, healthCheck, probeAuth } from './helpers.js';
+import { healthCheck, probeAuth } from './helpers.js';
 import { findCommandSpec, formatDescribe } from '../runtime/help.js';
 import { createExpiredAuthError, getAuthRecovery } from '../runtime/auth-recovery.js';
 import { cliCommandForChannel, resolveChannelSwitch } from '../runtime/channel.js';
@@ -51,6 +51,9 @@ export function doctorChannelSummary(
 }
 
 async function doctorHandler(ctx) {
+  let toolkitCoverage = null;
+  let toolkitWarnings = [];
+  let authenticatedUserId = null;
   const checks = {
     config: 'ok',
     auth: 'missing',
@@ -58,6 +61,7 @@ async function doctorHandler(ctx) {
     routing: 'ok',
     health: 'unknown',
     tool_roundtrip: 'unknown',
+    identity: 'unknown',
   };
 
   if (ctx.runtime.credentialKind === 'oauth') {
@@ -100,7 +104,12 @@ async function doctorHandler(ctx) {
       // cold local backend. A diagnostic must not report a false failure just
       // because that legitimate roundtrip exceeds the general 30s default.
       const payload = await probeAuth(doctorToolRoundtripRuntime(ctx.runtime));
-      checks.tool_roundtrip = Array.isArray(payload.toolkit_connection_statuses) ? 'ok' : 'error';
+      toolkitCoverage = payload.coverage;
+      const identity = serverAccountIdentity(ctx.runtime, payload);
+      authenticatedUserId = identity.verified ? identity.userId : null;
+      checks.identity = identity.verified ? (identity.mismatch ? 'mismatch' : 'ok') : 'unverified';
+      toolkitWarnings = [...payload.warnings, ...identity.warnings];
+      checks.tool_roundtrip = payload.coverage.complete ? 'ok' : 'partial';
       profile = getProfile(loadConfig(), ctx.runtime.profileName);
       checks.auth = ctx.runtime.jwt
         ? (credentialIsExpired(ctx.runtime, profile) ? 'expired' : 'configured')
@@ -158,6 +167,7 @@ async function doctorHandler(ctx) {
       release_channel: releaseChannel || null,
       cli_version: ctx.runtime.cliVersion || null,
       credential_source: ctx.runtime.credentialKind || null,
+      user_id: authenticatedUserId,
       ...(ctx.runtime.credentialKind === 'oauth'
         ? {
             oauth_client_id: profile.oauth_client_id || null,
@@ -167,7 +177,9 @@ async function doctorHandler(ctx) {
           }
         : {}),
       checks,
+      toolkit_coverage: toolkitCoverage,
     },
+    warnings: toolkitWarnings,
     humanSummary: `Doctor checks completed for profile ${ctx.runtime.profileName}`,
     hints,
     renderHuman: () =>
@@ -195,10 +207,22 @@ export function activeRuntimeUserId(runtime) {
     : decodeJwtUserId(runtime.jwt);
 }
 
+function serverAccountIdentity(runtime, payload) {
+  const canonical = typeof payload.user_id === 'string' && payload.user_id.trim() ? payload.user_id : null;
+  const cached = activeRuntimeUserId(runtime);
+  // Portal JWT subjects can be linked Auth IDs rather than canonical Notis IDs.
+  const mismatch = Boolean(canonical && runtime.credentialKind === 'oauth' && cached && cached !== canonical);
+  return { userId: canonical || cached, verified: Boolean(canonical), mismatch,
+    warnings: canonical
+      ? (mismatch ? ['The saved OAuth account differs from the account authenticated by the server.'] : [])
+      : ['Account identity is not verified by this server; the displayed identity comes from this profile.'] };
+}
+
 async function whoamiHandler(ctx) {
   const payload = await probeAuth(ctx.runtime);
   const toolkits = payload.toolkit_connection_statuses || [];
-  const userId = activeRuntimeUserId(ctx.runtime);
+  const identity = serverAccountIdentity(ctx.runtime, payload);
+  const userId = identity.userId;
 
   return ctx.output.emitSuccess({
     command: ctx.spec.command_path.join(' '),
@@ -208,17 +232,22 @@ async function whoamiHandler(ctx) {
       api_base: ctx.runtime.apiBase,
       credential_source: ctx.runtime.credentialKind || null,
       user_id: userId,
-      toolkit_count: toolkits.length,
+      identity_source: identity.verified ? 'server' : 'profile_unverified',
+      toolkit_count: payload.coverage.complete ? toolkits.length : null,
+      observed_toolkit_count: toolkits.length,
+      coverage: payload.coverage,
       toolkits: toolkits.map((t) => t.toolkit),
       cli_version: ctx.runtime.cliVersion,
     },
-    humanSummary: `Logged in as ${userId || 'unknown'} via profile "${ctx.runtime.profileName}"`,
+    humanSummary: `${identity.verified ? 'Logged in as' : 'Unverified saved identity'} ${userId || 'unknown'} via profile "${ctx.runtime.profileName}"`,
+    warnings: [...payload.warnings, ...identity.warnings],
     renderHuman: () =>
       [
         `Profile:   ${ctx.runtime.profileName}`,
         `API:       ${ctx.runtime.apiBase}`,
         `User:      ${userId || 'unknown'}`,
-        `Toolkits:  ${toolkits.length}`,
+        `Identity:  ${identity.verified ? 'verified by server' : 'unverified saved profile'}`,
+        `Toolkits:  ${toolkits.length}${payload.coverage.complete ? '' : ' observed (inventory incomplete)'}`,
         `Version:   ${ctx.runtime.cliVersion}`,
       ].join('\n'),
     hints: [
@@ -249,7 +278,7 @@ export const metaCommandSpecs = [
     mutates: false,
     idempotent: true,
     related_commands: ['notis doctor'],
-    backend_call: { type: 'tool', name: COMPOSIO_SEARCH_TOOLS },
+    backend_call: { type: 'toolkit_inventory', method: 'POST', path: '/cli_tools' },
     handler: whoamiHandler,
   },
   {

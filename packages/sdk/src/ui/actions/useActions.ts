@@ -14,6 +14,23 @@ import {
 } from '../../words';
 import { ACTION_WORDS, failedItemsWords } from './actionWords';
 import { useToast, type ActionToastState, type ToastOptions } from './useToast';
+import { useNotisRuntime } from '../../provider';
+import type { HiddenRecords } from '../../queryCache';
+
+const DELETE_ACTION_TIMEOUT_MS = 120_000;
+class DeleteActionTimeout extends Error {
+  readonly code = 'notis_action_result_unknown';
+  constructor() { super(ACTION_WORDS.resultUnknown.en); this.name = 'DeleteActionTimeout'; }
+}
+
+/** Bound optimistic UI only: the handler may still finish, and is never retried or cancelled here. */
+function withDeleteDeadline<T>(run: () => T | Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.resolve().then(run),
+    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new DeleteActionTimeout()), DELETE_ACTION_TIMEOUT_MS); }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 export interface ResolvedAction<T> {
   id: string;
@@ -155,6 +172,7 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
   refsRef.current = refs;
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+  const runtime = useNotisRuntime();
 
   // Resolved on every render; the array keeps its identity while nothing visible changed.
   const resolved = resolveActions<T>(refs, handlers);
@@ -193,15 +211,28 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
     const targets = action.appliesTo ? items.filter(action.appliesTo) : [...items];
     if (!targets.length) return { status: 'cancelled', done: [], failed: [] };
     markBusy(action.id, true);
+    // Deleted records leave every cached read of the view at once; the ones that fail come back.
+    const keys = action.id === 'delete' ? targets.map(recordKeyOf) : [];
+    const hidden: HiddenRecords | undefined = keys.some(Boolean)
+      ? runtime?.queryClient?.hideRecords?.(keys.filter((key): key is string => !!key)) : undefined;
+    let settled = false;
     try {
-      const result = await action.run(targets, choice);
-      const undo = typeof result === 'function' ? result as UndoFn
+      const result = action.id === 'delete'
+        ? await withDeleteDeadline(() => action.run(targets, choice)) : await action.run(targets, choice);
+      const ranUndo = typeof result === 'function' ? result as UndoFn
         : isActionResult<T>(result) && typeof result.undo === 'function' ? result.undo : null;
       const detail = isActionResult<T>(result) && typeof result !== 'function' ? result : null;
       if (detail?.cancelled) return { status: 'cancelled', done: [], failed: [] };
       const failedSet = new Set<T>(detail?.failed ?? []);
       const failed = targets.filter((item) => failedSet.has(item));
       const done = targets.filter((item) => !failedSet.has(item));
+      if (hidden) {
+        hidden.commit(done.map(recordKeyOf).filter((key): key is string => !!key));
+        hidden.restore(failed.map(recordKeyOf).filter((key): key is string => !!key));
+        settled = true;
+      }
+      // Undo brings the records back on screen while the reads refresh.
+      const undo: UndoFn | null = ranUndo && hidden ? async () => { hidden.restore(); await ranUndo(); } : ranUndo;
       const reason = detail?.reason ? toWords(detail.reason) : null;
       if (failed.length && !done.length) {
         notify(ACTION_WORDS.failed, { tone: 'danger', reason });
@@ -224,13 +255,15 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
       else if (reason) notify(reason, { undo });
       return { status: 'done', done, failed };
     } catch (error) {
-      notify(ACTION_WORDS.failed, { tone: 'danger', reason: actionErrorReason(error) });
+      notify(error instanceof DeleteActionTimeout ? ACTION_WORDS.resultUnknown : ACTION_WORDS.failed,
+        { tone: 'danger', reason: actionErrorReason(error) });
       optionsRef.current.onError?.(error, { id: action.id });
       return { status: 'failed', done: [], failed: targets };
     } finally {
+      if (hidden && !settled) hidden.restore();
       markBusy(action.id, false);
     }
-  }, [actions, notify, markBusy]);
+  }, [actions, notify, markBusy, runtime]);
 
   const available = useCallback((items: readonly T[]) => availableActions(actions, items), [actions]);
   const isBusy = useCallback((id: string) => busyRef.current.has(id), []);
@@ -238,6 +271,12 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
   return {
     actions, available, run, busy, isBusy, toast: toaster.toast, notify, undo: toaster.undo, dismiss: toaster.dismiss,
   };
+}
+
+function recordKeyOf(item: unknown): string | null {
+  if (!item || typeof item !== 'object') return null;
+  const value = (item as { record_key?: unknown; recordKey?: unknown }).record_key ?? (item as { recordKey?: unknown }).recordKey;
+  return typeof value === 'string' && value ? value : null;
 }
 
 function keySignature(key: KeySpec | undefined): string {

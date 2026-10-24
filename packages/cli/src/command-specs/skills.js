@@ -46,12 +46,12 @@ function linkLabel(link) {
 /** One line per Skill: name, ID, kind, editability and its Space links. */
 export function skillInventoryLines(page) {
   const entries = Array.isArray(page?.skills) ? page.skills : [];
-  if (!entries.length) return 'No Skills match.';
   const lines = entries.map(entry => {
     const state = entry.editable ? 'editable' : `read-only${entry.read_only_reason ? ` (${entry.read_only_reason})` : ''}`;
     const links = (entry.links || []).map(linkLabel);
     return `${entry.name || entry.skill_id}  ${entry.skill_id}  ${entry.kind}  ${state}  links: ${links.length ? links.join(', ') : 'none'}`;
   });
+  if (!entries.length) lines.push('No Skills match.');
   if (page.has_more && page.next) lines.push(`More Skills: rerun with --after ${page.next}`);
   return lines.join('\n');
 }

@@ -170,7 +170,7 @@ export function DocumentPage(props: NotisDocumentPageProps): ReactElement {
     onTitle?.(title);
   }, [recordKey, onTitle]);
   const title = reported?.recordKey === recordKey ? reported.title : null;
-  useTopBarTitleLeaf(leaf && title !== null ? title.trim() || t.untitled : null, back);
+  useTopBarTitleLeaf(leaf && title !== null ? title.trim() || t.untitled : null, back, { recordKey });
   return Host ? <Host {...props} topBarTitle={inTopBar} onTitle={reportTitle} /> : <DocumentPageFallback {...props} />;
 }
 

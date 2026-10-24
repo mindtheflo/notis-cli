@@ -134,7 +134,9 @@ function validateTextFile(relPath, content) {
   const extension = extname(relPath);
   const rules = getCompiledRules();
   if (extension === '.css' || extension === '.scss' || extension === '.sass' || extension === '.pcss') {
-    return applyRules(content, rules.css, relPath);
+    // A comment that mentions html, body or :root is not a selector. Blanking
+    // comments keeps offsets and line numbers; every rule still runs unchanged.
+    return applyRules(maskComments(content, '.css'), rules.css, relPath);
   }
   if (extension === '.js' || extension === '.jsx' || extension === '.ts' || extension === '.tsx') {
     return applyRules(maskSerializedJsonData(content, extension), rules.javascript, relPath);

@@ -268,6 +268,62 @@ Options:
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces history restore <space-id> --target-revision 2 --revision 5 --request-id undo-last-change --dry-run`
 
+### `npx --package @notis_ai/cli@latest -- notis spaces history read <space-id>`
+
+Read the files of one saved Space version.
+
+When to use: See exactly what a saved version contained, before comparing or restoring it. Editors only.
+
+Options:
+- `--revision <revision>` — The saved version from history list.
+- `--path <path>` — Read only this file or folder.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history read <space-id> --revision 3 --path app/page.tsx`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history diff <space-id>`
+
+Compare two saved Space versions, or one with the current version.
+
+When to use: See what changed between versions. Prints the unified diff; pass --json for the full comparison.
+
+Options:
+- `--from <revision>` — The older saved version.
+- `--to <revision>` — The newer saved version, or current (default).
+- `--path <path>` — Compare only this file or folder.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history diff <space-id> --from 3`
+- `npx --package @notis_ai/cli@latest -- notis spaces history diff <space-id> --from 3 --to 5 --json`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history name <space-id>`
+
+Name a saved Space version, or clear its name.
+
+When to use: Mark a version worth keeping, such as a launch. Named versions are kept past the usual retention.
+
+Options:
+- `--revision <revision>` — The saved version from history list.
+- `--name <name>` — The version name.
+- `--clear` — Remove the version name.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history name <space-id> --revision 3 --name "Launch"`
+- `npx --package @notis_ai/cli@latest -- notis spaces history name <space-id> --revision 3 --clear`
+
+### `npx --package @notis_ai/cli@latest -- notis spaces history delete <space-id>`
+
+Delete one saved Space version for good.
+
+When to use: Only when the user asked to delete this version. It cannot be restored afterwards.
+
+Options:
+- `--revision <revision>` — The saved version from history list.
+- `--yes` — Confirm the user asked to delete this version for good.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces history delete <space-id> --revision 3 --yes`
+
 ### `npx --package @notis_ai/cli@latest -- notis spaces screenshot <url>`
 
 Capture a full-height PNG of a live view with your current access.

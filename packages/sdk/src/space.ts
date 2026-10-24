@@ -307,6 +307,11 @@ export interface SpaceActionOptions {
   schemaRevision?: number;
   readOnly?: boolean;
   dedupe?: boolean;
+  /**
+   * A write that is one step of a batch: the host skips re-reading every cached list after it,
+   * and the batch calls `queryClient.invalidate()` once at the end. Hosts that predate it ignore it.
+   */
+  deferRefresh?: boolean;
 }
 
 export type SpaceDocumentBodyRequest = {

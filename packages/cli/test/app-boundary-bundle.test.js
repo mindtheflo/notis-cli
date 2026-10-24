@@ -21,6 +21,18 @@ test('retired SDK host names have no source-boundary exception', t => {
   assert.ok(collectArtifactBoundaryViolations({ 'app.js': 'document.body.remove();' }).length > 0);
 });
 
+test('source CSS comments that mention html, body or :root never trip the selector rules', t => {
+  const project = mkdtempSync(join(tmpdir(), 'notis-css-comment-boundary-'));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  mkdirSync(join(project, 'spaces/slides'), { recursive: true });
+  writeFileSync(join(project, 'spaces/slides/view.css'),
+    '/* html or body */\n.sl-kind-html { color: inherit; }\n/* no :root { here */\n.sl-page-body { color: inherit; }\n');
+  writeFileSync(join(project, 'spaces/slides/theme.scss'), '/* body { reset } */\n.sl-page-body { color: inherit; }\n');
+  assert.deepEqual(collectProjectBoundaryViolations(project), []);
+  writeFileSync(join(project, 'spaces/slides/reset.css'), '/* reset */\nbody { margin: 0; }\n');
+  assert.deepEqual(collectProjectBoundaryViolations(project).map(value => value.split(':')[0]), ['spaces/slides/reset.css']);
+});
+
 test('copyBoundaryRules bundles the server boundary rules into the package', () => {
   const target = copyBoundaryRules({ repoRoot, cliRoot });
   assert.equal(target, join(cliRoot, BOUNDARY_RULES_RELATIVE_PATH));

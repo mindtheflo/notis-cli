@@ -296,7 +296,7 @@ export const specimen = defineSpecimen({
   name: 'ListReader',
   group: 'lists',
   from: '@notis/sdk/ui',
-  covers: ['ListReader'],
+  covers: ['ListReader', 'ListSkeleton'],
   summary: 'A list of rows with a reader for the open one: keys, selection, actions, toast and open modes in one piece.',
   states: [
     {

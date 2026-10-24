@@ -147,14 +147,15 @@ export interface EscapeLayerOptions {
 export function useEscapeLayer(id: string, onEscape: (event?: KeyboardEvent) => boolean,
   options: EscapeLayerOptions = {}): void {
   const core = useEngineCore();
+  const owner = useShortcutOwner();
   const ref = useRef(onEscape);
   ref.current = onEscape;
   const priority = options.priority ?? ESCAPE_PRIORITY.overlay;
   const enabled = options.enabled ?? true;
   useEffect(() => {
     if (!enabled) return undefined;
-    return core.addEscapeLayer(id, (event) => ref.current(event), priority);
-  }, [core, id, priority, enabled]);
+    return core.addEscapeLayer(id, (event) => core.isOwnerAvailable(owner) && ref.current(event), priority);
+  }, [core, owner, id, priority, enabled]);
 }
 
 /**
@@ -163,8 +164,9 @@ export function useEscapeLayer(id: string, onEscape: (event?: KeyboardEvent) => 
  */
 export function useEscapeBlocker(active: boolean, options: { priority?: number } = {}): void {
   const core = useEngineCore();
+  const owner = useShortcutOwner();
   const priority = options.priority ?? ESCAPE_PRIORITY.detail + 50;
-  useEffect(() => (active ? core.addEscapeBlocker(priority) : undefined), [core, active, priority]);
+  useEffect(() => (active ? core.addEscapeBlocker(priority, () => core.isOwnerAvailable(owner)) : undefined), [core, owner, active, priority]);
 }
 
 // ---- help sheet ----

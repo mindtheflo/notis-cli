@@ -75,10 +75,69 @@ export function useNativeMutation<TOperation extends 'insert' | 'update' | 'dele
   const mutate = useCallback(async (input: NativeInsert | NativeUpdate | NativeDelete, options: { schemaRevision: number; requestId: string }) => {
     const action = actionFor(runtime, binding, operation);
     setPending((value) => value + 1); setError(null);
-    try { return await runtime!.callAction!<NativeMutationReceipt>(action, { request: input }, options); }
-    catch (cause) { const failure = cause instanceof Error ? cause : new Error(String(cause)); setError(failure); throw failure; }
-    finally { setPending((value) => value - 1); }
+    // A trashed row leaves every cached read at once and comes back if the write fails.
+    const key = operation === 'delete' && typeof (input as NativeDelete).record_key === 'string' ? (input as NativeDelete).record_key : null;
+    const hidden = key ? runtime?.queryClient?.hideRecords?.([key]) : undefined;
+    try {
+      const receipt = await runtime!.callAction!<NativeMutationReceipt>(action, { request: input }, options);
+      hidden?.commit();
+      return receipt;
+    } catch (cause) {
+      hidden?.restore();
+      const failure = cause instanceof Error ? cause : new Error(String(cause)); setError(failure); throw failure;
+    } finally { setPending((value) => value - 1); }
   }, [runtime, binding, operation]);
   return { mutate, loading: pending > 0, error };
 }
+
+export interface NativeDeleteManyResult {
+  done: NativeDelete[];
+  failed: Array<{ input: NativeDelete; error: Error }>;
+}
+
+/**
+ * Trashes many rows of one database binding: every row leaves the cached reads at once, the writes run a few at
+ * a time (each with its own request ID, `${requestId}:${record_key}`, so a retry with the same `requestId` replays
+ * instead of trashing twice), the reads refresh once at the end, and a row whose write failed comes back. It never
+ * throws for a failed row: `failed` lists them.
+ */
+export function useNativeDelete(binding: string): {
+  deleteMany: (inputs: readonly NativeDelete[], options: { schemaRevision: number; requestId: string }) => Promise<NativeDeleteManyResult>;
+  loading: boolean; error: Error | null;
+} {
+  const runtime = useNotisRuntime();
+  const [pending, setPending] = useState(0), [error, setError] = useState<Error | null>(null);
+  const deleteMany = useCallback(async (inputs: readonly NativeDelete[], options: { schemaRevision: number; requestId: string }) => {
+    const action = actionFor(runtime, binding, 'delete');
+    const result: NativeDeleteManyResult = { done: [], failed: [] };
+    if (!inputs.length) return result;
+    setPending((value) => value + 1); setError(null);
+    const hidden = runtime?.queryClient?.hideRecords?.(inputs.map((input) => input.record_key));
+    let next = 0;
+    const worker = async () => {
+      while (next < inputs.length) {
+        const input = inputs[next++];
+        try {
+          await runtime!.callAction!<NativeMutationReceipt>(action, { request: input },
+            { schemaRevision: options.schemaRevision, requestId: `${options.requestId}:${input.record_key}`, deferRefresh: true });
+          result.done.push(input);
+        } catch (cause) {
+          result.failed.push({ input, error: cause instanceof Error ? cause : new Error(String(cause)) });
+        }
+      }
+    };
+    try {
+      await Promise.all(Array.from({ length: Math.min(DELETE_CONCURRENCY, inputs.length) }, worker));
+    } finally {
+      hidden?.commit(result.done.map((input) => input.record_key));
+      hidden?.restore(result.failed.map((item) => item.input.record_key));
+      runtime?.queryClient?.invalidate();
+      if (result.failed.length) setError(result.failed[0].error);
+      setPending((value) => value - 1);
+    }
+    return result;
+  }, [runtime, binding]);
+  return { deleteMany, loading: pending > 0, error };
+}
+const DELETE_CONCURRENCY = 4;
 const EMPTY_DOCUMENTS: DocumentRecord[] = [];

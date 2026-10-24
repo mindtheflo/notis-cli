@@ -483,6 +483,79 @@ test('CLI fails closed when a local-only worktree has no active runtime lease', 
   assert.match(payload.message, /local-only/);
 });
 
+test('a stopped nested worktree never inherits an active ancestor lease', () => {
+  const { root, home } = makeWorktree('notis-worktree-ancestor-', {
+    expectedUserId: 'outer-test-user',
+    devJwt: makeJwt('outer-test-user'),
+  });
+  const inner = join(root, '.context', 'inner-worktree');
+  const nested = join(inner, 'packages', 'feature');
+  mkdirSync(join(inner, '.context'), { recursive: true });
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(
+    join(inner, '.context', 'notis-routing.json'),
+    JSON.stringify({ version: 1, mode: 'local-only', workspace_root: inner }),
+  );
+  const env = {
+    HOME: home,
+    NOTIS_API_BASE: 'https://api-beta.notis.ai',
+    NOTIS_JWT: 'personal-jwt',
+  };
+
+  const outer = runRuntimeProbe(root, env);
+  assert.equal(outer.status, 0, outer.stderr);
+  assert.equal(JSON.parse(outer.stdout).profileName, DEV_PROFILE);
+
+  const listed = runCliProbe(nested, ['profile', 'list', '--json'], env);
+  assert.equal(listed.status, 0, listed.stderr);
+  const payload = JSON.parse(listed.stdout);
+  assert.equal(payload.data.worktree_runtime_unavailable, true);
+  assert.equal(payload.data.effective_profile, null);
+
+  const routed = runRuntimeProbe(nested, env);
+  assert.equal(routed.status, 4, routed.stderr);
+  assert.equal(JSON.parse(routed.stdout).code, 'dev_runtime_unavailable');
+});
+
+test('a nested worktree uses its own live lease and rejects its stale lease', () => {
+  const { root, home, context } = makeWorktree('notis-worktree-nested-live-', {
+    expectedUserId: 'outer-test-user',
+    devJwt: makeJwt('outer-test-user'),
+  });
+  const inner = join(root, 'worktrees', 'inner');
+  const innerContext = join(inner, '.context');
+  const nested = join(inner, 'packages', 'feature');
+  mkdirSync(innerContext, { recursive: true });
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(
+    join(innerContext, 'notis-routing.json'),
+    JSON.stringify({ version: 1, mode: 'local-only', workspace_root: inner }),
+  );
+  const lease = {
+    ...JSON.parse(readFileSync(join(context, 'notis-runtime.json'), 'utf8')),
+    workspace_root: inner,
+    profile: 'dev-inner',
+    api_base: 'http://localhost:4312',
+    expected_user_id: 'inner-test-user',
+    dev_access_token: makeJwt('inner-test-user'),
+  };
+  writeFileSync(join(innerContext, 'notis-runtime.json'), JSON.stringify(lease));
+
+  const active = runRuntimeProbe(nested, { HOME: home });
+  assert.equal(active.status, 0, active.stderr);
+  assert.equal(JSON.parse(active.stdout).apiBase, 'http://localhost:4312');
+  assert.equal(JSON.parse(active.stdout).profileName, 'dev-inner');
+  assert.equal(JSON.parse(active.stdout).jwt, makeJwt('inner-test-user'));
+
+  writeFileSync(
+    join(innerContext, 'notis-runtime.json'),
+    JSON.stringify({ ...lease, dev_pid: -1 }),
+  );
+  const stopped = runRuntimeProbe(nested, { HOME: home });
+  assert.equal(stopped.status, 4, stopped.stderr);
+  assert.equal(JSON.parse(stopped.stdout).code, 'dev_runtime_unavailable');
+});
+
 test('a stopped worktree lists and saves profiles without claiming they are effective', () => {
   const root = mkdtempSync(join(tmpdir(), 'notis-worktree-listable-'));
   const home = mkdtempSync(join(tmpdir(), 'notis-worktree-listable-home-'));

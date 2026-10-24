@@ -9,6 +9,7 @@ import { handoverCommandSpecs } from './handover.js';
 import { agentsCommandSpecs } from './agents.js';
 import { skillsCommandSpecs } from './skills.js';
 import { spacesCommandSpecs } from './spaces.js';
+import { documentsCommandSpecs } from './documents.js';
 import { viewsCommandSpecs } from './views.js';
 import { filesCommandSpecs } from './files.js';
 
@@ -16,6 +17,7 @@ export const GROUP_SUMMARIES = {
   files: 'Upload local files for native records with verified byte receipts.',
   views: 'Discover and render the views you can open.',
   spaces: 'Build independent Spaces and their declared capabilities.',
+  documents: 'Read, compare and restore saved document versions, and manage the documents Bin.',
   agents: 'Install Notis context into local coding agents.',
   handover: 'Hand the branch you are on to a Notis agent, hosted or Codex/Claude in the cloud.',
   tools: 'Discover and execute generic tools exposed through Notis.',
@@ -32,6 +34,7 @@ export const COMMAND_SPECS = [
   ...agentsCommandSpecs,
   ...skillsCommandSpecs,
   ...spacesCommandSpecs,
+  ...documentsCommandSpecs,
   ...viewsCommandSpecs,
   ...filesCommandSpecs,
   ...handoverCommandSpecs,

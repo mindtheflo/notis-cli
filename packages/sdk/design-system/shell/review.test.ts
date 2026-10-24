@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { changeBoxes } from './review';
+import { changeBoxes, LOOKS_UNCHANGED, quietStates } from './review';
 
 function canvas(width: number, height: number): Uint8ClampedArray {
   return new Uint8ClampedArray(width * height * 4).fill(255);
@@ -34,4 +34,24 @@ test('changed pixels close to each other share one circle', () => {
   const boxes = changeBoxes(head, canvas(200, 100), 200, 100);
   assert.equal(boxes.length, 1);
   assert.deepEqual(boxes[0], { x: 8, y: 8, width: 40, height: 16 });
+});
+
+test('a specimen that looks the same is not shown, one that changed or is new is', () => {
+  assert.ok(LOOKS_UNCHANGED.has('same'));
+  assert.ok(LOOKS_UNCHANGED.has('unchanged'));
+  for (const status of ['changed', 'new', 'removed', 'code', 'failed', 'timeout'] as const) assert.ok(!LOOKS_UNCHANGED.has(status));
+});
+
+test('only the states that look different stay visible in a changed specimen', () => {
+  const entry = { status: 'changed' as const, label: 'Changed', states: { open: 'changed' as const } };
+  assert.deepEqual(quietStates(entry, ['closed', 'open', 'empty']), ['closed', 'empty']);
+});
+
+test('every state stays visible when the change has no per-state detail', () => {
+  const ids = ['closed', 'open'];
+  assert.deepEqual(quietStates(undefined, ids), []);
+  assert.deepEqual(quietStates({ status: 'new', label: 'New', states: { open: 'new' } }, ids), []);
+  assert.deepEqual(quietStates({ status: 'code', label: 'Code', states: { open: 'changed' } }, ids), []);
+  assert.deepEqual(quietStates({ status: 'changed', label: 'Changed' }, ids), []);
+  assert.deepEqual(quietStates({ status: 'changed', label: 'Changed', states: {} }, ids), []);
 });

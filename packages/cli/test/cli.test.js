@@ -1704,7 +1704,7 @@ test('describe whoami is registered', () => {
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ok, true);
   assert.equal(payload.data.spec.command_path.join(' '), 'whoami');
-  assert.equal(payload.data.spec.backend_call.name, 'COMPOSIO_SEARCH_TOOLS');
+  assert.equal(payload.data.spec.backend_call.type, 'toolkit_inventory');
 });
 
 test('tools toolkits reads canonical toolkit connection statuses', async () => {
@@ -1716,16 +1716,19 @@ test('tools toolkits reads canonical toolkit connection statuses', async () => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
+      coverage: { complete: true, families: { composio: 'available' } },
       results: [],
       toolkit_connection_statuses: [
         {
-          toolkit: 'composio-todoist',
+          toolkit: 'todoist',
+          provider: 'composio',
           description: 'Todoist',
           has_active_connection: true,
           status_message: 'Connected',
         },
         {
-          toolkit: 'composio-notion',
+          toolkit: 'notion',
+          provider: 'composio',
           description: 'Notion',
           has_active_connection: false,
           status_message: 'composio-notion is not connected. Call LOCAL_NOTIS_AUTHENTIFY.',
@@ -1746,17 +1749,123 @@ test('tools toolkits reads canonical toolkit connection statuses', async () => {
     );
 
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(requestBody.tool_name, 'COMPOSIO_SEARCH_TOOLS');
-    assert.equal(requestBody.arguments.queries[0].use_case, 'List available toolkit namespaces and connection statuses');
+    assert.equal(requestBody.operation, 'toolkit_inventory');
+    assert.equal(requestBody.tool_name, undefined);
+    assert.equal(requestBody.arguments, undefined);
     const payload = JSON.parse(result.stdout);
     assert.deepEqual(payload.data.toolkits.map((toolkit) => toolkit.id), [
-      'composio-todoist',
-      'composio-notion',
+      'notion',
+      'todoist',
     ]);
-    assert.equal(payload.data.toolkits[0].has_active_connection, true);
-    assert.equal(payload.data.toolkits[1].has_active_connection, false);
+    assert.equal(payload.data.toolkits[1].has_active_connection, true);
+    assert.equal(payload.data.toolkits[0].has_active_connection, false);
+    assert.equal(payload.data.coverage.complete, true);
   } finally {
     await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('doctor and whoami verify the server account without trusting a cached OAuth identity', async () => {
+  let canonicalUser = 'canonical-owner';
+  let inventoryCalls = 0;
+  const server = createHttpServer(async (req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url === '/health') return res.end(JSON.stringify({ status: 'ok' }));
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { operation: 'toolkit_inventory' });
+    inventoryCalls += 1;
+    res.end(JSON.stringify({ success: true, user_id: canonicalUser, toolkit_connection_statuses: [],
+      coverage: { complete: true, families: {} } }));
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  const apiBase = `http://127.0.0.1:${server.address().port}`;
+  const configDir = mkdtempSync(join(tmpdir(), 'notis-cli-identity-'));
+  const configFile = join(configDir, 'config.json');
+  try {
+    for (const scenario of [
+      { kind: 'jwt', cached: 'auth-subject', server: 'canonical-owner', check: 'ok' },
+      { kind: 'oauth', cached: 'canonical-owner', server: 'canonical-owner', check: 'ok' },
+      { kind: 'oauth', cached: 'wrong-cached-owner', server: 'canonical-owner', check: 'mismatch' },
+      { kind: 'oauth', cached: 'legacy-owner', server: undefined, check: 'unverified' },
+    ]) {
+      canonicalUser = scenario.server;
+      writeFileSync(configFile, JSON.stringify({ current_profile: 'default', profiles: { default: {
+        api_base: apiBase,
+        ...(scenario.kind === 'oauth' ? { oauth_access_token: makeJwt('auth-subject'),
+          oauth_access_expires_at: 4102444800, oauth_refresh_expires_at: 4102444800,
+          oauth_client_id: 'notis_cli', oauth_issuer: apiBase, oauth_scopes: ['notis:read'],
+          oauth_user_id: scenario.cached } : {}),
+      } } }));
+      const env = { NOTIS_CLI_CONFIG_FILE: configFile,
+        ...(scenario.kind === 'jwt' ? { NOTIS_JWT: makeJwt('auth-subject') } : {}) };
+      const invoke = async (command) => {
+        const result = await runCliAsync(['--json', '--api-base', apiBase, command], env);
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(result.stdout);
+      };
+      const whoami = await invoke('whoami');
+      const doctor = await invoke('doctor');
+      assert.equal(whoami.data.user_id, scenario.server || scenario.cached);
+      assert.equal(whoami.data.identity_source, scenario.server ? 'server' : 'profile_unverified');
+      assert.equal(doctor.data.checks.identity, scenario.check);
+      assert.equal(doctor.data.user_id, scenario.server || null);
+      assert.equal(whoami.warnings.some(w => /saved OAuth account differs/i.test(w)), scenario.check === 'mismatch');
+      assert.equal(whoami.warnings.some(w => /not verified/i.test(w)), scenario.check === 'unverified');
+      if (scenario.check === 'unverified') {
+        const human = await runCliAsync(['--output', 'table', '--api-base', apiBase, 'whoami'], env);
+        assert.equal(human.status, 0, human.stderr);
+        assert.match(human.stdout, /Identity:\s+unverified saved profile/);
+      }
+    }
+    assert.equal(inventoryCalls, 9, 'each command reuses its existing read-only inventory request');
+  } finally {
+    await new Promise((done) => server.close(done));
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test('inventory completeness is shared by toolkits, whoami and doctor; malformed inventory fails', async () => {
+  let mode = 'partial';
+  const server = createHttpServer(async (req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url === '/health') return res.end(JSON.stringify({ status: 'ok' }));
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    assert.deepEqual(body, { operation: 'toolkit_inventory' });
+    return res.end(JSON.stringify(mode === 'malformed' ? { success: true } : {
+      success: true,
+      toolkit_connection_statuses: [{ toolkit: 'todoist', provider: 'composio', has_active_connection: true }],
+      coverage: { complete: false, families: { composio: 'available', mcp_records: 'unavailable' } },
+      warnings: ['MCP inventory unavailable.'],
+    }));
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  const apiBase = `http://127.0.0.1:${server.address().port}`;
+  const run = (command) => runCliAsync(['--json', '--api-base', apiBase, ...command], { NOTIS_JWT: makeJwt() });
+  try {
+    const toolkits = JSON.parse((await run(['tools', 'toolkits'])).stdout);
+    const whoami = JSON.parse((await run(['whoami'])).stdout);
+    const doctor = JSON.parse((await run(['doctor'])).stdout);
+    assert.equal(toolkits.data.coverage.complete, false);
+    assert.deepEqual(toolkits.data.toolkits.map((row) => row.id), whoami.data.toolkits);
+    assert.equal(whoami.data.toolkit_count, null);
+    assert.equal(whoami.data.observed_toolkit_count, 1);
+    assert.equal(doctor.data.checks.tool_roundtrip, 'partial');
+    assert.equal(doctor.data.toolkit_coverage.complete, false);
+    for (const result of [toolkits, whoami, doctor]) assert.ok(result.warnings.length > 0);
+    mode = 'malformed';
+    for (const command of [['tools', 'toolkits'], ['whoami']]) {
+      const result = await run(command);
+      assert.equal(result.status, 6);
+      assert.equal(JSON.parse(result.stdout).error.code, 'invalid_toolkit_inventory');
+    }
+    const failedDoctor = JSON.parse((await run(['doctor'])).stdout);
+    assert.equal(failedDoctor.data.checks.tool_roundtrip, 'error');
+    assert.equal(failedDoctor.data.toolkit_coverage, null);
+  } finally {
+    await new Promise((done) => server.close(done));
   }
 });
 
@@ -2489,7 +2598,7 @@ test('doctor refreshes a lapsed OAuth grant before reporting on it', async () =>
     }
     if (req.url === '/cli_tools' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ toolkit_connection_statuses: [] }));
+      res.end(JSON.stringify({ success: true, toolkit_connection_statuses: [], coverage: { complete: true, families: {} } }));
       return;
     }
     res.writeHead(404).end();

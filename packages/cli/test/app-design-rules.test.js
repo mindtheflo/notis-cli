@@ -55,6 +55,22 @@ test('each design rule fires on its fixture and nothing else', () => {
   }
 });
 
+test('border resets do not count as four-side borders and do not hide a following border', () => {
+  for (const profile of ['app', 'space']) {
+    const config = loadDesignRules({ rulesPath, profile });
+    const flagged = (source) => collectDesignViolationsForFile('app/view.css', source, config)
+      .some((item) => item.ruleId === 'no-border-box');
+    for (const value of ['0', 'none', '0px', '0 !important']) {
+      assert.equal(flagged(`.control{border:${value};border-bottom:1px solid hsl(var(--border));}`), false, value);
+      assert.equal(flagged(`.control{border:${value}}`), false, value);
+    }
+    for (const value of ['1px solid currentColor', '0.5px solid currentColor', '0px 1px']) {
+      assert.equal(flagged(`.control{border:${value};}`), true, value);
+    }
+    assert.equal(flagged('.control{border:0;} .panel{border:1px solid currentColor;}'), true);
+  }
+});
+
 test('the split-layout rule fires only when a shell page also renders an aside', () => {
   const config = loadDesignRules({ rulesPath });
   const bad = '<main className="notis-app-shell">\n<aside />\n</main>\n';

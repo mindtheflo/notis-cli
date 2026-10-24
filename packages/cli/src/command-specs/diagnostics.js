@@ -64,7 +64,8 @@ async function discoverSupabaseSqlTool(runtime) {
   const names = discoveredToolNames(payload);
   let match = selectSupabaseSqlTool(names);
   if (!match) {
-    const candidate = selectSupabaseSqlTool([], await fetchToolkits(runtime));
+    const { toolkits } = await fetchToolkits(runtime);
+    const candidate = selectSupabaseSqlTool([], toolkits);
     if (candidate) {
       try {
         await fetchToolSchema(runtime, candidate);

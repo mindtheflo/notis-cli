@@ -28,7 +28,11 @@ status, listing text, locales, sample rows and counts, screenshots, findings,
 2. **Write the listing** with `store_submission_update {submission_id, metadata,
    locales}`: name, tagline, description, category, icon and accent in
    `metadata` (English), and the French name, tagline and description in
-   `locales.fr`. Say what the Space does for the person who installs it, from
+   `locales.fr`. The optional `locales.fr.items` maps `pages`, `databases`,
+   `skills` and `automations` by the immutable `key` returned in the submission's
+   item inventory. Supply display-only `name` and `description` (`summary` for
+   automations), preserving the package's identities and order. A null or blank
+   leaf clears that translation, so the viewer falls back to English. Say what the Space does for the person who installs it, from
    its views, databases and Skills. Write French as natural French (tu), not a
    word-for-word translation. No personal names, account details, customer or
    company data from the source.
@@ -71,8 +75,11 @@ Judge whether it carries a real privacy risk for the publisher or for people in
 their data: an outside host that would receive installers' data, an integration
 or MCP call that reads private accounts, a read of Spaces outside the published
 tree, a sharing change, personal data in the listing, screenshots or samples. A
-candidate with no real risk is treated like any other finding. For each real
-risk, ask the user one plain question naming what and where, with two choices:
+candidate with no real risk is treated like any other finding. Sample or fake
+data is never a risk: the scan already skips tests, fixtures and placeholder
+hosts, so never ask the user to confirm data you can see is a sample. If one
+still shows up, say it is sample data the scan missed instead of asking about
+it. For each real risk, ask the user one plain question naming what and where, with two choices:
 
 - **Remove**: take it out of what is published.
 - **Keep**: publish it as it is; Notis adds your note to the listing so

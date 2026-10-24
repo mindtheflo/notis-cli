@@ -338,6 +338,11 @@ export interface ListReaderProps<T> {
    * opens one (on load, Back and Forward, a Space link). Without a reader, Enter and a click call it with the item.
    */
   onOpen?: (item: T | null) => void;
+  /**
+   * The page an item opens, for the desktop's right-click Open in new tab, Open in browser and Copy link. Default: the
+   * current URL with the open param set, when the open id lives in the URL. Return null for an item with no page.
+   */
+  itemHref?: (item: T) => string | null | undefined;
   /** Controlled open id; pair with `onOpenChange`. */
   open?: string | null;
   /**
@@ -474,8 +479,26 @@ function cancelledOutcome<T>(): ActionOutcome<T> {
 /** The focused element seen from `root` (inside shadow roots) and its page body. */
 function focusOf(root: HTMLElement | null): { active: Element | null; body: HTMLElement | null } {
   if (!root) return { active: null, body: null };
-  return { active: deepActiveElement(root.getRootNode() as Document | ShadowRoot), body: root.ownerDocument.body };
+  // A host field outside this ShadowRoot leaves its activeElement null. Keep
+  // that real focus instead of treating it as a dropped row and moving it.
+  return { active: deepActiveElement(root.getRootNode() as Document | ShadowRoot)
+    ?? deepActiveElement(root.ownerDocument), body: root.ownerDocument.body };
 }
+
+/** The current URL with `param` set to `id`: the page an item opens when the open id lives in the URL. */
+function urlWithParam(param: string, id: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set(param, id);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The portal reads this on right-click to offer the desktop's link menu for a row that is not an anchor. */
+const ITEM_HREF_ATTRIBUTE = 'data-notis-href';
 
 function readUrlParam(param: string): string | null {
   if (typeof window === 'undefined') return null;
@@ -661,7 +684,7 @@ function ListReaderInner<T>({
   getId = defaultGetId, row, reader, actions = [], handlers, openAs, density = 'comfortable', layout = 'list',
   columns, groupBy, selectable, dragSelect = true, wrap = true, empty, title, tabs, toolbarActions, create, viewMenu, infoLine, search, footer,
   readerLabel, readerActions, crumbLabel = defaultCrumbLabel, autoOpen: autoOpenProp = false, renderTile, tileVariant, look = 'plain',
-  openParam = 'open', onOpen, open: controlledOpen, onOpenChange, listId = 'list', label, className, openInUrl = true,
+  openParam = 'open', onOpen, itemHref, open: controlledOpen, onOpenChange, listId = 'list', label, className, openInUrl = true,
   selected: controlledSelected, onSelectedChange, afterAction = 'clear', draggable, onDragStart, loading = false,
   hasMore = false, onLoadMore, loadingMore = false, isPending, isDisabled, collapsible = false,
   collapsed: controlledCollapsed, onCollapsedChange, groupCounts = true, apiRef, items: naturalItems, reorder, board,
@@ -808,6 +831,7 @@ function ListReaderInner<T>({
   // ---- open id, cursor, mode ----
   const actionsController = useActions(listActions, handlers);
   const [openId, setOpenId] = useOpenId(openParam, controlledOpen, onOpenChange, openInUrl, actionsController.notify);
+  const runtime = useNotisRuntime();
   // The item the reader last showed: an open item that leaves the list while the page keeps it open (unsaved edits)
   // stays in the reader until it closes.
   const lastShown = useRef<{ id: string; item: T } | null>(null);
@@ -1483,12 +1507,19 @@ function ListReaderInner<T>({
     onDragStart?.(dragged, event);
   };
 
+  // Only a list whose open id lives in a URL has a page per item unless the caller names it.
+  const urlOpens = controlledOpen === undefined && (openInUrl || runtime?.resource?.kind === 'space')
+    && Boolean(reader || onOpen);
+  const hrefOf = (item: T, id: string) => (itemHref ? itemHref(item) : urlOpens ? urlWithParam(openParam, id) : null);
+
   const renderRow = (item: T, id: string) => {
     const props = getRowProps(id);
     const pending = !!isPending?.(item);
     const disabled = disabledIds.has(id);
+    const href = disabled ? null : hrefOf(item, id);
     const own = {
       ...props,
+      ...(href ? { [ITEM_HREF_ATTRIBUTE]: href } : {}),
       ...(pending ? { 'data-pending': '', 'aria-busy': true } : {}),
       ...(disabled ? { 'data-disabled': '', 'aria-disabled': true } : {}),
       ...(canDrag(item, id) ? {

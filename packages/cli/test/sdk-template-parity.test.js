@@ -38,7 +38,10 @@ test('the app scaffold ships the canonical SDK source legacy apps use, without t
       `SDK scaffold copy drifted at ${file}.`,
     );
   }
-  for (const file of ['ui/toolkit.css', 'ui/index.ts', 'words/index.ts']) {
+  // Pure words are reached by the legacy components' shared utility; the
+  // complete canonical dependency closure above still has to match byte for byte.
+  assert.ok(templateFiles.includes('words/index.ts'));
+  for (const file of ['ui/toolkit.css', 'ui/index.ts', 'ui/list/ListReader.tsx', 'ui/board/BoardView.tsx']) {
     assert.ok(!templateFiles.includes(file), `Legacy apps never vendor the Spaces toolkit (${file}).`);
   }
   assert.ok(!templateFiles.some(file => /\.test\.tsx?$/.test(file)), 'Legacy apps never vendor SDK tests.');

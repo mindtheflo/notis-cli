@@ -71,6 +71,26 @@ test('findLayerRoot: the page body in the document, one shared layer root inside
   assert.equal(findLayerRoot(inner), layer, 'reused, not created twice');
 });
 
+test('a field menu stays in its native dialog top layer and outside menus keep their own root', async () => {
+  const chosen: string[] = [];
+  const { shadow } = await mountInShadow(<>
+    <button id="outside">Outside</button>
+    <dialog open id="details">
+      <Menu label="Status" trigger={<button id="status">Inbox</button>}>
+        <Menu.Item onSelect={() => chosen.push('Planned')}>Planned</Menu.Item>
+      </Menu>
+    </dialog>
+  </>);
+  const outsideLayer = findLayerRoot(shadow.getElementById('outside'));
+  await click(shadow.getElementById('status')!);
+  const menu = shadow.querySelector('[role="menu"]')!;
+  assert.ok(shadow.getElementById('details')!.contains(menu), 'native showModal makes nodes outside the dialog inert');
+  assert.notEqual(menu.parentElement, outsideLayer);
+  await click(menu.querySelector('[role="menuitem"]')!);
+  assert.deepEqual(chosen, ['Planned']);
+  assert.equal(findLayerRoot(shadow.getElementById('outside')), outsideLayer);
+});
+
 test('Menu inside a shadow root: opens in the layer root, arrows move, Enter selects, Escape closes', async () => {
   const chosen: string[] = [];
   let pageKeys = 0;

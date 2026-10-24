@@ -3,9 +3,9 @@
 import { useEffect, useRef } from 'react';
 import { useNotisRuntime } from '../provider';
 
-type Leaf = { label: string; onBack?: () => void };
+type Leaf = { label: string; onBack?: () => void; recordKey?: string };
 type LeafSetter = (leaf: Leaf | null) => void;
-type Owner = { label: string; back: { current: (() => void) | undefined }; hasBack: boolean };
+type Owner = { label: string; back: { current: (() => void) | undefined }; hasBack: boolean; recordKey: string | null };
 type LeafOwners = { owners: Owner[]; sent: Owner | null; back: () => void };
 
 // The components that own a leaf, per host setter, in mount order. The newest owner names the leaf; a component
@@ -15,10 +15,13 @@ const ownersBySetter = new WeakMap<LeafSetter, LeafOwners>();
 function publish(set: LeafSetter, entry: LeafOwners) {
   const top = entry.owners.length ? entry.owners[entry.owners.length - 1] : null;
   const sent = entry.sent;
-  if (top === sent || (top && sent && top.label === sent.label && top.hasBack === sent.hasBack)) { entry.sent = top; return; }
+  if (top === sent || (top && sent && top.label === sent.label && top.hasBack === sent.hasBack && top.recordKey === sent.recordKey)) {
+    entry.sent = top;
+    return;
+  }
   entry.sent = top;
   // The host keeps one stable way back per setter; it always calls the newest owner's latest onBack.
-  set(top ? { label: top.label, ...(top.hasBack ? { onBack: entry.back } : {}) } : null);
+  set(top ? { label: top.label, ...(top.hasBack ? { onBack: entry.back } : {}), ...(top.recordKey ? { recordKey: top.recordKey } : {}) } : null);
 }
 
 /**
@@ -31,18 +34,24 @@ function publish(set: LeafSetter, entry: LeafOwners) {
  * `onBack` closes the record: the crumb before the leaf (the view) then calls it,
  * so the top bar is the page's way back and the page draws no breadcrumb of its own.
  *
+ * `recordKey` names the record the leaf shows, when it is a record of the Space's own
+ * collection (its `collection` database): its Editors can then rename that record from
+ * the leaf in the top bar, and the view shows the new name once its data refreshes.
+ *
  * Without a portal runtime, this hook is a safe no-op.
  *
  * ```tsx
  * useTopBarTitleLeaf(openTicket ? openTicket.key : null, () => setParams({ ticket: null }));
+ * useTopBarTitleLeaf(deck ? deck.name : null, undefined, { recordKey: deck?.recordKey });
  * ```
  */
-export function useTopBarTitleLeaf(label: string | null, onBack?: () => void): void {
+export function useTopBarTitleLeaf(label: string | null, onBack?: () => void, options?: { recordKey?: string | null }): void {
   const runtime = useNotisRuntime();
   const leaf = label?.trim() || null;
   const back = useRef(onBack);
   back.current = onBack;
   const hasBack = Boolean(onBack);
+  const recordKey = options?.recordKey?.trim() || null;
 
   useEffect(() => {
     const set = runtime?.setTopBarTitleLeaf;
@@ -53,7 +62,7 @@ export function useTopBarTitleLeaf(label: string | null, onBack?: () => void): v
       entry = created;
       ownersBySetter.set(set, entry);
     }
-    const owner: Owner = { label: leaf, back, hasBack };
+    const owner: Owner = { label: leaf, back, hasBack, recordKey };
     entry.owners.push(owner);
     publish(set, entry);
     return () => {
@@ -62,5 +71,5 @@ export function useTopBarTitleLeaf(label: string | null, onBack?: () => void): v
       current.owners = current.owners.filter((item) => item !== owner);
       publish(set, current);
     };
-  }, [runtime, leaf, hasBack]);
+  }, [runtime, leaf, hasBack, recordKey]);
 }

@@ -12,7 +12,21 @@ import { DOCUMENT_EDITOR_WORDS, DocumentEditor } from './DocumentEditor';
 import { DOCUMENT_HOOK_WORDS } from '../hooks/useDocument';
 import { MARKDOWN_EDITOR_WORDS, MarkdownEditor } from './MarkdownEditor';
 import { DocumentPage } from './DocumentPage';
-import { RECORD_COMPONENT_WORDS, ShareControl } from './RecordComponents';
+import { HtmlFrame, RECORD_COMPONENT_WORDS, ShareControl, SpacePageFrame, spacePageLink } from './RecordComponents';
+import type { NotisHtmlFrameProps, NotisSpacePageFrameProps } from '../runtime';
+
+test('HtmlFrame hands its ready signal and presentation mode to the host frame', async () => {
+  const seen: NotisHtmlFrameProps[] = [];
+  const runtime = { context: { locale: 'en' }, ui: { HtmlFrame: (props: NotisHtmlFrameProps) => {
+    seen.push(props); return <span data-host-html="" />;
+  } } } as unknown as NotisRuntime;
+  const onReady = () => {};
+  const presentation = { onAction: () => {} };
+  await mount(<NotisProvider runtime={runtime}><HtmlFrame recordKey="r1" onReady={onReady} presentation={presentation} /></NotisProvider>);
+  assert.ok(doc.querySelector('[data-host-html]'));
+  assert.equal(seen.at(-1)?.onReady, onReady);
+  assert.equal(seen.at(-1)?.presentation, presentation);
+});
 
 const doc = dom.window.document;
 let root: Root | null = null;
@@ -152,4 +166,42 @@ test('ShareControl outside Notis is a short muted label; the tooltip says where 
   await mount(<ShareControl recordKey="r1" />);
   assert.equal(doc.querySelector('[data-notis-share-unavailable]')!.textContent, 'Share unavailable');
   for (const words of Object.values(RECORD_COMPONENT_WORDS)) { noDash(words.en); noDash(words.fr); }
+});
+
+test('SpacePageFrame without the host is a card: title, path and Open page, in the Space’s language', async () => {
+  await mount(<NotisProvider runtime={inLocale('fr')}><SpacePageFrame href="/slides/decks?deck=d1" title="Plan" /></NotisProvider>);
+  const card = doc.querySelector('[data-notis-space-page-card]') as HTMLElement;
+  assert.ok(card, 'the fallback card draws');
+  assert.equal(doc.querySelector('iframe'), null, 'no frame without the host');
+  assert.match(card.textContent ?? '', /Plan/);
+  assert.match(card.textContent ?? '', /\/slides\/decks/);
+  assert.doesNotMatch(card.textContent ?? '', /deck=d1/, 'the path, not its query');
+  const open = card.querySelector('a') as HTMLAnchorElement;
+  assert.equal(open.textContent, 'Ouvrir la page');
+  assert.equal(open.getAttribute('href'), '/slides/decks?deck=d1');
+  await mount(<SpacePageFrame href="/slides/decks" />);
+  assert.match(doc.querySelector('[data-notis-space-page-card]')!.textContent ?? '', /Space page/);
+  assert.equal(doc.querySelector('[data-notis-space-page-card] a')!.textContent, 'Open page');
+});
+
+test('SpacePageFrame fallback never links a script or protocol-relative URL', async () => {
+  for (const href of ['javascript:alert(1)', '//evil.example/x', 'data:text/html,hi', '/\\evil.example', 'https://u:password@beta.notis.ai/x']) {
+    await mount(<SpacePageFrame href={href} />);
+    assert.equal(doc.querySelector('[data-notis-space-page-card] a'), null, href);
+  }
+  assert.deepEqual(spacePageLink('https://beta.notis.ai/slides/decks?deck=1'), {
+    path: '/slides/decks', openHref: 'https://beta.notis.ai/slides/decks?deck=1',
+  });
+  assert.deepEqual(spacePageLink('/slides'), { path: '/slides', openHref: '/slides' });
+});
+
+test('SpacePageFrame hands every prop to the host frame when the host draws it', async () => {
+  const seen: NotisSpacePageFrameProps[] = [];
+  const runtime = { context: { locale: 'en' }, ui: { SpacePageFrame: (props: NotisSpacePageFrameProps) => {
+    seen.push(props); return <span data-host-frame="" />;
+  } } } as unknown as NotisRuntime;
+  await mount(<NotisProvider runtime={runtime}><SpacePageFrame href="/slides" title="Deck" interactive className="h-64" /></NotisProvider>);
+  assert.ok(doc.querySelector('[data-host-frame]'));
+  assert.equal(doc.querySelector('[data-notis-space-page-card]'), null);
+  assert.deepEqual(seen.at(-1), { href: '/slides', title: 'Deck', interactive: true, className: 'h-64' });
 });

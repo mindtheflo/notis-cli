@@ -21,9 +21,23 @@ export function LayerRootProvider({ root, children }: { root: HTMLElement | null
 /** The layer root for overlays opened from `from` (usually the trigger element). */
 export function findLayerRoot(from: Node | null | undefined): HTMLElement | null {
   if (typeof document === 'undefined') return null;
+  // Native showModal() makes every node outside its dialog inert, including
+  // the Space's usual overlay root. Keep its menus/popovers in the top layer.
+  const element = from?.nodeType === 1 ? from as Element : from?.parentElement;
+  const dialog = element?.closest('dialog[open]');
+  if (dialog) {
+    const existing = Array.from(dialog.children).find(child => child.hasAttribute(LAYER_ROOT_ATTRIBUTE));
+    if (existing) return existing as HTMLElement;
+    const created = dialog.ownerDocument.createElement('div');
+    created.setAttribute(LAYER_ROOT_ATTRIBUTE, '');
+    created.className = 'nui-layer';
+    dialog.appendChild(created);
+    return created;
+  }
   const root = from && typeof from.getRootNode === 'function' ? from.getRootNode() : document;
   if (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot) {
-    const existing = root.querySelector<HTMLElement>(`[${LAYER_ROOT_ATTRIBUTE}]`);
+    const existing = Array.from(root.querySelectorAll<HTMLElement>(`[${LAYER_ROOT_ATTRIBUTE}]`))
+      .find(layer => !layer.closest('dialog'));
     if (existing) return existing;
     const created = root.ownerDocument.createElement('div');
     created.setAttribute(LAYER_ROOT_ATTRIBUTE, '');

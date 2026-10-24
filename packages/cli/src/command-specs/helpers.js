@@ -1,3 +1,5 @@
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { randomUUID } from 'node:crypto';
 import { CliError, EXIT_CODES, usageError } from '../runtime/errors.js';
 import { callTool, httpRequest } from '../runtime/transport.js';
@@ -76,19 +78,35 @@ export async function runToolCommand({
 }
 
 export async function fetchToolkits(runtime) {
-  const payload = await fetchToolDiscovery(runtime, 'List available toolkit namespaces and connection statuses');
-  return (payload.toolkit_connection_statuses || []).map((entry) => ({
+  const payload = await probeAuth(runtime);
+  const toolkits = payload.toolkit_connection_statuses.map((entry) => ({
     id: entry.toolkit,
-    provider: typeof entry.toolkit === 'string' ? entry.toolkit.split('-', 1)[0] : undefined,
+    provider: entry.provider,
     description: entry.description || entry.status_message || entry.toolkit,
     has_active_connection: Boolean(entry.has_active_connection),
     status_message: entry.status_message || '',
-    connection_details: entry.connection_details || {},
+    availability: entry.availability,
   }));
+  return { toolkits, coverage: payload.coverage, warnings: payload.warnings };
 }
 
 export async function probeAuth(runtime) {
-  return fetchToolDiscovery(runtime, 'List available toolkit namespaces and connection statuses');
+  const result = await httpRequest({ runtime, path: '/cli_tools', body: { operation: 'toolkit_inventory' } });
+  const payload = result.payload;
+  if (payload?.success !== true || !Array.isArray(payload.toolkit_connection_statuses)
+      || typeof payload.coverage?.complete !== 'boolean'
+      || !payload.coverage.families || typeof payload.coverage.families !== 'object'
+      || Array.isArray(payload.coverage.families)
+      || payload.toolkit_connection_statuses.some((row) => !row || typeof row.toolkit !== 'string' || !row.toolkit
+        || typeof row.provider !== 'string' || !row.provider)) {
+    throw new CliError({ code: 'invalid_toolkit_inventory', message: 'The server did not return a valid toolkit inventory.', exitCode: EXIT_CODES.backend });
+  }
+  return {
+    ...payload,
+    toolkit_connection_statuses: [...payload.toolkit_connection_statuses].sort((a, b) => a.toolkit.localeCompare(b.toolkit)),
+    warnings: [...(Array.isArray(payload.warnings) ? payload.warnings.filter((v) => typeof v === 'string') : []),
+      ...(!payload.coverage.complete ? ['Toolkit inventory is incomplete; some connections could not be checked.'] : [])],
+  };
 }
 
 export async function healthCheck(runtime) {
@@ -145,45 +163,35 @@ export async function fetchToolDiscovery(runtime, useCase, knownFields = '') {
   return result.payload || {};
 }
 
+// Tool schemas are the dry-run contract, including nested branches and constraints.
+const toolArgumentsAjv = new Ajv({
+  allErrors: true, strict: false, strictSchema: true, strictNumbers: true, logger: false,
+  coerceTypes: false, useDefaults: false, removeAdditional: false,
+});
+addFormats(toolArgumentsAjv);
+// Native tool schemas mark uploadable fields with this annotation.
+toolArgumentsAjv.addKeyword({ keyword: 'file_uploadable', schemaType: 'boolean', valid: true });
+
 export function validateArguments(schema, args) {
-  const errors = [];
-  if (!schema || schema.type !== 'object') return errors;
-
-  const properties = schema.properties || {};
-  const required = schema.required || [];
-
-  for (const field of required) {
-    if (!(field in args)) {
-      errors.push(`Missing required field: "${field}"`);
-    }
+  if (schema == null) return [];
+  let validate;
+  try {
+    validate = toolArgumentsAjv.compile(schema);
+  } catch {
+    // A malformed or unsupported schema cannot establish a valid dry run.
+    return ['Tool schema could not be validated; inspect the current schema.'];
   }
-
-  if (schema.additionalProperties === false) {
-    for (const key of Object.keys(args)) {
-      if (!(key in properties)) {
-        errors.push(`Unknown field: "${key}"`);
-      }
+  if (validate(args)) return [];
+  return (validate.errors || []).map((error) => {
+    const path = error.instancePath ? ` at "${error.instancePath}"` : '';
+    if (error.keyword === 'required') {
+      return `Missing required field: "${error.params.missingProperty}"${path}`;
     }
-  }
-
-  for (const [key, value] of Object.entries(args)) {
-    const prop = properties[key];
-    if (!prop) continue;
-    if (prop.type === 'string' && typeof value !== 'string') {
-      errors.push(`Field "${key}" should be a string, got ${typeof value}`);
+    if (error.keyword === 'additionalProperties') {
+      return `Unknown field: "${error.params.additionalProperty}"${path}`;
     }
-    if (prop.type === 'integer' && !Number.isInteger(value)) {
-      errors.push(`Field "${key}" should be an integer, got ${typeof value}`);
-    }
-    if (prop.type === 'array' && !Array.isArray(value)) {
-      errors.push(`Field "${key}" should be an array, got ${typeof value}`);
-    }
-    if (prop.type === 'object' && (typeof value !== 'object' || value === null || Array.isArray(value))) {
-      errors.push(`Field "${key}" should be an object, got ${typeof value}`);
-    }
-  }
-
-  return errors;
+    return `Invalid arguments${path}: ${error.message || error.keyword}`;
+  });
 }
 
 export function toolConflictToError(payload, defaultMessage) {

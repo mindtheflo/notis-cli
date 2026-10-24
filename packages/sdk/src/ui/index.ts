@@ -72,3 +72,7 @@ export {
 } from './charts/Chart';
 // H-auto: editable fields (inline edit of facts, Save/Cancel, Cmd+Enter).
 export * from './fields';
+// E: comment pane, thread cards, pins and the Comments database controller.
+export * from './comments';
+// The second-screen presenter: slides full screen on the other screen, the presenter view stays here.
+export * from './present';

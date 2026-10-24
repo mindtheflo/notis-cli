@@ -29,7 +29,7 @@ export const ESCAPE_PRIORITY = Object.freeze({
 export const SEQUENCE_TIMEOUT_MS = 1500;
 
 interface EscapeLayerRecord { id: string; priority: number; onEscape: (event?: KeyboardEvent) => boolean; seq: number }
-interface EscapeBlockerRecord { priority: number; seq: number }
+interface EscapeBlockerRecord { priority: number; seq: number; isActive?: () => boolean }
 interface PendingSequence { candidates: Array<{ entry: RegisteredShortcut; chords: Chord[] }>; step: number; at: number }
 
 export function detectPlatform(): Platform {
@@ -195,8 +195,8 @@ export class KeyboardEngineCore {
     };
   }
 
-  addEscapeBlocker(priority: number = ESCAPE_PRIORITY.detail + 50): () => void {
-    const blocker: EscapeBlockerRecord = { priority, seq: ++this.seq };
+  addEscapeBlocker(priority: number = ESCAPE_PRIORITY.detail + 50, isActive?: () => boolean): () => void {
+    const blocker: EscapeBlockerRecord = { priority, seq: ++this.seq, isActive };
     this.blockers.push(blocker);
     return () => {
       const index = this.blockers.indexOf(blocker);
@@ -217,14 +217,15 @@ export class KeyboardEngineCore {
    * from a key press each layer gets the keydown.
    */
   runEscapeChain(event?: KeyboardEvent): boolean {
-    const top = this.blockers.reduce((max, blocker) => Math.max(max, blocker.priority), -Infinity);
+    const blockers = this.blockers.filter(blocker => !blocker.isActive || blocker.isActive());
+    const top = blockers.reduce((max, blocker) => Math.max(max, blocker.priority), -Infinity);
     for (const layer of this.sortedLayers()) {
       if (layer.priority < top) return true;
       let handled = false;
       try { handled = layer.onEscape(event) === true; } catch (error) { reportError(error); handled = true; }
       if (handled) return true;
     }
-    return this.blockers.length > 0;
+    return blockers.length > 0;
   }
 
   // ---- help sheet ----

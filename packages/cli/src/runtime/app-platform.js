@@ -91,17 +91,72 @@ export function resolveBuiltBundleDir(projectDir) {
   return null;
 }
 
-function normalizeShadowScopedCss(css) {
-  return css
+/**
+ * Same-length copy of `css` in which comments become spaces and quoted strings
+ * and attribute selectors become word characters, so selector matching never
+ * sees text inside them and a word written there still blocks a match after it.
+ */
+function maskCssForSelectorMatching(css) {
+  let masked = '';
+  let index = 0;
+  const skipString = (from) => {
+    const quote = css[from];
+    let end = from + 1;
+    while (end < css.length && css[end] !== quote && css[end] !== '\n') end += css[end] === '\\' ? 2 : 1;
+    return Math.min(end + 1, css.length);
+  };
+  while (index < css.length) {
+    const char = css[index];
+    if (char === '\\') {
+      // An escaped character (`.w-\\[100px\\]`) is part of a name, never a string or attribute opener.
+      masked += css.slice(index, index + 2);
+      index += 2;
+    } else if (char === '/' && css[index + 1] === '*') {
+      const close = css.indexOf('*/', index + 2);
+      const end = close === -1 ? css.length : close + 2;
+      masked += css.slice(index, end).replace(/[^\n]/g, ' ');
+      index = end;
+    } else if (char === '"' || char === "'") {
+      const end = skipString(index);
+      masked += 'x'.repeat(end - index);
+      index = end;
+    } else if (char === '[') {
+      let end = index + 1;
+      while (end < css.length && css[end] !== ']') {
+        end = css[end] === '"' || css[end] === "'" ? skipString(end) : end + (css[end] === '\\' ? 2 : 1);
+      }
+      end = Math.min(end + 1, css.length);
+      masked += 'x'.repeat(end - index);
+      index = end;
+    } else {
+      masked += char;
+      index += 1;
+    }
+  }
+  return masked;
+}
+
+// Standalone `html`, `:root` and `body` type selectors right before a block.
+// A name inside a class, id, custom property or escaped utility (`.sl-kind-html`,
+// `#body`, `--html`, `.md\:root`) never matches, nor does text in a comment,
+// string or attribute selector.
+const SHADOW_GLOBAL_SELECTOR = /(?:(?<![\w\-.#:\\])html|(?<![\w\-\\]):root)\s*(?:,\s*:host\s*)?\{|(?<![\w\-.#:\\])body\s*\{/g;
+
+export function normalizeShadowScopedCss(css) {
+  const masked = maskCssForSelectorMatching(css);
+  let output = '';
+  let last = 0;
+  for (const match of masked.matchAll(SHADOW_GLOBAL_SELECTOR)) {
+    output += css.slice(last, match.index);
     // Keep defaults on both the Portal shadow host and the app root used
     // by the standalone harness. Removing :root erases Tailwind v4 theme
     // variables in previews, collapsing spacing, type sizes and controls.
-    .replace(/(?:html|:root)\s*,\s*:host\s*\{/g, '[data-notis-app-root],:host{')
-    .replace(/:root\s*\{/g, '[data-notis-app-root],:host{')
-    .replace(/html\s*\{/g, '[data-notis-app-root],:host{')
     // Shadow trees do not contain a body element. Route those defaults to the
     // app root contract instead so authors still get the expected reset.
-    .replace(/body\s*\{/g, '[data-notis-app-root]{');
+    output += match[0].startsWith('body') ? '[data-notis-app-root]{' : '[data-notis-app-root],:host{';
+    last = match.index + match[0].length;
+  }
+  return output + css.slice(last);
 }
 
 function normalizeBundleStylesheets(projectDir) {

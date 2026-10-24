@@ -69,6 +69,23 @@ export default space({ name: 'A', ${VIEW_DECLARATION}, entry: './view.tsx', layo
   return root;
 }
 
+test('unsupported Space fields name the field instead of claiming optional actions are missing', async () => {
+  const root = fixture();
+  try {
+    const path = join(root, 'spaces/a/space.config.ts');
+    const valid = `name: 'Queue', ${VIEW_DECLARATION}, entry: './view.tsx'`;
+    writeFileSync(path, `export default { ${valid}, settings: ['folder', 'type'] };`);
+    await assert.rejects(loadSelectedSpace(root, 'a'), (error) => {
+      assert.equal(error.code, 'usage_error');
+      assert.match(error.message, /Unsupported Space definition fields: settings/);
+      assert.match(error.message, /params/);
+      return true;
+    });
+    writeFileSync(path, `export default { ${valid} };`);
+    assert.equal((await loadSelectedSpace(root, 'a')).definition.name, 'Queue', 'read-only views do not require actions');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('selected source includes shared/type/style dependencies but no sibling definition or private state', async () => {
   const root = fixture();
   try {

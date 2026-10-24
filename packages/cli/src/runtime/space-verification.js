@@ -76,10 +76,15 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
     });
     const runtimeCalls = brokers.flatMap(({ width, broker }) => broker.calls.map(call => ({ width, ...call })));
     const passed = renders.every(value => value.status === 'passed') && runtimeCalls.every(call => call.ok);
+    // Each distinct fixture reason once (both widths usually hit the same one), ahead of the generic line.
+    const fixtureErrors = [...new Map(runtimeCalls.filter(call => !call.ok && call.error)
+      .map(call => [call.error, { phase: 'fixture', operation: call.operation,
+        ...(call.recordKey ? { record_key: call.recordKey } : {}), ...(call.actionId ? { action_id: call.actionId } : {}),
+        message: call.error }])).values()].slice(0, 10);
     return { ...diagnostic, status: passed ? 'passed' : 'failed', mounted: renders.every(value => value.mounted),
       fixture_digest: brokers[0].broker.fixtureDigest, renderer_digest: rendererDigest,
       render_count: renders.length, browser_count: 1, renders, runtimeCalls,
-      errors: passed ? [] : [{ phase: 'renderer', message: 'At least one width or read-only fixture failed verification.' }] };
+      errors: passed ? [] : [...fixtureErrors, { phase: 'renderer', message: 'At least one width or read-only fixture failed verification.' }] };
   } catch (error) {
     return { ...diagnostic, status: 'failed', ...(rendererDigest ? { renderer_digest: rendererDigest } : {}),
       errors: [{ phase: 'harness', message: error.message }] };

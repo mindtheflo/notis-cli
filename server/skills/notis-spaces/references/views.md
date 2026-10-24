@@ -15,6 +15,24 @@ notis spaces build ./notes --space collection
 lock and local source key; one build/deploy changes that selected Space only.
 A container has children but no page; page-only params/shows/memory belong on views.
 
+## Index the Space in the workspace
+
+The root `notis.config.ts` maps each local Space key to an object with its
+definition file. The value is not a path string or the definition itself:
+
+```ts
+import { defineSpaces } from '@notis/sdk/config';
+
+export default defineSpaces({
+  spaces: { notes: { definition: 'spaces/notes/space.config.ts' } },
+});
+```
+
+That definition file exports `defineSpace`, as below; its `entry` is relative to
+the definition file. `spaces init` creates this index for a new collection.
+When writing a new source workspace through the confined source tools, include
+the index and the definition before requesting a build.
+
 ## A complete view declaration
 
 The linked `notes` resource below must already resolve to this installation's

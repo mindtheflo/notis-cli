@@ -41,6 +41,17 @@ function viewDeclarations(manifest) {
   return {...(manifest.params && Object.keys(manifest.params).length?{params:Object.fromEntries(Object.entries(manifest.params).map(([name,{page,...value}])=>[name,structuredClone(value)]))}:{}),
     ...(Object.keys(shows).length?{shows}:{}),...(['portal','hidden'].includes(manifest.chrome)?{chrome:manifest.chrome}:{})};
 }
+// What a first-party record component reads, and the smallest valid fixture for it, so a missing
+// fixture names exactly what to add.
+const RECORD_VIEW_READS={record:'readonly note snapshot',html:'stored HTML page',report:'report source'};
+function recordViewExample(operation,key) {
+  const result={
+    record:{record_key:key,writable:false,schema:{properties:{}},document:{record_key:key,properties:{}}},
+    html:{record_key:key,html:'<h1>Fictional page</h1>'},
+    report:{source:'export default function Report() { return null; }',export_name:'default'},
+  }[operation];
+  return JSON.stringify({operation,record_key:key,result});
+}
 const VIEWER_READS={list_databases:'databases',get_database:'databases',query_database:'databases',list_skills:'skills',get_skill:'skills'};
 
 export function createSpaceFixtureEngine(release) {
@@ -138,28 +149,43 @@ export function createSpaceFixtureEngine(release) {
   }
   // First-party record components use explicit readonly fixtures. They never
   // need a collaboration token, upload path, property writer or database key.
+  const viewName=JSON.stringify(release.manifest?.local_key || release.manifest?.name || 'view');
+  const fixtureWhere=`View ${viewName}${release.fixturePath ? ` (${release.fixturePath})` : ''}:`;
   const recordViews=fixtures.recordViews ?? [];
   if(!Array.isArray(recordViews) || recordViews.length>100) throw usageError('Declare bounded synthetic recordViews fixtures.');
+  // Live, a record component opens any row of a declared native database resource (a list row's HtmlFrame needs
+  // no record param), so a fixture needs one such resource, and every record param must name one.
   const recordDeclarations=Object.values(release.manifest.params || {}).filter(value=>value?.type==='record');
+  const nativeDatabases=Object.values(bodyResources).some(value=>value?.kind==='database');
   const previousViews=new Set();
   for(const entry of recordViews) {
     if(!object(entry) || Object.keys(entry).sort().join(',')!=='operation,record_key,result'
       || !['record','html','report'].includes(entry.operation) || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(entry.record_key)
-      || !object(entry.result) || !recordDeclarations.length
-      || !recordDeclarations.every(value=>bodyResources[value.database]?.kind==='database')) throw usageError('Declare readonly recordViews only for a declared native record param.');
+      || !object(entry.result) || !nativeDatabases
+      || !recordDeclarations.every(value=>bodyResources[value.database]?.kind==='database')) throw usageError('Declare readonly recordViews only for a declared native database resource.');
     const identity=entry.operation+':'+entry.record_key;
     if(previousViews.has(identity)) throw usageError('Ambiguous record view fixture.');
     previousViews.add(identity);
     const value=entry.result;
     if(entry.operation==='record' && (value.record_key!==entry.record_key || !object(value.document) || !object(value.schema)
       || value.writable!==false || Object.hasOwn(value,'target') || value.document.record_key!==entry.record_key)) throw usageError('Record fixtures must be readonly snapshots without authoring targets.');
-    if(entry.operation==='html' && (typeof value.html!=='string' || value.record_key!==entry.record_key)) throw usageError('HTML fixtures contain a record key and HTML.');
+    if(entry.operation==='html' && typeof value.html!=='string') {
+      throw usageError(`${fixtureWhere} the html recordViews fixture for record ${entry.record_key} is missing result.html, the page HTML as a string. Use ${recordViewExample('html',entry.record_key)}.`);
+    }
+    if(entry.operation==='html' && value.record_key!==entry.record_key) {
+      throw usageError(`${fixtureWhere} the html recordViews fixture for record ${entry.record_key} needs result.record_key set to that same record key. Use ${recordViewExample('html',entry.record_key)}.`);
+    }
+    if(entry.operation==='html' && value.title!==undefined && value.title!==null && typeof value.title!=='string') throw usageError('HTML fixtures contain a record key, HTML and an optional title.');
     if(entry.operation==='report' && (typeof value.source!=='string' || typeof value.export_name!=='string')) throw usageError('Report fixtures contain an explicit readonly source and export.');
   }
   return { context:fixtures.context || {}, digest:createHash('sha256').update(JSON.stringify(fixtures)).digest('hex'),
     executeRecordView(operation,key) {
       const match=recordViews.find(value=>value.operation===operation && value.record_key===key);
-      if(!match) throw usageError('Add an explicit synthetic record view fixture.');
+      if(!match) {
+        const where=release.fixturePath ? `Add it to recordViews in ${release.fixturePath}`
+          : 'This Space declares no verificationFixtures file: add one to its Space definition with a recordViews entry';
+        throw usageError(`View ${viewName} reads the ${RECORD_VIEW_READS[operation] || operation} of record ${key}, but its fixtures have no recordViews entry with operation "${operation}" and that record_key. ${where}, for example ${recordViewExample(operation,key)}.`);
+      }
       return structuredClone(match.result);
     },
     executeBody(request) {

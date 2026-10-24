@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { httpRequest } from '../runtime/transport.js';
 import { assertSourceRoot } from '../runtime/source-root.js';
 import { parseJson } from './helpers.js';
+import { unifiedDiffSummary, versionName } from './version-history.js';
 import { createHash } from 'node:crypto';
 import { viewRenderCommandSpec } from './views.js';
 
@@ -161,7 +162,9 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
     finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
     const diagnosticPath = saveSpaceVerification(directory, { ...render, space_id: body.space_id });
     if (!['passed', 'not_applicable_container'].includes(render.status)) {
-      throw usageError('The built Space did not pass offline render verification. Nothing was published.', { render, diagnostic_path: diagnosticPath });
+      const reason = render.errors?.find(value => value.phase === 'fixture')?.message;
+      throw usageError(`The built Space did not pass offline render verification. Nothing was published.${reason ? ` ${reason}` : ''}`,
+        { render, diagnostic_path: diagnosticPath });
     }
     if (publish && !ctx.options.dryRun) {
       // The retained intent pins the local change set next to the server verification, with the
@@ -254,6 +257,13 @@ const idArgument = { token: '<space-id>', key: 'spaceId', description: 'Exact ex
 const recordOption = { flags: '--record <record-key>', description: 'Fixed record context, when this is a record-scoped Space.' };
 const requestOption = { flags: '--request-id <key>', description: 'Stable intent key. Reuse after timeouts or lost replies.' };
 
+function historyRevision(value, flag) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw usageError(`Pass ${flag} with a saved version number from history list.`);
+  }
+  return Number(value);
+}
+
 export const spacesCommandSpecs = [
   {
     command_path: ['spaces', 'history', 'list'],
@@ -285,6 +295,77 @@ export const spacesCommandSpecs = [
           || !ctx.options.requestId) throw usageError('Pass --target-revision, current --revision and a stable --request-id.');
       return remote(ctx, 'history-restore', { body: { space_id: ctx.args.spaceId, target_revision: Number(target),
         revision: Number(revision), request_id: ctx.options.requestId, dry_run: Boolean(ctx.options.dryRun) } });
+    },
+  },
+  {
+    command_path: ['spaces', 'history', 'read'],
+    summary: 'Read the files of one saved Space version.',
+    when_to_use: 'See exactly what a saved version contained, before comparing or restoring it. Editors only.',
+    args_schema: { arguments: [idArgument], options: [
+      { flags: '--revision <revision>', description: 'The saved version from history list.' },
+      { flags: '--path <path>', description: 'Read only this file or folder.' },
+    ] },
+    examples: ['notis spaces history read <space-id> --revision 3 --path app/page.tsx'],
+    mutates: false, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/history-read' },
+    handler(ctx) {
+      return remote(ctx, 'history-read', { method: 'GET', query: { space_id: ctx.args.spaceId,
+        revision: historyRevision(ctx.options.revision, '--revision'), path: ctx.options.path } });
+    },
+  },
+  {
+    command_path: ['spaces', 'history', 'diff'],
+    summary: 'Compare two saved Space versions, or one with the current version.',
+    when_to_use: 'See what changed between versions. Prints the unified diff; pass --json for the full comparison.',
+    args_schema: { arguments: [idArgument], options: [
+      { flags: '--from <revision>', description: 'The older saved version.' },
+      { flags: '--to <revision>', description: 'The newer saved version, or current (default).' },
+      { flags: '--path <path>', description: 'Compare only this file or folder.' },
+    ] },
+    examples: ['notis spaces history diff <space-id> --from 3', 'notis spaces history diff <space-id> --from 3 --to 5 --json'],
+    mutates: false, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/history-diff' },
+    async handler(ctx) {
+      const to = ctx.options.to === undefined || ctx.options.to === 'current' ? 'current' : historyRevision(ctx.options.to, '--to');
+      const query = { space_id: ctx.args.spaceId, from: historyRevision(ctx.options.from, '--from'), to, path: ctx.options.path };
+      const suffix = new URLSearchParams(Object.entries(query).filter(([, value]) => value != null));
+      const result = await httpRequest({ runtime: ctx.runtime, method: 'GET', path: `/portal_spaces/history-diff?${suffix}`, spacesProtocol: true });
+      return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data: result.payload,
+        humanSummary: unifiedDiffSummary(result.payload), meta: { mutating: false, request_id: result.requestId } });
+    },
+  },
+  {
+    command_path: ['spaces', 'history', 'name'],
+    summary: 'Name a saved Space version, or clear its name.',
+    when_to_use: 'Mark a version worth keeping, such as a launch. Named versions are kept past the usual retention.',
+    args_schema: { arguments: [idArgument], options: [
+      { flags: '--revision <revision>', description: 'The saved version from history list.' },
+      { flags: '--name <name>', description: 'The version name.' },
+      { flags: '--clear', description: 'Remove the version name.' },
+    ] },
+    examples: ['notis spaces history name <space-id> --revision 3 --name "Launch"', 'notis spaces history name <space-id> --revision 3 --clear'],
+    mutates: true, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/history-name' },
+    handler(ctx) {
+      return remote(ctx, 'history-name', { body: { space_id: ctx.args.spaceId,
+        revision: historyRevision(ctx.options.revision, '--revision'), name: versionName(ctx.options) } });
+    },
+  },
+  {
+    command_path: ['spaces', 'history', 'delete'],
+    summary: 'Delete one saved Space version for good.',
+    when_to_use: 'Only when the user asked to delete this version. It cannot be restored afterwards.',
+    args_schema: { arguments: [idArgument], options: [
+      { flags: '--revision <revision>', description: 'The saved version from history list.' },
+      { flags: '--yes', description: 'Confirm the user asked to delete this version for good.' },
+    ] },
+    examples: ['notis spaces history delete <space-id> --revision 3 --yes'],
+    mutates: true, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/history-delete' },
+    handler(ctx) {
+      const revision = historyRevision(ctx.options.revision, '--revision');
+      if (!ctx.options.yes) throw usageError('Deleting a saved version cannot be undone. Only do it when the user asked, then pass --yes.');
+      return remote(ctx, 'history-delete', { body: { space_id: ctx.args.spaceId, revision } });
     },
   },
   viewRenderCommandSpec({ screenshotOnly: true }),

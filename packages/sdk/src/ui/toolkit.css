@@ -543,6 +543,23 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
   .nui-help-panel { width: 100%; height: 100%; max-height: none; border-radius: 0; }
 }
 
+/* == section: dialog (A1) == */
+/* The SDK Dialog (components/Dialog.tsx), a native <dialog> in the top layer: the Portal's AlertDialog card. Phones get
+ * an inset rounded card that never touches the screen edges. While the OS asks instead (nativeOnTouch), card and
+ * backdrop stay mounted but transparent. */
+dialog.notis-dialog { position: fixed; inset: 0; margin: auto; box-sizing: border-box; width: min(32rem, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; padding: 24px; border: 0; border-radius: 8px; background: hsl(var(--background)); color: hsl(var(--foreground)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev-lg, 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12)); font-size: 14px; line-height: 20px; outline: none; }
+dialog.notis-dialog::backdrop { background: rgb(0 0 0 / .4); }
+.notis-dialog-title { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
+.notis-dialog-description { margin: 8px 0 0; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); }
+.notis-dialog-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+dialog.notis-dialog[data-native-confirm] { opacity: 0; pointer-events: none; }
+dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
+@media (max-width: 639px) {
+  dialog.notis-dialog { border-radius: 16px; }
+  .notis-dialog-actions { flex-direction: column-reverse; align-items: stretch; }
+  .notis-dialog-actions > * { min-height: 44px; }
+}
+
 /* == section: dates base (A3) == */
 /* The A2 button reset covers .nui-root and .nui-layer only; these pieces also render in plain Portal pages. */
 :where(.nui-dp, .nui-pp, .nui-pp-pop, .nui-cal, .nui-tl-view, .nui-ctable-wrap) button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: default; }
@@ -1092,6 +1109,85 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
   background: hsl(var(--nui-blue, 217 91% 60%)); pointer-events: none; }
 .nui-tile[data-drop="before"]::after { left: -7px; }
 .nui-tile[data-drop="after"]::after { right: -7px; }
+
+/* == section: comments (E) == */
+/* CommentPane, CommentThreadCard, NewCommentBox and CommentPins. Flat: fills, no borders or coloured edges. */
+.nui-comment-pane { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto;
+  padding: 16px; font-size: 13px; line-height: 1.45; color: hsl(var(--foreground)); }
+.nui-comment-pane-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.nui-comment-pane-title { margin: 0; font-size: 14px; font-weight: 600; }
+.nui-comment-copy { justify-content: space-between; width: 100%; }
+.nui-comment-copy-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
+.nui-comment-count { min-width: 20px; padding: 0 6px; border-radius: 999px; background: hsl(var(--foreground) / .08);
+  font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.nui-comment-list { display: flex; flex-direction: column; gap: 8px; }
+.nui-comment-empty { padding: 24px 8px; }
+
+.nui-comment-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
+  background: hsl(var(--foreground) / .04); cursor: pointer; outline: none; scroll-margin: 12px; }
+.nui-comment-card:hover { background: hsl(var(--foreground) / .06); }
+.nui-comment-card[data-selected] { background: hsl(var(--foreground) / .08); }
+.nui-comment-card:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
+.nui-comment-card[data-resolved] > :not(.nui-comment-compose):not(.nui-comment-head) { opacity: .7; }
+.nui-comment-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nui-comment-who { display: flex; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 0 6px; min-width: 0; }
+.nui-comment-author { font-weight: 600; }
+.nui-comment-meta { color: hsl(var(--muted-foreground)); font-size: 12px; }
+.nui-comment-new { align-self: center; width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-comment-actions { display: flex; gap: 2px; margin-inline-start: auto; opacity: 0; transition: opacity .12s; }
+.nui-comment-card:hover .nui-comment-actions, .nui-comment-card:focus-within .nui-comment-actions,
+.nui-comment-card[data-selected] .nui-comment-actions { opacity: 1; }
+@media (hover: none) { .nui-comment-actions { opacity: 1; } }
+.nui-comment-icon-btn { flex: none; }
+.nui-comment-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.nui-comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nui-comment-avatar { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px;
+  border-radius: 50%; background: hsl(var(--foreground) / .1); font-size: 11px; font-weight: 700; line-height: 1; }
+.nui-comment-avatar[data-me] { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+
+.nui-comment-ask { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 8px;
+  background: hsl(var(--nui-blue, 217 91% 60%) / .08); cursor: default; }
+.nui-comment-ask-label { margin: 0; }
+.nui-comment-ask-who { font-weight: 600; }
+.nui-comment-answer { display: flex; align-items: center; gap: 6px; margin: 0; color: hsl(var(--muted-foreground)); }
+.nui-comment-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.nui-comment-replies { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.nui-comment-reply { display: flex; gap: 8px; min-width: 0; }
+.nui-comment-reply-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+
+.nui-comment-compose { display: flex; align-items: flex-end; gap: 4px; cursor: default; }
+.nui-comment-input { flex: 1; min-width: 0; min-height: 32px; max-height: 240px; padding: 6px 10px; border: 0; border-radius: 8px;
+  background: hsl(var(--foreground) / .05); color: inherit; font: inherit; resize: none; field-sizing: content; outline: none; }
+.nui-comment-input:hover { background: hsl(var(--foreground) / .08); }
+.nui-comment-input:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
+.nui-comment-input::placeholder { color: hsl(var(--muted-foreground)); }
+
+.nui-comment-new-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
+  background: hsl(var(--foreground) / .06); }
+.nui-comment-new-title { margin: 0; font-weight: 600; }
+.nui-comment-new-actions, .nui-comment-dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* A pin: a numbered drop whose point sits on the commented spot. Put CommentPins in a positioned element. */
+.nui-comment-pin { position: absolute; z-index: 2; display: flex; align-items: center; justify-content: center; width: 26px;
+  height: 26px; padding: 0; border: 0; border-radius: 13px 13px 13px 3px; transform: translate(-4px, -100%);
+  background: hsl(var(--foreground)); color: hsl(var(--background)); font: 700 12px/1 inherit; cursor: pointer;
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 2px 8px rgb(0 0 0 / .35); }
+.nui-comment-pin[data-agent] { background: hsl(var(--nui-blue, 217 91% 60%)); color: #fff; }
+.nui-comment-pin[data-selected] { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 2px; }
+.nui-comment-pin[data-resolved] { opacity: .35; }
+.nui-comment-pin[data-draft] { pointer-events: none; }
+.nui-comment-pin:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 2px; }
+/* A zone: the Manager's selection blue, a tinted fill inside a ring on all four sides. */
+.nui-comment-zone { position: absolute; z-index: 1; border-radius: 4px; pointer-events: none;
+  background: hsl(var(--nui-blue, 217 91% 60%) / .12); box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-comment-zone[data-selected] { background: hsl(var(--nui-blue, 217 91% 60%) / .2); }
+.nui-comment-zone[data-resolved] { opacity: .35; }
+/* Add comment mode covers the anchor: a click drops a pin, a press and drag marks a zone. */
+.nui-comment-capture { position: absolute; inset: 0; z-index: 1; cursor: crosshair; touch-action: none; user-select: none;
+  -webkit-user-select: none; }
+.nui-comment-start { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.nui-comment-hint { margin: 0; color: hsl(var(--muted-foreground)); font-size: 12px; }
 
 /* == section: gallery (attachments) == */
 /* The attachment row of conversations: 140px cards in a snap scroller with edge fades (Portal FileCarousel look). */
