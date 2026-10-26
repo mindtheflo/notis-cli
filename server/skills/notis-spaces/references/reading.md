@@ -35,6 +35,12 @@ CLI outputs include artifact paths; open those files to inspect them. A JSON
 success envelope without the expected image/content is not inspection. Rendering
 grants no upload, record edit, provider write or another viewer's access.
 
+An Editor can also render a Space preview link
+(`/spaces/preview?space=<id>&release=<id>&revision=<n>`, with `&record=<key>` for one
+item) to inspect an unpromoted release before it goes live. Its reads use that
+release under your own access, so they are never reported as fresh, and a preview
+render is never saved to the Space's memory. Viewers cannot render previews.
+
 The tool's screenshot is shown to you; it is not a file to attach. Answer from
 what it showed and cite the view link. When the user needs the image file itself,
 say the screenshot cannot be attached.
