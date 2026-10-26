@@ -8,8 +8,8 @@ import { KeyboardEngine, KeyboardEngineCore } from '../engine';
 import { NotisProvider } from '../../provider';
 import type { NotisRuntime } from '../../runtime';
 import {
-  COMMENT_COLUMNS, CommentPane, CommentPins, applyCommentPatches, commentChangesSince, commentDigest, commentRelativeTime,
-  commentThreads, isCommentZone, readCommentRow, useComments, type CommentAnchor, type CommentController, type CommentRecord,
+  COMMENT_COLUMNS, CommentPane, CommentPins, applyCommentPatches, commentAttachmentFor, commentBodyParts, commentChangesSince,
+  commentDigest, commentRelativeTime, commentThreads, isCommentZone, readCommentRow, useComments, type CommentAnchor, type CommentController, type CommentRecord,
   type UseCommentsOptions,
 } from '.';
 import * as ui from '..';
@@ -35,6 +35,7 @@ function row(key: string, fields: {
   body: string; author?: string; slide?: string; thread?: string; x?: number; y?: number; w?: number; h?: number;
   status?: string; needs?: string;
   options?: string; answer?: string; change?: string; changedAt?: string; createdAt?: string; revision?: number;
+  files?: unknown[];
 }): Record<string, unknown> {
   const text = (value: string) => ({ type: 'rich_text', rich_text: [{ text: { content: value } }] });
   const select = (value: string) => ({ type: 'select', select: { name: value } });
@@ -53,6 +54,7 @@ function row(key: string, fields: {
   if (fields.y != null) properties.Y = { type: 'number', number: fields.y };
   if (fields.w != null) properties.W = { type: 'number', number: fields.w };
   if (fields.h != null) properties.H = { type: 'number', number: fields.h };
+  if (fields.files) properties.Attachments = { type: 'files', files: fields.files };
   if (fields.change) properties.Change = select(fields.change);
   if (fields.changedAt) properties['Changed at'] = { type: 'date', date: { start: fields.changedAt } };
   return {
@@ -84,7 +86,7 @@ test('Comments columns: the Slides Comments table, unchanged', () => {
     body: 'Body', scope: 'Deck', anchor: 'Slide', thread: 'Thread', author: 'Author', x: 'X', y: 'Y', w: null, h: null,
     status: 'Status',
     needs: 'Needs', options: 'Options', answer: 'Answer', answeredAt: 'Answered at', change: 'Change',
-    changedAt: 'Changed at', example: 'Example',
+    changedAt: 'Changed at', example: 'Example', attachments: 'Attachments',
   });
 });
 
@@ -496,4 +498,126 @@ test('Comment on the whole item: no pin, its own heading, and no X or Y', async 
   assert.equal(props.X, undefined);
   assert.equal(props.Y, undefined);
   assert.deepEqual(props.Slide, ['slide-1']);
+});
+
+// ---------------------------------------------------------------------------
+// Pictures, files and links shown with a comment
+// ---------------------------------------------------------------------------
+
+const BEFORE = 'https://files.example/native-record-files/v1/a/file.png';
+const AFTER = 'https://files.example/native-record-files/v1/b/file.png';
+
+test('Attachments: read from the files column, pictures told from files, unsafe links dropped', () => {
+  const comment = readCommentRow(row('a1', { body: 'Keep it?', files: [
+    { name: 'Before.png', url: BEFORE },
+    { name: 'After.png', file: { url: AFTER } },
+    { name: 'Notes.pdf', external: { url: 'https://files.example/notes.pdf' } },
+    'https://files.example/raw/shot.webp',
+    { name: 'Bad', url: 'javascript:alert(1)' },
+    { name: 'Also bad', url: '//evil.example/x.png' },
+  ] }));
+  assert.deepEqual(comment.attachments.map(item => [item.label, item.image]),
+    [['Before', true], ['After', true], ['Notes', false], ['shot', true]]);
+  assert.equal(comment.attachments[1]!.url, AFTER);
+  assert.deepEqual(readCommentRow(row('a2', { body: 'x' })).attachments, [], 'a table without the column shows none');
+  assert.deepEqual(readCommentRow(row('a3', { body: 'x', files: [{ name: 'A.png', url: BEFORE }] }),
+    { columns: { attachments: null } }).attachments, []);
+  assert.equal(commentAttachmentFor(' before ', comment.attachments)?.url, BEFORE, 'an option names its picture, any case');
+  assert.equal(commentAttachmentFor('Notes', comment.attachments), undefined, 'only pictures answer an option');
+  const inline = readCommentRow(row('a4', { body: 'x', files: [{ name: 'Chart', url: 'data:image/svg+xml;utf8,%3Csvg%2F%3E' },
+    { name: 'Page', url: 'data:text/html,<script>1</script>' }] })).attachments;
+  assert.deepEqual(inline.map(item => [item.label, item.image]), [['Chart', true]], 'an inline picture shows, other data does not');
+});
+
+test('commentBodyParts: links keep their brackets and lose the sentence punctuation', () => {
+  const parts = commentBodyParts('See https://beta.notis.ai/notes/n-1/review?tab=list . Or (https://x.example/a_(b)), done.');
+  assert.deepEqual(parts, [
+    { text: 'See ' },
+    { href: 'https://beta.notis.ai/notes/n-1/review?tab=list', label: 'beta.notis.ai/notes/n-1/review' },
+    { text: ' . Or (' },
+    { href: 'https://x.example/a_(b)', label: 'x.example/a_(b)' },
+    { text: '), done.' },
+  ]);
+  const long = commentBodyParts('https://beta.notis.ai/notes/notes-bcbc4e63520d5c76b2868945a86f782b/beta-stabilization')[0] as { label: string };
+  assert.equal(long.label.length, 48);
+  assert.ok(long.label.endsWith('…'));
+  assert.deepEqual(commentBodyParts('no links here'), [{ text: 'no links here' }]);
+});
+
+test('CommentPane: links open in a new tab, pictures open larger, files are links', async () => {
+  const rows = [
+    row('p1', { body: 'Pictures at https://beta.notis.ai/notes/n-1 .', author: 'Claude', slide: 'slide-1',
+      files: [{ name: 'Before.png', url: BEFORE }, { name: 'Report.pdf', url: 'https://files.example/report.pdf' }] }),
+  ];
+  await mount(<Harness {...base} />, fakeRuntime(rows, []));
+  const link = doc.querySelector('[data-thread="p1"] .nui-comment-link') as HTMLAnchorElement;
+  assert.equal(link.getAttribute('href'), 'https://beta.notis.ai/notes/n-1');
+  assert.equal(link.target, '_blank');
+  assert.equal(link.rel, 'noopener noreferrer');
+  assert.equal(link.textContent, 'beta.notis.ai/notes/n-1');
+  assert.equal(doc.querySelector('.nui-comment-pictures')!.getAttribute('data-count'), '1');
+  assert.equal((doc.querySelector('.nui-comment-thumb img') as HTMLImageElement).getAttribute('src'), BEFORE);
+  assert.equal(doc.querySelector('.nui-comment-caption')!.textContent, 'Before');
+  assert.match(doc.querySelector('[data-thread="p1"] .nui-gallery-row')!.textContent!, /Report/, 'a file shows in the attachment row');
+  assert.equal(doc.querySelectorAll('[data-thread="p1"] .nui-comment-figure').length, 1, 'only pictures sit in the grid');
+  assert.equal(doc.querySelector('.nui-viewer'), null);
+  await click(button('Open Before larger')!);
+  const viewer = doc.querySelector('.nui-viewer') as HTMLElement;
+  assert.ok(viewer, 'the picture opens in the image viewer');
+  assert.equal(viewer.querySelector('img')!.getAttribute('src'), BEFORE);
+  assert.equal(controller!.threadKey, null, 'opening a picture does not pick the thread');
+  await click(viewer.querySelector('button[aria-label="Close"]')!);
+  assert.equal(doc.querySelector('.nui-viewer'), null);
+});
+
+test('CommentPane: a choice is answered from under its picture or its larger view', async () => {
+  const calls: Call[] = [];
+  const rows = [row('p2', { body: 'Which layout?', author: 'Claude', slide: 'slide-1', needs: 'choice', options: 'A | B | Neither',
+    files: [{ name: 'A.png', url: BEFORE }, { name: 'B.png', url: AFTER }] })];
+  await mount(<Harness {...base} />, fakeRuntime(rows, calls));
+  const figures = [...doc.querySelectorAll('.nui-comment-figure')];
+  assert.deepEqual(figures.map(figure => figure.querySelector('button.nui-btn')?.textContent), ['A', 'B']);
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-choices button')].map(el => el.textContent), ['Neither'],
+    'the row keeps only the options no picture names');
+  await click(button('Open B larger')!);
+  assert.equal(doc.querySelector('.nui-viewer img')!.getAttribute('src'), AFTER);
+  await click([...doc.querySelectorAll('.nui-viewer-bar button')].find(el => el.textContent === 'B')!);
+  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'B');
+  assert.equal(doc.querySelector('.nui-viewer'), null, 'answering closes the viewer');
+  const chosen = doc.querySelector('.nui-comment-figure[data-chosen]')!;
+  assert.equal(chosen.querySelector('img')!.getAttribute('src'), AFTER);
+  assert.equal(doc.querySelectorAll('.nui-comment-figure button.nui-btn').length, 0, 'an answered ask offers no more buttons');
+  assert.match(doc.querySelector('[data-thread="p2"] .nui-comment-answer')!.textContent!, /B, sent to the agent/);
+
+  await mount(<Harness {...base} />, fakeRuntime([row('p3', { body: 'Pick', author: 'Claude', slide: 'slide-1', needs: 'choice',
+    options: 'A | B', files: [{ name: 'A.png', url: BEFORE }, { name: 'B.png', url: AFTER }] })], calls));
+  assert.equal(doc.querySelector('.nui-comment-choices'), null, 'no empty row when every option has its picture');
+  await click([...doc.querySelectorAll('.nui-comment-figure button.nui-btn')].find(el => el.textContent === 'A')!);
+  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'A');
+});
+
+test('CommentPane: a check offers the labels its author gave, and Looks good or Undo without them', async () => {
+  const calls: Call[] = [];
+  const rows = [row('k1', { body: 'Keep the spacing fix?', author: 'Codex', slide: 'slide-1', needs: 'check',
+    options: 'Approve exact change | Hold' })];
+  await mount(<Harness {...base} authors={undefined} />, fakeRuntime(rows, calls));
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-choices button')].map(el => el.textContent), ['Approve exact change', 'Hold']);
+  await click(button('Hold')!);
+  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'Hold');
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
+  assert.deepEqual([...doc.querySelectorAll('[data-thread="c2"] .nui-comment-choices button')].map(el => el.textContent),
+    ['Looks good', 'Undo']);
+});
+
+test('Replies show their pictures and links too, and French words', async () => {
+  const rows = [
+    row('q1', { body: 'Tighten it', slide: 'slide-1' }),
+    row('q2', { body: 'New version: https://x.example/v2', author: 'Claude', slide: 'slide-1', thread: 'q1',
+      files: [{ name: 'Après.png', url: AFTER }], createdAt: '2026-10-21T12:00:00.000Z' }),
+  ];
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
+  const reply = doc.querySelector('.nui-comment-reply')!;
+  assert.equal(reply.querySelector('.nui-comment-link')!.getAttribute('href'), 'https://x.example/v2');
+  assert.equal(reply.querySelector('.nui-comment-attachments')!.getAttribute('aria-label'), 'Images et fichiers');
+  assert.ok(button('Agrandir Après'));
 });

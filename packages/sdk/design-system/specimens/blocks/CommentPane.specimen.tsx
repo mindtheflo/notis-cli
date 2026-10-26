@@ -27,7 +27,7 @@ const SCOPE: CommentScope = { id: 'deck-1', recordKey: 'deck-1', name: 'Q3 revie
 interface Seed {
   key: string; body: { en: string; fr: string }; author: string; slide: string; at: string; thread?: string; x?: number; y?: number;
   w?: number; h?: number;
-  needs?: string; options?: string; status?: string; change?: string;
+  needs?: string; options?: string; status?: string; change?: string; files?: { name: string; url: string }[];
 }
 
 const SEEDS: Seed[] = [
@@ -47,10 +47,10 @@ const SEEDS: Seed[] = [
     body: { en: 'Add the dates.', fr: 'Ajoute les dates.' } },
 ];
 
-function rows(lang: Ctx['lang']) {
+function rows(lang: Ctx['lang'], seeds: Seed[] = SEEDS) {
   const text = (value: string) => ({ type: 'rich_text', rich_text: [{ text: { content: value } }] });
   const select = (value: string) => ({ type: 'select', select: { name: value } });
-  return SEEDS.map(seed => ({
+  return seeds.map(seed => ({
     id: `id-${seed.key}`, record_key: seed.key, revision: 1, title: seed.body[lang], created_at: seed.at,
     properties: {
       Deck: { type: 'relation', relation: [{ id: 'deck-1' }] },
@@ -60,23 +60,45 @@ function rows(lang: Ctx['lang']) {
       ...(seed.x != null ? { X: { type: 'number', number: seed.x }, Y: { type: 'number', number: seed.y } } : {}),
       ...(seed.w != null ? { W: { type: 'number', number: seed.w }, H: { type: 'number', number: seed.h } } : {}),
       ...(seed.change ? { Change: select(seed.change), 'Changed at': { type: 'date', date: { start: seed.at } } } : {}),
+      ...(seed.files ? { Attachments: { type: 'files', files: seed.files } } : {}),
     },
   }));
 }
 
+/** A flat screenshot as an inline SVG, so the frames never load from the network. */
+function screenshot(fill: string, label: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">`
+    + `<rect width="640" height="400" fill="${fill}"/><rect x="40" y="40" width="560" height="56" rx="8" fill="#fff" opacity=".9"/>`
+    + `<rect x="40" y="120" width="360" height="24" rx="6" fill="#fff" opacity=".6"/>`
+    + `<text x="320" y="300" font-family="sans-serif" font-size="44" fill="#fff" text-anchor="middle">${label}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/** Asks with pictures: a before and after to pick from, and a check with the agent's own answers. */
+const PICTURE_SEEDS: Seed[] = [
+  { key: 'p1', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:20:00Z', needs: 'choice', options: 'Before | After',
+    body: { en: 'The floating button covered the last menu. Which spacing do you keep?',
+      fr: 'Le bouton flottant cachait le dernier menu. Quel espacement gardes-tu ?' },
+    files: [{ name: 'Before.png', url: screenshot('#8a8f98', 'Before') }, { name: 'After.png', url: screenshot('#5b7cfa', 'After') }] },
+  { key: 'p2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:25:00Z', needs: 'check', options: 'Keep the fix | Hold',
+    body: { en: 'The full review is at https://beta.notis.ai/notes/review . May I keep the fix?',
+      fr: 'La revue complète est sur https://beta.notis.ai/notes/review . Je garde la correction ?' },
+    files: [{ name: 'Menu.png', url: screenshot('#2f9e77', 'Menu') }, { name: 'Review.pdf', url: 'https://example.com/review.pdf' }] },
+];
+
 /** The book runtime plus a Comments list that answers from fixtures and writes that succeed without a server. */
-function commentRuntime(lang: Ctx['lang'], empty: boolean): NotisRuntime {
+function commentRuntime(lang: Ctx['lang'], empty: boolean, seeds: Seed[] = SEEDS): NotisRuntime {
   const base = bookRuntime(lang);
   let next = 0;
   return {
     ...base,
     space: {
-      ...base.space!, cacheScope: `comments-book:${lang}:${empty ? 'empty' : 'full'}`,
+      ...base.space!, cacheScope: `comments-book:${lang}:${empty ? 'empty' : seeds === SEEDS ? 'full' : 'pictures'}`,
       actions: { 'comments.insert': { readOnly: false }, 'comments.update': { readOnly: false } },
       shows: { comments: { database: 'comments' } },
       bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
     } as unknown as NotisRuntime['space'],
-    shown: async () => ({ rows: empty ? [] : rows(lang), schema_revision: 1 }),
+    shown: async () => ({ rows: empty ? [] : rows(lang, seeds), schema_revision: 1 }),
     callAction: async () => ({ record_key: `book-${next += 1}`, revision: 2 }),
   } as unknown as NotisRuntime;
 }
@@ -112,6 +134,19 @@ function Demo({ ctx, empty = false, draft }: { ctx: Ctx; empty?: boolean; draft?
   return <NotisProvider runtime={runtime}><Deck anchorKey="slide-1" draft={draft} /></NotisProvider>;
 }
 
+function PicturesDemo({ ctx }: { ctx: Ctx }) {
+  const runtime = useMemo(() => commentRuntime(ctx.lang, false, PICTURE_SEEDS), [ctx.lang]);
+  return <NotisProvider runtime={runtime}><PicturesPane /></NotisProvider>;
+}
+
+/** The pane alone, as a Space's side panel shows it. */
+function PicturesPane() {
+  const controller = useComments({
+    scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1', authors: ['Flo', 'Claude', 'Notis'], words: SLIDE_WORDS,
+  });
+  return <div style={{ maxWidth: 360 }}><CommentPane controller={controller} /></div>;
+}
+
 function CardOnly({ ctx }: { ctx: Ctx }) {
   const runtime = useMemo(() => commentRuntime(ctx.lang, false), [ctx.lang]);
   return <NotisProvider runtime={runtime}><Card /></NotisProvider>;
@@ -136,7 +171,7 @@ export const specimen = defineSpecimen({
   group: 'blocks',
   from: '@notis/sdk/ui',
   covers: ['CommentPane', 'CommentThreadCard', 'NewCommentBox', 'CommentPins', 'CommentAvatar'],
-  summary: 'Review comments on a page: pins, zones and whole-item comments with replies, asks the agent waits on, Resolve and Copy changes.',
+  summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files, asks the agent waits on (answered from under a picture), Resolve and Copy changes.',
   states: [
     {
       id: 'threads',
@@ -167,6 +202,11 @@ export const specimen = defineSpecimen({
       label: 'Add comment mode: click to pin, hold and drag to mark a zone',
       height: 560,
       render: ctx => <Demo ctx={ctx} draft="commenting" />,
+    },
+    {
+      id: 'pictures',
+      label: 'Asks with pictures: pick the before or the after, a check with the agent\'s own answers, a link and a file',
+      render: ctx => <PicturesDemo ctx={ctx} />,
     },
     {
       id: 'empty',

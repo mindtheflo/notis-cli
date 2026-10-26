@@ -19,14 +19,15 @@ import React, {
 import { Dialog } from '../../components/Dialog';
 import { ActionToast } from '../actions/ActionToast';
 import { Badge, Button, EmptyState, SegmentedControl } from '../blocks';
+import { AttachmentGallery, ImageViewer } from '../gallery';
 import { ESCAPE_PRIORITY } from '../engine/core';
 import { useEscapeLayer } from '../engine/hooks';
 import { Icon } from '../icons';
 import { Tooltip } from '../overlay';
 import { cx } from '../util';
 import {
-  COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, commentRelativeTime, isCommentZone, scrollCommentIntoView, type CommentRecord,
-  type CommentThread,
+  COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, commentAttachmentFor, commentBodyParts, commentRelativeTime, isCommentZone,
+  scrollCommentIntoView, type CommentAttachment, type CommentRecord, type CommentThread,
 } from './commentModel';
 import type { CommentController } from './useComments';
 
@@ -71,6 +72,85 @@ function stop(event: { stopPropagation(): void }) { event.stopPropagation(); }
 
 function sendsOnEnter(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
   return event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing;
+}
+
+/** The answers an ask offers: the author's Options, or Looks good and Undo for a check without its own. */
+function askChoices(root: CommentRecord): string[] {
+  if (root.needs === 'check') return root.options.length ? root.options : [...COMMENT_CHECK_ANSWERS];
+  return root.needs === 'choice' ? root.options : [];
+}
+
+/** A comment's text with its links opening in a new tab, each named by its host and path. */
+function CommentBody({ body }: { body: string }) {
+  return (
+    <p className="nui-comment-body">
+      {commentBodyParts(body).map((part, index) => 'href' in part ? (
+        <a key={index} className="nui-comment-link" href={part.href} target="_blank" rel="noopener noreferrer"
+          title={part.href} onClick={stop}>{part.label}</a>
+      ) : <React.Fragment key={index}>{part.text}</React.Fragment>)}
+    </p>
+  );
+}
+
+/**
+ * The pictures and files shown with a comment. A picture opens in the image viewer, with every picture of the comment.
+ * While an ask waits, an option named like a picture is answered from under it and from the viewer's bar.
+ */
+function CommentAttachments({ controller, comment, choices = [], onAnswer }: {
+  controller: CommentController; comment: CommentRecord; choices?: readonly string[]; onAnswer?: (answer: string) => void;
+}) {
+  const [viewing, setViewing] = useState<number | null>(null);
+  const images = comment.attachments.filter(item => item.image);
+  const files = comment.attachments.filter(item => !item.image);
+  if (!images.length && !files.length) return null;
+  const busy = controller.busy.has(comment.recordKey);
+  const optionOf = (item: CommentAttachment | undefined) =>
+    item ? choices.find(option => commentAttachmentFor(option, [item]) === item) : undefined;
+  return (
+    <div className="nui-comment-attachments" role="group" aria-label={controller.say('attachments')} onClick={stop} onKeyDown={stop}>
+      {images.length ? (
+        <div className="nui-comment-pictures" data-count={Math.min(images.length, 2)}>
+          {images.map((item, index) => {
+            const option = optionOf(item);
+            const chosen = option != null && comment.answer === option;
+            return (
+              <figure key={item.url} className="nui-comment-figure" data-chosen={chosen ? '' : undefined}>
+                <button type="button" className="nui-comment-thumb" aria-label={controller.say('enlarge', { name: item.label })}
+                  onClick={() => setViewing(index)}>
+                  <img src={item.url} alt={item.label} loading="lazy" />
+                </button>
+                {option != null && onAnswer ? (
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAnswer(option)}>
+                    {answerLabel(controller, option)}
+                  </Button>
+                ) : (
+                  <figcaption className="nui-comment-caption">
+                    {chosen ? <Icon name="check" /> : null}<span>{item.label}</span>
+                  </figcaption>
+                )}
+              </figure>
+            );
+          })}
+        </div>
+      ) : null}
+      {files.length ? (
+        <AttachmentGallery items={files.map(item => ({ url: item.url, name: item.name }))} />
+      ) : null}
+      {viewing != null ? (
+        <ImageViewer images={images.map(item => ({ src: item.url, alt: item.label }))} initialIndex={viewing}
+          onClose={() => setViewing(null)}
+          actions={(_image, index) => {
+            const option = optionOf(images[index]);
+            return option != null && onAnswer ? (
+              <button type="button" className="nui-viewer-btn" disabled={busy}
+                onClick={() => { onAnswer(option); setViewing(null); }}>
+                <Icon name="check" /><span>{answerLabel(controller, option)}</span>
+              </button>
+            ) : null;
+          }} />
+      ) : null}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +206,11 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
 
   const needsLabel = root.needs === 'check' ? controller.say('needCheck')
     : root.needs === 'choice' ? controller.say('needChoice') : controller.say('needInput');
-  const choices = root.needs === 'check' ? [...COMMENT_CHECK_ANSWERS] : root.options;
+  const choices = askChoices(root);
+  const waiting = root.needs !== 'none' && root.needs !== 'input' && !root.answer;
+  // Options named like a picture are answered from under it, inside the ask; the row below keeps the others.
+  const rowChoices = choices.filter(option => !commentAttachmentFor(option, root.attachments));
+  const pictureAsk = rowChoices.length < choices.length;
   const meta = [
     commentRelativeTime(root.createdAt, locale, now),
     showAnchor && anchor ? controller.say('anchorLabel', { n: anchor.order }) : '',
@@ -173,13 +257,18 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
           {resolved ? <Badge>{controller.words.resolved}</Badge> : null}
         </div>
       ) : null}
-      <p className="nui-comment-body">{root.body}</p>
+      <CommentBody body={root.body} />
+      {pictureAsk ? null : <CommentAttachments controller={controller} comment={root} />}
 
       {root.needs !== 'none' ? (
         <div className="nui-comment-ask" onClick={stop} onKeyDown={stop}>
           <p className="nui-comment-ask-label">
             <span className="nui-comment-ask-who">{controller.say('needs', { who: root.author })}</span> {needsLabel}
           </p>
+          {pictureAsk ? (
+            <CommentAttachments controller={controller} comment={root} choices={choices}
+              onAnswer={waiting ? answer => actions.answer(root, answer) : undefined} />
+          ) : null}
           {root.answer ? (
             <p className="nui-comment-answer">
               <Icon name="check" />
@@ -195,14 +284,14 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
                 accept="text/*,.md,.txt,.csv,.json"
                 onChange={event => { void attach(event.target.files?.[0]); event.target.value = ''; }} />
             </div>
-          ) : (
+          ) : rowChoices.length ? (
             <div className="nui-comment-choices" role="group" aria-label={needsLabel}>
-              {choices.map(choice => (
+              {rowChoices.map(choice => (
                 <Button key={choice} size="sm" variant="secondary" disabled={busy}
                   onClick={() => actions.answer(root, choice)}>{answerLabel(controller, choice)}</Button>
               ))}
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
 
@@ -217,7 +306,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
                   <span className="nui-comment-meta">{commentRelativeTime(reply.createdAt, locale, now)}</span>
                   {newDot(reply)}
                 </div>
-                <p className="nui-comment-body">{reply.body}</p>
+                <CommentBody body={reply.body} />
+                <CommentAttachments controller={controller} comment={reply} />
               </div>
             </li>
           ))}

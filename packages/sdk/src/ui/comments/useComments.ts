@@ -348,7 +348,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       scopeIds: currentScope ? [currentScope.id] : [], anchorIds: fields.anchor ? [fields.anchor.id] : [],
       thread: fields.thread, author: me, x: fields.x, y: fields.y,
       w: columns.w && columns.h ? fields.w : null, h: columns.w && columns.h ? fields.h : null, status: 'Open', needs: 'none', options: [], answer: '',
-      answeredAt: null, change: fields.change, changedAt: at, example: false, createdAt: at,
+      answeredAt: null, change: fields.change, changedAt: at, example: false, createdAt: at, attachments: [],
     };
     setDrafts(current => [...current, { comment, serverKey: null }]);
     const properties: Record<string, unknown> = {

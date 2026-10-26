@@ -44,6 +44,8 @@ export const COMMENT_WORDS = Object.freeze({
   looksGood: w('Looks good', 'Ça me va'),
   undo: w('Undo', 'Annuler le changement'),
   attach: w('Attach a file', 'Joindre un fichier'),
+  attachments: w('Pictures and files', 'Images et fichiers'),
+  enlarge: w('Open {name} larger', 'Agrandir {name}'),
   paste: w('Paste text', 'Coller du texte'),
   sent: w('{answer}, sent to the agent', '{answer}, envoyé à l’agent'),
   example: w('Example', 'Exemple'),

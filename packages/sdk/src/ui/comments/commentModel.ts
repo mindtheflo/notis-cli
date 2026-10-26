@@ -18,11 +18,13 @@
  * | Change      | select               | The last change made here: created, replied, answered, resolved, reopened, deleted. |
  * | Changed at  | date                 | When that change was made; the digest lists changes after the checkpoint. |
  * | Example     | checkbox             | A sample comment shown with an Example badge.                         |
+ * | Attachments | files                | Pictures and files the author shows with the comment (optional).      |
  *
  * Every column name can be renamed with `CommentColumns`; the defaults are the Slides names, so a Space that copies
  * the Slides table needs no mapping and no migration. Zones are opt-in: a table that adds W and H number columns
  * passes `{ w: 'W', h: 'H' }`. Without them (`w` and `h` null, the default) a drag on the anchor places a pin where it
- * started, and nothing writes a column the table does not have.
+ * started, and nothing writes a column the table does not have. Attachments are only read (agents add them), so a
+ * table without the column simply shows none.
  */
 
 export type CommentRow = Record<string, unknown>;
@@ -50,13 +52,15 @@ export interface CommentColumns {
   change: string;
   changedAt: string;
   example: string;
+  /** The files column read for pictures and files shown with a comment. Null: the table has none. */
+  attachments: string | null;
 }
 
 export const COMMENT_COLUMNS: Readonly<CommentColumns> = Object.freeze({
   body: 'Body', scope: 'Deck', anchor: 'Slide', thread: 'Thread', author: 'Author', x: 'X', y: 'Y', w: null, h: null,
   status: 'Status',
   needs: 'Needs', options: 'Options', answer: 'Answer', answeredAt: 'Answered at', change: 'Change',
-  changedAt: 'Changed at', example: 'Example',
+  changedAt: 'Changed at', example: 'Example', attachments: 'Attachments',
 });
 
 export function commentColumns(columns?: Partial<CommentColumns>): CommentColumns {
@@ -67,8 +71,14 @@ export interface CommentRecord {
   id: string; recordKey: string; revision: number; body: string; scopeIds: string[]; anchorIds: string[];
   thread: string; author: string; x: number | null; y: number | null; w: number | null; h: number | null; status: CommentStatus; needs: CommentNeeds;
   options: string[]; answer: string; answeredAt: string | null; change: CommentChange | null; changedAt: string | null;
-  example: boolean; createdAt: string | null;
+  example: boolean; createdAt: string | null; attachments: CommentAttachment[];
 }
+
+/**
+ * A picture or file shown with a comment. `label` is the name without its extension: a choice option with the same
+ * label is answered from under that picture ("Before.png" and "After.png" with Options "Before | After").
+ */
+export interface CommentAttachment { name: string; label: string; url: string; image: boolean }
 
 /** The record a thread sits on (a slide, a section). `order` numbers it in the digest and the card meta. */
 export interface CommentAnchor { id: string; recordKey: string; order: number; title: string }
@@ -139,6 +149,86 @@ function relationOf(row: CommentRow, name: string | null): string[] {
 
 function str(value: unknown): string { return typeof value === 'string' ? value : ''; }
 
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i;
+const INLINE_IMAGE = /^data:image\/(png|jpeg|gif|webp|avif|svg\+xml)[;,]/;
+
+/** An http(s) link without credentials, or a site path: anything else (script URLs, `//host`) opens nothing. */
+export function safeCommentUrl(value: string): string | null {
+  const url = value.trim();
+  if (!url || /[\u0000-\u001f\u007f\\\s]/.test(url)) return null;
+  if (url.startsWith('/') && !url.startsWith('//')) return url;
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') && !parsed.username && !parsed.password ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function pathOf(url: string): string {
+  try { return new URL(url, 'https://notis.invalid').pathname; } catch { return url; }
+}
+
+/** The files of a files column: `{ name, url }`, `{ name, file: { url } }`, `{ name, external: { url } }` or a URL. */
+function attachmentsOf(row: CommentRow, name: string | null): CommentAttachment[] {
+  const value = property(row, name);
+  if (!Array.isArray(value)) return [];
+  return value.flatMap<CommentAttachment>(item => {
+    const entry = asObject(item);
+    const raw = typeof item === 'string' ? item
+      : str(entry?.url) || str(asObject(entry?.file)?.url) || str(asObject(entry?.external)?.url);
+    // A small inline picture (a fixture, a generated chart) is shown; any other data URL is not.
+    const inline = INLINE_IMAGE.test(raw);
+    const url = inline ? raw : safeCommentUrl(raw);
+    if (!url) return [];
+    const last = pathOf(url).split('/').pop() || '';
+    let decoded = last;
+    try { decoded = decodeURIComponent(last); } catch { /* keep the raw segment */ }
+    const fileName = str(entry?.name).trim() || (inline ? 'image' : decoded) || url;
+    return [{
+      name: fileName, label: fileName.replace(/\.[a-z0-9]{1,8}$/i, '').trim() || fileName, url,
+      image: inline || IMAGE_FILE.test(fileName) || IMAGE_FILE.test(pathOf(url)),
+    }];
+  });
+}
+
+/** The picture a choice option names (same label, any case), when there is one. */
+export function commentAttachmentFor(option: string, attachments: readonly CommentAttachment[]): CommentAttachment | undefined {
+  const wanted = option.trim().toLocaleLowerCase();
+  return wanted ? attachments.find(item => item.image && item.label.toLocaleLowerCase() === wanted) : undefined;
+}
+
+/** A comment's text in pieces: plain text, and http(s) links with a short label (host and path). */
+export type CommentBodyPart = { text: string } | { href: string; label: string };
+
+const LINK = /https?:\/\/[^\s<>"]+/g;
+const LINK_LABEL_MAX = 48;
+
+export function commentBodyParts(body: string): CommentBodyPart[] {
+  const parts: CommentBodyPart[] = [];
+  let last = 0;
+  for (const match of body.matchAll(LINK)) {
+    let raw = match[0];
+    // A sentence's punctuation after a link is not part of it; a closing bracket is, when the link opened one.
+    while (/[.,;:!?'"\])}]$/.test(raw)) {
+      const end = raw.at(-1)!;
+      const open = end === ')' ? '(' : end === ']' ? '[' : end === '}' ? '{' : null;
+      if (open && raw.split(open).length > raw.split(end).length - 1) break;
+      raw = raw.slice(0, -1);
+    }
+    const start = match.index ?? 0;
+    const href = safeCommentUrl(raw);
+    if (!href) continue;
+    if (start > last) parts.push({ text: body.slice(last, start) });
+    const url = new URL(href);
+    const full = `${url.host}${url.pathname === '/' ? '' : url.pathname}`;
+    parts.push({ href, label: full.length > LINK_LABEL_MAX ? `${full.slice(0, LINK_LABEL_MAX - 1)}…` : full });
+    last = start + raw.length;
+  }
+  if (last < body.length) parts.push({ text: body.slice(last) });
+  return parts;
+}
+
 const NEEDS: CommentNeeds[] = ['none', 'check', 'choice', 'input'];
 const STATUSES: CommentStatus[] = ['Open', 'Resolved', 'Deleted'];
 const CHANGES: CommentChange[] = ['created', 'replied', 'answered', 'resolved', 'reopened', 'deleted'];
@@ -167,6 +257,7 @@ export function readCommentRow(row: CommentRow, options: {
     answer: textOf(row, c.answer), answeredAt: dateOf(row, c.answeredAt),
     change: CHANGES.includes(change as CommentChange) ? change as CommentChange : null, changedAt: dateOf(row, c.changedAt),
     example: value === true || value === 'true', createdAt: str(row.created_at) || null,
+    attachments: attachmentsOf(row, c.attachments),
   };
 }
 
