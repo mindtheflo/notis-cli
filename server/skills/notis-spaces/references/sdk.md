@@ -40,7 +40,10 @@ Keep hooks unconditional. `loading` means no first successful read;
 or clear them on error ([loading rules](design.md#loading-empty-and-error)).
 `Skeleton` and `ViewSkeleton` come from `@notis/sdk`; `ViewSkeleton`'s `label`
 names what loads (`{ en: 'Loading meetings', fr: 'Chargement des réunions' }`),
-said in the Space's language, default Loading content.
+said in the Space's language, default Loading content. Its shapes are
+measured from the view at verify time and drawn from the release; `skeletonKey`
+(default `main`) names the region when a view has several separately loading
+parts, and `variant` only draws the fallback before the first measured release.
 
 For another explicitly idempotent read use `useActionQuery`, or
 `useQuery(keyArray, readCallback, { readOnly: true })` with every input in the

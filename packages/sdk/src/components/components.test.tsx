@@ -58,6 +58,169 @@ test('ViewSkeleton says what loads in the Space’s language; a view may name wh
   assert.deepEqual(SKELETON_WORDS.loading, { en: 'Loading content', fr: 'Chargement du contenu' });
 });
 
+test('ViewSkeleton stays inside its pane: its padding is inside its width (VIEW-046)', async () => {
+  await mount(<ViewSkeleton />);
+  const root = doc.querySelector<HTMLElement>('[data-notis-content-skeleton]')!;
+  assert.equal(root.style.width, '100%');
+  assert.equal(root.style.boxSizing, 'border-box');
+});
+
+const captured = {
+  schema: 'notis-space-skeleton/v1', sourceHash: 'a'.repeat(64),
+  regions: {
+    main: {
+      '390': { en: { height: 300, bones: [[0, 0, 100, 44, 8, 0], [5, 60, 90, 120, 12, 1], [5, 60, 90, 120, 12, 2], [0, 200, 100, 1, 0, 3]] } },
+      '1440': {
+        en: { height: 500, bones: [[10, 0, 40, 28, 6, 0]], rows: [{ y: 100, h: 50, bones: [[2, 10, 60, 20, 4, 0]], repeat: 'fill' }] },
+        fr: { height: 520, bones: [[10, 0, 50, 28, 6, 0]] },
+      },
+    },
+    side: { '1440': { fr: { height: 80, bones: [[0, 0, 100, 80, 0, 1]] } } },
+  },
+};
+const withSkeleton = (skeleton: unknown, locale: 'en' | 'fr' = 'en') => ({ context: { locale, skeleton } }) as unknown as NotisRuntime;
+const region = () => doc.querySelector<HTMLElement>('[data-notis-content-skeleton]')!;
+const bones = () => [...region().querySelectorAll<HTMLElement>(':scope > [data-notis-bone]')];
+
+/** Lays the page out: the skeleton box is `width` px wide and its scroll parent (`[data-pane]`) shows `pane` px. */
+async function laidOut(layout: { width?: number; pane?: number }, run: () => Promise<void>) {
+  const proto = dom.window.Element.prototype;
+  const saved = ['clientWidth', 'clientHeight'].map((key) => [key, Object.getOwnPropertyDescriptor(proto, key)] as const);
+  Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: Element) {
+    return this.hasAttribute('data-notis-skeleton-key') ? layout.width ?? 0 : 0;
+  } });
+  Object.defineProperty(proto, 'clientHeight', { configurable: true, get(this: Element) {
+    return this.hasAttribute('data-pane') ? layout.pane ?? 0 : 0;
+  } });
+  try { await run(); } finally {
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(proto, key, descriptor); else delete (proto as unknown as Record<string, unknown>)[key];
+    }
+  }
+}
+const inPane = (node: ReactNode) => <div data-pane="" style={{ overflowY: 'auto' }}>{node}</div>;
+
+test('ViewSkeleton draws the bones captured for its region, each type in its own grey (VIEW-044)', async () => {
+  await laidOut({ width: 500 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured)}><ViewSkeleton /></NotisProvider>);
+    const root = region();
+    assert.equal(root.getAttribute('role'), 'status');
+    assert.equal(root.getAttribute('aria-busy'), 'true');
+    assert.equal(root.getAttribute('aria-label'), 'Loading content');
+    assert.ok(root.hasAttribute('data-notis-content-skeleton'));
+    assert.equal(root.getAttribute('data-notis-skeleton-key'), 'main');
+    assert.equal(root.style.position, 'relative');
+    assert.equal(root.style.height, '300px', 'the captured height, so the page does not jump');
+    assert.equal(root.style.padding, '', 'the bones already hold the layout');
+    assert.equal(root.style.boxSizing, 'border-box');
+    const [leaf, filled, outline, divider] = bones();
+    assert.equal(bones().length, 4);
+    assert.deepEqual([leaf.style.position, leaf.style.left, leaf.style.width, leaf.style.top, leaf.style.height, leaf.style.borderRadius],
+      ['absolute', '0%', '100%', '0px', '44px', '8px']);
+    assert.equal(leaf.style.background, 'rgba(128, 128, 128, 0.18)');
+    assert.deepEqual([filled.style.left, filled.style.width, filled.style.top, filled.style.height, filled.style.borderRadius],
+      ['5%', '90%', '60px', '120px', '12px']);
+    assert.equal(filled.style.background, 'rgba(128, 128, 128, 0.06)');
+    assert.equal(outline.style.boxShadow, 'inset 0 0 0 1px rgba(128,128,128,.14)');
+    assert.equal(outline.style.background, '', 'an outlined box is not filled');
+    assert.equal(divider.style.background, 'rgba(128, 128, 128, 0.16)');
+    assert.equal(divider.style.height, '1px');
+    for (const bone of bones()) assert.equal(bone.getAttribute('aria-hidden'), 'true');
+  });
+  await mount(<NotisProvider runtime={withSkeleton(captured, 'fr')}><ViewSkeleton /></NotisProvider>);
+  assert.equal(region().getAttribute('aria-label'), 'Chargement du contenu', 'still named in the Space language');
+});
+
+test('ViewSkeleton draws the 390 capture under 800 px of its own width, else the 1440 one (VIEW-044)', async () => {
+  const at = async (width: number) => laidOut({ width }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured)}><ViewSkeleton /></NotisProvider>);
+  });
+  await at(799);
+  assert.equal(region().style.height, '300px');
+  assert.equal(bones().length, 4);
+  await at(800);
+  assert.equal(region().style.height, '500px');
+  assert.equal(bones()[0].style.width, '40%');
+  await at(0);
+  assert.equal(region().style.height, '500px', 'before its box is measured: the window width (1024 here), else 1440');
+  await laidOut({ width: 500 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured, 'fr')}><ViewSkeleton skeletonKey="side" /></NotisProvider>);
+  });
+  assert.equal(region().style.height, '80px', 'a width that was not captured falls back to the other width');
+});
+
+test('ViewSkeleton draws the runtime locale, else the other locale (VIEW-044)', async () => {
+  await laidOut({ width: 1200 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured, 'fr')}><ViewSkeleton /></NotisProvider>);
+    assert.equal(region().style.height, '520px');
+    assert.equal(bones()[0].style.width, '50%');
+  });
+  await laidOut({ width: 500 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured, 'fr')}><ViewSkeleton /></NotisProvider>);
+    assert.equal(region().style.height, '300px', 'no French capture at 390: the English one');
+    await mount(<NotisProvider runtime={withSkeleton(captured, 'fr')}><ViewSkeleton locale="en" /></NotisProvider>);
+    assert.equal(region().style.height, '300px');
+  });
+});
+
+test('ViewSkeleton repeats a captured row until the visible pane is filled (VIEW-044)', async () => {
+  const rows = () => [...region().querySelectorAll<HTMLElement>('[data-notis-bone-row]')];
+  await laidOut({ width: 1200, pane: 600 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(rows().length, 10, '(600 - 100) / 50');
+    assert.deepEqual(rows().slice(0, 3).map((row) => row.style.top), ['100px', '150px', '200px']);
+    assert.equal(rows()[0].getAttribute('aria-hidden'), 'true');
+    const bone = rows()[0].querySelector<HTMLElement>('[data-notis-bone]')!;
+    assert.deepEqual([bone.style.left, bone.style.width, bone.style.top, bone.style.height], ['2%', '60%', '10px', '20px']);
+    assert.equal(region().style.height, '600px');
+  });
+  await laidOut({ width: 1200, pane: 1010 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(rows().length, 19, 'ceil((1010 - 100) / 50)');
+    assert.equal(region().style.height, '1050px', 'the box grows to hold every copy');
+  });
+  await laidOut({ width: 1200, pane: 0 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured)}><ViewSkeleton /></NotisProvider>);
+    assert.equal(rows().length, 1, 'at least one copy');
+    assert.equal(region().style.height, '500px');
+  });
+  await laidOut({ width: 1200, pane: 10_000_000 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(captured)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(rows().length, 200, 'capped');
+  });
+});
+
+test('ViewSkeleton keeps its variant with no captured region, and ignores a malformed skeleton (VIEW-044)', async () => {
+  const isVariant = (key: string) => {
+    const root = region();
+    assert.equal(root.getAttribute('data-notis-skeleton-key'), key);
+    assert.equal(root.style.padding, '24px');
+    assert.equal(root.style.display, 'grid');
+    assert.equal(bones().length, 0);
+    assert.equal(root.getAttribute('role'), 'status');
+    assert.equal(root.getAttribute('aria-busy'), 'true');
+  };
+  await mount(<ViewSkeleton />);
+  isVariant('main');
+  await mount(<NotisProvider runtime={withSkeleton(captured)}><ViewSkeleton skeletonKey="chart" /></NotisProvider>);
+  isVariant('chart');
+  const malformed = [
+    null, 'text', { ...captured, schema: 'notis-space-skeleton/v2' },
+    { ...captured, sourceHash: 1 },
+    { ...captured, regions: { Main: captured.regions.main } },
+    { ...captured, regions: { main: { '768': captured.regions.main['390'] } } },
+    { ...captured, regions: { main: { '390': { de: captured.regions.main['390'].en } } } },
+    { ...captured, regions: { main: { '390': { en: { height: 300, bones: [[0, 0, '100', 44, 8, 0]] } } } } },
+    { ...captured, regions: { main: { '390': { en: { height: 300, bones: [[0, 0, 100, 44, 8, 7]] } } } } },
+    { ...captured, regions: { main: { '390': { en: { height: -1, bones: [] } } } } },
+    { ...captured, regions: { main: { '390': { en: { height: 300, bones: [], rows: [{ y: 0, h: 0, bones: [], repeat: 'fill' }] } } } } },
+  ];
+  for (const skeleton of malformed) {
+    await mount(<NotisProvider runtime={withSkeleton(skeleton)}><ViewSkeleton /></NotisProvider>);
+    isVariant('main');
+  }
+});
+
 test('an untitled document reads "Untitled" in the asked language; a real title is kept', () => {
   assert.equal(normalizeDocumentRecord({ id: 'a' }).title, 'Untitled');
   assert.equal(normalizeDocumentRecord({ id: 'a', title: '   ' }, { locale: 'fr' }).title, 'Sans titre');

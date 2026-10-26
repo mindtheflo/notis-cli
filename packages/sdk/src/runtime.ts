@@ -10,6 +10,7 @@ import type { AgentContextContent, AgentContextItem, AgentContextSource } from '
 
 import type { ComponentType, ReactNode } from 'react';
 import type { NotisQueryClient } from './queryCache';
+import type { NotisSpaceSkeleton } from './skeleton';
 import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport } from './space';
 
 // ---------------------------------------------------------------------------
@@ -190,6 +191,8 @@ export interface NotisRuntimeContext {
   collectionItem?: CollectionItemDetail | null;
   /** App-owned resource requested through the route's `?resource=<id>` link. */
   resourceId?: string | null;
+  /** Loading bones measured from this release at build time; `ViewSkeleton` draws them. Absent until the host has them. */
+  readonly skeleton?: NotisSpaceSkeleton;
 }
 
 // ---------------------------------------------------------------------------

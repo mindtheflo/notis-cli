@@ -979,6 +979,38 @@ test('reader bar: in the center dialog an action key acts on the open item throu
   assert.ok(q('.nui-lr-center [role="dialog"]'), 'the dialog stays open');
 });
 
+test('loading: the skeleton fills the visible pane and the title keeps its count slot (VIEW-046)', async () => {
+  const proto = dom.window.HTMLElement.prototype;
+  const offset = Object.getOwnPropertyDescriptor(proto, 'offsetHeight');
+  const client = Object.getOwnPropertyDescriptor(dom.window.Element.prototype, 'clientHeight');
+  Object.defineProperty(proto, 'offsetHeight', { configurable: true, get(this: HTMLElement) {
+    return this.classList.contains('nui-row-skel') ? 52 : this.classList.contains('nui-group-head') ? 30 : 0;
+  } });
+  Object.defineProperty(dom.window.Element.prototype, 'clientHeight', { configurable: true, get(this: Element) {
+    return this.classList.contains('nui-lr-scroll') ? 760 : 0;
+  } });
+  try {
+    await mount(list({ items: [], loading: true }));
+    assert.equal(doc.querySelectorAll('.nui-row-skel').length, 15, '760 px of pane over 52 px rows, not a fixed 8');
+    await mount(list({ items: [], loading: true, groupBy: () => ({ id: 'open', label: 'Open' }) }));
+    assert.equal(doc.querySelectorAll('.nui-row-skel').length, 15, 'the group head takes its height first: ceil(730 / 52)');
+  } finally {
+    if (offset) Object.defineProperty(proto, 'offsetHeight', offset); else delete (proto as { offsetHeight?: number }).offsetHeight;
+    if (client) Object.defineProperty(dom.window.Element.prototype, 'clientHeight', client);
+    else delete (dom.window.Element.prototype as { clientHeight?: number }).clientHeight;
+  }
+
+  await mount(list({ items: [], loading: true, title: { text: 'Tickets', count: undefined } }));
+  const slot = q('.nui-lr-title-count');
+  assert.ok(slot?.hasAttribute('data-reserved'), 'a title that names a count reserves its slot while it loads');
+  assert.equal(slot?.getAttribute('aria-hidden'), 'true');
+  await mount(list({ title: { text: 'Tickets', count: 4 } }));
+  assert.equal(q('.nui-lr-title-count')!.textContent, '4');
+  assert.equal(q('.nui-lr-title-count')!.hasAttribute('data-reserved'), false);
+  await mount(list({ items: [], loading: true, title: { text: 'Tickets' } }));
+  assert.equal(q('.nui-lr-title-count'), null, 'a title with no count reserves nothing');
+});
+
 test('loading: skeleton rows first, Load more at the end, J on the last row loads more', async () => {
   await mount(list({ items: [], loading: true }));
   assert.equal(doc.querySelectorAll('.nui-row-skel').length, 8);

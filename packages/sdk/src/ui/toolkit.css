@@ -239,6 +239,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-title { display: inline-flex; flex: 0 1 auto; align-items: baseline; gap: 6px; min-width: 0; margin: 0; padding-inline: 10px 4px; font-size: 14px; line-height: 20px; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; overflow: hidden; }
 .nui-lr-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .nui-lr-title-count { flex-shrink: 0; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
+.nui-lr-title-count[data-reserved] { display: inline-block; min-width: 2ch; }
 .nui-lr-toolbar-spacer { flex: 1 1 0; min-width: 0; }
 .nui-lr-tools { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .nui-lr-info { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px 6px 16px; box-sizing: border-box; font-size: 13px; line-height: 18px; color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .03); }

@@ -404,7 +404,7 @@ function refusalOf(verdict: OpenChangeVerdict): Words | null {
 /** The drag data type of list rows: a JSON array of ids. */
 export const LIST_DRAG_TYPE = 'application/x-notis-items';
 
-/** How many skeleton rows the first load shows. */
+/** How many skeleton rows the first load shows before the pane is measured. */
 const SKELETON_ROWS = 8;
 
 /** The string `title`, else `name`, of an item, else null. */
@@ -641,22 +641,40 @@ function guardSelection(selection: Selection, blocked: (id: string) => boolean, 
 export interface ListSkeletonProps {
   /** Draw a group head first, for a list that groups its rows. */
   grouped?: boolean;
+  /** A fixed number of rows. Default: as many as fill the visible pane. */
   rows?: number;
 }
 
 /**
  * The list while its first page loads, drawn like the rows it stands for: a group head when the list
- * groups, then a lead mark and a title over a meta line. Pages use it for their own route fallbacks so
- * the page does not shift when the real list arrives.
+ * groups, then a lead mark and a title over a meta line, as many rows as fill the pane. Pages use it for
+ * their own route fallbacks so the page does not shift when the real list arrives.
  */
-export function ListSkeleton({ grouped = false, rows = SKELETON_ROWS }: ListSkeletonProps) {
+export function ListSkeleton({ grouped = false, rows }: ListSkeletonProps) {
   const t = useT();
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const [fill, setFill] = useState(SKELETON_ROWS);
+  useIsoLayoutEffect(() => {
+    const pane = paneRef.current;
+    if (rows !== undefined || !pane || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const row = pane.querySelector<HTMLElement>('.nui-row-skel');
+      const rowHeight = row?.offsetHeight ?? 0;
+      if (rowHeight <= 0 || pane.clientHeight <= 0) return;
+      const head = pane.querySelector<HTMLElement>('.nui-group-head')?.offsetHeight ?? 0;
+      setFill(Math.max(1, Math.ceil((pane.clientHeight - head) / rowHeight)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [rows]);
   return (
-    <div className="nui-lr-scroll" role="status" aria-busy="true" aria-label={t(LIST_READER_WORDS.loading)}>
+    <div ref={paneRef} className="nui-lr-scroll" role="status" aria-busy="true" aria-label={t(LIST_READER_WORDS.loading)}>
       {grouped && (
         <div className="nui-group-head" aria-hidden="true"><span className="nui-skel nui-skel-head" /></div>
       )}
-      {Array.from({ length: rows }, (_, index) => (
+      {Array.from({ length: rows ?? fill }, (_, index) => (
         <div key={index} className="nui-row nui-row-skel" aria-hidden="true">
           <span className="nui-skel nui-skel-dot" />
           <span className="nui-row-main">
@@ -1636,7 +1654,9 @@ function ListReaderInner<T>({
   const titleNode = title ? (
     <h2 className="nui-lr-title">
       <span className="nui-lr-title-text">{t(title.text)}</span>
-      {title.count !== undefined && <span className="nui-lr-title-count">{title.count}</span>}
+      {/* A title that names a count keeps its slot while the count loads, so the tabs and pills beside it do not move. */}
+      {title.count !== undefined ? <span className="nui-lr-title-count">{title.count}</span>
+        : 'count' in title ? <span className="nui-lr-title-count" data-reserved="" aria-hidden="true" /> : null}
     </h2>
   ) : null;
   const tools = toolbarActions || create || viewMenu ? (

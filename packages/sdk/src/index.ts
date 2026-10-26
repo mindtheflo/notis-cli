@@ -196,6 +196,8 @@ export type {
 export { useToolQuery } from './hooks/useToolQuery';
 
 export { Skeleton, SKELETON_WORDS, ViewSkeleton } from './components/Skeleton';
+export { isNotisSpaceSkeleton, pickSkeletonEntry, SPACE_SKELETON_SCHEMA } from './skeleton';
+export type { NotisSkeletonEntry, NotisSkeletonLocale, NotisSkeletonRow, NotisSkeletonWidth, NotisSpaceSkeleton, SkeletonBone } from './skeleton';
 
 export { useLongPressSelection } from './hooks/useLongPressSelection';
 export { isInteractionElementVisible } from './interactions/visibility';

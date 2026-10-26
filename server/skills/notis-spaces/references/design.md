@@ -94,9 +94,13 @@ ring on all four sides. Never restyle the pieces' states.
 The pieces keep their layout while reading. On your own layout, keep the same
 rule:
 
-- First read: the tab row, navigation and panes stay where they will be; a
-  content-shaped skeleton fills only the missing region. No page spinner and no
+- First read: the tab row, navigation and panes stay where they will be;
+  `ViewSkeleton` fills only the missing region. No page spinner and no
   whole-page Loading.
+- Do not draw skeleton shapes by hand. `notis spaces verify` measures the view
+  with its data at 390 and 1440 px in EN and FR and ships those shapes with the
+  release, so `ViewSkeleton` always matches the current layout. Give each region
+  that loads on its own a `ViewSkeleton` with its own `skeletonKey`.
 - Never show an empty state before the first successful read (`hasData`). An
   empty result is real and renders at once from the cache; give `ListReader` an
   `empty` slot or use `EmptyState` with a next step.
@@ -117,9 +121,13 @@ multi-field edit or a destructive confirmation.
 `notis spaces build` runs the design check and reports each rule broken by file
 and line; the server runs it again on publish. Passing it does not prove the
 design is good. Then run `notis spaces verify`, which draws every view at 390
-and 1440 px in EN and FR, and actually look at the images:
+and 1440 px in EN and FR, once with data and once while the reads are still
+pending, and actually look at both images:
 
 - Does the view fill the host frame, also while loading?
+- Does the pending image keep the final layout: same tab row and panes, a
+  skeleton where content will be, no Loading text and no empty state? Fix every
+  pending finding verify prints.
 - Is anything clipped, overflowing or truncated, in French especially?
 - Do keys, selection and the open item behave like the rest of Notis?
 - Do empty and error states say what to do next?

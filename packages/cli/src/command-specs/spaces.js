@@ -1,5 +1,5 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
-import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
+import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
 import { buildSpaceArtifact, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
@@ -124,6 +124,32 @@ function describePendingChanges(summary) {
   return parts.length ? ` ${parts.join('. ')}.` : '';
 }
 
+const SKELETON_FILE = 'bundle/skeleton.json';
+
+/** Reviewable: the measured loading skeleton, its warnings and where the loading screenshots are. */
+function describeSkeleton(skeleton) {
+  if (!skeleton) return '';
+  const parts = [skeleton.status === 'captured' ? `Loading skeleton measured for ${skeleton.regions.join(', ')}.`
+    : skeleton.status === 'failed' ? 'The loading skeleton could not be measured; the view keeps its fallback skeleton.' : ''];
+  const findings = skeleton.findings || [];
+  if (findings.length) {
+    const where = value => [value.width, value.locale].filter(Boolean).join(' ');
+    const shown = findings.slice(0, 5).map(value => `${where(value) ? `[${where(value)}] ` : ''}${value.message}`);
+    parts.push(`Loading state warnings (${findings.length}): ${shown.join(' ')}${findings.length > 5 ? ` And ${findings.length - 5} more in the diagnostic.` : ''}`);
+  }
+  const paths = (skeleton.pending_screenshots || []).map(value => value.path).filter(Boolean);
+  if (paths.length) parts.push(`Loading screenshots: ${paths.join(', ')}.`);
+  const text = parts.filter(Boolean).join(' ');
+  return text ? ` ${text}` : '';
+}
+
+/** Same server verification for this Space, source, grants and authorization mode. */
+function sameVerification(verification, body, sourceDigest) {
+  return verification?.valid === true && verification.space_id === body.space_id && verification.source_digest === sourceDigest
+    && JSON.stringify(Object.entries(verification.reuse_grants || {}).sort()) === JSON.stringify(Object.entries(body.reuse_grants).sort())
+    && (verification.authorization_mode ?? 'authorize_missing') === (body.authorization_mode ?? 'authorize_missing');
+}
+
 async function sourceRelease(ctx, publish, stageOnly = false) {
   const { directory, key } = selected(ctx);
   if (!ctx.options.spaceId) throw usageError('Pass --space-id <id> for the existing Space.');
@@ -139,42 +165,74 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       artifact_files: release.files, reuse_grants: object(ctx.options.reuseGrants || '{}', '--reuse-grants'),
       ...(ctx.options.reuseGrantsOnly ? { authorization_mode: 'reuse_only' } : {}),
       ...(local.changes ? { changes: local.changes } : {}) };
-    const sourceDigest = appFilesDigest(release.sourceFiles), artifactDigest = appFilesDigest(release.files);
+    const sourceDigest = appFilesDigest(release.sourceFiles), builtDigest = appFilesDigest(release.files);
     const call = (operation, data) => httpRequest({ runtime: { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, 600_000) },
       method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: true });
     if (verification && (verification.local_changes_fingerprint ?? null) !== local.fingerprint) {
       throw usageError('This request ID belongs to different Skill folders or list entries. Restore the state you first deployed to retry, or use a new request ID for a new release.');
     }
+    const retried = Boolean(verification);
+    // A retry injects the exact skeleton bytes its first attempt sent, so the stored digest still matches.
+    const pinnedSkeleton = retried && Object.hasOwn(verification, 'local_skeleton') ? verification.local_skeleton : undefined;
+    // An intent stored before skeletons existed keeps the release exactly as it was built.
+    const legacyRetry = retried && pinnedSkeleton === undefined;
+    const mismatch = () => usageError('This request ID belongs to different source or grant choices. Keep the original bytes to retry, or use a new request ID for a new release.');
     if (!verification) {
       verification = (await call('source-verify', body)).payload;
     }
-    if (verification?.valid !== true || verification.space_id !== body.space_id || verification.source_digest !== sourceDigest
-      || verification.artifact_digest !== artifactDigest || JSON.stringify(Object.entries(verification.reuse_grants || {}).sort())
-        !== JSON.stringify(Object.entries(body.reuse_grants).sort())
-      || (verification.authorization_mode ?? 'authorize_missing') !== (body.authorization_mode ?? 'authorize_missing')) {
-      throw usageError('This request ID belongs to different source or grant choices. Keep the original bytes to retry, or use a new request ID for a new release.');
-    }
+    // The artifact digest is compared once the measured skeleton is in the release (below).
+    if (!sameVerification(verification, body, sourceDigest) || (!retried && verification.artifact_digest !== builtDigest)) throw mismatch();
     const controller = new AbortController();
     const cancel = () => controller.abort();
     process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
     let render;
     try { render = await verifySpaceRelease(release, { capabilities: verification.capabilities, signal: controller.signal,
-      authorizationMode: body.authorization_mode, unavailableActions: verification.unavailable_actions }); }
+      authorizationMode: body.authorization_mode, unavailableActions: verification.unavailable_actions,
+      // Test seam only: the command context never carries it from user options.
+      ...(typeof ctx.loadSpaceRenderer === 'function' ? { loadRenderer: ctx.loadSpaceRenderer } : {}) }); }
     finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
+    if (render.skeleton) {
+      const paths = saveSpacePendingScreenshots(directory, render.pendingScreenshots || []);
+      render.skeleton.pending_screenshots = render.skeleton.pending_screenshots.map((value, index) => ({ ...value, ...(paths[index] ? { path: paths[index] } : {}) }));
+    }
     const diagnosticPath = saveSpaceVerification(directory, { ...render, space_id: body.space_id });
     if (!['passed', 'not_applicable_container'].includes(render.status)) {
       const reason = render.errors?.find(value => value.phase === 'fixture')?.message;
       throw usageError(`The built Space did not pass offline render verification. Nothing was published.${reason ? ` ${reason}` : ''}`,
         { render, diagnostic_path: diagnosticPath });
     }
+    // The measured skeleton joins the release in memory, replacing any file at its path; nothing is written to disk.
+    const skeletonFile = pinnedSkeleton !== undefined ? pinnedSkeleton
+      : render.skeletonJson ? Buffer.from(render.skeletonJson, 'utf8').toString('base64') : null;
+    const skeletonWarnings = [];
+    const written = release.files[SKELETON_FILE];
+    if (!legacyRetry && (skeletonFile || written !== undefined)) {
+      const files = { ...release.files };
+      if (skeletonFile) {
+        files[SKELETON_FILE] = skeletonFile;
+        if (written !== undefined && written !== skeletonFile) skeletonWarnings.push(`Replaced ${SKELETON_FILE} with the skeleton verify measured; verify writes this file, do not add it by hand.`);
+      } else {
+        delete files[SKELETON_FILE];
+        skeletonWarnings.push(`Removed ${SKELETON_FILE} from the release: verify measured no loading skeleton for this build, so the file would be stale. Verify writes this file, do not add it by hand.`);
+      }
+      release.files = files;
+      body.artifact_files = files;
+    }
+    const artifactDigest = appFilesDigest(body.artifact_files);
+    if (!retried && artifactDigest !== builtDigest) {
+      // The server binds the release that carries the skeleton, and checks the file itself.
+      verification = (await call('source-verify', body)).payload;
+      if (!sameVerification(verification, body, sourceDigest)) throw mismatch();
+    }
+    if (verification.artifact_digest !== artifactDigest) throw mismatch();
     if (publish && !ctx.options.dryRun) {
       // The retained intent pins the local change set next to the server verification, with the
       // lock and list it was computed from: the lock and list this publication then rewrites can
       // never turn the identical command into a different intent.
       verification = spacePublicationIntent(directory, identity, { ...verification, local_changes_fingerprint: local.fingerprint,
-        local_state: local.lock ? { lock: local.lock, resources: local.resources ?? null } : null });
+        local_state: local.lock ? { lock: local.lock, resources: local.resources ?? null } : null, local_skeleton: skeletonFile });
     }
-    const { local_changes_fingerprint: _fingerprint, local_state: _state, ...serverVerification } = verification;
+    const { local_changes_fingerprint: _fingerprint, local_state: _state, local_skeleton: _skeleton, ...serverVerification } = verification;
     // Close/check the pinned local snapshot before the first remote mutation.
     // The upload uses the captured bytes, not mutable working-tree paths.
     release.close();
@@ -183,12 +241,13 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       : serverVerification;
     if (publish && !ctx.options.dryRun && !stageOnly) recordPublication(directory, local, result);
     const data = { ...result, render, diagnostic_path: diagnosticPath, ...(local.summary ? { local_changes: local.summary } : {}) };
+    const skeletonSummary = describeSkeleton(render.skeleton);
     return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data,
       humanSummary: publish && !ctx.options.dryRun
         ? stageOnly ? `Prepared ${key} as revision ${result.candidate_revision}. ${result.preview_url || 'This container has no executable preview.'} Live source was not changed.${describePendingChanges(local.summary).replace(/\.$/, '; they go live with notis spaces promote.')}`
-          : `Published ${key} as revision ${result.published_revision}${result.replayed ? ' (confirmed retry)' : ''}.${describeAppliedChanges(result)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}`
-        : `Verified ${key}'s frozen source${render.status === 'passed' ? ', rendered fixtures' : ' (container)'} and current authorizations; nothing was published.${describePendingChanges(local.summary)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}`,
-      warnings: local.warnings, meta: { mutating: publish && !ctx.options.dryRun } });
+          : `Published ${key} as revision ${result.published_revision}${result.replayed ? ' (confirmed retry)' : ''}.${describeAppliedChanges(result)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}${skeletonSummary}`
+        : `Verified ${key}'s frozen source${render.status === 'passed' ? ', rendered fixtures' : ' (container)'} and current authorizations; nothing was published.${describePendingChanges(local.summary)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}${skeletonSummary}`,
+      warnings: skeletonWarnings.length ? [...(local.warnings || []), ...skeletonWarnings] : local.warnings, meta: { mutating: publish && !ctx.options.dryRun } });
   } finally { release.close(); }
 }
 

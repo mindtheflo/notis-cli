@@ -2022,6 +2022,19 @@ export function saveSpaceVerification(projectDir, diagnostic) {
   });
 }
 
+/** The loading-state screenshots of the last verify, `pending-<width>-<locale>.png` beside the diagnostic. */
+export function saveSpacePendingScreenshots(projectDir, screenshots) {
+  if (!screenshots?.length) return [];
+  return withAppReleaseWorkspace(projectDir, (workspace) => screenshots.map(({ width, locale, png }) => {
+    if (![390, 1440].includes(width) || !['en', 'fr'].includes(locale)) throw usageError('Unsafe pending screenshot name.');
+    const name = `pending-${width}-${locale}.png`;
+    // Replace the previous verify's image without following a planted link.
+    rmSync(name, { force: true });
+    writeFileSync(name, png, { flag: 'wx', mode: 0o600 });
+    return join(workspace.projectDir, '.notis', name);
+  }));
+}
+
 /** Retain the original CAS after an uncertain publish response, across CLI exits. */
 export function spacePublicationIntent(projectDir, identity, create = null) {
   const name = `space-publish-${createHash('sha256').update(JSON.stringify(identity)).digest('hex')}.json`;
