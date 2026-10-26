@@ -23,14 +23,12 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
 import { pick, SHELL_WORDS, type Words } from '../../words';
 import { ESCAPE_PRIORITY, useEscapeLayer, useToolkitLocale } from '../engine';
+import { PaneHandle, measureWidth as measure } from './PaneHandle';
 import {
-  PANELS_KEYBOARD_STEP_PX,
   PANELS_LIST_MIN_PX,
   PANELS_READER_MIN_PX,
   clampReaderWidth,
@@ -144,11 +142,6 @@ function afterFrame(fn: () => void): () => void {
   return () => clearTimeout(timer);
 }
 
-function measure(element: HTMLElement | null): number | null {
-  const width = element?.getBoundingClientRect().width ?? 0;
-  return width > 0 ? width : null;
-}
-
 /** Split-mode rules for a non-default threshold, scoped to one Panels by its own container name. */
 function splitRules(name: string, id: string, breakpoint: number): string {
   const self = `.nui-panels[data-panels-id="${id}"]`;
@@ -172,6 +165,7 @@ export function Panels({
   className,
 }: PanelsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const locale = useToolkitLocale();
   const reactId = useId();
   const id = useMemo(() => reactId.replace(/[^a-zA-Z0-9_-]/g, ''), [reactId]);
   const customBreakpoint = listMin !== PANELS_LIST_MIN_PX || readerMin !== PANELS_READER_MIN_PX;
@@ -256,14 +250,18 @@ export function Panels({
         {readerOpen ? (
           <div className="nui-panels-reader">
             {resizable ? (
-              <PanelsHandle
+              <PaneHandle
+                className="nui-panels-handle"
+                label={pick(PANELS_WORDS.resizeReader, locale)}
+                hint={pick(PANELS_WORDS.resizeReaderHint, locale)}
                 width={readerWidth}
-                listMin={listMin}
-                readerMin={readerMin}
+                min={readerMin}
                 max={container === null ? undefined : readerMaxWidth(container, listMin, readerMin)}
+                clamp={(px, measured) => clampReaderWidth(px, measured, listMin, readerMin)}
+                rootRef={rootRef}
+                onLive={(px) => rootRef.current?.style.setProperty('--nui-panels-reader-w', `${px}px`)}
                 onWidth={setReaderWidth}
                 onReset={resetReaderWidth}
-                rootRef={rootRef}
               />
             ) : null}
             {onBack ? <PanelsBackBar onBack={onBack} /> : null}
@@ -299,85 +297,5 @@ function PanelsBackBar({ onBack }: { onBack: () => void }) {
         {pick(SHELL_WORDS.back, locale)}
       </button>
     </div>
-  );
-}
-
-type Drag = { pointerId: number; startX: number; startWidth: number; container: number | null; width: number | null };
-
-/**
- * The reader's left edge in split mode: drag, arrow keys (24px), double click resets. A
- * drag writes the width straight onto the Panels element and commits it on release.
- */
-function PanelsHandle({ width, listMin, readerMin, max, onWidth, onReset, rootRef }: {
-  width: number;
-  listMin: number;
-  readerMin: number;
-  max: number | undefined;
-  onWidth: (px: number) => void;
-  onReset: () => void;
-  rootRef: { current: HTMLDivElement | null };
-}) {
-  const locale = useToolkitLocale();
-  const dragRef = useRef<Drag | null>(null);
-  const [dragWidth, setDragWidth] = useState<number | null>(null);
-
-  const end = useCallback(() => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    dragRef.current = null;
-    setDragWidth(null);
-    // A click without movement keeps the width as it was.
-    if (drag.width !== null) onWidth(drag.width);
-  }, [onWidth]);
-
-  useEffect(() => end, [end]);
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width, container: measure(rootRef.current), width: null };
-    setDragWidth(width);
-  };
-
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    // The handle sits on the reader's left edge: moving left widens the reader.
-    const next = clampReaderWidth(drag.startWidth + drag.startX - event.clientX, drag.container, listMin, readerMin);
-    if (next === drag.width) return;
-    drag.width = next;
-    rootRef.current?.style.setProperty('--nui-panels-reader-w', `${next}px`);
-    setDragWidth(next);
-  };
-
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const direction = event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0;
-    if (direction === 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onWidth(width + direction * PANELS_KEYBOARD_STEP_PX);
-  };
-
-  return (
-    <div
-      className="nui-panels-handle"
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={pick(PANELS_WORDS.resizeReader, locale)}
-      aria-valuemin={readerMin}
-      aria-valuemax={max}
-      aria-valuenow={Math.round(dragWidth ?? width)}
-      title={pick(PANELS_WORDS.resizeReaderHint, locale)}
-      tabIndex={0}
-      data-resizing={dragWidth === null ? undefined : ''}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={end}
-      onPointerCancel={end}
-      onLostPointerCapture={end}
-      onDoubleClick={onReset}
-      onKeyDown={onKeyDown}
-    />
   );
 }
