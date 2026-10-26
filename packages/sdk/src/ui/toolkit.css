@@ -181,11 +181,11 @@ tr.nui-row > td { height: 40px; padding: 0 12px; border-top: 1px solid hsl(var(-
 /* TBL4: fills only, never an inset on the first cell or a ring; the cursor row takes the open row's fill. */
 tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-shadow: none; }
 
-/* Tiles: a ring on all four sides for every state, never an edge on one side. */
+/* Tiles: the popover surface (ring and lift, like menus and toasts); a ring on all four sides for every state, never an edge on one side. */
 .nui-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 12px; padding: 16px 24px 32px; }
-.nui-tile { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; outline: none; border-radius: 8px; padding: 16px; box-sizing: border-box; background: hsl(var(--background)); box-shadow: 0 0 0 1px hsl(var(--foreground) / .1); cursor: default; user-select: none; -webkit-user-select: none; }
+.nui-tile { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; outline: none; border-radius: 16px; padding: 16px; box-sizing: border-box; background: hsl(var(--popover)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); cursor: default; user-select: none; -webkit-user-select: none; }
 .nui-tile[data-variant="manager"] { min-height: 152px; }
-.nui-tile:hover:not([data-open]):not([data-selected]):not([data-cursor]) { box-shadow: 0 0 0 1px hsl(var(--foreground) / .2); }
+.nui-tile:hover:not([data-open]):not([data-selected]):not([data-cursor]) { box-shadow: 0 0 0 1px hsl(var(--foreground) / .16), var(--nui-elev-lg, 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12)); }
 .nui-tile[data-selected] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05)); box-shadow: 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .35); }
 .nui-tile[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .10)); box-shadow: 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .5); }
 .nui-tile[data-cursor] { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .65); }
