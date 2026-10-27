@@ -59,6 +59,7 @@ metadata; do not assume the older `documents` result shape. Sorts use
 `{field, direction: 'asc'|'desc'}`. Multi-select/relation fields cannot be sorted.
 
 Use `include_content: false` for lists. Include bodies only when needed.
+Add `properties: [{"property": "Status"}, ...]` to return only those fields (the title column only when the title property is listed); a public Site action fixes it in its request so visitors never receive internal fields.
 Archived rows are excluded unless `include_archived: true`; binned/inaccessible
 rows remain excluded by authority. Do not turn a missing page into a zero count.
 

@@ -19,6 +19,8 @@ export interface NativeQuery {
   aggregate?: { op: 'sum' | 'avg' | 'min' | 'max'; field: NativeField };
   page_size?: number;
   offset?: number;
+  /** Return only these properties; the title column follows the title property. */
+  properties?: Array<{ property_id: string } | { property: string }>;
 }
 export interface NativeInsert {
   columns?: { title?: string | null; icon?: string | null; cover?: string | null };
