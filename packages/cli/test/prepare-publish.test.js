@@ -58,8 +58,13 @@ test('the production branch plans the next stable version on latest', () => {
   assert.equal(plan({ NPM_RELEASE_CHANNEL: 'nightly' }).plan.publishTag, 'nightly');
 });
 
+test('the renamed nightly and stable branches plan the same channels as beta and production', () => {
+  assert.equal(plan({ NOTIS_RELEASE_BRANCH: 'nightly' }).plan.publishTag, 'nightly');
+  assert.equal(plan({ NOTIS_RELEASE_BRANCH: 'stable' }).plan.publishTag, 'latest');
+});
+
 test('the retired beta channel and unknown branches never plan a release', () => {
-  for (const env of [{ NPM_RELEASE_CHANNEL: 'beta' }, { NOTIS_RELEASE_BRANCH: 'nightly' },
+  for (const env of [{ NPM_RELEASE_CHANNEL: 'beta' }, { NOTIS_RELEASE_BRANCH: 'latest' },
     { NOTIS_RELEASE_BRANCH: 'main' }]) {
     const { result } = plan(env);
     assert.notEqual(result.status, 0, JSON.stringify(env));

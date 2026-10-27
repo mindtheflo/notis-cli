@@ -247,13 +247,34 @@ test('a catch-up compares the live commit Render serves and never publishes newe
   } finally { cleanup(); }
 });
 
+test('the renamed branches plan the same release as their old names', async () => {
+  const { c, git, cleanup } = history();
+  try {
+    const { plan } = planner(c, git);
+    // A push or release on nightly/stable is the beta/production release key.
+    const merge = await plan({ mode: 'merge', ref: 'refs/heads/nightly', liveState: 'live', liveSha: c[4], channel: '' });
+    assert.deepEqual(merge.row, { channel: 'beta', source_sha: c[5], publish_reason: merge.reason });
+    const release = await plan({ mode: 'release', ref: 'refs/heads/nightly', sha: c[4], channel: 'nightly', sourceSha: c[4] });
+    assert.deepEqual(release.row, { channel: 'beta', source_sha: c[5], publish_reason: release.reason });
+    const stable = await plan({ mode: 'release', ref: 'refs/heads/stable', sha: c[4], channel: 'stable', sourceSha: c[4] });
+    assert.equal(stable.channel, 'production');
+    // A release from the old name, called with the new name, is the same release.
+    const mixed = await plan({ mode: 'release', ref: 'refs/heads/beta', sha: c[4], channel: 'nightly', sourceSha: c[4] });
+    assert.equal(mixed.channel, 'beta');
+    const caught = await plan({ mode: 'catch-up', ref: 'refs/heads/stable', sha: c[4], channel: 'nightly', sourceSha: c[5] });
+    assert.equal(caught.channel, 'beta');
+    await assert.rejects(plan({ mode: 'release', ref: 'refs/heads/nightly', sha: c[4], channel: 'stable', sourceSha: c[4] }),
+      /beta release cannot publish the stable CLI/);
+  } finally { cleanup(); }
+});
+
 test('publishing runs start only from beta or production, and previews are not planned here', async () => {
   const { c, git, cleanup } = history();
   try {
     const { plan } = planner(c, git);
     for (const mode of ['merge', 'release', 'catch-up']) {
       await assert.rejects(plan({ mode, ref: 'refs/heads/conductor/candidate', channel: 'beta', sourceSha: c[5],
-        liveState: 'live', liveSha: c[5] }), /only from beta or production/);
+        liveState: 'live', liveSha: c[5] }), /only from nightly or stable \(formerly beta or production\)/);
     }
     await assert.rejects(plan({ mode: 'preview', ref: 'refs/heads/beta', channel: 'beta' }), /does not plan preview/);
   } finally { cleanup(); }

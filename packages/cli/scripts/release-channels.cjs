@@ -3,20 +3,23 @@
 //
 // The frozen-`latest` incident (npm `latest` stuck at 0.2.2 for 7 weeks) was
 // caused by this logic narrowing a scheduled `all` run to the workflow's ref
-// branch -- and scheduled runs always execute on the default branch (beta), so
-// the stable/production channel was never evaluated. Keeping the decision here,
+// branch -- and scheduled runs always execute on the default branch (now
+// nightly), so the stable channel was never evaluated. Keeping the decision here,
 // covered by tests, means a future edit can't silently re-freeze a channel.
 //
 // CommonJS (.cjs) on purpose: actions/github-script requires this file with
 // require(), which must work regardless of the Node version on the runner.
 
-// The one table that maps a source branch to the package channel it publishes
-// and that channel's npm dist-tag. Every release script reads it, so renaming
-// the git branches (beta -> nightly, production -> stable) is a change to the
-// keys here and to the workflow inputs that name them, nothing else.
+// The one table that maps a release to its git branches, the package channel
+// it publishes and that channel's npm dist-tag. Every release script reads it.
+// The key is the release's identity in the Depot environments
+// (notis-depot-cli-<key>), the release flags and the finalizer's channel input,
+// so it kept its name when the git branches were renamed on 2026-10-27
+// (beta -> nightly, production -> stable). `branches` lists the current branch
+// name first, then the old one, which a push may still use during the switch.
 const BRANCH_RELEASES = Object.freeze({
-  beta: Object.freeze({ channel: 'nightly', distTag: 'nightly' }),
-  production: Object.freeze({ channel: 'stable', distTag: 'latest' }),
+  beta: Object.freeze({ channel: 'nightly', distTag: 'nightly', branches: Object.freeze(['nightly', 'beta']) }),
+  production: Object.freeze({ channel: 'stable', distTag: 'latest', branches: Object.freeze(['stable', 'production']) }),
 });
 
 // The dist-tag every pre-nightly build published to. It no longer receives
@@ -31,10 +34,20 @@ function isPackageChannel(channel) {
   return PACKAGE_CHANNELS.includes(channel);
 }
 
+// The release key for a git branch under either name, or for the key itself.
+function releaseKeyForBranch(branch) {
+  const key = SUPPORTED_CHANNELS.find(name => BRANCH_RELEASES[name].branches.includes(branch));
+  if (!key) throw new Error(`Unsupported channel: ${branch}`);
+  return key;
+}
+
 function releaseForBranch(branch) {
-  const release = Object.hasOwn(BRANCH_RELEASES, branch || '') ? BRANCH_RELEASES[branch] : null;
-  if (!release) throw new Error(`Unsupported channel: ${branch}`);
-  return release;
+  return BRANCH_RELEASES[releaseKeyForBranch(branch)];
+}
+
+// The git branches a release may live on, current name first.
+function gitBranchesForChannel(channel) {
+  return [...releaseForBranch(channel).branches];
 }
 
 function channelForBranch(branch) {
@@ -72,7 +85,8 @@ function versionMatchesChannel(version, channel) {
 // default branch, which is what froze the stable channel.
 function resolveSelectedChannels(inputChannel, supportedChannels = SUPPORTED_CHANNELS) {
   const channel = inputChannel || 'all';
-  const selected = channel === 'all' ? [...supportedChannels] : [channel];
+  const named = SUPPORTED_CHANNELS.find(name => BRANCH_RELEASES[name].branches.includes(channel));
+  const selected = channel === 'all' ? [...supportedChannels] : [named || channel];
   for (const value of selected) {
     if (!supportedChannels.includes(value)) {
       throw new Error(`Unsupported channel: ${value}`);
@@ -87,6 +101,8 @@ module.exports = {
   SUPPORTED_CHANNELS,
   PACKAGE_CHANNELS,
   isPackageChannel,
+  releaseKeyForBranch,
+  gitBranchesForChannel,
   channelForBranch,
   branchForChannel,
   distTagForChannel,

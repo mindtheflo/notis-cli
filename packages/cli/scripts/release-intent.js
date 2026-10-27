@@ -1,6 +1,6 @@
 // An annotated tag is the durable reservation, not evidence of npm delivery.
 // Never update/delete one: a retry must reconcile its exact reserved version.
-import { SUPPORTED_CHANNELS, isPackageChannel, versionMatchesChannel } from './release-channels.cjs';
+import { SUPPORTED_CHANNELS, gitBranchesForChannel, isPackageChannel, versionMatchesChannel } from './release-channels.cjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -97,13 +97,19 @@ export function createIntentStore({ repository, token, fetcher = fetch }) {
     }
     return reserved;
   }
+  // The release's branch under its current name, then its name before the
+  // 2026-10-27 rename (beta -> nightly, production -> stable).
   async function readBranchHead(branch) {
     if (!SUPPORTED_CHANNELS.includes(branch)) throw new Error('Invalid publication branch');
-    const ref = await request('GET', `/ref/heads/${branch}`);
-    if (ref.ref !== `refs/heads/${branch}` || ref.object?.type !== 'commit' || !SHA.test(ref.object.sha || '')) {
-      throw new Error('Invalid publication branch receipt');
+    for (const name of gitBranchesForChannel(branch)) {
+      const ref = await request('GET', `/ref/heads/${name}`, undefined, true);
+      if (ref === null) continue;
+      if (ref.ref !== `refs/heads/${name}` || ref.object?.type !== 'commit' || !SHA.test(ref.object.sha || '')) {
+        throw new Error('Invalid publication branch receipt');
+      }
+      return ref.object.sha;
     }
-    return ref.object.sha;
+    throw new Error('Publication branch not found; publication held');
   }
   return { read, readRef, reserve, readBranchHead };
 }

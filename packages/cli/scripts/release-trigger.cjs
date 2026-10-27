@@ -11,10 +11,10 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const { BRANCH_RELEASES, SUPPORTED_CHANNELS } = require('./release-channels.cjs');
+const { BRANCH_RELEASES, SUPPORTED_CHANNELS, releaseKeyForBranch } = require('./release-channels.cjs');
 
 const PACKAGE_NAME = '@notis_ai/cli';
-// Source branch -> the npm tag its releases move (beta -> nightly, production
+// Release key -> the npm tag its releases move (beta -> nightly, production
 // -> latest), read from the one branch table in release-channels.cjs.
 const CHANNEL_TAGS = Object.freeze(Object.fromEntries(
   Object.entries(BRANCH_RELEASES).map(([branch, release]) => [branch, release.distTag])));
@@ -49,11 +49,13 @@ const RELEASE_INPUT_PATHS = Object.freeze([
 ]);
 
 const SHA = /^[0-9a-f]{40}$/;
-const BRANCHES = Object.freeze(Object.fromEntries(SUPPORTED_CHANNELS.map(branch => [`refs/heads/${branch}`, branch])));
+// Every branch name of every release, current and old, -> its release key.
+const BRANCHES = Object.freeze(Object.fromEntries(SUPPORTED_CHANNELS.flatMap(key =>
+  BRANCH_RELEASES[key].branches.map(branch => [`refs/heads/${branch}`, key]))));
 const MAX_LISTED = 5;
 
 // preview: any manual run of the workflow itself, always read-only.
-// merge: a push of CLI files to beta or production.
+// merge: a push of CLI files to nightly or stable (or their old names).
 // release: called by temporal-release.yml after it made a commit live.
 // catch-up: called by post-release-catch-up.yml with the commit Render serves;
 // it publishes only the CLI that commit contains, nothing newer.
@@ -68,6 +70,14 @@ function resolveMode({ eventName, trigger }) {
   if (trigger === 'release' && ['push', 'workflow_call'].includes(eventName)) return 'release';
   if (trigger === 'catch-up' && ['workflow_dispatch', 'workflow_call'].includes(eventName)) return 'catch-up';
   throw new Error(`The ${trigger} trigger cannot run from a ${eventName || 'an unknown'} event`);
+}
+
+function releaseKeyOrSelf(channel) {
+  try {
+    return releaseKeyForBranch(channel);
+  } catch {
+    return channel;
+  }
 }
 
 function isWatched(file) {
@@ -166,9 +176,11 @@ async function planPublication({ mode, ref, sha, channel, sourceSha, liveState, 
   readHistory = readRegistryHistory, git = gitClient(cwd) }) {
   const branch = BRANCHES[ref];
   if (!branch) {
-    throw new Error(`A ${mode} run publishes only from ${SUPPORTED_CHANNELS.join(' or ')}, not ${ref || 'an unknown ref'}`);
+    const [current, old] = [0, 1].map(index => SUPPORTED_CHANNELS.map(key => BRANCH_RELEASES[key].branches[index]).join(' or '));
+    throw new Error(`A ${mode} run publishes only from ${current} (formerly ${old}), not ${ref || 'an unknown ref'}`);
   }
-  let target = channel;
+  // Callers name the channel by its key or by the branch they released, under either name.
+  let target = releaseKeyOrSelf(channel);
   let live = sourceSha;
   if (mode === 'merge') {
     target = branch;
@@ -182,10 +194,10 @@ async function planPublication({ mode, ref, sha, channel, sourceSha, liveState, 
     if (liveState !== 'live') throw new Error(`The live release of ${target} is unknown (${liveState || 'no answer'})`);
     live = liveSha;
   } else if (mode === 'release') {
-    if (channel !== branch) throw new Error(`A ${branch} release cannot publish the ${channel} CLI`);
+    if (target !== branch) throw new Error(`A ${branch} release cannot publish the ${channel} CLI`);
     if (sourceSha !== sha) throw new Error('A release publishes after its own released commit only');
   } else if (mode === 'catch-up') {
-    if (!CHANNEL_TAGS[channel]) throw new Error(`Unsupported channel: ${channel}`);
+    if (!CHANNEL_TAGS[target]) throw new Error(`Unsupported channel: ${channel}`);
   } else {
     throw new Error(`planPublication does not plan ${mode} runs`);
   }

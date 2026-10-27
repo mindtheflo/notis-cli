@@ -37,13 +37,13 @@ test('resolveSelectedChannels does not depend on any ref/branch input', () => {
 
 const {
   BRANCH_RELEASES, PACKAGE_CHANNELS, RETIRED_DIST_TAG, branchForChannel, channelForBranch, distTagForChannel,
-  isPackageChannel, prereleaseIdForChannel, versionMatchesChannel,
+  gitBranchesForChannel, isPackageChannel, prereleaseIdForChannel, releaseKeyForBranch, versionMatchesChannel,
 } = require('../scripts/release-channels.cjs');
 
 test('one table maps each source branch to its package channel and npm tag', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(BRANCH_RELEASES)), {
-    beta: { channel: 'nightly', distTag: 'nightly' },
-    production: { channel: 'stable', distTag: 'latest' },
+    beta: { channel: 'nightly', distTag: 'nightly', branches: ['nightly', 'beta'] },
+    production: { channel: 'stable', distTag: 'latest', branches: ['stable', 'production'] },
   });
   assert.deepEqual([...SUPPORTED_CHANNELS], ['beta', 'production']);
   assert.deepEqual([...PACKAGE_CHANNELS], ['nightly', 'stable']);
@@ -57,8 +57,24 @@ test('one table maps each source branch to its package channel and npm tag', () 
     assert.equal(isPackageChannel(unknown), false, unknown);
     assert.throws(() => distTagForChannel(unknown), /Unsupported release channel/);
   }
-  assert.throws(() => channelForBranch('nightly'), /Unsupported channel/);
+  assert.throws(() => channelForBranch('main'), /Unsupported channel/);
   assert.throws(() => channelForBranch('constructor'), /Unsupported channel/);
+});
+
+test('the renamed branches and their old names release the same channel', () => {
+  // The branches were renamed on 2026-10-27; the release key (the Depot
+  // environment and finalizer channel) kept its old name.
+  assert.equal(channelForBranch('nightly'), 'nightly');
+  assert.equal(channelForBranch('stable'), 'stable');
+  assert.equal(releaseKeyForBranch('nightly'), 'beta');
+  assert.equal(releaseKeyForBranch('beta'), 'beta');
+  assert.equal(releaseKeyForBranch('stable'), 'production');
+  assert.equal(releaseKeyForBranch('production'), 'production');
+  assert.throws(() => releaseKeyForBranch('latest'), /Unsupported channel/);
+  assert.deepEqual(gitBranchesForChannel('beta'), ['nightly', 'beta']);
+  assert.deepEqual(gitBranchesForChannel('production'), ['stable', 'production']);
+  assert.deepEqual(resolveSelectedChannels('stable'), ['production']);
+  assert.deepEqual(resolveSelectedChannels('nightly'), ['beta']);
 });
 
 test('nightly releases are -nightly. prereleases; stable releases are plain semver; beta is retired', () => {

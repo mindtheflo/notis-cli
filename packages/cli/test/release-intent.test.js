@@ -118,3 +118,26 @@ test('existing intent in registry cannot collide with another source or roll a t
 test('publishing cannot fall back to an unreserved plan if authentication is missing', async () => {
   await assert.rejects(resolveReleaseIntent({ identity, reserve: true, allocateVersion: () => intent.version }), /durable/);
 });
+
+test('the publication branch head is read under its current name, then its name before the rename', async () => {
+  const head = 'c'.repeat(40);
+  const read = (refs) => {
+    const paths = [];
+    const fetcher = async (url) => {
+      const name = url.split('/ref/heads/')[1];
+      paths.push(name);
+      return refs.includes(name)
+        ? response(200, { ref: `refs/heads/${name}`, object: { type: 'commit', sha: head } })
+        : response(404, { message: 'Not Found' });
+    };
+    return { store: createIntentStore({ repository: 'mindtheflo/notis', token: 'test-token', fetcher }), paths };
+  };
+  const renamed = read(['nightly']);
+  assert.equal(await renamed.store.readBranchHead('beta'), head);
+  assert.deepEqual(renamed.paths, ['nightly']);
+  const before = read(['production']);
+  assert.equal(await before.store.readBranchHead('production'), head);
+  assert.deepEqual(before.paths, ['stable', 'production']);
+  await assert.rejects(read([]).store.readBranchHead('beta'), /branch not found/);
+  await assert.rejects(read(['nightly']).store.readBranchHead('nightly'), /Invalid publication branch/);
+});
