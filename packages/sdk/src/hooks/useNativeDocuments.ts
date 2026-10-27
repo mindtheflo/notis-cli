@@ -5,8 +5,10 @@ import { useNotisRuntime } from '../provider';
 import { normalizeDocumentRecord } from '../documents';
 import type { DocumentRecord, NotisRuntime } from '../runtime';
 import type { NativeDelete, NativeInsert, NativeMutationReceipt, NativeQuery, NativeUpdate } from '../nativeData';
+import { insertChange, tempRecordKey, updateChange } from '../optimisticRows';
 import { useQuery, type UseQueryResult } from './useQuery';
 import { SdkQueryError } from '../queryErrors';
+import { NATIVE_ROWS } from '../queryCache';
 
 function actionFor(runtime: NotisRuntime | null, binding: string, operation: 'query' | 'insert' | 'update' | 'delete'): string {
   const descriptor = runtime?.space?.bindings[binding];
@@ -59,35 +61,80 @@ export function useNativeDocuments(binding: string, options: {
       if (typeof result.next_offset !== 'number' || result.next_offset <= offset) throw new SdkQueryError('responseIncomplete', 'Native query pagination did not advance next_offset.');
       offset = result.next_offset;
     }
-    return { documents: rows.map((row) => normalizeDocumentRecord(row, { locale })), schemaRevision: revision! };
-  }, { readOnly: true, enabled: options.enabled, staleTimeMs: options.staleTimeMs });
+    const answer = { documents: rows.map((row) => normalizeDocumentRecord(row, { locale })), schemaRevision: revision! };
+    // The flattened documents drop property types and option ids; writes shown at once need them.
+    Object.defineProperty(answer, NATIVE_ROWS, { value: rows, enumerable: false });
+    return answer;
+  }, { readOnly: true, enabled: options.enabled, staleTimeMs: options.staleTimeMs,
+    rows: { binding, at: 'documents', shape: 'document', query: options.query ?? {} } });
   return { ...query, documents: query.data?.documents ?? EMPTY_DOCUMENTS, schemaRevision: query.data?.schemaRevision, live };
 }
 
-/** Explicit insert/update/trash; update never silently creates a missing row. */
+/** Options of one native write. */
+export interface NativeMutationOptions {
+  schemaRevision: number;
+  requestId: string;
+  /**
+   * Inserts: the Space `shows` lists the new row shows in before the server answers (their filters stay on the
+   * server). By default the view's only list over this database, if it has exactly one.
+   */
+  showIn?: string | readonly string[];
+  /** One step of a batch that refreshes the lists itself at the end. */
+  deferRefresh?: boolean;
+}
+
+/**
+ * Explicit insert/update/trash; update never silently creates a missing row.
+ *
+ * The write shows in every cached read of the database at once: an edited row changes where it is (and moves to its
+ * sorted place, or leaves a read whose filter the page sent and no longer keeps it), a new row joins the reads whose
+ * filter it passes and the `showIn` lists, a trashed row leaves. A failed write puts the server's rows back.
+ */
 export function useNativeMutation<TOperation extends 'insert' | 'update' | 'delete'>(binding: string, operation: TOperation): {
   mutate: (input: TOperation extends 'insert' ? NativeInsert : TOperation extends 'update' ? NativeUpdate : NativeDelete,
-    options: { schemaRevision: number; requestId: string }) => Promise<NativeMutationReceipt>;
+    options: NativeMutationOptions) => Promise<NativeMutationReceipt>;
   loading: boolean; error: Error | null;
 } {
   const runtime = useNotisRuntime();
   const [pending, setPending] = useState(0), [error, setError] = useState<Error | null>(null);
-  const mutate = useCallback(async (input: NativeInsert | NativeUpdate | NativeDelete, options: { schemaRevision: number; requestId: string }) => {
+  const mutate = useCallback(async (input: NativeInsert | NativeUpdate | NativeDelete, options: NativeMutationOptions) => {
     const action = actionFor(runtime, binding, operation);
     setPending((value) => value + 1); setError(null);
+    const client = runtime?.queryClient;
     // A trashed row leaves every cached read at once and comes back if the write fails.
     const key = operation === 'delete' && typeof (input as NativeDelete).record_key === 'string' ? (input as NativeDelete).record_key : null;
-    const hidden = key ? runtime?.queryClient?.hideRecords?.([key]) : undefined;
+    const hidden = key ? client?.hideRecords?.([key]) : undefined;
+    const shown = operation === 'update' && typeof (input as NativeUpdate).record_key === 'string'
+      ? client?.optimistic?.([updateChange(binding, input as NativeUpdate)])
+      : operation === 'insert' ? client?.optimistic?.([insertChange(binding, input as NativeInsert, tempRecordKey(), showInLists(runtime, binding, options.showIn))])
+        : undefined;
+    const { showIn: _showIn, ...callOptions } = options;
     try {
-      const receipt = await runtime!.callAction!<NativeMutationReceipt>(action, { request: input }, options);
+      // A shown write refreshes the lists itself, after it is confirmed: every read of that refresh then holds it,
+      // so none can keep the change on top of rows the server already answered without it.
+      const receipt = await runtime!.callAction!<NativeMutationReceipt>(action, { request: input },
+        shown ? { ...callOptions, deferRefresh: true } : callOptions);
       hidden?.commit();
+      shown?.commit(receipt && typeof receipt.record_key === 'string'
+        ? { recordKey: receipt.record_key, id: receipt.id, revision: receipt.revision } : undefined);
+      if (shown && !callOptions.deferRefresh) client?.invalidate();
       return receipt;
     } catch (cause) {
       hidden?.restore();
+      shown?.rollback();
+      // The write may still have landed (an unknown outcome): read the server's rows again.
+      if (shown) client?.invalidate();
       const failure = cause instanceof Error ? cause : new Error(String(cause)); setError(failure); throw failure;
     } finally { setPending((value) => value - 1); }
   }, [runtime, binding, operation]);
   return { mutate, loading: pending > 0, error };
+}
+
+/** The `shows` lists a new row of `binding` shows in: the ones named, else the view's only list over it. */
+function showInLists(runtime: NotisRuntime | null, binding: string, showIn: NativeMutationOptions['showIn']): string[] {
+  if (showIn !== undefined) return typeof showIn === 'string' ? [showIn] : [...showIn];
+  const lists = Object.entries(runtime?.space?.shows ?? {}).filter(([, list]) => 'database' in list && list.database === binding);
+  return lists.length === 1 ? [lists[0]![0]] : [];
 }
 
 export interface NativeDeleteManyResult {

@@ -71,6 +71,7 @@ import { RowIdContext, RowStateContext, type RowState, type RowStateSource } fro
 import { SelectionBar, useSelectionBar } from './SelectionBar';
 import { ROW_ID_ATTRIBUTE, ROW_INTERACTIVE_SELECTOR, findRow, useListKeys } from './useListKeys';
 import { REORDER_WORDS, chainReorderProps, useReorder, type ReorderChange } from './useReorder';
+import { useAnimatedOrder } from './useAnimatedOrder';
 import { useSelection, type Selection } from './useSelection';
 
 /** What the reader slot and the header get besides their item. */
@@ -809,6 +810,11 @@ function ListReaderInner<T>({
   }, [collapsedSet, groups, ids]);
   const selectableIds = useMemo(() => (blockedIds.size ? ids.filter((id) => !blockedIds.has(id)) : ids),
     [blockedIds, ids]);
+  // The Manager's motion: a re-sorted, new or leaving row moves instead of jumping. Another tab or search is another
+  // list, not a change to this one: it re-lays out at once.
+  // A board tile can change column without changing the order of ids: its column is part of where it is.
+  useAnimatedOrder(scrollRef, `${ids.join('\u0001')}|${columnKey}`,
+    `${layout}|${density}|${query}|${tabs?.value ?? ''}|${[...collapsedSet].join('\u0001')}`, items);
 
   /** The board's columns with their tiles (empty columns too); `laneIds` is what the arrows walk. */
   const lanes = useMemo(() => {

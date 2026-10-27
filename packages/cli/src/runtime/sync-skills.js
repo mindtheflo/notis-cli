@@ -19,8 +19,8 @@ async function lockSnapshot(lockDirectory) {
     try {
       owner = raw ? JSON.parse(raw) : {};
     } catch {
-      // A process can die between mkdir and the atomic owner write. Preserve
-      // the directory mtime as a reclaimable ownerless lease.
+      // A lock left by an older CLI can lack its owner. Preserve the
+      // directory mtime as a reclaimable ownerless lease.
     }
     return {
       id: typeof owner.id === 'string' ? owner.id : null,
@@ -77,11 +77,27 @@ async function quarantineStaleLock(lockDirectory, snapshot) {
   }
 }
 
-async function writeLockOwnerAtomically(lockDirectory, owner) {
-  const temporaryOwnerPath = join(lockDirectory, `.owner.${owner.id}.tmp`);
-  const ownerPath = join(lockDirectory, 'owner');
-  await writeFile(temporaryOwnerPath, JSON.stringify(owner), { mode: 0o600 });
-  await rename(temporaryOwnerPath, ownerPath);
+/**
+ * Acquires the lock by publishing a directory that already holds its owner: it is built in a private staging
+ * folder and renamed onto the shared path, which fails while another owner's lock is there. The shared path
+ * never holds an ownerless lock a reclaimer could take for stale, and a failed attempt only removes its own folder.
+ */
+async function publishOwnedLock(lockDirectory, owner) {
+  const quarantineRoot = join(dirname(lockDirectory), '.stale-operation-locks');
+  const staging = join(quarantineRoot, `staging.${owner.id}`);
+  await mkdir(quarantineRoot, { recursive: true, mode: 0o700 });
+  await mkdir(staging, { mode: 0o700 });
+  try {
+    await writeFile(join(staging, 'owner'), JSON.stringify(owner), { mode: 0o600 });
+    await rename(staging, lockDirectory);
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    // Held by another owner: renaming onto a directory that is not empty refuses (Windows says EPERM).
+    const held = ['EEXIST', 'ENOTEMPTY'].includes(error?.code)
+      || (error?.code === 'EPERM' && await lockSnapshot(lockDirectory) !== null);
+    if (held) throw Object.assign(new Error('Lock held.'), { code: 'EEXIST' });
+    throw error;
+  }
 }
 
 async function releaseOwnedLock(lockDirectory, ownerId) {
@@ -118,19 +134,7 @@ export async function withSkillSyncLock(callback, {
 
   for (;;) {
     try {
-      await mkdir(lockDirectory, { mode: 0o700 });
-      try {
-        await writeLockOwnerAtomically(lockDirectory, {
-          id: ownerId,
-          pid: process.pid,
-          at: now(),
-        });
-      } catch (error) {
-        // This process exclusively created the directory and has not yet
-        // published an owner, so it is safe to undo a failed acquisition.
-        await rm(lockDirectory, { recursive: true, force: true });
-        throw error;
-      }
+      await publishOwnedLock(lockDirectory, { id: ownerId, pid: process.pid, at: now() });
       break;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;

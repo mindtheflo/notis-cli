@@ -367,8 +367,9 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       }
     }
     try {
+      // The draft is the new comment on screen: the list does not add a second one.
       const receipt = await insertMutation.mutate({ columns: { title: fields.body }, properties },
-        { schemaRevision, requestId: newCommentId() });
+        { schemaRevision, requestId: newCommentId(), showIn: [] });
       setDrafts(current => current.map(draft => draft.comment.recordKey === tempKey ? { ...draft, serverKey: receipt.record_key } : draft));
       void refetch();
       return receipt.record_key;

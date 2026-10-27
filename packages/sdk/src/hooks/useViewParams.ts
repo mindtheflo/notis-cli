@@ -187,7 +187,9 @@ export function useShown<TRow = Record<string, unknown>>(name: string, options: 
     }
     const merged = { ...(first as SpaceShownResult & { rows: TRow[] }), rows } as SpaceShownResult & { rows: TRow[] };
     return merged;
-  }, { readOnly: true, enabled: available && !missing.length && options.enabled !== false, staleTimeMs: options.staleTimeMs });
+  }, { readOnly: true, enabled: available && !missing.length && options.enabled !== false, staleTimeMs: options.staleTimeMs,
+    // The list's filter stays on the server: only its sorts are known here.
+    rows: list && 'database' in list ? { binding: list.database, at: 'rows', list: name, query: { sorts } } : undefined });
   const unavailable = runtime !== null && !available && options.enabled !== false;
   const error = useMemo(() => unavailable ? new SdkQueryError('listUnavailable', `The list "${name}" is unavailable in this view: declare it in \`shows\` `
     + `with a database, or gate it on useShownAvailable("${name}").`, runtime?.context?.locale) : null, [unavailable, name, runtime?.context?.locale]);

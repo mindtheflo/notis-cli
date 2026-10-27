@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useNotisRuntime } from '../provider';
-import { createQueryClient, queryKey } from '../queryCache';
+import { createQueryClient, queryKey, type RowsDescriptor } from '../queryCache';
 import { spaceQueryKey } from '../space';
 import { localizeQueryError } from '../queryErrors';
 
@@ -11,6 +11,13 @@ export interface UseQueryOptions {
   readOnly: true;
   enabled?: boolean;
   staleTimeMs?: number;
+  /**
+   * The native rows this read answers with, so a write to that database shows in it at once: `binding` is the
+   * database binding, `at` the answer field holding the rows ('' when the answer is the list). Rows are native
+   * rows unless `shape` says 'document'; give `query` (the native query the read runs) to let a write add a new
+   * row, move a row to its sorted place, or take out a row its filter no longer keeps.
+   */
+  rows?: { binding: string; at?: string; shape?: RowsDescriptor['shape']; query?: unknown; list?: string };
 }
 
 export interface UseQueryResult<T> {
@@ -32,12 +39,14 @@ export function useQuery<T>(key: readonly unknown[], read: () => Promise<T>, opt
   const cacheKey = queryKey(spaceQueryKey(runtime, key));
   const enabled = Boolean(runtime) && options.enabled !== false && options.readOnly === true;
   const readRef = useRef(read);
+  const rowsRef = useRef<RowsDescriptor | undefined>(undefined);
+  rowsRef.current = options.rows ? { at: '', shape: 'native', ...options.rows } : undefined;
   useLayoutEffect(() => { readRef.current = read; });
   const subscribe = useCallback((listener: () => void) => enabled ? client.subscribe(cacheKey, listener) : () => {}, [cacheKey, client, enabled]);
   const snapshot = useSyncExternalStore(subscribe, () => client.getSnapshot<T>(cacheKey), () => client.getSnapshot<T>(cacheKey));
   const fetch = useCallback(() => {
     const capturedRead = readRef.current;
-    return client.fetch(cacheKey, capturedRead, { staleTimeMs: options.staleTimeMs });
+    return client.fetch(cacheKey, capturedRead, { staleTimeMs: options.staleTimeMs, rows: rowsRef.current });
   }, [cacheKey, client, options.staleTimeMs]);
   useEffect(() => {
     if (!enabled) return;

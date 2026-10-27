@@ -11,7 +11,7 @@ export { NotisProvider, useNotisRuntime } from './provider';
 
 // Hooks
 export { useAction, useActionQuery } from './hooks/useAction';
-export { useNativeDocuments, useNativeMutation, useNativeDelete, type NativeDeleteManyResult } from './hooks/useNativeDocuments';
+export { useNativeDocuments, useNativeMutation, useNativeDelete, type NativeDeleteManyResult, type NativeMutationOptions } from './hooks/useNativeDocuments';
 export type { NativeField, NativeFilter, NativeQuery, NativeInsert, NativeUpdate, NativeDelete, NativeMutationReceipt } from './nativeData';
 export type { SpaceDatabaseCreate, SpaceResourceReference } from './space';
 export type { SpaceActionTemplate, SpaceActionDescriptor, SpaceRuntimeDescriptor, SpaceActionOptions } from './space';
@@ -34,8 +34,9 @@ export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled 
 export type { SpaceActionFailureDetails } from './space';
 export { useQuery, useQueryClient } from './hooks/useQuery';
 export type { UseQueryOptions, UseQueryResult } from './hooks/useQuery';
-export { createQueryClient, createPrefetchQueue, queryKey } from './queryCache';
-export type { NotisQueryClient, QuerySnapshot, QueryFetchOptions, HiddenRecords } from './queryCache';
+export { createQueryClient, createPrefetchQueue, queryKey, optimisticRowState, OPTIMISTIC_ROW } from './queryCache';
+export type { NotisQueryClient, QuerySnapshot, QueryFetchOptions, HiddenRecords, RowsDescriptor, RowsRead, RowChange,
+  OptimisticWrite, OptimisticRowState } from './queryCache';
 export { useNotis } from './hooks/useNotis';
 export { useDocuments } from './hooks/useDocuments';
 export type { UseDocumentsOptions, UseDocumentsResult } from './hooks/useDocuments';

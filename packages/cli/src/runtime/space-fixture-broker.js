@@ -6,7 +6,7 @@ const object = value => value && typeof value === 'object' && !Array.isArray(val
 const exact = (value, keys) => object(value) && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 
 export function createSpaceFixtureBroker({ release, capabilities, width, outputs = ['markdown', 'screenshot'],
-  authorizationMode = 'authorize_missing', unavailableActions = [] }) {
+  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure }) {
   const engine = createSpaceFixtureEngine(release);
   const frozen = spaceHarnessSnapshot(release, capabilities, engine, { authorizationMode, unavailableActions });
   const calls = [];
@@ -33,6 +33,7 @@ export function createSpaceFixtureBroker({ release, capabilities, width, outputs
       } catch (error) {
         // Keep the reason with the call so verify reports which read failed and what the fixture lacks.
         log.error = String(error?.message || error).slice(0, 2000);
+        onFailure?.(log);
         throw error;
       }
       log.ok = true;

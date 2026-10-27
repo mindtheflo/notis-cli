@@ -74,8 +74,10 @@ test('the broker keeps the failed read and its reason, and finish reports it', a
 
 test('verify carries the specific fixture reason, not only the generic renderer line', async () => {
   const release = htmlRelease({ actions: {}, context: { params: { note: record } }, recordViews: [] });
-  // A failed read leaves the frame waiting, so the render runs to its timeout; keep it short here.
-  const result = await verifySpaceRelease(release, { capabilities, loadRenderer, timeoutMs: 8_000 });
+  // A failed read leaves the frame waiting on it: verify stops soon after, never at its 45 s timeout.
+  const started = Date.now();
+  const result = await verifySpaceRelease(release, { capabilities, loadRenderer });
+  assert.ok(Date.now() - started < 30_000, `verify stopped after ${Date.now() - started} ms`);
   assert.equal(result.status, 'failed', JSON.stringify(result));
   const fixtureErrors = result.errors.filter(value => value.phase === 'fixture');
   assert.equal(fixtureErrors.length, 1, JSON.stringify(result.errors));

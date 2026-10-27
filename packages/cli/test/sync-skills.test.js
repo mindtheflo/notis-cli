@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -152,4 +152,29 @@ test('concurrent stale-lock reclaimers never overlap callbacks or delete the new
   await Promise.all(callers);
   assert.equal(maximumActive, 1);
   assert.deepEqual([...entered].sort((a, b) => a - b), [0, 1, 2, 3, 4]);
+});
+
+test('an acquirer that finds a live lock leaves its owner in place and no staging folder behind', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-held-skill-lock-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const skills = join(home, '.notis', 'skills');
+  const lockDirectory = join(skills, '.operation-lock');
+  mkdirSync(lockDirectory, { recursive: true });
+  const holder = JSON.stringify({ id: 'live-holder', pid: process.pid, at: Date.now() });
+  writeFileSync(join(lockDirectory, 'owner'), holder);
+
+  await assert.rejects(reconcileAllSkills({
+    serverUrl: 'http://127.0.0.1:8000',
+    jwt: 'header.payload.signature',
+    honorSyncEnabled: false,
+    home,
+    lockOptions: { staleMs: 60_000, pollMs: 5, timeoutMs: 60 },
+    reconcileBase: () => assert.fail('the held lock must keep the callback out'),
+    runAccountSync: async () => ({ syncEnabled: true }),
+  }));
+
+  assert.equal(readFileSync(join(lockDirectory, 'owner'), 'utf8'), holder);
+  const staging = existsSync(join(skills, '.stale-operation-locks'))
+    ? readdirSync(join(skills, '.stale-operation-locks')).filter((name) => name.startsWith('staging.')) : [];
+  assert.deepEqual(staging, []);
 });

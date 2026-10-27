@@ -54,16 +54,21 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
   if (signal?.aborted) return { ...diagnostic, status: 'failed', errors: [{ phase: 'browser', message: 'Verification cancelled.' }] };
   if (release.manifest.kind === 'container') return { ...diagnostic, status: 'not_applicable_container' };
   let pool, held = false, rendererDigest;
-  const brokers = [390, 1440].map(width => ({ width, broker: null }));
+  const brokers = [390, 1440].map(width => ({ width, broker: null, stop: new AbortController(), timer: null }));
   try {
     // Validate fixture authority before opening a browser or acquiring a slot.
+    // A failed fixture read already fails the check, and the view usually waits on it until the timeout: the
+    // render stops shortly after, once the reads the view sends together have had their say.
     for (const item of brokers) item.broker = createSpaceFixtureBroker({ release, capabilities, width: item.width,
-      authorizationMode, unavailableActions });
+      authorizationMode, unavailableActions, onFailure: () => {
+        item.timer ??= setTimeout(() => item.stop.abort(), FIXTURE_FAILURE_GRACE_MS);
+      } });
     await acquire(signal); held = true;
     const library = await loadRenderer(); rendererDigest = library.rendererDigest;
     pool = library.createBrowserPool({ concurrency: 2, maxQueue: 2 });
-    const observations = await Promise.allSettled(brokers.map(async ({ width, broker }) => {
-      const result = await library.renderView({ broker, pool, outputs: ['markdown', 'screenshot'], width, timeoutMs, signal });
+    const observations = await Promise.allSettled(brokers.map(async ({ width, broker, stop }) => {
+      const cancel = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+      const result = await library.renderView({ broker, pool, outputs: ['markdown', 'screenshot'], width, timeoutMs, signal: cancel });
       const blocked = result.blocked_calls || [];
       return { width, mounted: true, status: blocked.length ? 'failed' : 'passed',
         markdown_sha256: createHash('sha256').update(result.markdown).digest('hex'),
@@ -98,9 +103,11 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
     return { ...diagnostic, status: 'failed', ...(rendererDigest ? { renderer_digest: rendererDigest } : {}),
       errors: [{ phase: 'harness', message: error.message }] };
   } finally {
+    for (const item of brokers) clearTimeout(item.timer);
     try { await pool?.close(); } finally { if (held) releaseSlot(); }
   }
 }
+const FIXTURE_FAILURE_GRACE_MS = 1_500;
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const captureFailure = (width, locale, error) => ({ check: 'capture_failed', severity: 'warning', width, locale,
