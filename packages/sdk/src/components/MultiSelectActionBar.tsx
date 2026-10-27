@@ -27,6 +27,10 @@ export interface MultiSelectActionBarProps {
   actions: MultiSelectAction[];
   /** Override the "{count} selected" label units. Default: "selected" with no item word. */
   itemLabel?: { singular: string; plural: string };
+  /** Complete count text in the caller's language, including plural agreement. */
+  selectionLabel?: string;
+  /** Accessible toolbar name in the caller's language. */
+  toolbarLabel?: string;
   /** Optional extra class on the outer container (composed alongside the inline styles). */
   className?: string;
   /** Optional override for the bar's positioning style. Defaults to bottom-center floating. */
@@ -125,6 +129,8 @@ export function MultiSelectActionBar({
   selectedCount,
   actions,
   itemLabel,
+  selectionLabel,
+  toolbarLabel,
   className,
   style,
   shortcutsEnabled = true,
@@ -196,9 +202,9 @@ export function MultiSelectActionBar({
       ? itemLabel.singular
       : itemLabel.plural
     : 'selected';
-  const countLabel = itemLabel
+  const countLabel = selectionLabel ?? (itemLabel
     ? `${selectedCount} ${countWord} selected`
-    : `${selectedCount} selected`;
+    : `${selectedCount} selected`);
 
   const composedStyle: CSSProperties = { ...containerBaseStyle, ...(style || {}) };
 
@@ -215,7 +221,7 @@ export function MultiSelectActionBar({
         onClearSelection();
       }}
       role="toolbar"
-      aria-label={`Bulk actions for ${selectedCount} selected ${countWord}`}
+      aria-label={toolbarLabel ?? `Bulk actions for ${selectedCount} selected ${countWord}`}
       className={className}
       style={composedStyle}
     >
@@ -225,8 +231,13 @@ export function MultiSelectActionBar({
           [data-notis-bulk-actions] { flex-wrap: wrap; width: calc(100% - 2rem) !important; }
           [data-notis-bulk-count] { flex-basis: 100%; padding: 0.375rem 0.5rem !important; font-size: 14px !important; }
           [data-notis-bulk-divider] { display: none; }
-          [data-notis-bulk-action-list] { width: 100%; }
-          [data-notis-bulk-actions] button { min-height: 48px; font-size: 16px !important; }
+          /* Every action gets an equal column, icon over label, so none is cut off at the edge
+             (longer labels such as French ones wrap inside their column instead). */
+          [data-notis-bulk-action-list] { display: grid !important; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); width: 100%; overflow: visible !important; }
+          [data-notis-bulk-actions] button { flex-direction: column; justify-content: flex-start; gap: 4px !important; min-width: 0; min-height: 56px; padding: 8px 4px 6px !important; font-size: 12px !important; line-height: 1.25; white-space: normal !important; text-align: center; }
+          [data-notis-bulk-actions] kbd { display: none !important; }
+          [data-notis-bulk-action-icon][data-has-shortcut] { display: inline-flex !important; }
+          [data-notis-bulk-action-icon] svg { width: 18px; height: 18px; }
         }
         @media (hover: none) and (pointer: coarse) {
           [data-notis-bulk-actions] kbd { display: none !important; }

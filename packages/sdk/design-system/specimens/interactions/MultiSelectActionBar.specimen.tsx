@@ -10,6 +10,8 @@ import { bulkActions, INLINE_BAR_STYLE, LiveTaskList, Note, SELECTION_COPY } fro
 type Ctx = SpecimenRenderContext;
 
 const COPY = {
+  localizedSelection: w('2 tasks selected', '2 tâches sélectionnées'),
+  localizedToolbar: w('Actions for 2 selected tasks', 'Actions pour 2 tâches sélectionnées'),
   floating: w(
     'Three tasks are ticked, so the bar floats at the bottom centre of the view. Run an action, press its key or press Escape to clear.',
     'Trois tâches sont cochées : la barre flotte en bas au centre de la vue. Lance une action, appuie sur sa touche ou sur Échap pour tout effacer.',
@@ -89,6 +91,15 @@ export const specimen = defineSpecimen({
   covers: ['MultiSelectActionBar'],
   summary: 'The floating bar of bulk actions that appears while rows of a list are selected.',
   states: [
+    {
+      id: 'localized-labels',
+      label: 'Complete translated count and toolbar name',
+      render: (ctx) => <MultiSelectActionBar selectedCount={2}
+        actions={bulkActions(ctx.t, ['complete', 'delete'])}
+        selectionLabel={ctx.t(COPY.localizedSelection)}
+        toolbarLabel={ctx.t(COPY.localizedToolbar)}
+        shortcutsEnabled={false} style={INLINE_BAR_STYLE} />,
+    },
     {
       id: 'floating',
       label: 'Floating over a list',
