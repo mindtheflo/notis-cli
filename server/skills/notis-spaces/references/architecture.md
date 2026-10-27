@@ -94,9 +94,10 @@ Live tool schemas own the arguments.
   unavailable (see recovery below). The owner cannot be removed and hands
   ownership over before leaving.
 - **Site** (Portal; no agent tool): anyone with the link, signed out. A Space Site is
-  the Share panel's "Publish as a site" (the view's top bar Share). One record uses
-  "Publish this page as a site" in that panel: a `DocumentPage` with `share` on is
-  listed there while it shows in its own Space's view. A `ShareControl`, or a page
+  the Share panel's Publish tab (the view's top bar Share). One record uses the
+  tab's "Page to publish" choice ("This page" instead of "This view"): a
+  `DocumentPage` with `share` on is listed there while it shows in its own Space's
+  view. A `ShareControl`, or a page
   shown in another Space's view, keeps its own Share popover (Create public link,
   then Shared publicly with Copy link and Stop sharing). Visitors reach only declared
   actions and reads. Any paid action or read is billed to the grant issuer, not
