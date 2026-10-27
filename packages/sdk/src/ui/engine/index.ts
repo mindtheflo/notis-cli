@@ -22,8 +22,8 @@ export { KeyboardEngine, ShortcutScope } from './KeyboardEngine';
 export type { KeyboardEngineProps, ShortcutScopeProps } from './KeyboardEngine';
 export { HelpSheet } from './HelpSheet';
 export type { HelpSheetProps } from './HelpSheet';
-export { stepCursor } from './step';
-export type { StepOptions } from './step';
+export { continuationOf, stepCursor, travelBetween } from './step';
+export type { StepOptions, TravelDirection } from './step';
 export type {
   EngineHost,
   EngineSettings,

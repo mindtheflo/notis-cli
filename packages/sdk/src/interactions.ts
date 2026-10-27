@@ -19,6 +19,8 @@ export type {
   ResolvedCollectionAction,
 } from './interactions/actions';
 export { useCollectionInteractions, COLLECTION_ITEM_ATTRIBUTE } from './hooks/useCollectionInteractions';
+export { continuationOf, travelBetween } from './ui/engine/step';
+export type { TravelDirection } from './ui/engine/step';
 export type {
   CollectionInteractionController,
   CollectionInteractionReason,

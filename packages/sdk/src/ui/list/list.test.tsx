@@ -120,6 +120,8 @@ test('successorOf: the next remaining row, else the previous one, else none', ()
   assert.equal(successorOf(['a', 'b', 'c'], ['a'], 'b'), 'a');
   assert.equal(successorOf(['a', 'b', 'c'], ['a', 'b'], 'c'), 'b');
   assert.equal(successorOf(['a'], [], 'a'), null);
+  assert.equal(successorOf(['a', 'b', 'c'], ['a', 'c'], 'b', 'previous'), 'a', 'travelling back: the previous row');
+  assert.equal(successorOf(['a', 'b', 'c'], ['b', 'c'], 'a', 'previous'), 'b', 'at the top: the next one');
 });
 
 test('selection reducer: shift ranges grow and shrink from the anchor, select all, clear', () => {
@@ -531,6 +533,53 @@ test('reader: an open item that leaves the list hands over to the next one', asy
   items = items.filter((t) => t.id !== 'd');
   await render(list({ items }));
   assert.equal(q('#reader')!.textContent, 'Ticket B', 'no next row: the previous one');
+});
+
+test('removals continue the way the cursor last went: K and a click upward go back, J goes on (iOS Photos)', async () => {
+  let items = [...TICKETS];
+  const props = () => list({ items });
+  const render = await mount(props());
+  // K from nowhere lands on the last row, K again goes up: the way is now "previous".
+  await press('k');
+  await press('k');
+  assert.equal(cursorId(), 'c');
+  items = items.filter((t) => t.id !== 'c');
+  await render(props());
+  assert.equal(cursorId(), 'b', 'after K a removal goes to the previous row');
+  items = items.filter((t) => t.id !== 'b');
+  await render(props());
+  assert.equal(cursorId(), 'a', 'the move the list made keeps the way');
+  items = items.filter((t) => t.id !== 'a');
+  await render(props());
+  assert.equal(cursorId(), 'd', 'at the top edge it goes the other way');
+  // J sets the way back to "next"; a wrap from the last row to the first still counts as next.
+  items = [...TICKETS];
+  await render(props());
+  await press('j');
+  assert.equal(cursorId(), 'a', 'J wraps from the last row to the first');
+  items = items.filter((t) => t.id !== 'a');
+  await render(props());
+  assert.equal(cursorId(), 'b');
+  // A click further up the list goes "previous" too, and the open item follows it.
+  await click(q('[data-nui-item="d"]')!);
+  await click(q('[data-nui-item="c"]')!);
+  assert.equal(q('#reader')!.textContent, 'Ticket C');
+  items = items.filter((t) => t.id !== 'c');
+  await render(props());
+  assert.equal(q('#reader')!.textContent, 'Ticket B');
+  assert.equal(cursorId(), 'b');
+});
+
+test('E on rows that stay moves on the way the cursor last went', async () => {
+  await mount(list({ actions: ['complete'], handlers: { complete: () => {} } }));
+  await press('k');
+  await press('k');
+  assert.equal(cursorId(), 'c');
+  await press('e');
+  assert.equal(cursorId(), 'b', 'after K the E action moves up');
+  await press('j');
+  await press('e');
+  assert.equal(cursorId(), 'd', 'after J it moves down again');
 });
 
 test('reader bar: Prev/Next wrap like J/K and Close closes', async () => {

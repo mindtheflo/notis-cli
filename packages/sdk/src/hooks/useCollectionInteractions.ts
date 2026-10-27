@@ -26,6 +26,7 @@ import {
 
 import type { MultiSelectActionBarProps } from '../components/MultiSelectActionBar';
 import { isInteractionElementVisible } from '../interactions/visibility';
+import { travelBetween, type TravelDirection } from '../ui/engine/step';
 import { useLongPressSelection } from './useLongPressSelection';
 import { useMarqueeSelection, type SelectionMarqueeRect } from './useMarqueeSelection';
 
@@ -117,6 +118,11 @@ export interface CollectionInteractionController<T> {
   lastClickedId: string | null;
   dragRect: SelectionMarqueeRect | null;
   actions: ResolvedCollectionAction[];
+  /**
+   * The way the active item last moved (J/K, the arrows, a click further up or down); 'next' until it moves. A page
+   * that removes the active item continues this way (iOS Photos), else the other way at the edge.
+   */
+  travelDirection: () => TravelDirection;
   getActionBarProps: () => Pick<MultiSelectActionBarProps, 'selectedCount' | 'actions' | 'collectionOwnerId' | 'isAvailable' | 'shortcutsEnabled' | 'onClearSelection'>;
 
   isSelected: (id: string) => boolean;
@@ -237,6 +243,7 @@ export function useCollectionInteractions<T>(
   const selectedIdsRef = useRef(selectedIds);
   const activeIdRef = useRef(activeId);
   const anchorIdRef = useRef(anchorId);
+  const travelRef = useRef<TravelDirection>('next');
   // Keep manually selected rows outside the current keyboard range on reversal.
   const keyboardRangeBaseRef = useRef<Set<string> | null>(null);
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -307,6 +314,9 @@ export function useCollectionInteractions<T>(
   const setActive = useCallback((id: string | null, reason: CollectionInteractionReason = 'activate') => {
     const next = id && selectableIdsRef.current.includes(id) ? id : null;
     if (activeIdRef.current === next) return;
+    // A click or focus further up or down sets the way; keys set it themselves (moveActive), a wrap included.
+    const travel = reason === 'items-changed' ? null : travelBetween(selectableIdsRef.current, activeIdRef.current, next);
+    if (travel) travelRef.current = travel;
     activeIdRef.current = next;
     if (controlledActiveId === undefined) setUncontrolledActiveId(next);
     onActiveIdChangeRef.current?.(next, reason);
@@ -448,6 +458,7 @@ export function useCollectionInteractions<T>(
     const ids = selectableIdsRef.current;
     if (ids.length === 0) return;
     const current = activeIdRef.current;
+    const forward = direction === 'next' || direction === 'down' || direction === 'right';
     // Range gestures follow the displayed order, independent of asymmetric grid geometry.
     let next = extend ? null : resolveNextIdRef.current?.({
       direction,
@@ -457,7 +468,6 @@ export function useCollectionInteractions<T>(
     }) ?? null;
     if (!next) {
       const currentIndex = current ? ids.indexOf(current) : -1;
-      const forward = direction === 'next' || direction === 'down' || direction === 'right';
       const nextIndex = currentIndex === -1
         ? forward ? 0 : ids.length - 1
         : Math.min(ids.length - 1, Math.max(0, currentIndex + (forward ? 1 : -1)));
@@ -478,6 +488,7 @@ export function useCollectionInteractions<T>(
       setAnchor(next, 'navigate');
     }
     setActive(next, extend ? 'range' : 'navigate');
+    travelRef.current = forward ? 'next' : 'previous';
     const nextId = next;
     requestAnimationFrame(() => focusItem(nextId));
   }, [focusItem, replaceRange, setActive, setAnchor]);
@@ -649,6 +660,7 @@ export function useCollectionInteractions<T>(
   }), [enabled, onCheckboxClick]);
 
   const getSelectedItems = useCallback(() => getItemsForIds(selectedIdsRef.current), [getItemsForIds]);
+  const travelDirection = useCallback(() => travelRef.current, []);
   const isSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
 
   const actionContext = useMemo<CollectionActionContext<T>>(() => ({
@@ -716,6 +728,7 @@ export function useCollectionInteractions<T>(
     lastClickedId: anchorId,
     dragRect,
     actions: resolvedActions,
+    travelDirection,
     getActionBarProps,
     isSelected,
     getSelectedItems,

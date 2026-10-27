@@ -22,3 +22,33 @@ export function stepCursor(ids: readonly string[], cursor: string | null | undef
   }
   return ids[next]!;
 }
+
+/** The way the cursor last moved through a list. A removal continues that way (iOS Photos). */
+export type TravelDirection = 'next' | 'previous';
+
+/** The way a move from `from` to `to` went in `ids`; null when either is not in the list or nothing moved. */
+export function travelBetween(ids: readonly string[], from: string | null | undefined,
+  to: string | null | undefined): TravelDirection | null {
+  if (from == null || to == null || from === to) return null;
+  const a = ids.indexOf(from);
+  const b = ids.indexOf(to);
+  if (a === -1 || b === -1) return null;
+  return b > a ? 'next' : 'previous';
+}
+
+/**
+ * The id that takes `gone`'s place after it left `previous` (`now` holds the ids still listed): the nearest one still
+ * there in the travel direction, else the nearest the other way. Null when none is left.
+ */
+export function continuationOf(previous: readonly string[], now: readonly string[] | ReadonlySet<string>,
+  gone: string, direction: TravelDirection = 'next'): string | null {
+  const present = now instanceof Set ? now : new Set(now as readonly string[]);
+  const index = previous.indexOf(gone);
+  if (index === -1) return null;
+  const scan = (delta: number) => {
+    for (let i = index + delta; i >= 0 && i < previous.length; i += delta) if (present.has(previous[i]!)) return previous[i]!;
+    return null;
+  };
+  const first = direction === 'next' ? 1 : -1;
+  return scan(first) ?? scan(-first);
+}

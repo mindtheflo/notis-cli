@@ -4,6 +4,7 @@
  *
  * Behaviour follows the Portal Manager list (`useCollectionInteractions`):
  * - J/K wrap on a fresh press and stop at the edge while held (`stepCursor`, `repeat: true`).
+ * - Each key move reports its way (`onTravel`), so a wrap from the last row to the first still counts as "next".
  * - With an item open, J/K open the item under the new cursor.
  * - Only visible rows count (hidden, inert or display none rows are skipped).
  * - The row under the cursor is focused without scrolling, then scrolled to the nearest edge (scroll padding keeps
@@ -25,7 +26,7 @@ import type {
 import { DEFAULT_KEYMAP, type Scope, type Words } from '../../words';
 import { closestComposed, containsComposed, isVisibleComposed } from '../engine/dom';
 import { useShortcuts, useToolkitPlatform } from '../engine/hooks';
-import { stepCursor } from '../engine/step';
+import { stepCursor, type TravelDirection } from '../engine/step';
 import type { ShortcutDef } from '../engine/types';
 import { deepActiveElement, flag, useLatest } from '../util';
 import type { Selection } from './useSelection';
@@ -71,6 +72,8 @@ export interface UseListKeysOptions {
    * Right go to the nearest column that has tiles, at the same height or its last tile.
    */
   board?: readonly (readonly string[])[];
+  /** A key moved the cursor: J, Down and Right go 'next'; K, Up and Left go 'previous'. Called before `setCursor`. */
+  onTravel?: (direction: TravelDirection, to: string) => void;
 }
 
 export interface RowDomProps {
@@ -226,6 +229,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
         return true;
       }
       sel?.navigate(next);
+      latest.current.onTravel?.(delta > 0 ? 'next' : 'previous', next);
       return moveTo(next, open !== null && next !== open);
     };
     const extend = (delta: number) => (event: KeyboardEvent) => {
@@ -234,6 +238,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
       const next = stepCursor(visibleIds(), current, delta, { wrap: false, repeat: event.repeat });
       if (next === null) return false;
       sel.extendStep(next);
+      latest.current.onTravel?.(delta > 0 ? 'next' : 'previous', next);
       return moveTo(next, false);
     };
     const base = (entry: { id: string; keys: readonly string[]; label: { en: string; fr: string } }): Pick<ShortcutDef,
@@ -286,6 +291,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
         const { cursor: current, openId: open = null, selection: sel = null } = latest.current;
         const visible = visibleIds();
         const index = current === null ? -1 : visible.indexOf(current);
+        const way: TravelDirection = dir === 'left' || dir === 'up' ? 'previous' : 'next';
         if (index === -1) return moveTo(visible[0] ?? null, false);
         const board = latest.current.board;
         if (board) {
@@ -294,6 +300,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
           // The edge holds (the key is still taken, so the page does not scroll).
           if (next === null || next === current) return true;
           sel?.navigate(next);
+          latest.current.onTravel?.(way, next);
           return moveTo(next, open !== null && next !== open);
         }
         const columns = gridColumns(containerRef.current, visible);
@@ -303,6 +310,7 @@ export function useListKeys(options: UseListKeysOptions): { getRowProps(id: stri
         if (target < 0 || target >= visible.length) return true;
         const next = visible[target]!;
         sel?.navigate(next);
+        latest.current.onTravel?.(way, next);
         return moveTo(next, open !== null && next !== open);
       };
       for (const dir of ['left', 'right', 'up', 'down'] as const) {

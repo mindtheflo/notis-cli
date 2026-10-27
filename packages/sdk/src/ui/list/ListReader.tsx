@@ -5,8 +5,10 @@
  * - J/K move the cursor (wrapping on a fresh press), Enter or a click opens the item in the current open mode.
  * - X, Shift+J/K, Mod+A, Mod/Shift-click and press and hold select; the selection bar shows the bulk actions.
  * - Esc closes the open item first, then clears the selection.
- * - After an action takes the cursor row off the list, the cursor (and an open item) moves to the next row, else the
- *   previous one. An E action (Complete, Archive) whose items stay in the list moves on to the row after them.
+ * - After an action takes the cursor row off the list, the cursor (and an open item) moves on the way the cursor last
+ *   went (iOS Photos): the next row after J, Down, Next or a click further down (the default), the previous row after
+ *   K, Up, Prev or a click further up; at the edge it goes the other way. An E action (Complete, Archive) whose items
+ *   stay in the list moves on past them the same way.
  * - Side: the reader sits beside the list (Panels; below the Panels minimum it slides over the list with Back).
  *   Center: a dialog over the list (max 880px), J/K still step through items. Full: the reader replaces the list.
  * - The open id lives in the URL (`openParam`, default `open`): the Space URL inside a Space, the page URL (history)
@@ -42,7 +44,7 @@ import { ESCAPE_PRIORITY } from '../engine/core';
 import { containsComposed, isVisibleComposed, openModalLayers } from '../engine/dom';
 import { useEscapeLayer, useShortcutOwner, useShortcuts } from '../engine/hooks';
 import { ShortcutScope } from '../engine/KeyboardEngine';
-import { stepCursor } from '../engine/step';
+import { continuationOf, stepCursor, travelBetween, type TravelDirection } from '../engine/step';
 import type { ShortcutDef } from '../engine/types';
 import { Icon } from '../icons';
 import { Panels, usePanels } from '../layout/Panels';
@@ -454,14 +456,10 @@ function defaultGetId<T>(item: T): string {
   return typeof id === 'string' ? id : String(id);
 }
 
-/** The id that takes `gone`'s place: the next one still in `now`, else the previous one. */
-export function successorOf(previous: readonly string[], now: readonly string[], gone: string): string | null {
-  const present = new Set(now);
-  const index = previous.indexOf(gone);
-  if (index === -1) return null;
-  for (let i = index + 1; i < previous.length; i += 1) if (present.has(previous[i]!)) return previous[i]!;
-  for (let i = index - 1; i >= 0; i -= 1) if (present.has(previous[i]!)) return previous[i]!;
-  return null;
+/** The id that takes `gone`'s place: the nearest one still in `now` the way the cursor last went, else the other way. */
+export function successorOf(previous: readonly string[], now: readonly string[], gone: string,
+  direction: TravelDirection = 'next'): string | null {
+  return continuationOf(previous, now, gone, direction);
 }
 
 /** A run that did not happen (no such action, a picker closed unchosen). */
@@ -871,6 +869,26 @@ function ListReaderInner<T>({
 
   useEffect(() => { if (openId !== null) setCursor(openId); }, [openId]);
 
+  // ---- travel: the way the cursor last went, which a removal continues ----
+  // Keys and Prev/Next say their way (so a wrap from the last row to the first is still "next"); any other move (a
+  // click, Back, the API) reads it from the list order. Moves the list makes on its own after a removal keep it.
+  const travel = useRef<TravelDirection>('next');
+  const travelFrom = useRef<string | null>(cursor);
+  const travelSaid = useRef<string | null>(null);
+  const sayTravel = useCallback((direction: TravelDirection | null, to: string | null) => {
+    if (direction) travel.current = direction;
+    travelSaid.current = to;
+  }, []);
+  useEffect(() => {
+    const from = travelFrom.current;
+    travelFrom.current = cursor;
+    const said = travelSaid.current;
+    travelSaid.current = null;
+    if (cursor === null || cursor === from || said === cursor) return;
+    const direction = travelBetween(latest.current.navIds, from, cursor);
+    if (direction) travel.current = direction;
+  }, [cursor, latest]);
+
   // onOpen follows the item the reader shows, however it opened (a click, a key, the API, the URL on load, Back).
   // While an open id waits for its item (the first page loads), nothing is said yet.
   const announced = useRef<string | null>(null);
@@ -1024,13 +1042,16 @@ function ListReaderInner<T>({
     if (!moveOn || outcome.status !== 'done') return;
     const { ids: list, cursor: current, openId: opened } = latest.current;
     const doneIds = outcome.done.map((item) => getId(item));
-    const last = Math.max(-1, ...doneIds.map((id) => list.indexOf(id)));
-    const next = list.slice(last + 1).find((id) => !doneIds.includes(id)) ?? null;
+    const at = doneIds.map((id) => list.indexOf(id)).filter((index) => index !== -1);
+    const next = travel.current === 'previous'
+      ? list.slice(0, Math.min(list.length, ...at)).reverse().find((id) => !doneIds.includes(id)) ?? null
+      : list.slice(Math.max(-1, ...at) + 1).find((id) => !doneIds.includes(id)) ?? null;
     if (!next || !doneIds.includes((current ?? opened) as string)) return;
+    sayTravel(null, next);
     noteFollow(next);
     setCursor(next);
     if (opened !== null && doneIds.includes(opened)) open(next, { quiet: true });
-  }, [afterAction, boardMove, getId, latest, noteFollow, open, rawSelection, selectionRef]);
+  }, [afterAction, boardMove, getId, latest, noteFollow, open, rawSelection, sayTravel, selectionRef]);
 
   // ---- pickers (Move to, Assign): a menu of the action's options at the button, row or reader bar ----
   const [picker, setPicker] = useState<{ action: ResolvedAction<T>; items: T[]; anchor: HTMLElement | null } | null>(null);
@@ -1094,7 +1115,7 @@ function ListReaderInner<T>({
     onPick: openPicker,
   });
 
-  // ---- removals: the cursor and an open item move on (next, else previous) ----
+  // ---- removals: the cursor and an open item move on the way the cursor last went, else the other way ----
   const previousIds = useRef<readonly string[]>(ids);
   useIsoLayoutEffect(() => {
     const previous = previousIds.current;
@@ -1103,12 +1124,15 @@ function ListReaderInner<T>({
     const present = new Set(ids);
     const { cursor: current, openId: opened } = latest.current;
     if (current !== null && !present.has(current) && previous.includes(current)) {
-      const next = successorOf(previous, ids, current);
+      const next = successorOf(previous, ids, current, travel.current);
+      sayTravel(null, next);
       noteFollow(next);
       setCursor(next);
     }
     if (opened !== null && !present.has(opened) && previous.includes(opened)) {
-      open(successorOf(previous, ids, opened), { quiet: true });
+      const next = successorOf(previous, ids, opened, travel.current);
+      sayTravel(null, next);
+      open(next, { quiet: true });
     }
   }, [ids]);
 
@@ -1140,7 +1164,7 @@ function ListReaderInner<T>({
     ids: navIds, cursor, setCursor, onOpen: open, wrap: wraps, containerRef: scrollRef, selection: listSelection,
     openId: readerOpen ? openId : null, enabled: !centerOpen && !fullOpen,
     onReachEnd: hasMore && onLoadMore ? loadMore : undefined, grid: layout === 'tiles',
-    board: boardOn ? laneIds : undefined,
+    board: boardOn ? laneIds : undefined, onTravel: (direction, to) => sayTravel(direction, to),
   });
 
   // ---- drag to select: a marquee from empty space selects the rows under it (Manager `enableDragSelect`) ----
@@ -1165,9 +1189,10 @@ function ListReaderInner<T>({
       if (delta > 0 && latest.current.hasMore && list[list.length - 1] === from) { loadMore(); return true; }
       return false;
     }
+    sayTravel(delta > 0 ? 'next' : 'previous', next);
     open(next);
     return true;
-  }, [latest, loadMore, open, wraps]);
+  }, [latest, loadMore, open, sayTravel, wraps]);
 
   // Center peek is modal: only modal keys run, so J/K step through items from here (not while a menu is open).
   const centerDefs = useMemo<ShortcutDef[]>(() => {
