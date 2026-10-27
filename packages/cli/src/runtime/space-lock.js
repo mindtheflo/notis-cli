@@ -317,7 +317,7 @@ export function applyPublication({ lock, folders, result }) {
   return { lock: next, resources: resourceEntries(applied.space_links || []) };
 }
 
-/** One line describing what a deploy changed, with the review link of every changed Skill. */
+/** One line describing what a deploy changed. */
 export function describeAppliedChanges(result) {
   const applied = result?.applied;
   if (!applied) return '';
@@ -330,8 +330,5 @@ export function describeAppliedChanges(result) {
   const removed = (applied.links || []).flatMap((link) => (link.removed || []).map((entry) => `${entry.alias} (${link.kind})`));
   if (added.length) parts.push(`Links added: ${added.join(', ')}`);
   if (removed.length) parts.push(`Links removed: ${removed.join(', ')}`);
-  for (const review of result.reviews || []) {
-    if (review.review_url) parts.push(`Review ${review.alias}: ${review.review_url}`);
-  }
   return parts.length ? ` ${parts.join('. ')}.` : '';
 }

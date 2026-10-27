@@ -3,8 +3,8 @@
 A report is either a saved page or an interactive view, not a separate UI system:
 
 - **Saved page or report** (self-contained HTML, or a finished report the user
-  wants to keep): a page in the most appropriate Space, by default a note in the
-  **Notis reports** folder of **Notis Notes**. See [Save an HTML page or report](#save-an-html-page-or-report).
+  wants to keep): a page in **Notis Notes**, filed by its Save HTML Skill. See
+  [Save an HTML page or report](#save-an-html-page-or-report).
 - **Interactive report** (typed params such as a period, live data reads): an
   independently authored Space view with its own source, data declarations and
   memory policy. Editing one report must not replace an unrelated view.
@@ -27,10 +27,10 @@ Reading does not regenerate historical figures or authorize source/data changes.
 
 ## Save an HTML page or report
 
-Save the page in the most appropriate Space: the one the user names, or the
-Space the work belongs to when it keeps pages. Otherwise save it in the
-**Notis reports** folder of **Notis Notes** (or the Notes folder the user names);
-the Save HTML Skill creates the folder when it is missing. "All notes" hides these notes; each
+Save the page in the Space the user names, or the Space the work belongs to, when
+that Space keeps pages of its own; otherwise save it in **Notis Notes**. The Notes Save HTML Skill alone chooses the folder
+(it files work by its Space and Skill) and creates it when missing; pass it only
+a folder the user or your workflow names. "All notes" hides these notes; each
 folder shows everything in it.
 
 1. Save it with the Skill that Space ships for its pages. In Notes that is the

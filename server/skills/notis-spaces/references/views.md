@@ -216,9 +216,6 @@ presentations; ordinary collection views keep Portal chrome.
 A Space whose published view hides chrome starts hidden from each person's sidebar;
 it stays reachable by link and search. Each person can turn on **Show hidden Spaces**
 in the sidebar's Spaces menu, then choose **Show in sidebar** in that Space's menu.
-Skill review Spaces stay out of the sidebar, even with **Show hidden Spaces** on:
-people open them from the Skill page's **Changes** list. A review a person already
-chose to show stays in their sidebar until they hide it.
 Optional `markdown: './markdown.ts'` names a module exporting a pure function of
 `{params, shown}`. Its output must represent this view, not make hidden writes.
 Use `<RenderChartData>` with the chart's actual rows so rendered Markdown contains

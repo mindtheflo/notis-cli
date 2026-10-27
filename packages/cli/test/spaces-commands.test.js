@@ -286,7 +286,7 @@ test('deploy sends only what changed since the pull, then records the applied ve
     const body = JSON.parse(request.body); calls.push({ url, body });
     if (url.endsWith('/source-verify')) return new Response(JSON.stringify(verificationFor(body)));
     return new Response(JSON.stringify({ release_id: 'release', space_id: 'fixture-space', published_revision: 2, space_revision: 6, replayed: false,
-      applied: applied(), reviews: [{ alias: 'guide', skill_id: 'skill-guide', operation: 'update', review_url: 'https://app.notis.ai/skill-reviews/guide' }] }));
+      applied: applied() }));
   });
   const ctx = context('spaces deploy', { space: 'one', spaceId: 'fixture-space', requestId: 'pulled-intent' }, { dir: root });
   const result = await ctx.spec.handler(ctx);
@@ -299,7 +299,7 @@ test('deploy sends only what changed since the pull, then records the applied ve
   assert.deepEqual(publish.changes, verify.changes);
   assert.equal(publish.verification.changes_digest, 'd'.repeat(64));
   assert.equal('local_changes_fingerprint' in publish.verification, false, 'The local fingerprint never leaves the workspace');
-  assert.match(result.humanSummary, /Published one as revision 2\. Skills updated: guide\. Skills created: weekly-digest\. Links added: weekly \(automation\)\. Review guide: https:\/\/app\.notis\.ai\/skill-reviews\/guide\./);
+  assert.match(result.humanSummary, /Published one as revision 2\. Skills updated: guide\. Skills created: weekly-digest\. Links added: weekly \(automation\)\.$/);
   const lock = readSpaceLock(root);
   assert.equal(lock.skills.guide.version.revision, 4);
   assert.equal(lock.skills.guide.folder_hash, appFilesDigest({ 'SKILL.md': b64('# Guide\nEdited locally.') }));
@@ -336,28 +336,26 @@ test('inconsistent pulled state and changed local changes on a retry are refused
   assert.equal(fetch.mock.callCount(), before);
 });
 
-test('rv3-enfr D2: repeating a successful deploy in the pulled folder replays the same release and review link', async t => {
+test('rv3-enfr D2: repeating a successful deploy in the pulled folder replays the same release', async t => {
   const root = await sourceFixture(t), calls = [];
   pulledFixture(root);
-  const review = 'https://app.notis.ai/skill-reviews/guide';
   t.mock.method(globalThis, 'fetch', async (url, request) => {
     const body = JSON.parse(request.body); calls.push({ url, body });
     if (url.endsWith('/source-verify')) return new Response(JSON.stringify(verificationFor(body)));
     const replayed = calls.filter(call => call.url.endsWith('/source-publish')).length > 1;
     return new Response(JSON.stringify({ release_id: 'release-4290', space_id: 'fixture-space', published_revision: 2, space_revision: 6,
-      replayed, applied: applied(), reviews: [{ alias: 'guide', skill_id: 'skill-guide', operation: 'update', review_url: review }] }));
+      replayed, applied: applied() }));
   });
   const ctx = context('spaces deploy', { space: 'one', spaceId: 'fixture-space', requestId: 'repeat-intent' }, { dir: root });
   const first = await ctx.spec.handler(ctx);
   assert.equal(first.data.replayed, false);
   const lock = readSpaceLock(root), list = readFileSync(join(root, 'resources.json'), 'utf8');
   assert.equal(lock.source_revision, 2, 'The success rewrote the lock and the list');
-  // The identical command in the same folder: no usage error, the same release and review link.
+  // The identical command in the same folder: no usage error, the same release.
   const again = await ctx.spec.handler(ctx);
   assert.equal(again.data.replayed, true);
   assert.equal(again.data.release_id, 'release-4290');
-  assert.deepEqual(again.data.reviews.map(entry => entry.review_url), [review]);
-  assert.match(again.humanSummary, /Published one as revision 2 \(confirmed retry\)\..*Review guide: https:\/\/app\.notis\.ai\/skill-reviews\/guide\./);
+  assert.match(again.humanSummary, /Published one as revision 2 \(confirmed retry\)\..*Links added: weekly \(automation\)\.$/);
   const publishes = calls.filter(call => call.url.endsWith('/source-publish')).map(call => call.body);
   assert.equal(publishes.length, 2);
   assert.equal(calls.filter(call => call.url.endsWith('/source-verify')).length, 1, 'The retained verification is reused');
@@ -394,7 +392,7 @@ test('promote with the pulled workspace records what went live in the lock and t
   const root = await sourceFixture(t);
   pulledFixture(root);
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ release_id: 'sealed', space_id: 'fixture-space', published_revision: 3,
-    space_revision: 7, replayed: false, applied: applied(), reviews: [] })));
+    space_revision: 7, replayed: false, applied: applied() })));
   const ctx = context('spaces promote', {}, { releaseId: 'sealed', dir: root });
   const result = await ctx.spec.handler(ctx);
   assert.match(result.humanSummary, /Published revision 3\. Skills updated: guide/);

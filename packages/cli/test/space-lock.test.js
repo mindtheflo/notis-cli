@@ -89,7 +89,7 @@ test('after a publication the lock records applied versions and the server list,
       { binding_id: 'b-weekly', alias: 'weekly', revision: 1, kind: 'automation', resource_id: 'auto-1', available: true },
       { binding_id: 'b-else', alias: 'elsewhere', revision: 1, kind: 'database', resource_id: 'db-else', available: false },
       { binding_id: 'b-doc', alias: 'note', revision: 1, kind: 'document', resource_id: 'doc-1', available: true },
-    ] }, reviews: [{ alias: 'guide', skill_id: 'skill-guide', review_url: 'https://app.notis.ai/skill-reviews/guide' }] };
+    ] } };
   const { lock: next, resources } = applyPublication({ lock: current, folders, result });
   assert.equal(next.source_revision, 4);
   assert.deepEqual(next.skills.guide, { skill_id: 'skill-guide', binding_id: 'b-guide', binding_revision: 1, version: { revision: 4, digest: 'b'.repeat(64) }, folder_hash: appFilesDigest(edited) });
@@ -98,7 +98,7 @@ test('after a publication the lock records applied versions and the server list,
   assert.equal(next.links[0].available, false);
   assert.deepEqual(resources, [{ kind: 'database', id: 'db-else', alias: 'elsewhere' }, { kind: 'skill', id: 'skill-guide', alias: 'guide' },
     { kind: 'automation', id: 'auto-1', alias: 'weekly' }, { kind: 'skill', id: 'skill-new', alias: 'weekly-digest' }]);
-  assert.equal(describeAppliedChanges(result), ' Skills updated: guide. Skills created: weekly-digest. Links added: weekly (automation). Review guide: https://app.notis.ai/skill-reviews/guide.');
+  assert.equal(describeAppliedChanges(result), ' Skills updated: guide. Skills created: weekly-digest. Links added: weekly (automation).');
   const untouched = applyPublication({ lock: current, folders: { guide: folders.guide }, result: { published_revision: 5 } });
   assert.equal(untouched.resources, null); assert.equal(untouched.lock.source_revision, 5);
   assert.deepEqual(untouched.lock.skills, current.skills);
