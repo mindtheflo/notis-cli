@@ -13,6 +13,7 @@ import {
   installManagedHookRuntime,
   installAgentSetup,
   installRecallOnlyAgentHooks,
+  onCloudComputer,
   shouldInstallLocalAgentSetup,
 } from '../src/runtime/agent-setup.js';
 import {
@@ -438,11 +439,25 @@ test('agent setup does not duplicate an existing unmarked Notis block', () => {
   assert.equal(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf-8'), legacy);
 });
 
-test('local agent setup skips hosted Notis and cloud Conductor environments', () => {
+test('local agent setup skips hosted Notis, the cloud computer and cloud Conductor environments', () => {
   const home = tempHome();
-  assert.equal(shouldInstallLocalAgentSetup({ NOTIS_JWT: 'token' }, home), false);
-  assert.equal(shouldInstallLocalAgentSetup({ CONDUCTOR_IS_LOCAL: '0' }, home), false);
-  assert.equal(shouldInstallLocalAgentSetup({ CONDUCTOR_IS_LOCAL: '1' }, home), true);
+  // Injected, so the answer does not depend on whether this host has /vercel/sandbox.
+  const local = { cloudComputer: () => false };
+  assert.equal(shouldInstallLocalAgentSetup({ NOTIS_JWT: 'token' }, home, local), false);
+  assert.equal(shouldInstallLocalAgentSetup({ CONDUCTOR_IS_LOCAL: '0' }, home, local), false);
+  assert.equal(shouldInstallLocalAgentSetup({ CONDUCTOR_IS_LOCAL: '1' }, home, local), true);
+  assert.equal(shouldInstallLocalAgentSetup({ CONDUCTOR_IS_LOCAL: '1' }, home, { cloudComputer: () => true }), false);
+});
+
+test('a test run pins whether it is on the cloud computer; other runs read /vercel/sandbox', () => {
+  assert.equal(onCloudComputer({ NODE_ENV: 'test', NOTIS_TEST_CLOUD_COMPUTER: '1' }), true);
+  assert.equal(onCloudComputer({ NODE_ENV: 'test', NOTIS_TEST_CLOUD_COMPUTER: '0' }), false);
+  assert.equal(onCloudComputer({ NOTIS_TEST_CLOUD_COMPUTER: '0' }), existsSync('/vercel/sandbox'));
+  assert.equal(onCloudComputer({ NODE_ENV: 'test' }), existsSync('/vercel/sandbox'));
+  assert.equal(
+    shouldInstallLocalAgentSetup({ NODE_ENV: 'test', NOTIS_TEST_CLOUD_COMPUTER: '1' }, tempHome()),
+    false,
+  );
 });
 
 test('memory hook context includes profile and relevant memories as non-instructional recall', () => {

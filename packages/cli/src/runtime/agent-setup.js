@@ -395,10 +395,28 @@ function agentPaths(agentId, home) {
   throw new Error(`Unsupported agent: ${agentId}`);
 }
 
-export function shouldInstallLocalAgentSetup(env = process.env, home = homedir()) {
+// The cloud computer's root. Present only inside the user's Vercel sandbox.
+const CLOUD_COMPUTER_ROOT = '/vercel/sandbox';
+
+/**
+ * Whether this process runs on the Notis cloud computer. A test run pins the
+ * answer with NOTIS_TEST_CLOUD_COMPUTER=0 or 1, so a suite run on the cloud
+ * computer reads the same as one run anywhere else.
+ */
+export function onCloudComputer(env = process.env) {
+  const pinned = env.NODE_ENV === 'test' ? env.NOTIS_TEST_CLOUD_COMPUTER : undefined;
+  if (pinned === '0' || pinned === '1') return pinned === '1';
+  return existsSync(CLOUD_COMPUTER_ROOT);
+}
+
+export function shouldInstallLocalAgentSetup(
+  env = process.env,
+  home = homedir(),
+  { cloudComputer = () => onCloudComputer(env) } = {},
+) {
   if (env.NOTIS_JWT || env.NOTIS_AGENT === '1' || env.NOTIS_DELEGATED_CONTEXT === '1') return false;
   if (env.CONDUCTOR_IS_LOCAL === '0') return false;
-  if (existsSync('/vercel/sandbox')) return false;
+  if (cloudComputer()) return false;
   return Boolean(home);
 }
 

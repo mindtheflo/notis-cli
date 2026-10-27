@@ -4,6 +4,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
 import { promisify } from 'node:util';
@@ -44,6 +45,9 @@ function runCli(args, env = {}) {
       HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
       NODE_ENV: 'test',
       NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+      // Local agent setup is skipped on the cloud computer; pin it off so the
+      // suite reads the same on every host (see onCloudComputer).
+      NOTIS_TEST_CLOUD_COMPUTER: '0',
       ...env,
     },
     encoding: 'utf-8',
@@ -67,6 +71,9 @@ async function runCliAsync(args, env = {}) {
       HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
       NODE_ENV: 'test',
       NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+      // Local agent setup is skipped on the cloud computer; pin it off so the
+      // suite reads the same on every host (see onCloudComputer).
+      NOTIS_TEST_CLOUD_COMPUTER: '0',
       ...env,
     },
     encoding: 'utf-8',
@@ -93,6 +100,9 @@ async function runCliWithInputAsync(args, input, env = {}) {
         HOME: mkdtempSync(join(tmpdir(), 'notis-cli-home-')),
         NODE_ENV: 'test',
         NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+        // Local agent setup is skipped on the cloud computer; pin it off so the
+        // suite reads the same on every host (see onCloudComputer).
+        NOTIS_TEST_CLOUD_COMPUTER: '0',
         ...env,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -2467,7 +2477,26 @@ test('start withholds the onboarding brief from an account that is already set u
   }
 });
 
-test('start still serves the brief to an account that has not onboarded', async () => {
+// Makes the CLI child believe it runs on the Notis cloud computer, whose
+// /vercel/sandbox no ordinary machine or CI runner has.
+function cloudComputerHostEnv() {
+  const dir = mkdtempSync(join(tmpdir(), 'notis-cli-cloud-host-'));
+  const preload = join(dir, 'cloud-computer.mjs');
+  writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const existsSync = fs.existsSync;',
+    "fs.existsSync = (path) => path === '/vercel/sandbox' || existsSync(path);",
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` };
+}
+
+// The brief, the missing settings and the Codex setup must not depend on the
+// host: the Notis cloud computer once got agent_setup[0].agent undefined here.
+for (const [host, hostEnv] of [['this machine', () => ({})], ['the cloud computer', cloudComputerHostEnv]]) {
+test(`start still serves the brief to an account that has not onboarded, on ${host}`, async () => {
   const server = createHttpServer(async (req, res) => {
     if (req.url === '/cli_tools' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2509,7 +2538,7 @@ test('start still serves the brief to an account that has not onboarded', async 
   try {
     const result = await runCliAsync(
       ['--json', '--api-base', apiBase, 'start'],
-      { NOTIS_CLI_CONFIG_FILE: configFile, HOME: agentHome },
+      { NOTIS_CLI_CONFIG_FILE: configFile, HOME: agentHome, ...hostEnv() },
     );
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout);
@@ -2533,6 +2562,7 @@ test('start still serves the brief to an account that has not onboarded', async 
     await new Promise((resolvePromise) => server.close(resolvePromise));
   }
 });
+}
 
 // An unreachable tool bridge must not block sign-in. Degrading to the old
 // behaviour is the safe direction: worst case the agent sees a brief it should
