@@ -439,7 +439,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 @supports (animation-timeline: scroll()) { .nui-section[data-kind="bar"] .nui-section-tabs { animation: nui-bar-end-fade linear both; animation-timeline: scroll(self inline); } }
 .nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow) { flex-shrink: 0; }
 .nui-section[data-kind="bar"] .nui-section-tabs .nui-toggles { flex-wrap: nowrap; }
-.nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 5px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }
+.nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 6px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }
 .nui-badge[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-badge[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-st-active, 142 71% 45%)); }
 .nui-badge[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(32 95% 40%); }
