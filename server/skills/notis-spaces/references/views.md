@@ -125,7 +125,8 @@ export default function Notes() {
 ```
 
 That is the whole view. J/K (wrapping), Enter, Escape, selection with X,
-Shift+J/K and Mod+A, E with Notis's Archive words and toast, the selection bar,
+Shift+J/K, Mod+A and the select-all checkbox before the title, E with Notis's
+Archive words and toast, the selection bar,
 the `?` sheet, open as Side, Center or Full, the one-pane rule next to chat and the
 phone layout come with it. `openParam` names the declared record param, so the
 open note lives in the link. `search` fills the host top bar search field and

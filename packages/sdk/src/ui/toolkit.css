@@ -241,6 +241,17 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-title-count { flex-shrink: 0; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
 .nui-lr-title-count[data-reserved] { display: inline-block; min-width: 2ch; }
 .nui-lr-toolbar-spacer { flex: 1 1 0; min-width: 0; }
+/* The select-all, as the Manager's: lined up over the rows' checkboxes (and the title over their titles). While nothing
+   is selected it stays hidden, keeping its room, until hovered or focused; on touch, until a selection starts. */
+.nui-lr-check { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: 12px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: transparent; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .35); cursor: pointer; transition: opacity .15s ease; }
+.nui-lr-check svg { width: 12px; height: 12px; }
+.nui-lr-check[data-state="none"] { opacity: 0; }
+@media (hover: hover) { .nui-lr-check[data-state="none"]:hover:not(:disabled) { opacity: 1; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .7); } }
+.nui-lr-check:focus-visible { opacity: 1; outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; }
+.nui-lr-check:not([data-state="none"]) { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; color: #fff; }
+.nui-lr-check:disabled { cursor: default; }
+@media (hover: none) { .nui-lr-check[data-state="none"] { visibility: hidden; } }
+[data-touch] .nui-lr-check[data-state="none"] { visibility: hidden; }
 .nui-lr-tools { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .nui-lr-info { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px 6px 16px; box-sizing: border-box; font-size: 13px; line-height: 18px; color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .03); }
 .nui-lr-sub-label { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
@@ -322,10 +333,13 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-sb-btn > .nui-sb-icon { display: none; font-size: 15px; }
 .nui-sb-btn > .nui-sb-x { display: inline-block; font-size: 15px; }
 .nui-selbar[data-fit="nokeys"] .nui-sb-btn > .nui-sb-keys { display: none; }
-.nui-selbar[data-fit="icons"] { gap: 0; padding: 4px 4px 4px 12px; }
-.nui-selbar[data-fit="icons"] .nui-sb-btn { padding: 0 7px; }
-.nui-selbar[data-fit="icons"] .nui-sb-btn > :is(.nui-sb-label, .nui-sb-keys) { display: none; }
-.nui-selbar[data-fit="icons"] .nui-sb-btn > .nui-sb-icon { display: inline-block; }
+.nui-selbar:is([data-fit="icons"], [data-fit="nonote"]) { gap: 0; padding: 4px 4px 4px 12px; }
+.nui-selbar:is([data-fit="icons"], [data-fit="nonote"]) .nui-sb-btn { padding: 0 7px; }
+.nui-selbar:is([data-fit="icons"], [data-fit="nonote"]) .nui-sb-btn > :is(.nui-sb-label, .nui-sb-keys) { display: none; }
+.nui-selbar:is([data-fit="icons"], [data-fit="nonote"]) .nui-sb-btn > .nui-sb-icon { display: inline-block; }
+/* "more not loaded" after the count: the last thing to go when the pill is too narrow. */
+.nui-sb-note { font-weight: 400; opacity: .75; }
+.nui-selbar[data-fit="nonote"] .nui-sb-note { display: none; }
 
 /* == section: toast (A2) == */
 .nui-toast-wrap { position: absolute; left: 0; right: 0; bottom: 18px; z-index: 8; display: flex; justify-content: center; padding-inline: 12px; pointer-events: none; }

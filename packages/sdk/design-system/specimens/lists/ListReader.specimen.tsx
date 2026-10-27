@@ -325,9 +325,40 @@ export const specimen = defineSpecimen({
     },
     {
       id: 'selected',
-      label: 'Two rows selected: checkboxes and the selection bar',
+      label: 'Two rows selected: checkboxes, the select-all partly checked and the selection bar',
       height: TALL,
       render: (ctx) => <TicketsDemo ctx={ctx} id="selected" initialSelected={['NB-417', 'NB-415']} />,
+    },
+    {
+      id: 'select-all-focus',
+      label: 'Select all: hidden at rest, shown on hover or keyboard focus (before the tabs)',
+      height: 360,
+      render: (ctx) => <TicketsDemo ctx={ctx} id="select-all-focus" height={360} fixedItems={TICKETS.slice(0, 4)} />,
+      interact: async (root) => {
+        (await waitFor(root, '[data-part="select-all"]')).focus({ focusVisible: true } as FocusOptions);
+        await settle(2);
+      },
+    },
+    {
+      id: 'select-all-checked',
+      label: 'Select all: every row selected, the checkbox checked',
+      height: 360,
+      render: (ctx) => {
+        const items = TICKETS.slice(0, 4);
+        return <TicketsDemo ctx={ctx} id="select-all-checked" height={360} fixedItems={items} initialSelected={items.map((ticket) => ticket.id)} />;
+      },
+    },
+    {
+      id: 'select-all-more',
+      label: 'Select all with more to load: the bar says the rest is not loaded',
+      height: 480,
+      render: (ctx) => {
+        const items = TICKETS.slice(0, 5);
+        return (
+          <TicketsDemo ctx={ctx} id="select-all-more" height={480} withTabs={false} title={{ text: LIST_COPY.tickets }}
+            fixedItems={items} initialSelected={items.map((ticket) => ticket.id)} hasMore onLoadMore={noop} />
+        );
+      },
     },
     {
       id: 'marquee',

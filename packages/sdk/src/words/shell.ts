@@ -23,6 +23,7 @@ export const SHELL_WORDS = Object.freeze({
   tryAgain: { en: 'Try again', fr: 'Réessayer' },
   selectedOne: { en: '1 selected', fr: '1 sélectionné' },
   selectedMany: { en: '{n} selected', fr: '{n} sélectionnés' },
+  moreNotLoaded: { en: 'more not loaded', fr: 'suite non chargée' },
   sidePeek: { en: 'Side peek', fr: 'Aperçu latéral' },
   centerPeek: { en: 'Center peek', fr: 'Aperçu centré' },
   fullPage: { en: 'Full page', fr: 'Pleine page' },

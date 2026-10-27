@@ -267,11 +267,21 @@ function initials(name: string): string {
   return (first + last).toUpperCase();
 }
 
-function Check() {
+/** The tick of a selection checkbox (rows and the list's select-all). */
+export function Check() {
   return (
     <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
       <path d="M2.5 6.2l2.3 2.3 4.7-4.9" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round"
         strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** The dash of a partly checked select-all. */
+export function Dash() {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+      <path d="M3 6h6" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" />
     </svg>
   );
 }

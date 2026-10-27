@@ -27,7 +27,7 @@ export const SELECTION_BAR_MAX_INLINE = 5;
 /** The boost of the bar's keys over row keys (toolkit spec 2.1). */
 export const SELECTION_BAR_BOOST = 25;
 
-export type SelectionBarFit = '' | 'nokeys' | 'icons';
+export type SelectionBarFit = '' | 'nokeys' | 'icons' | 'nonote';
 
 export interface SelectionBarProps {
   /** The actions that apply to the selected items, in order. */
@@ -40,6 +40,8 @@ export interface SelectionBarProps {
   busy?: ReadonlySet<string>;
   /** 'list' (default): the pill centres on its list. 'page': on the whole page. */
   anchor?: 'list' | 'page';
+  /** Every loaded item is selected but the list has more: the count says the rest is not loaded. */
+  moreNotLoaded?: boolean;
   className?: string;
 }
 
@@ -47,13 +49,17 @@ const BAR_WORDS = Object.freeze({
   label: { en: 'Selection actions', fr: 'Actions de la sélection' },
 }) satisfies Readonly<Record<string, Words>>;
 
-/** The first fit that leaves `room` px, trying keys and words, then words only, then icons. */
-export function chooseFit(measure: (fit: SelectionBarFit) => number, room: number): SelectionBarFit {
-  for (const fit of ['', 'nokeys', 'icons'] as const) if (measure(fit) <= room) return fit;
-  return 'icons';
+/**
+ * The first fit that leaves `room` px, trying keys and words, then words only, then icons; with a note after the
+ * count ("more not loaded"), then icons without the note.
+ */
+export function chooseFit(measure: (fit: SelectionBarFit) => number, room: number, note = false): SelectionBarFit {
+  const fits: readonly SelectionBarFit[] = note ? ['', 'nokeys', 'icons', 'nonote'] : ['', 'nokeys', 'icons'];
+  for (const fit of fits) if (measure(fit) <= room) return fit;
+  return fits[fits.length - 1]!;
 }
 
-export function SelectionBar({ actions, count, onClear, onRun, busy, anchor = 'list', className }: SelectionBarProps) {
+export function SelectionBar({ actions, count, onClear, onRun, busy, anchor = 'list', moreNotLoaded = false, className }: SelectionBarProps) {
   const t = useT();
   const locale = useToolkitLocale();
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -61,7 +67,7 @@ export function SelectionBar({ actions, count, onClear, onRun, busy, anchor = 'l
   const inline = actions.slice(0, SELECTION_BAR_MAX_INLINE);
   const overflow = actions.slice(SELECTION_BAR_MAX_INLINE);
   const label = t(selectedCount(count));
-  const signature = `${actions.map((action) => action.id).join(',')}|${count}|${locale}`;
+  const signature = `${actions.map((action) => action.id).join(',')}|${count}|${moreNotLoaded}|${locale}`;
 
   // Step down until the pill fits its slot (24px of air), as the deck's fitPill does.
   const refit = useCallback(() => {
@@ -75,12 +81,12 @@ export function SelectionBar({ actions, count, onClear, onRun, busy, anchor = 'l
       if (candidate) bar.dataset.fit = candidate;
       else delete bar.dataset.fit;
       return bar.offsetWidth;
-    }, room);
+    }, room, moreNotLoaded);
     bar.style.maxWidth = '';
     if (next) bar.dataset.fit = next;
     else delete bar.dataset.fit;
     setFit(next);
-  }, []);
+  }, [moreNotLoaded]);
 
   useIsoLayoutEffect(() => { refit(); }, [refit, signature]);
   useIsoLayoutEffect(() => {
@@ -101,7 +107,10 @@ export function SelectionBar({ actions, count, onClear, onRun, busy, anchor = 'l
       <KeycapSurface on="pill">
         <div ref={barRef} className={cx('nui-selbar', className)} role="toolbar" aria-label={t(BAR_WORDS.label)}
           data-fit={fit || undefined}>
-          <span className="nui-sb-count" aria-live="polite">{label}</span>
+          <span className="nui-sb-count" aria-live="polite">
+            {label}
+            {moreNotLoaded && <span className="nui-sb-note"> · {t(SHELL_WORDS.moreNotLoaded)}</span>}
+          </span>
           {inline.map((action) => {
             const keys = keyList(action.key);
             const name = t(action.label);

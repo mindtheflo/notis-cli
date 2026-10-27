@@ -265,6 +265,74 @@ test('not selectable without a bulk action: X does nothing and rows have no chec
   await press('x');
   assert.deepEqual(selectedIds(), []);
   assert.equal(q('.nui-row-check'), null);
+  assert.equal(q('[data-part="select-all"]'), null, 'no select-all either');
+});
+
+// ---- select all ----
+
+const selectAll = () => q('[data-part="select-all"]')!;
+
+test('select all: the toolbar checkbox (a toolbar of its own without a title) selects every row, then clears', async () => {
+  await mount(list({ actions: ['complete'], handlers: { complete: () => {} } }));
+  assert.ok(q('.nui-lr-toolbar > [data-part="select-all"]'), 'a list with no title still gets the checkbox');
+  assert.equal(selectAll().getAttribute('role'), 'checkbox');
+  assert.equal(selectAll().getAttribute('aria-checked'), 'false');
+  assert.equal(selectAll().getAttribute('data-state'), 'none');
+  assert.equal(selectAll().getAttribute('aria-label'), 'Select all');
+  await click(selectAll());
+  assert.deepEqual(selectedIds(), ['a', 'b', 'c', 'd']);
+  assert.equal(selectAll().getAttribute('aria-checked'), 'true');
+  assert.equal(selectAll().getAttribute('aria-label'), 'Clear selection');
+  assert.equal(q('.nui-sb-count')!.textContent, '4 selected', 'every row is loaded: nothing more to say');
+  await click(selectAll());
+  assert.deepEqual(selectedIds(), []);
+  assert.equal(selectAll().getAttribute('aria-checked'), 'false');
+});
+
+test('select all: a partial selection shows mixed, and a click selects the rest', async () => {
+  await mount(list({ actions: ['complete'], handlers: { complete: () => {} } }));
+  await press('j');
+  await press('x');
+  assert.equal(selectAll().getAttribute('aria-checked'), 'mixed');
+  assert.equal(selectAll().getAttribute('data-state'), 'partial');
+  await click(selectAll());
+  assert.deepEqual(selectedIds(), ['a', 'b', 'c', 'd']);
+  await press('a', { meta: true });
+  assert.equal(selectAll().getAttribute('aria-checked'), 'true', 'Mod+A and the checkbox agree');
+});
+
+test('select all: pending and disabled rows stay out, and more rows to load are named', async () => {
+  await mount(list({ actions: ['complete'], handlers: { complete: () => {} }, isPending: (t) => t.id === 'b',
+    isDisabled: (t) => t.id === 'c', hasMore: true, onLoadMore: () => {} }));
+  await click(selectAll());
+  assert.deepEqual(selectedIds(), ['a', 'd']);
+  assert.equal(selectAll().getAttribute('aria-checked'), 'true');
+  assert.equal(q('.nui-sb-count')!.textContent, '2 selected · more not loaded');
+});
+
+test('select all: only the rows a local search keeps; controlled selection goes through onSelectedChange', async () => {
+  const changes: string[][] = [];
+  await mount(list({ actions: ['complete'], handlers: { complete: () => {} }, selected: [],
+    onSelectedChange: (ids) => { changes.push([...ids]); } }));
+  await click(selectAll());
+  assert.deepEqual(changes.at(-1), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(selectedIds(), [], 'the page owns the selection');
+});
+
+test('select all: before the title or the tabs, in table and tiles too; disabled on an empty list', async () => {
+  const props = { actions: ['complete'] as const, handlers: { complete: () => {} } };
+  await mount(list({ ...props, title: { text: 'Inbox', count: 4 } }));
+  assert.equal(selectAll().nextElementSibling?.className, 'nui-lr-title');
+  await mount(list({ ...props, tabs: { role: 'filter', items: [{ id: 'open', label: 'Open' }], value: 'open', onChange: () => {} } }));
+  assert.ok(q('.nui-tabrow [data-part="select-all"]'), 'it leads the tab row');
+  await mount(list({ ...props, layout: 'table', row: (t) => <td>{t.title}</td> }));
+  await click(selectAll());
+  assert.equal(doc.querySelectorAll('[data-nui-item][data-selected]').length, 4);
+  await mount(list({ ...props, layout: 'tiles', renderTile: (t) => ({ title: t.title }) }));
+  await click(selectAll());
+  assert.equal(doc.querySelectorAll('[data-nui-item][data-selected]').length, 4);
+  await mount(list({ ...props, items: [] }));
+  assert.ok(selectAll().hasAttribute('disabled'), 'it keeps its room while the list is empty');
 });
 
 // ---- selection bar actions ----
@@ -737,12 +805,15 @@ test('groups and empty state', async () => {
 });
 
 test('selection bar step-down: full pill, then without keycaps, then icons only', () => {
-  const widths = { '': 520, nokeys: 430, icons: 260 } as const;
+  const widths = { '': 520, nokeys: 430, icons: 260, nonote: 180 } as const;
   const measure = (fit: keyof typeof widths) => widths[fit];
   assert.equal(chooseFit(measure, 600), '');
   assert.equal(chooseFit(measure, 480), 'nokeys');
   assert.equal(chooseFit(measure, 300), 'icons');
   assert.equal(chooseFit(measure, 100), 'icons', 'icons only is the floor');
+  assert.equal(chooseFit(measure, 200, true), 'nonote', 'with a note, icons without the note come last');
+  assert.equal(chooseFit(measure, 100, true), 'nonote', 'and are the floor');
+  assert.equal(chooseFit(measure, 300, true), 'icons', 'the note stays while icons fit');
 });
 
 // ---- toolkit gaps (A4) ----

@@ -162,6 +162,13 @@ test('columns: one per stage with its label, count and tone dot; an empty column
   assert.equal(q('#reader'), null, 'nothing opens on its own');
 });
 
+test('select all: the board toolbar checkbox selects every tile in every column', async () => {
+  await mount(() => <Page moves={[]} props={{ actions: ['archive'], handlers: { archive: () => {} } }} />);
+  await click(q('[data-part="select-all"]')!);
+  assert.equal(doc.querySelectorAll('.nui-tile[data-selected]').length, 3);
+  assert.equal(q('[data-part="select-all"]')!.getAttribute('aria-checked'), 'true');
+});
+
 test('a board without onMove only reads: tiles do not drag and Shift+Right moves nothing', async () => {
   await mount(() => <Page moves={[]} props={{ onMove: undefined }} />);
   assert.equal(q('.nui-tile[data-nui-item="a"]')!.getAttribute('draggable'), null);

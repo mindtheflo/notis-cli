@@ -16,7 +16,9 @@
  * - `onOpenChange` may keep the open item (unsaved edits): the list then says why in its toast. An open item that
  *   leaves the list (a search, a refresh, a delete) stays in the reader while the page keeps it, so a page that
  *   deletes the open item drops its unsaved edits first and the list moves on.
- * - Toolbar: one 44px line (a status title, the tabs, "+" and the view menu), then an optional 44px info line. The
+ * - Toolbar: one 44px line (a status title, the tabs, "+" and the view menu), then an optional 44px info line. A list
+ *   that can select puts the Manager's select-all checkbox first (with a toolbar of its own when it has no other); it
+ *   selects the loaded rows Mod+A selects, and the selection bar says so when more rows are not loaded yet. The
  *   search lives in the top bar (`search`), and the open item's label joins the top bar title (`crumbLabel`).
  * - Reader bar (48px): close or back, open as, previous, next, the item's label, its actions, More, then Open as full
  *   page (center) or a second close (one pane). Actions past the bar's room fold into More.
@@ -64,7 +66,7 @@ import { normalizeAllowed, useOpenMode, useOpenModeKey } from '../open/useOpenMo
 import type { OpenMode } from '../open/openModeStore';
 import { boardOrder, dropIndex, neighbourColumn, type BoardColumn, type ListBoard } from '../board/boardModel';
 import { BOARD_WORDS } from '../board/boardWords';
-import { RowMore } from './Row';
+import { Check, Dash, RowMore } from './Row';
 import { RowIdContext, RowStateContext, type RowState, type RowStateSource } from './rowState';
 import { SelectionBar, useSelectionBar } from './SelectionBar';
 import { ROW_ID_ATTRIBUTE, ROW_INTERACTIVE_SELECTOR, findRow, useListKeys } from './useListKeys';
@@ -1684,6 +1686,15 @@ function ListReaderInner<T>({
         : 'count' in title ? <span className="nui-lr-title-count" data-reserved="" aria-hidden="true" /> : null}
     </h2>
   ) : null;
+  // ---- select all: the Manager's checkbox before the title or tabs, over the rows Mod+A selects ----
+  const loadedSelected = canSelect && selection.count ? selectableIds.filter((id) => selection.isSelected(id)).length : 0;
+  const allState: SelectAllState = !canSelect || !selection.count ? 'none'
+    : selectableIds.length > 0 && loadedSelected === selectableIds.length ? 'all' : 'partial';
+  const selectAllNode = canSelect ? (
+    <SelectAllCheck state={allState} disabled={!selectableIds.length}
+      onToggle={() => { if (allState === 'all') selection.clear(); else selection.selectAll(); }} />
+  ) : null;
+  const leadOf = (lead: ReactNode) => (selectAllNode ? <>{selectAllNode}{lead}</> : lead);
   const tools = toolbarActions || create || viewMenu ? (
     <span className="nui-lr-tools">
       {toolbarActions}
@@ -1692,11 +1703,11 @@ function ListReaderInner<T>({
     </span>
   ) : null;
   let toolbarNode: ReactNode = null;
-  if (tabs) toolbarNode = <TabRow {...tabs} lead={tabs.lead ?? titleNode} end={tools} />;
-  else if (titleNode || tools) {
+  if (tabs) toolbarNode = <TabRow {...tabs} lead={leadOf(tabs.lead ?? titleNode)} end={tools} />;
+  else if (titleNode || tools || selectAllNode) {
     toolbarNode = (
       <div className="nui-lr-toolbar">
-        {titleNode}
+        {leadOf(titleNode)}
         <span className="nui-lr-toolbar-spacer" />
         {tools}
       </div>
@@ -1730,7 +1741,7 @@ function ListReaderInner<T>({
       )}
       {marquee.rect && <MultiSelectDragOverlay rect={marquee.rect} className="nui-marquee" />}
       {footer ? <div className="nui-lr-footer">{footer}</div> : null}
-      {barShown && <SelectionBar {...bar.barProps} />}
+      {barShown && <SelectionBar {...bar.barProps} moreNotLoaded={hasMore && allState === 'all'} />}
       {mode === 'side' && <PaneProbe onChange={setPaneLayout} />}
       {!listCovered && toastNode}
     </div>
@@ -1903,6 +1914,27 @@ function TileContent({ parts }: { parts: TileParts }) {
 // ---- toolbar parts ----
 
 /** The toolbar's "+": a 32px ghost button, its label in a tooltip; its key (if any) creates from the list. */
+type SelectAllState = 'none' | 'partial' | 'all';
+
+/**
+ * The list's select-all, as in the Manager: hidden until hovered or focused while nothing is selected (on touch, until
+ * a selection starts), then checked or partly checked. Unchecked or partly checked selects every loaded row that can
+ * be selected; checked clears. Hidden, it keeps its room, so the title and tabs never move.
+ */
+function SelectAllCheck({ state, disabled, onToggle }: { state: SelectAllState; disabled: boolean; onToggle(): void }) {
+  const t = useT();
+  const label = state === 'none' ? SHELL_WORDS.selectAll : SHELL_WORDS.clearSelection;
+  return (
+    <Tooltip label={label} keys={state === 'none' ? [...DEFAULT_KEYMAP['list.selectAll'].keys] : ['escape']}>
+      <button type="button" role="checkbox" className="nui-lr-check" data-part="select-all" data-state={state}
+        aria-checked={state === 'all' ? true : state === 'partial' ? 'mixed' : false} aria-label={t(label)}
+        disabled={disabled} onClick={onToggle}>
+        {state === 'all' ? <Check /> : state === 'partial' ? <Dash /> : null}
+      </button>
+    </Tooltip>
+  );
+}
+
 function CreateButton({ create }: { create: NonNullable<ListReaderProps<unknown>['create']> }) {
   const t = useT();
   const latest = useLatest(create);
