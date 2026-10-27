@@ -2674,7 +2674,7 @@ function lockIsStale() {
   }
 }
 
-async function acquireRefreshLock(runtime, waitMs = OAUTH_REFRESH_LOCK_WAIT_MS) {
+async function acquireRefreshLock(runtime, staleAccessToken, waitMs = OAUTH_REFRESH_LOCK_WAIT_MS) {
   mkdirSync(join(homedir(), '.notis'), { recursive: true });
   const deadline = Date.now() + waitMs;
   for (;;) {
@@ -2686,7 +2686,7 @@ async function acquireRefreshLock(runtime, waitMs = OAUTH_REFRESH_LOCK_WAIT_MS) 
       const profile = getProfile(loadConfig(), runtime.profileName);
       if (
         profile.oauth_access_token
-        && profile.oauth_access_token !== runtime.oauthAccessToken
+        && profile.oauth_access_token !== staleAccessToken
         && !credentialIsExpired({ credentialKind: 'oauth' }, profile)
       ) {
         updateRuntimeFromOAuthProfile(runtime, profile);
@@ -2730,6 +2730,10 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch, tokenRe
   // Refresh rotates the same stored grant that login publishes and logout
   // removes. Join their global -> profile lock order so a token rotation can
   // never be mistaken for a successor authorization by a concurrent logout.
+  // The token this caller found unusable. Requests running in parallel in one
+  // process share `runtime`, so the first to finish updates it for all; compare
+  // against what this caller saw, or every waiting request renews once more.
+  const staleAccessToken = runtime.oauthAccessToken;
   const globalLock = await acquireListenerGlobalLock({ waitMs: OAUTH_REFRESH_LOCK_WAIT_MS });
   let profileLock = null;
   let ownsLock = false;
@@ -2737,7 +2741,7 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch, tokenRe
   let metadata = null;
   try {
     profileLock = await acquireListenerStartLock(runtime);
-    ownsLock = await acquireRefreshLock(runtime);
+    ownsLock = await acquireRefreshLock(runtime, staleAccessToken);
     if (!ownsLock) return true;
     stopTouchingLocks = keepLockFoldersFresh([profileLock, oauthLockDir()]);
     const config = loadConfig();
@@ -2745,7 +2749,7 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch, tokenRe
     assertOAuthApiTarget(runtime, profile);
     if (
       profile.oauth_access_token
-      && profile.oauth_access_token !== runtime.oauthAccessToken
+      && profile.oauth_access_token !== staleAccessToken
       && !credentialIsExpired({ credentialKind: 'oauth' }, profile)
     ) {
       updateRuntimeFromOAuthProfile(runtime, profile);

@@ -1579,6 +1579,80 @@ test('concurrent CLI processes serialize refresh and reuse the rotated credentia
   }
 });
 
+test('parallel requests in one process renew a lapsed sign-in once', async () => {
+  let tokenCalls = 0;
+  const server = createServer(async (req, res) => {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    if (req.url === '/oauth/token' && req.method === 'POST') {
+      tokenCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: makeJwt('oauth-user'),
+        refresh_token: `rotated-refresh-token-${tokenCalls}`,
+        expires_in: 3600,
+        refresh_expires_in: 7200,
+        scope: 'notis:read',
+      }));
+      return;
+    }
+    res.writeHead(404);
+    res.end(JSON.stringify({ origin }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-refresh-inprocess-'));
+  const configDir = join(home, '.notis');
+  mkdirSync(configDir, { recursive: true });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: origin,
+        oauth_access_token: 'expired-access-token',
+        oauth_refresh_token: 'refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: future,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: origin,
+        oauth_scopes: ['notis:read'],
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+
+  const oauthModule = new URL('../src/runtime/oauth.js', import.meta.url).href;
+  // One runtime shared by every request, as `notis` does for parallel calls.
+  const script = `
+    import { refreshOAuthCredential } from ${JSON.stringify(oauthModule)};
+    const runtime = {
+      apiBase: ${JSON.stringify(origin)},
+      profileName: 'default',
+      credentialKind: 'oauth',
+      oauthAccessToken: 'expired-access-token',
+      oauthRefreshToken: 'refresh-token',
+    };
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => refreshOAuthCredential(runtime)),
+    );
+    process.stdout.write(JSON.stringify(results));
+  `;
+  try {
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: home,
+      env: { PATH: process.env.PATH, HOME: home, NODE_ENV: 'test' },
+      encoding: 'utf-8',
+    });
+    assert.deepEqual(JSON.parse(stdout), [true, true, true, true]);
+    assert.equal(tokenCalls, 1);
+    const stored = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf-8'));
+    assert.equal(stored.profiles.default.oauth_refresh_token, 'rotated-refresh-token-1');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('an OAuth 401 refreshes the rotating pair and retries exactly once', async () => {
   let protectedCalls = 0;
   let tokenCalls = 0;
