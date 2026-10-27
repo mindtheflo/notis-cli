@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareReleaseVersions, matchesRelease, readRegistry, publishAndReconcile } from '../scripts/release-registry.js';
+import { readFileSync } from 'node:fs';
+import { compareReleaseVersions, matchesRelease, readRegistry, publishAndReconcile,
+  DEFAULT_RECONCILE_DELAYS_MS } from '../scripts/release-registry.js';
 
 const identity = { sourceSha: 'a'.repeat(40), channel: 'nightly' };
 const receipt = { version: '0.2.0-nightly.1000.1', notisRelease: identity, dist: { integrity: 'sha512-exact-bytes' } };
@@ -76,6 +78,30 @@ test('a delayed npm receipt is polled without a second publish', async () => {
   assert.equal(result.verified, true);
   assert.equal(publishes, 1);
   assert.equal(reads, 5);
+});
+
+// npm now answers `publish` with "being processed and may take a few minutes";
+// on 2026-10-22..27 every finalizer published, then the version and its tag
+// only appeared 1.6 to 7.2 minutes later, after a 31-second window had failed.
+test('the default reconcile window outlasts npm processing a publish for minutes', async () => {
+  let clock = 0;
+  const visibleAfterMs = 8 * 60_000;
+  let publishes = 0;
+  const result = await publishAndReconcile({ ...options,
+    read: () => (publishes && clock >= visibleAfterMs ? receipt : null),
+    run: () => { publishes += 1; return { status: 0 }; },
+    sleep: async ms => { clock += ms; },
+  });
+  assert.equal(result.verified, true);
+  assert.equal(publishes, 1);
+});
+
+test('the finalize job outlives the whole reconcile window', () => {
+  const workflow = readFileSync(new URL('../../../.github/workflows/publish-cli-package.yml', import.meta.url), 'utf8');
+  const minutes = Number(/^\s*timeout-minutes:\s*(\d+)\s*$/m.exec(workflow)?.[1]);
+  const windowMs = DEFAULT_RECONCILE_DELAYS_MS.reduce((sum, ms) => sum + ms, 0);
+  // Room for checkout, setup, handoff verification, the publish and registry reads.
+  assert.ok(minutes * 60_000 >= windowMs + 8 * 60_000, `job timeout ${minutes}m is too short for a ${windowMs}ms window`);
 });
 
 test('legacy GitHub receipts reconcile across the CI migration', () => {

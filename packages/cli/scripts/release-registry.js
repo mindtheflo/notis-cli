@@ -87,7 +87,18 @@ export function verifyPublishedReceipt({ receipt, tagged, sourceSha, channel, ve
   }
 }
 
-const DEFAULT_RECONCILE_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+// npm acknowledges a publish before the registry serves it ("being processed
+// and may take a few minutes"): in October 2026 the version and its dist-tag
+// appeared 1.6 to 7.2 minutes after `npm publish` returned. Back off to a
+// 15-second cadence and keep reading for 12 minutes; the finalize job's
+// timeout-minutes must stay above this window (see release-registry.test.js).
+const RECONCILE_WINDOW_MS = 12 * 60_000;
+export const DEFAULT_RECONCILE_DELAYS_MS = Object.freeze((() => {
+  const delays = [1_000, 2_000, 4_000, 8_000];
+  let total = delays.reduce((sum, ms) => sum + ms, 0);
+  while (total < RECONCILE_WINDOW_MS) { delays.push(15_000); total += 15_000; }
+  return delays;
+})());
 
 async function readVerifiedPublishedReceipt({ packageName, version, tag, sourceSha, channel, integrity,
   read, sleep, delays }) {
