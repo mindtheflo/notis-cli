@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createIntentStore, intentTag, resolveReleaseIntent, validateIntent } from '../scripts/release-intent.js';
 import { publishAndReconcile, validateReservedVersion } from '../scripts/release-registry.js';
 
-const identity = { packageName: '@notis_ai/cli', sourceSha: 'a'.repeat(40), channel: 'beta' };
-const intent = { schema: 1, ...identity, version: '0.2.0-beta.1000.1' };
+const identity = { packageName: '@notis_ai/cli', sourceSha: 'a'.repeat(40), channel: 'nightly' };
+const intent = { schema: 1, ...identity, version: '0.2.0-nightly.1000.1' };
 const tagSha = 'b'.repeat(40);
 const response = (status, value) => ({ ok: status >= 200 && status < 300, status, json: async () => value });
 
@@ -65,7 +65,7 @@ test('a lost create-ref response is reconciled without creating another referenc
 test('conflicting ref creation is read back and never overwritten', async () => {
   const same = api({ conflict: intent });
   assert.deepEqual(await same.store.reserve(intent), intent);
-  const different = api({ conflict: { ...intent, version: '0.2.0-beta.999.1' } });
+  const different = api({ conflict: { ...intent, version: '0.2.0-nightly.999.1' } });
   await assert.rejects(different.store.reserve(intent), /unconfirmed or conflicting/);
   assert.equal(different.calls.filter(([method, path]) => method === 'POST' && path === '/refs').length, 1);
 });
@@ -92,7 +92,7 @@ test('read-only rehearsal reads existing intents without writes or new version a
 test('full rerun preserves the exact version while npm receipt is still missing', async () => {
   const { store } = api();
   const first = await resolveReleaseIntent({ identity, store, reserve: true, allocateVersion: () => intent.version });
-  await assert.rejects(() => publishAndReconcile({ ...identity, version: first.intent.version, tag: 'beta',
+  await assert.rejects(() => publishAndReconcile({ ...identity, version: first.intent.version, tag: 'nightly',
     tarball: '/tmp/test.tgz', integrity: 'sha512-fixture', read: () => null, run: () => ({ status: 1 }),
     sleep: async () => {}, reconcileDelaysMs: [] }), /not verified/);
   const rerun = await resolveReleaseIntent({ identity, store, reserve: true,
@@ -111,8 +111,8 @@ test('intent validation rejects another package, source, channel and malformed v
 test('existing intent in registry cannot collide with another source or roll a tag backwards', () => {
   assert.throws(() => validateReservedVersion({ versions: { [intent.version]: { version: intent.version, gitHead: 'c'.repeat(40) } },
     'dist-tags': {} }, intent), /another release/);
-  assert.throws(() => validateReservedVersion({ versions: {}, 'dist-tags': { beta: '0.2.0-beta.1001.1' } }, intent), /superseded/);
-  assert.doesNotThrow(() => validateReservedVersion({ versions: {}, 'dist-tags': { beta: '0.2.0-beta.999.9' } }, intent));
+  assert.throws(() => validateReservedVersion({ versions: {}, 'dist-tags': { nightly: '0.2.0-nightly.1001.1' } }, intent), /superseded/);
+  assert.doesNotThrow(() => validateReservedVersion({ versions: {}, 'dist-tags': { nightly: '0.2.0-nightly.999.9' } }, intent));
 });
 
 test('publishing cannot fall back to an unreserved plan if authentication is missing', async () => {

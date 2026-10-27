@@ -214,7 +214,7 @@ test('the upsell renderer covers the upgrade page, team owner and trial', () => 
 
   const trial = renderUpsell(cloudUpsell({ action: 'activate_paid_billing', tool: 'LOCAL_NOTIS_ACTIVATE_PAID_BILLING' }), { apiBase: 'https://api-beta.notis.ai' });
   assert.match(trial.text, /Start my plan now: notis tools exec LOCAL_NOTIS_ACTIVATE_PAID_BILLING/);
-  assert.match(trial.text, /https:\/\/beta\.notis\.ai\/subscribe/);
+  assert.match(trial.text, /https:\/\/app-nightly\.notis\.ai\/subscribe/);
   assert.equal(trial.hints[0].reason, 'Start my plan now');
 
   const switchPlan = renderUpsell(cloudUpsell({ action: 'switch_trial_plan', tool: 'LOCAL_NOTIS_SWITCH_TRIAL_PLAN', target_plan: 'pro' }));

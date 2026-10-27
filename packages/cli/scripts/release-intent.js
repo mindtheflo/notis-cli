@@ -1,10 +1,12 @@
 // An annotated tag is the durable reservation, not evidence of npm delivery.
 // Never update/delete one: a retry must reconcile its exact reserved version.
+import { SUPPORTED_CHANNELS, isPackageChannel, versionMatchesChannel } from './release-channels.cjs';
+
 const SHA = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 export function intentTag({ sourceSha, channel }) {
-  if (!SHA.test(sourceSha || '') || !['beta', 'stable'].includes(channel)) {
+  if (!SHA.test(sourceSha || '') || !isPackageChannel(channel)) {
     throw new Error('Invalid release intent identity');
   }
   return `notis-cli-intent/${channel}/${sourceSha}`;
@@ -15,7 +17,7 @@ export function validateIntent(intent, identity) {
   if (intent?.schema !== 1 || intent.packageName !== identity.packageName
       || intent.sourceSha !== identity.sourceSha || intent.channel !== identity.channel
       || !VERSION.test(intent.version || '')
-      || (identity.channel === 'beta' ? !intent.version.includes('-beta.') : intent.version.includes('-'))) {
+      || !versionMatchesChannel(intent.version, identity.channel)) {
     throw new Error('Stored release intent conflicts with the exact package, source or channel');
   }
   return intent;
@@ -96,7 +98,7 @@ export function createIntentStore({ repository, token, fetcher = fetch }) {
     return reserved;
   }
   async function readBranchHead(branch) {
-    if (!['beta', 'production'].includes(branch)) throw new Error('Invalid publication branch');
+    if (!SUPPORTED_CHANNELS.includes(branch)) throw new Error('Invalid publication branch');
     const ref = await request('GET', `/ref/heads/${branch}`);
     if (ref.ref !== `refs/heads/${branch}` || ref.object?.type !== 'commit' || !SHA.test(ref.object.sha || '')) {
       throw new Error('Invalid publication branch receipt');

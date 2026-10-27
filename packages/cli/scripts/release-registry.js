@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { distTagForChannel, versionMatchesChannel } from './release-channels.cjs';
 
 export function compareReleaseVersions(left, right) {
   const parse = value => {
@@ -28,7 +29,7 @@ export function validateReservedVersion(history, { version, sourceSha, channel }
   if (receipt && !matchesRelease(receipt, sourceSha, channel)) {
     throw new Error('Reserved version belongs to another release; publication held');
   }
-  const latest = history['dist-tags'][channel === 'beta' ? 'beta' : 'latest'];
+  const latest = history['dist-tags'][distTagForChannel(channel)];
   if (latest && latest !== version && compareReleaseVersions(version, latest) <= 0) {
     throw new Error('Reserved version was superseded; reconcile it without moving the registry tag backwards');
   }
@@ -56,7 +57,7 @@ export function matchesRelease(receipt, sourceSha, channel) {
     && receipt.notisRelease.channel === channel;
   // Before provider-neutral receipts, npm stored the checkout SHA as gitHead.
   return receipt?.gitHead === sourceSha && typeof receipt.version === 'string'
-    && (channel === 'beta' ? receipt.version.includes('-beta.') : !receipt.version.includes('-'));
+    && versionMatchesChannel(receipt.version, channel);
 }
 
 export async function readReleaseHistory(packageName, { fetcher = fetch } = {}) {
@@ -73,7 +74,7 @@ export async function readReleaseHistory(packageName, { fetcher = fetch } = {}) 
 export function findPublishedRelease(history, sourceSha, channel) {
   const matches = Object.values(history.versions).filter(receipt => matchesRelease(receipt, sourceSha, channel));
   if (!matches.length) return null;
-  const tag = channel === 'beta' ? 'beta' : 'latest';
+  const tag = distTagForChannel(channel);
   const tagged = matches.find(receipt => receipt.version === history['dist-tags'][tag]);
   if (!tagged) throw new Error(`Source was already published as ${matches.map(item => item.version).join(', ')} but ${tag} points elsewhere; reconcile that version, do not republish`);
   return tagged;

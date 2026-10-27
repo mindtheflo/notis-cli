@@ -1,11 +1,13 @@
 // Additional CI records are separate from the never-modified version reservation.
+import { isPackageChannel } from './release-channels.cjs';
+
 const SHA = /^[0-9a-f]{40}$/;
 const PREFIXES = { handoff: 'notis-cli-handoff', 'preview-intent': 'notis-cli-preview',
   'preview-handoff': 'notis-cli-preview-handoff', dispatch: 'notis-cli-dispatch',
   'preview-dispatch': 'notis-cli-preview-dispatch' };
 
 export function recordTag(kind, { sourceSha, channel }) {
-  if (!PREFIXES[kind] || !SHA.test(sourceSha || '') || !['beta', 'stable'].includes(channel)) throw new Error('Invalid immutable handoff identity');
+  if (!PREFIXES[kind] || !SHA.test(sourceSha || '') || !isPackageChannel(channel)) throw new Error('Invalid immutable handoff identity');
   return `${PREFIXES[kind]}/${channel}/${sourceSha}`;
 }
 

@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
+import { PACKAGE_CHANNELS, branchForChannel, channelForBranch } from './release-channels.cjs';
 
 export const FINALIZER_WORKFLOW = 'publish-cli-package.yml';
 const WORKFLOW_PATH = `.github/workflows/${FINALIZER_WORKFLOW}`;
 const API_VERSION = '2026-03-10';
 const SHA = /^[0-9a-f]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const INTENT_TAG = /^notis-cli-(intent|preview)\/(beta|stable)\/([0-9a-f]{40})$/;
+const INTENT_TAG = new RegExp(`^notis-cli-(intent|preview)/(${PACKAGE_CHANNELS.join('|')})/([0-9a-f]{40})$`);
 const INPUTS = ['channel', 'handoff_ref_sha', 'read_only', 'release_id', 'source_sha'];
 const ASSET_HOSTS = new Set([
   'release-assets.githubusercontent.com', 'objects.githubusercontent.com',
@@ -55,7 +56,7 @@ function requireTag(tag, sourceSha) {
   if (!match || (sourceSha !== undefined && (!SHA.test(sourceSha) || match[3] !== sourceSha))) {
     throw held('Invalid exact-source release intent tag');
   }
-  return { channel: match[2] === 'beta' ? 'beta' : 'production', sourceSha: match[3], preview: match[1] === 'preview' };
+  return { channel: branchForChannel(match[2]), sourceSha: match[3], preview: match[1] === 'preview' };
 }
 
 function dispatchIdentity({ repository, tag, sourceSha, inputs }) {
@@ -215,7 +216,7 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
       try { record = JSON.parse(object.message); } catch { /* Rejected below. */ }
       if (record?.schema !== 1 || record.preview !== true || record.sourceSha !== sourceSha
           || record.packageName !== '@notis_ai/cli'
-          || record.channel !== (identity.channel === 'beta' ? 'beta' : 'stable')) {
+          || record.channel !== channelForBranch(identity.channel)) {
         throw held('Existing preview annotation does not match the read-only source identity');
       }
     }

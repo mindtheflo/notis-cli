@@ -39,7 +39,7 @@ function history() {
   return { dir, c, git: gitClient(dir), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-const tagged = (version, sourceSha) => ({ tag: 'beta', version, sourceSha });
+const tagged = (version, sourceSha) => ({ tag: 'nightly', version, sourceSha });
 
 test('modes: manual runs preview, pushes merge, only the two callers publish after a release', () => {
   assert.equal(resolveMode({ eventName: 'workflow_dispatch', trigger: '' }), 'preview');
@@ -63,22 +63,27 @@ test('the watched paths are the CLI package inputs, matched by whole path segmen
   assert.equal(new Set(WATCHED_PATHS).size, WATCHED_PATHS.length);
 });
 
-test('beta compares with the beta tag and production with latest, by recorded source commit', () => {
-  const registry = { 'dist-tags': { beta: '1.1.0-beta.3', latest: '1.0.0' }, versions: {
-    '1.1.0-beta.3': { notisRelease: { sourceSha: 'b'.repeat(40), channel: 'beta' }, gitHead: 'b'.repeat(40) },
+test('the beta branch compares with the nightly tag and production with latest, by recorded source commit', () => {
+  const registry = { 'dist-tags': { beta: '1.1.0-beta.9', nightly: '1.1.0-nightly.3', latest: '1.0.0' }, versions: {
+    '1.1.0-beta.9': { notisRelease: { sourceSha: 'c'.repeat(40), channel: 'beta' }, gitHead: 'c'.repeat(40) },
+    '1.1.0-nightly.3': { notisRelease: { sourceSha: 'b'.repeat(40), channel: 'nightly' }, gitHead: 'b'.repeat(40) },
     '1.0.0': { gitHead: 'a'.repeat(40) } } };
-  assert.deepEqual(CHANNEL_TAGS, { beta: 'beta', production: 'latest' });
-  assert.deepEqual(publishedSource(registry, 'beta'), { tag: 'beta', version: '1.1.0-beta.3', sourceSha: 'b'.repeat(40) });
+  // Every branch -> tag decision comes from the one table in release-channels.cjs.
+  assert.deepEqual(CHANNEL_TAGS, { beta: 'nightly', production: 'latest' });
+  assert.deepEqual(publishedSource(registry, 'beta'), { tag: 'nightly', version: '1.1.0-nightly.3', sourceSha: 'b'.repeat(40) });
   assert.deepEqual(publishedSource(registry, 'production'), { tag: 'latest', version: '1.0.0', sourceSha: 'a'.repeat(40) });
-  assert.deepEqual(publishedSource({ 'dist-tags': {}, versions: {} }, 'beta'), { tag: 'beta', version: null, sourceSha: null });
+  // The retired beta tag never counts as the nightly channel's publication.
+  assert.deepEqual(publishedSource({ 'dist-tags': { beta: '1.1.0-beta.9' }, versions: registry.versions }, 'beta'),
+    { tag: 'nightly', version: null, sourceSha: null });
   const unrecorded = { 'dist-tags': { latest: '0.2.2' }, versions: { '0.2.2': { gitHead: 'not-a-commit' } } };
   assert.deepEqual(publishedSource(unrecorded, 'production'), { tag: 'latest', version: '0.2.2', sourceSha: null });
   assert.throws(() => publishedSource(registry, 'dev'), /Unsupported channel/);
+  assert.throws(() => publishedSource(registry, 'nightly'), /Unsupported channel/);
 });
 
 test('the registry read is the package history, with no credentials, and a missing package is empty', async () => {
   const calls = [];
-  const registry = { 'dist-tags': { beta: '1.0.0-beta.1' }, versions: { '1.0.0-beta.1': {} } };
+  const registry = { 'dist-tags': { nightly: '1.0.0-nightly.1' }, versions: { '1.0.0-nightly.1': {} } };
   const fetcher = async (url, options) => {
     calls.push({ url, options });
     return { status: 200, ok: true, json: async () => registry };
@@ -103,9 +108,9 @@ test('server files that are not live yet hold the CLI back for their own release
 test('the CLI publishes when its tag ships nothing, no recorded source or a commit origin lost', () => {
   const { c, git, cleanup } = history();
   try {
-    for (const [published, reason] of [[tagged(null, null), /nothing is published on beta/],
-      [tagged('1.0.0-beta.1', null), /records no source commit/],
-      [tagged('1.0.0-beta.1', MISSING), /origin no longer has/]]) {
+    for (const [published, reason] of [[tagged(null, null), /nothing is published on nightly/],
+      [tagged('1.0.0-nightly.1', null), /records no source commit/],
+      [tagged('1.0.0-nightly.1', MISSING), /origin no longer has/]]) {
       const decision = decide({ channel: 'beta', head: c[4], liveSha: c[3], published, git });
       assert.equal(decision.publish, true);
       assert.match(decision.reason, reason);
@@ -117,8 +122,8 @@ test('the CLI is not republished for the same, an older or an unchanged source',
   const { c, git, cleanup } = history();
   try {
     for (const [head, source, reason] of [[c[4], c[4], /already ships/], [c[2], c[4], /already contains/],
-      [c[4], c[3], /no CLI or SDK file changed since beta 1\.0\.0-beta\.1/]]) {
-      const decision = decide({ channel: 'beta', head, liveSha: head, published: tagged('1.0.0-beta.1', source), git });
+      [c[4], c[3], /no CLI or SDK file changed since nightly 1\.0\.0-nightly\.1/]]) {
+      const decision = decide({ channel: 'beta', head, liveSha: head, published: tagged('1.0.0-nightly.1', source), git });
       assert.equal(decision.publish, false, reason.source);
       assert.match(decision.reason, reason);
     }
@@ -139,7 +144,7 @@ test('a watched change since the published source publishes the branch head and 
 test('a catch-up publishes only the CLI the live release contains, nothing newer', () => {
   const { c, git, cleanup } = history();
   try {
-    const published = tagged('1.0.0-beta.1', c[1]);
+    const published = tagged('1.0.0-nightly.1', c[1]);
     const newer = decide({ channel: 'beta', head: c[5], liveSha: c[4], published, git, strict: true });
     assert.equal(newer.publish, false);
     assert.match(newer.reason, /changed CLI files after the live release .*packages\/cli\/index\.js/);
@@ -164,8 +169,8 @@ test('a live release off the branch, a missing commit or a malformed one stops t
 function planner(c, git, overrides = {}) {
   const heads = { beta: c[5], production: c[4] };
   const reads = { heads: 0, history: 0 };
-  const registry = { 'dist-tags': { beta: '1.0.0-beta.1', latest: '1.0.0' }, versions: {
-    '1.0.0-beta.1': { notisRelease: { sourceSha: c[1], channel: 'beta' } },
+  const registry = { 'dist-tags': { nightly: '1.0.0-nightly.1', latest: '1.0.0' }, versions: {
+    '1.0.0-nightly.1': { notisRelease: { sourceSha: c[1], channel: 'nightly' } },
     '1.0.0': { notisRelease: { sourceSha: c[4], channel: 'stable' } } } };
   return {
     reads,
@@ -183,7 +188,7 @@ test('a merge publishes once the server it talks to is live, and waits while a r
     const { plan, reads } = planner(c, git);
     const live = await plan({ mode: 'merge', ref: 'refs/heads/beta', liveState: 'live', liveSha: c[4], channel: '' });
     assert.deepEqual(live.row, { channel: 'beta', source_sha: c[5], publish_reason: live.reason });
-    assert.match(live.reason, /changed since beta 1\.0\.0-beta\.1/);
+    assert.match(live.reason, /changed since nightly 1\.0\.0-nightly\.1/);
     const pending = await plan({ mode: 'merge', ref: 'refs/heads/beta', liveState: 'live', liveSha: c[2] });
     assert.equal(pending.row, null);
     assert.match(pending.reason, /not live yet/);

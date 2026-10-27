@@ -248,8 +248,7 @@ test('normalizeConfig keeps the dev.sh credential a worktree profile is built on
   assert.equal(normalized.current_profile, 'dev-workspace');
   assert.deepEqual(normalized.profiles['dev-workspace'], {
     api_base: 'http://localhost:4311',
-    beta: undefined,
-    channel: undefined,
+    release_channel: undefined,
     label: './dev.sh (test@example.com)',
     dev_access_token: 'dev-token',
     dev_access_expires_at: 123,
@@ -603,7 +602,7 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
       'default',
       undefined,
     );
-    assert.equal(betaFromFlag, 'https://api-beta.notis.ai');
+    assert.equal(betaFromFlag, 'https://api-nightly.notis.ai');
 
     const betaFromStoredApi = getApiBase(
       {
@@ -1166,11 +1165,12 @@ test('an expired OAuth grant points at re-authorizing the profile that failed', 
   assert.equal(payload.error.code, 'auth_expired');
   assert.equal(payload.error.details.credential_source, 'oauth');
   assert.match(payload.error.message, /"work"/);
-  // The profile lives on api-beta, so recovery must point at the beta build:
-  // reinstalling `@latest` would send it back to the channel it failed on.
+  // The profile lives on the nightly API, so recovery must point at the
+  // nightly build: reinstalling `@latest` would send it back to the channel it
+  // failed on.
   assert.equal(
     payload.hints[0].command,
-    "npx --package @notis_ai/cli@beta -- notis login --profile 'work'",
+    "npx --package @notis_ai/cli@nightly -- notis login --profile 'work'",
   );
 });
 
@@ -2222,7 +2222,7 @@ test('profile use switches the active account without touching any credential', 
     data.profiles.map((entry) => [entry.name, entry.api_base, entry.authenticated]),
     [
       ['default', 'https://api.notis.ai', true],
-      ['beta', 'https://api-beta.notis.ai', true],
+      ['beta', 'https://api-nightly.notis.ai', true],
     ],
   );
 });

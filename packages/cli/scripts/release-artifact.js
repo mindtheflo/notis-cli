@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { validateIntent } from './release-intent.js';
+import { distTagForChannel, isPackageChannel } from './release-channels.cjs';
 
 export const PACKAGE_NAME = '@notis_ai/cli';
 export const ARTIFACT_NAMES = { tarball: 'notis-cli.tgz', plan: 'release-plan.json', manifest: 'handoff-manifest.json' };
@@ -42,7 +43,7 @@ export function validatePlan(plan, { sourceSha, channel, requireReserved = false
   validateIntent(plan.intent, identity);
   if (plan.packageName !== PACKAGE_NAME || plan.sourceSha !== identity.sourceSha
       || plan.releaseChannel !== identity.channel || plan.nextVersion !== plan.intent.version
-      || plan.publishTag !== (identity.channel === 'beta' ? 'beta' : 'latest')
+      || plan.publishTag !== distTagForChannel(identity.channel)
       || (requireReserved && plan.intentReserved !== true)) throw new Error('Release plan identity/reservation mismatch');
   return plan;
 }
@@ -59,7 +60,7 @@ export function createArtifactManifest({ tarball, planBytes, builder, readOnly }
 
 export function verifyArtifact({ manifest, tarball, planBytes, expected = {} }) {
   if (manifest?.schema !== 1 || manifest.packageName !== PACKAGE_NAME || typeof manifest.readOnly !== 'boolean'
-      || !/^[0-9a-f]{40}$/.test(manifest.sourceSha || '') || !['beta', 'stable'].includes(manifest.channel)) {
+      || !/^[0-9a-f]{40}$/.test(manifest.sourceSha || '') || !isPackageChannel(manifest.channel)) {
     throw new Error('Invalid immutable package manifest');
   }
   for (const key of ['sourceSha', 'channel', 'version', 'readOnly']) {

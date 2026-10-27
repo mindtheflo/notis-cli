@@ -85,7 +85,7 @@ Options:
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis login`
 - `npx --package @notis_ai/cli@latest -- notis login --profile work`
-- `npx --package @notis_ai/cli@latest -- notis login --profile beta --api-base https://api-beta.notis.ai`
+- `npx --package @notis_ai/cli@latest -- notis login --profile nightly --api-base https://api-nightly.notis.ai`
 - `npx --package @notis_ai/cli@latest -- notis login --no-browser --print-url`
 - `npx --package @notis_ai/cli@latest -- notis login --mode browser`
 - `npx --package @notis_ai/cli@latest -- notis login --mode code`

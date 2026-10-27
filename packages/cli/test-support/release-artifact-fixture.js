@@ -2,7 +2,7 @@ import { gzipSync } from 'node:zlib';
 import { createArtifactManifest, PACKAGE_NAME } from '../scripts/release-artifact.js';
 
 export const sourceSha = 'a'.repeat(40);
-export const version = '0.2.0-beta.123.1';
+export const version = '0.2.0-nightly.123.1';
 export const builder = { provider: 'depot', repository: 'mindtheflo/notis',
   workflow: '.depot/workflows/publish-cli-package.yml', orchestrationSha: 'b'.repeat(40),
   runId: 'run_123', jobId: 'build-1', event: 'api', smoke: 'native-exact-tarball' };
@@ -31,10 +31,10 @@ export function tarball(manifest, others = []) {
 }
 
 export function validBundle(readOnly = true, overrides = {}) {
-  const channel = overrides.channel || 'beta';
-  const nextVersion = channel === 'beta' ? version : '0.2.1';
+  const channel = overrides.channel || 'nightly';
+  const nextVersion = channel === 'nightly' ? version : '0.2.1';
   const plan = { packageName: PACKAGE_NAME, sourceSha, releaseChannel: channel,
-    nextVersion, publishTag: channel === 'beta' ? 'beta' : 'latest', intentReserved: !readOnly,
+    nextVersion, publishTag: channel === 'nightly' ? 'nightly' : 'latest', intentReserved: !readOnly,
     intent: { schema: 1, packageName: PACKAGE_NAME, sourceSha, channel, version: nextVersion },
     ...overrides.plan };
   const packageManifest = { name: PACKAGE_NAME, version: nextVersion,

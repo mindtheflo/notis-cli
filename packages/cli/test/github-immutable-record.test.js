@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRecordStore, recordTag } from '../scripts/github-immutable-record.js';
 
-const identity = { sourceSha: 'a'.repeat(40), channel: 'beta' };
+const identity = { sourceSha: 'a'.repeat(40), channel: 'nightly' };
 const kind = 'handoff';
 const tagSha = 'b'.repeat(40);
 const raceSha = 'c'.repeat(40);
@@ -63,12 +63,12 @@ function api(options = {}) {
 }
 
 test('record namespaces separate real reservations, live/preview handoffs and dispatch attempts', () => {
-  assert.equal(recordTag('handoff', identity), `notis-cli-handoff/beta/${identity.sourceSha}`);
-  assert.equal(recordTag('preview-intent', identity), `notis-cli-preview/beta/${identity.sourceSha}`);
-  assert.equal(recordTag('preview-handoff', identity), `notis-cli-preview-handoff/beta/${identity.sourceSha}`);
-  assert.equal(recordTag('dispatch', identity), `notis-cli-dispatch/beta/${identity.sourceSha}`);
-  assert.equal(recordTag('preview-dispatch', identity), `notis-cli-preview-dispatch/beta/${identity.sourceSha}`);
-  for (const invalid of [{ sourceSha: 'branch', channel: 'beta' }, { ...identity, channel: 'production' }]) {
+  assert.equal(recordTag('handoff', identity), `notis-cli-handoff/nightly/${identity.sourceSha}`);
+  assert.equal(recordTag('preview-intent', identity), `notis-cli-preview/nightly/${identity.sourceSha}`);
+  assert.equal(recordTag('preview-handoff', identity), `notis-cli-preview-handoff/nightly/${identity.sourceSha}`);
+  assert.equal(recordTag('dispatch', identity), `notis-cli-dispatch/nightly/${identity.sourceSha}`);
+  assert.equal(recordTag('preview-dispatch', identity), `notis-cli-preview-dispatch/nightly/${identity.sourceSha}`);
+  for (const invalid of [{ sourceSha: 'branch', channel: 'nightly' }, { ...identity, channel: 'production' }]) {
     assert.throws(() => recordTag(kind, invalid), /identity/);
   }
   assert.throws(() => recordTag('unknown', identity), /identity/);

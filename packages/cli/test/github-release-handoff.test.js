@@ -8,7 +8,7 @@ const repository = 'mindtheflo/notis';
 const token = 'private-test-token';
 const sourceSha = 'a'.repeat(40);
 const tagObject = 'b'.repeat(40);
-const tag = `notis-cli-intent/beta/${sourceSha}`;
+const tag = `notis-cli-intent/nightly/${sourceSha}`;
 const inputs = { source_sha: sourceSha, channel: 'beta', release_id: '11',
   handoff_ref_sha: 'c'.repeat(40), read_only: 'false' };
 const workflow = `# notis-cli-handoff-contract: v1
@@ -42,7 +42,7 @@ function api(options = {}) {
     repository: { id: 1, private: true, full_name: repository, default_branch: 'beta' },
     releases: [], assets: [], assetBytes: new Map([[asset.id, bytes]]), runs: [], sleeps: [],
     workflow, tag, targetSha: sourceSha, tagType: 'tag', tagExists: true,
-    annotation: { schema: 1, packageName: '@notis_ai/cli', sourceSha, channel: 'beta', preview: true },
+    annotation: { schema: 1, packageName: '@notis_ai/cli', sourceSha, channel: 'nightly', preview: true },
     ...options,
   };
   const calls = [];

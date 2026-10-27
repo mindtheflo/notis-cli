@@ -28,7 +28,7 @@ export function doctorChannelSummary(
   const decision = resolveChannelSwitch({
     runningVersion: runtime.cliVersion,
     profile: {
-      channel: runtime.channel,
+      release_channel: runtime.channel,
       api_base: runtime.apiBase,
     },
     moduleDirectory,

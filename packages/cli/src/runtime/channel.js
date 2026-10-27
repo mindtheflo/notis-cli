@@ -3,23 +3,54 @@
  *
  * The npm tag has to be chosen before the CLI starts, and the CLI only learns
  * which Notis it talks to after it reads the profile — so a single documented
- * install command can never be right for both environments on its own. The
- * deployment answers the question at login (`notis_cli_channel` in the CLI
- * protected-resource metadata), the answer is pinned on the profile, and every
- * later run re-executes the matching build. `@notis_ai/cli@latest` therefore
- * stays the one command worth documenting, including for beta accounts.
+ * install command can never be right for both environments on its own. Login
+ * asks the account which release channel it belongs to (`GET /release_channel`),
+ * the answer is pinned on the profile as `release_channel`, and every later run
+ * re-executes the matching build. `@notis_ai/cli@latest` therefore stays the
+ * one command worth documenting, including for nightly accounts.
  */
 
-export const RELEASE_CHANNELS = ['stable', 'beta'];
-const CHANNEL_TAGS = { stable: 'latest', beta: 'beta' };
+export const RELEASE_CHANNELS = ['stable', 'nightly'];
+// Keep equal to the dist-tags in scripts/release-channels.cjs (a test checks).
+const CHANNEL_TAGS = { stable: 'latest', nightly: 'nightly' };
+// Live API hosts and the channel each one serves.
+const API_HOST_CHANNELS = {
+  'api.notis.ai': 'stable',
+  'api-beta.notis.ai': 'nightly',
+  'api-nightly.notis.ai': 'nightly',
+};
 export const CLI_PACKAGE_NAME = '@notis_ai/cli';
 // Set on the child so a build that disagrees about its own channel — a bad
 // version string, a half-published tag — cannot bounce the process forever.
+// Builds from before the nightly channel wrote `1` and resolved channels from
+// the old profile fields, so a child that sees `1` may correct them once more.
 export const CHANNEL_SWITCH_ENV = 'NOTIS_CLI_CHANNEL_SWITCHED';
+export const CHANNEL_SWITCHED = '2';
+const LEGACY_CHANNEL_SWITCHED = '1';
 export const CHANNEL_DISABLE_ENV = 'NOTIS_CLI_AUTO_CHANNEL';
 
 export function isReleaseChannel(value) {
   return RELEASE_CHANNELS.includes(value);
+}
+
+/**
+ * A channel name as any Notis component may still spell it. `beta` is what
+ * deployments, profiles and builds called the nightly channel before it was
+ * renamed, so it reads as nightly; anything else unknown is dropped.
+ */
+export function normalizeReleaseChannel(value) {
+  if (value === 'beta') return 'nightly';
+  return isReleaseChannel(value) ? value : null;
+}
+
+export function channelFromApiBase(apiBase) {
+  if (typeof apiBase !== 'string' || !apiBase) return null;
+  try {
+    return API_HOST_CHANNELS[new URL(apiBase).hostname] || null;
+  } catch {
+    // A malformed endpoint says nothing about the channel.
+    return null;
+  }
 }
 
 export function packageTagForChannel(channel) {
@@ -33,37 +64,42 @@ export function cliCommandForChannel(channel) {
 /**
  * The channel of the build that is currently running.
  *
- * The publish pipeline stamps beta releases as prereleases
- * (`0.2.0-beta.129.1`) and production releases as plain semver (`0.2.10`), so
- * the manifest version is the only channel marker that cannot drift from what
- * npm actually served.
+ * The publish pipeline stamps nightly releases as prereleases
+ * (`0.2.0-nightly.129.1`, `0.2.0-beta.129.1` before the rename) and stable
+ * releases as plain semver (`0.2.10`), so the manifest version is the only
+ * channel marker that cannot drift from what npm actually served.
  */
 export function channelFromVersion(version) {
-  return String(version || '').includes('-') ? 'beta' : 'stable';
+  return String(version || '').includes('-') ? 'nightly' : 'stable';
 }
 
 /**
- * The channel a profile is pinned to.
+ * The channel a stored profile's fields pin it to, or null.
  *
- * `channel` is written at login from the deployment's own metadata. The
- * `beta` flag and the endpoint host are the fallbacks that let a profile
- * authorized by an older CLI resolve without a second login.
+ * This CLI writes only `release_channel`. Notis Desktop and older CLIs wrote a
+ * `beta` flag and a `channel` pin (`stable` | `beta`) instead; normalization
+ * drops those on every write, so when one is present it was written after this
+ * CLI last touched the profile and is the fresher answer. Desktop always sets
+ * `beta` from the API it just authorized, which makes it the most reliable.
+ */
+export function pinnedReleaseChannel(profile = {}) {
+  if (profile.beta === true) return 'nightly';
+  if (profile.beta === false) return 'stable';
+  return normalizeReleaseChannel(profile.channel)
+    || normalizeReleaseChannel(profile.release_channel);
+}
+
+/**
+ * The channel a profile belongs to: its pin, else the live API it talks to.
+ * The host fallback lets a profile authorized before channels existed resolve
+ * without a second login.
  */
 export function channelFromProfile(profile = {}) {
-  if (isReleaseChannel(profile.channel)) {
-    return profile.channel;
-  }
-  if (profile.beta === true) return 'beta';
-  if (profile.beta === false) return 'stable';
+  const pinned = pinnedReleaseChannel(profile);
+  if (pinned) return pinned;
   for (const candidate of [profile.oauth_api_base, profile.api_base]) {
-    if (typeof candidate !== 'string' || !candidate) continue;
-    try {
-      const { hostname } = new URL(candidate);
-      if (hostname === 'api-beta.notis.ai') return 'beta';
-      if (hostname === 'api.notis.ai') return 'stable';
-    } catch {
-      // A malformed endpoint says nothing about the channel.
-    }
+    const channel = channelFromApiBase(candidate);
+    if (channel) return channel;
   }
   return null;
 }
@@ -115,7 +151,11 @@ export function resolveChannelSwitch({
   const targetChannel = channelFromProfile(profile);
   const stay = (reason) => ({ switch: false, reason, runningChannel, targetChannel });
 
-  if (env[CHANNEL_SWITCH_ENV] === '1') return stay('already_switched');
+  // A pre-nightly build may have handed over on its own reading of the
+  // profile (`1`); that hop may be corrected once, never more.
+  if (env[CHANNEL_SWITCH_ENV] && env[CHANNEL_SWITCH_ENV] !== LEGACY_CHANNEL_SWITCHED) {
+    return stay('already_switched');
+  }
   if (env[CHANNEL_DISABLE_ENV] === '0') return stay('disabled');
   if (!targetChannel) return stay('profile_channel_unknown');
   if (targetChannel === runningChannel) return stay('channel_matches');

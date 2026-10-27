@@ -11,8 +11,13 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+const { BRANCH_RELEASES, SUPPORTED_CHANNELS } = require('./release-channels.cjs');
+
 const PACKAGE_NAME = '@notis_ai/cli';
-const CHANNEL_TAGS = Object.freeze({ beta: 'beta', production: 'latest' });
+// Source branch -> the npm tag its releases move (beta -> nightly, production
+// -> latest), read from the one branch table in release-channels.cjs.
+const CHANNEL_TAGS = Object.freeze(Object.fromEntries(
+  Object.entries(BRANCH_RELEASES).map(([branch, release]) => [branch, release.distTag])));
 
 // The push paths of .depot/workflows/publish-cli-package.yml, as git pathspecs.
 // A change here is a CLI change. A test keeps the two lists equal.
@@ -44,7 +49,7 @@ const RELEASE_INPUT_PATHS = Object.freeze([
 ]);
 
 const SHA = /^[0-9a-f]{40}$/;
-const BRANCHES = Object.freeze({ 'refs/heads/beta': 'beta', 'refs/heads/production': 'production' });
+const BRANCHES = Object.freeze(Object.fromEntries(SUPPORTED_CHANNELS.map(branch => [`refs/heads/${branch}`, branch])));
 const MAX_LISTED = 5;
 
 // preview: any manual run of the workflow itself, always read-only.
@@ -71,7 +76,7 @@ function isWatched(file) {
 
 // The version a channel's tag ships and the commit it was built from.
 function publishedSource(history, channel) {
-  const tag = CHANNEL_TAGS[channel];
+  const tag = Object.hasOwn(CHANNEL_TAGS, channel || '') ? CHANNEL_TAGS[channel] : null;
   if (!tag) throw new Error(`Unsupported channel: ${channel}`);
   const version = history?.['dist-tags']?.[tag] || null;
   const receipt = version ? history.versions?.[version] : null;
@@ -160,7 +165,9 @@ function decide({ channel, head, liveSha, published, git, strict = false }) {
 async function planPublication({ mode, ref, sha, channel, sourceSha, liveState, liveSha, readHead, cwd,
   readHistory = readRegistryHistory, git = gitClient(cwd) }) {
   const branch = BRANCHES[ref];
-  if (!branch) throw new Error(`A ${mode} run publishes only from beta or production, not ${ref || 'an unknown ref'}`);
+  if (!branch) {
+    throw new Error(`A ${mode} run publishes only from ${SUPPORTED_CHANNELS.join(' or ')}, not ${ref || 'an unknown ref'}`);
+  }
   let target = channel;
   let live = sourceSha;
   if (mode === 'merge') {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SUPPORTED_CHANNELS, branchForChannel, channelForBranch } from './release-channels.cjs';
 import { ARTIFACT_NAMES, PACKAGE_NAME, sha256, verifyArtifact } from './release-artifact.js';
 import { intentTag, validateIntent } from './release-intent.js';
 import { recordTag } from './github-immutable-record.js';
@@ -14,7 +15,7 @@ export function handoffKinds(readOnly) {
   return readOnly ? { binding: 'preview-handoff', dispatch: 'preview-dispatch' } : { binding: 'handoff', dispatch: 'dispatch' };
 }
 export function dispatchInputs(binding, handoffRefSha) {
-  return { source_sha: binding.sourceSha, channel: binding.channel === 'beta' ? 'beta' : 'production',
+  return { source_sha: binding.sourceSha, channel: branchForChannel(binding.channel),
     release_id: String(binding.releaseId), handoff_ref_sha: handoffRefSha, read_only: String(binding.readOnly) };
 }
 
@@ -132,7 +133,7 @@ export async function downloadHandoff({ binding, api }) {
 
 export async function verifyFinalizerHandoff({ repository, inputs, context, records, api, intents }) {
   const sourceSha = inputs.source_sha;
-  const channel = inputs.channel === 'beta' ? 'beta' : inputs.channel === 'production' ? 'stable' : null;
+  const channel = SUPPORTED_CHANNELS.includes(inputs.channel) ? channelForBranch(inputs.channel) : null;
   if (!channel || !['true', 'false'].includes(inputs.read_only)) throw new Error('Invalid finalizer channel or mode');
   const readOnly = inputs.read_only === 'true';
   const identity = { sourceSha, channel };
@@ -177,7 +178,7 @@ export async function deliverVerifiedBundle({ bundle, enabled, intents, readHist
       tag: plan.publishTag, sourceSha: manifest.sourceSha, integrity: manifest.tarball.integrity };
   }
   if (enabled !== true) throw new Error('CLI finalizer channel activation is disabled');
-  const branch = bundle.manifest.channel === 'beta' ? 'beta' : 'production';
+  const branch = branchForChannel(bundle.manifest.channel);
   if (await intents.readBranchHead(branch) !== bundle.manifest.sourceSha) throw new Error('Release is stale; current branch HEAD differs');
   return publish({ packageName: bundle.manifest.packageName, version: bundle.manifest.version,
     tag: bundle.plan.publishTag, sourceSha: bundle.manifest.sourceSha, channel: bundle.manifest.channel,

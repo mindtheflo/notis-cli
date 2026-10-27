@@ -14,6 +14,7 @@ import {
 import { createExpiredAuthError, createInvalidAuthHints } from './auth-recovery.js';
 import { refreshOAuthCredential } from './oauth.js';
 import { findUpsell, renderUpsell } from './upsell.js';
+import { releaseChannelMismatchError } from './release-channel.js';
 import {
   callCarriesToolRequestId,
   canReplayRequest,
@@ -141,6 +142,12 @@ export function normalizeBackendError(status, payload, runtime) {
       hints: payload?.hints || [],
       details: payload || {},
     });
+  }
+
+  if (status === 403 && backendError === 'release_channel_mismatch') {
+    // The account belongs to the other release channel's API. Nothing here
+    // can be retried; signing the profile in on its own channel fixes it.
+    return releaseChannelMismatchError(payload, runtime);
   }
 
   if (status === 403) {

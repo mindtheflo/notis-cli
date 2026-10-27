@@ -17,8 +17,8 @@ test('artifact requires exact native smoke provenance, npm destination and packe
   assert.throws(() => fixture({ packageManifest: { publishConfig: { registry: 'https://wrong.invalid' } } }), /registry/);
 });
 
-test('valid beta and production-channel artifacts bind plan, exact source, package and tarball hashes', () => {
-  for (const channel of ['beta', 'stable']) {
+test('valid nightly and production-channel artifacts bind plan, exact source, package and tarball hashes', () => {
+  for (const channel of ['nightly', 'stable']) {
     const artifact = fixture({ channel });
     const result = verifyArtifact({ ...artifact, expected: { sourceSha, channel,
       version: artifact.plan.nextVersion, readOnly: false } });
@@ -52,15 +52,15 @@ test('tampered tarball or plan bytes cannot pass the immutable checksums', () =>
 test('changed source, channel, version or read-only identity fails the caller expectation', () => {
   const artifact = fixture();
   for (const expected of [{ sourceSha: 'c'.repeat(40) }, { channel: 'stable' },
-    { version: '0.2.0-beta.999.1' }, { readOnly: true }]) {
+    { version: '0.2.0-nightly.999.1' }, { readOnly: true }]) {
     assert.throws(() => verifyArtifact({ ...artifact, expected }), /mismatch/);
   }
 });
 
 test('recomputed outer hashes cannot conceal a changed package identity', () => {
   const artifact = fixture();
-  for (const changes of [{ name: 'another-package' }, { version: '0.2.0-beta.999.1' },
-    { notisRelease: { sourceSha: 'c'.repeat(40), channel: 'beta' } },
+  for (const changes of [{ name: 'another-package' }, { version: '0.2.0-nightly.999.1' },
+    { notisRelease: { sourceSha: 'c'.repeat(40), channel: 'nightly' } },
     { notisRelease: { sourceSha, channel: 'stable' } }, { notisRelease: undefined }]) {
     const archive = tarball({ ...artifact.packageManifest, ...changes });
     const manifest = structuredClone(artifact.manifest);
@@ -73,9 +73,9 @@ test('recomputed outer hashes cannot conceal a changed package identity', () => 
 test('plan identity binds reserved intent, version, source, channel and npm dist-tag', () => {
   const { plan } = fixture();
   for (const changes of [{ packageName: 'another' }, { sourceSha: 'c'.repeat(40) },
-    { releaseChannel: 'stable' }, { nextVersion: '0.2.0-beta.999.1' }, { publishTag: 'latest' },
+    { releaseChannel: 'stable' }, { nextVersion: '0.2.0-nightly.999.1' }, { publishTag: 'latest' },
     { intent: { ...plan.intent, channel: 'stable' } }, { intentReserved: false }]) {
-    assert.throws(() => validatePlan({ ...plan, ...changes }, { sourceSha, channel: 'beta', requireReserved: true }));
+    assert.throws(() => validatePlan({ ...plan, ...changes }, { sourceSha, channel: 'nightly', requireReserved: true }));
   }
 });
 

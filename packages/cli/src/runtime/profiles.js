@@ -10,14 +10,14 @@ import { dirname, join, parse, resolve } from 'node:path';
 import { CliError, EXIT_CODES } from './errors.js';
 import { withConfigFileWriteLock } from './config-lock.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
-import { channelFromProfile, cliCommandForChannel, isReleaseChannel } from './channel.js';
+import { channelFromProfile, cliCommandForChannel, pinnedReleaseChannel } from './channel.js';
 import { resolveRetryEnabled } from './retry.js';
 
 export const CONFIG_DIR = join(homedir(), '.notis');
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 export const WORKSPACE_DIR = join(CONFIG_DIR, 'workspace');
 export const DEFAULT_API_BASE = 'https://api.notis.ai';
-export const BETA_API_BASE = 'https://api-beta.notis.ai';
+export const NIGHTLY_API_BASE = 'https://api-nightly.notis.ai';
 export const DEFAULT_PROFILE = 'default';
 const PROFILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const LEGACY_DESKTOP_PROFILE_KEYS = [
@@ -32,7 +32,7 @@ const LEGACY_DESKTOP_PROFILE_KEYS = [
 const WORKTREE_RUNTIME_FILENAME = join('.context', 'notis-runtime.json');
 const WORKTREE_ROUTING_FILENAME = join('.context', 'notis-routing.json');
 const LOCAL_API_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
-const LIVE_API_HOSTS = new Set(['api.notis.ai', 'api-beta.notis.ai']);
+const LIVE_API_HOSTS = new Set(['api.notis.ai', 'api-nightly.notis.ai', 'api-beta.notis.ai']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -86,11 +86,10 @@ function normalizeProfile(rawProfile = {}) {
   const raw = rawProfile && typeof rawProfile === 'object' ? rawProfile : {};
   return {
     api_base: typeof raw.api_base === 'string' ? raw.api_base : undefined,
-    beta: typeof raw.beta === 'boolean' ? raw.beta : undefined,
-    // Which published CLI build this profile runs, as the deployment reported
-    // it at login. Unknown values are dropped rather than trusted: this key
-    // decides which code executes on the next run.
-    channel: isReleaseChannel(raw.channel) ? raw.channel : undefined,
+    // Which published CLI build this profile runs (`stable` | `nightly`), as
+    // the account reported it at login. Unknown values are dropped rather
+    // than trusted: this key decides which code executes on the next run.
+    release_channel: pinnedReleaseChannel(raw) || undefined,
     label: typeof raw.label === 'string' ? raw.label : undefined,
     dev_access_token:
       typeof raw.dev_access_token === 'string' ? raw.dev_access_token : undefined,
@@ -535,28 +534,15 @@ function isLiveApiBase(value) {
 /**
  * Pick the live Notis API for this profile.
  *
- * Beta users (`users.beta = true`, mirrored onto the profile when OAuth
- * authorizes against api-beta) hit api-beta.notis.ai; everyone else hits
- * api.notis.ai. Localhost is never a default — only a `./dev.sh` profile
- * backed by a live worktree lease may retarget the CLI at loopback.
+ * Nightly accounts (`users.release_channel = 'nightly'`, pinned on the profile
+ * at login) hit the nightly API; everyone else hits api.notis.ai. Localhost is
+ * never a default: only a `./dev.sh` profile backed by a live worktree lease
+ * may retarget the CLI at loopback.
  */
 export function resolveDefaultLiveApiBase(profile = {}) {
-  if (profile.beta === true) {
-    return BETA_API_BASE;
-  }
-  if (profile.beta === false) {
-    return DEFAULT_API_BASE;
-  }
-  if (isLiveApiBase(profile.api_base)) {
-    try {
-      if (new URL(profile.api_base).hostname === 'api-beta.notis.ai') {
-        return BETA_API_BASE;
-      }
-    } catch {
-      // fall through
-    }
-  }
-  return DEFAULT_API_BASE;
+  const channel = pinnedReleaseChannel(profile)
+    || (isLiveApiBase(profile.api_base) ? channelFromProfile({ api_base: profile.api_base }) : null);
+  return channel === 'nightly' ? NIGHTLY_API_BASE : DEFAULT_API_BASE;
 }
 
 export function getApiBase(config, profileName, override) {

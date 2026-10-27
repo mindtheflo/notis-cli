@@ -131,7 +131,7 @@ function githubHarness(failOnce, readOnly) {
   const h = harness(readOnly);
   const sourceSha = h.bundle.manifest.sourceSha;
   Object.assign(h.state, { failed: false, posts: 0, finalizerRuns: [] });
-  const intent = { tag: `notis-cli-intent/beta/${sourceSha}`, refSha: 'e'.repeat(40), record: h.bundle.plan.intent };
+  const intent = { tag: `notis-cli-intent/nightly/${sourceSha}`, refSha: 'e'.repeat(40), record: h.bundle.plan.intent };
   const saved = () => [...h.state.records.values(), intent];
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const fetcher = async (url, { method, body }) => {
@@ -164,7 +164,7 @@ function githubHarness(failOnce, readOnly) {
   };
   const store = createGithubHandoffStore({ repository, token: 'fixture-not-a-token', fetcher, sleep: async () => {} });
   for (const name of ['preflightFinalizer', 'postFinalizer', 'findFinalizerRuns', 'readFinalizerRun']) h.api[name] = store[name];
-  const claimTag = recordTag(readOnly ? 'preview-dispatch' : 'dispatch', { sourceSha, channel: 'beta' });
+  const claimTag = recordTag(readOnly ? 'preview-dispatch' : 'dispatch', { sourceSha, channel: 'nightly' });
   return { ...h, claimed: () => h.state.records.has(claimTag) };
 }
 

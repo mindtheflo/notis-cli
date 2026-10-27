@@ -6,10 +6,17 @@ import { findPublishedRelease, readReleaseHistory, validateReservedVersion } fro
 import { createIntentStore, intentTag, resolveReleaseIntent } from './release-intent.js';
 import { createRecordStore } from './github-immutable-record.js';
 
+import { channelForBranch, distTagForChannel, isPackageChannel, prereleaseIdForChannel } from './release-channels.cjs';
+
 const shouldApply = process.argv.includes('--apply');
-const releaseChannel = process.env.NPM_RELEASE_CHANNEL || 'stable';
-if (!['beta', 'stable'].includes(releaseChannel)) throw new Error('Unsupported release channel');
-const publishTag = releaseChannel === 'beta' ? 'beta' : 'latest';
+// CI names the source branch and the branch table picks the package channel;
+// a local run may name the channel directly and defaults to stable.
+const releaseChannel = process.env.NOTIS_RELEASE_BRANCH
+  ? channelForBranch(process.env.NOTIS_RELEASE_BRANCH)
+  : process.env.NPM_RELEASE_CHANNEL || 'stable';
+if (!isPackageChannel(releaseChannel)) throw new Error('Unsupported release channel');
+const publishTag = distTagForChannel(releaseChannel);
+const prereleaseTag = prereleaseIdForChannel(releaseChannel);
 const sourceSha = process.env.NOTIS_RELEASE_SHA || execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error('An exact source SHA is required');
 if (execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== sourceSha) {
@@ -35,8 +42,8 @@ const { intent, reserved } = await resolveReleaseIntent({ identity, store,
   preview: preview?.record,
   reserve: reserve && !alreadyPublished,
   allocateVersion: () => {
-    const version = alreadyPublished ? published.version : publishTag === 'beta'
-      ? computePrereleasePublishVersion({ packageVersion: manifest.version, prereleaseTag: 'beta',
+    const version = alreadyPublished ? published.version : prereleaseTag
+      ? computePrereleasePublishVersion({ packageVersion: manifest.version, prereleaseTag,
           releaseNumber, latestRegistryVersion: latest?.version })
       : computePublishVersion({ packageVersion: manifest.version, latestRegistryVersion: latest?.version });
     validateReservedVersion(history, { ...identity, version });

@@ -1,8 +1,13 @@
 import { loginWithOAuth, logoutOAuth } from '../runtime/oauth.js';
+import { followAccountReleaseChannel } from '../runtime/release-channel.js';
 import { installLocalAgentContext } from './agents.js';
 
 async function loginHandler(ctx) {
-  const result = await loginWithOAuth(ctx.runtime, ctx.options, ctx.output);
+  const result = await followAccountReleaseChannel(
+    ctx.runtime,
+    await loginWithOAuth(ctx.runtime, ctx.options, ctx.output),
+    { login: loginWithOAuth, options: ctx.options, output: ctx.output },
+  );
   if (result.agentAuthorization) {
     const presentation = loginAgentAuthorizationPresentation(result.agentAuthorization);
     return ctx.output.emitSuccess({
@@ -115,7 +120,7 @@ export const authCommandSpecs = [
     examples: [
       'notis login',
       'notis login --profile work',
-      'notis login --profile beta --api-base https://api-beta.notis.ai',
+      'notis login --profile nightly --api-base https://api-nightly.notis.ai',
       'notis login --no-browser --print-url',
       'notis login --mode browser',
       'notis login --mode code',

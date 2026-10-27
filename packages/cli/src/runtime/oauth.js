@@ -26,9 +26,10 @@ import { CliError, EXIT_CODES, usageError } from './errors.js';
 import { readComputerIdentity } from './computer-identity.js';
 import { getAuthRecovery, getRetryRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
+  channelFromApiBase,
   channelFromProfile,
   cliCommandForChannel,
-  isReleaseChannel,
+  normalizeReleaseChannel,
 } from './channel.js';
 import {
   credentialIsExpired,
@@ -408,10 +409,9 @@ export async function discoverCliOAuth(apiBase, fetchImpl = fetch) {
     copyPasteRedirectUri: protectedResource.notis_cli_copy_paste_redirect_uri,
     // A deployment that predates channel advertising, or a local one with no
     // published build, leaves this null and the profile keeps resolving its
-    // channel from the endpoint it authorized against.
-    channel: isReleaseChannel(protectedResource.notis_cli_channel)
-      ? protectedResource.notis_cli_channel
-      : null,
+    // channel from the endpoint it authorized against. Deployments from before
+    // the rename still answer `beta`, which is the nightly channel.
+    channel: normalizeReleaseChannel(protectedResource.notis_cli_channel),
     authorizationEndpoint: authorizationServer.authorization_endpoint,
     tokenEndpoint: authorizationServer.token_endpoint,
     revocationEndpoint: authorizationServer.revocation_endpoint,
@@ -995,14 +995,6 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
   const now = Math.floor(Date.now() / 1000);
   const payload = decodeJwtPayload(tokenResponse.access_token);
   const oauthApiBase = (metadata.apiBase || runtime.apiBase || '').replace(/\/+$/, '');
-  let beta;
-  try {
-    const hostname = new URL(oauthApiBase).hostname;
-    if (hostname === 'api-beta.notis.ai') beta = true;
-    else if (hostname === 'api.notis.ai') beta = false;
-  } catch {
-    beta = undefined;
-  }
   const config = updateConfig((latest) => {
     const next = ensureProfile(latest, runtime.profileName);
     const profile = next.profiles[runtime.profileName];
@@ -1012,14 +1004,14 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
       // one API, and the environment the user just authorized against is the
       // only endpoint the resulting token is accepted by.
       api_base: oauthApiBase || profile.api_base,
-      beta: beta ?? profile.beta,
       // The deployment that just authorized this profile also names the
       // published build that belongs to it. Pinning it here is what lets the
       // next run correct itself without the user knowing a channel exists.
-      channel: isReleaseChannel(metadata.channel)
-        ? metadata.channel
-        : channelFromProfile({ ...profile, beta: beta ?? profile.beta, api_base: oauthApiBase })
-          ?? profile.channel,
+      // followAccountReleaseChannel then replaces it with the account's own
+      // answer once the new grant can ask for it.
+      release_channel: metadata.channel
+        || channelFromApiBase(oauthApiBase)
+        || profile.release_channel,
       oauth_api_base: oauthApiBase || profile.oauth_api_base,
       oauth_resource: metadata.resource,
       oauth_access_token: tokenResponse.access_token,
@@ -1968,14 +1960,16 @@ function confirmCommand(profileName, channel, apiBase) {
   return [
     cliCommandForChannel(channel),
     `--profile ${quoteShellArgument(profileName || 'default')}`,
-    `--api-base ${quoteShellArgument(apiBase)}`,
+    // Only an explicit route is repeated: without one, confirming must stay
+    // free to follow the account to its release channel.
+    ...(apiBase ? [`--api-base ${quoteShellArgument(apiBase)}`] : []),
     'start',
   ].join(' ');
 }
 
 function authorizationChannel(metadata, runtime, pending = null) {
   return metadata.channel
-    || pending?.channel
+    || normalizeReleaseChannel(pending?.channel)
     || channelFromProfile({ api_base: pending?.api_base || runtime.apiBase });
 }
 
@@ -2063,6 +2057,11 @@ async function redeemAuthorizationCode(runtime, code, fetchImpl) {
     // repeating --api-base must not persist a token under a different backend.
     if (pending.api_base) {
       runtime.apiBase = pending.api_base;
+      // An explicit --api-base login stays explicit through its redemption,
+      // so the account's release channel does not reroute it either.
+      if (pending.api_base_explicit && !runtime.requestedApiBase) {
+        runtime.requestedApiBase = pending.api_base;
+      }
     }
     metadata = {
       apiBase: pending.api_base,
@@ -2072,7 +2071,7 @@ async function redeemAuthorizationCode(runtime, code, fetchImpl) {
       tokenEndpoint: pending.token_endpoint,
       revocationEndpoint: pending.revocation_endpoint
         || `${String(pending.issuer || '').replace(/\/+$/, '')}/oauth/revoke`,
-      channel: pending.channel,
+      channel: normalizeReleaseChannel(pending.channel),
     };
     if (!metadata.issuer || !metadata.resource || !metadata.clientId || !metadata.tokenEndpoint) {
       throw oauthError(
@@ -2337,7 +2336,7 @@ export async function loginWithOAuth(
           confirm_command: confirmCommand(
             runtime.profileName,
             authorizationChannel(metadata, runtime),
-            live.api_base,
+            runtime.requestedApiBase ? live.api_base : null,
           ),
         },
       };
@@ -2471,6 +2470,7 @@ export async function loginWithOAuth(
     savePendingAuthorization(runtime, {
       profile: runtime.profileName,
       api_base: runtime.apiBase,
+      api_base_explicit: Boolean(runtime.requestedApiBase),
       verifier,
       state,
       redirect_uri: redirectUri,
@@ -2543,7 +2543,7 @@ export async function loginWithOAuth(
           confirm_command: confirmCommand(
             runtime.profileName,
             authorizationChannel(metadata, runtime),
-            runtime.apiBase,
+            runtime.requestedApiBase ? runtime.apiBase : null,
           ),
         },
       };

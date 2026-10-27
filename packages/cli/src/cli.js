@@ -13,6 +13,7 @@ import { withSkillSyncLock } from './runtime/sync-skills.js';
 import { maybeInstallSkillSyncService } from './runtime/skill-sync-service.js';
 import {
   CHANNEL_SWITCH_ENV,
+  CHANNEL_SWITCHED,
   resolveChannelSwitch,
 } from './runtime/channel.js';
 import {
@@ -270,8 +271,8 @@ export function channelProfileForArgs(
   { config: suppliedConfig, worktreeRuntime: suppliedWorktreeRuntime } = {},
 ) {
   // An explicit endpoint overrides the stored profile for this run, so it also
-  // decides the build: `--api-base https://api-beta.notis.ai` on a production
-  // profile is a deliberate one-off beta call.
+  // decides the build: `--api-base https://api-nightly.notis.ai` on a stable
+  // profile is a deliberate one-off nightly call.
   const { profile: profileName, apiBase } = readChannelRelevantFlags(args);
   if (apiBase) {
     return { api_base: apiBase };
@@ -313,7 +314,7 @@ export function executeChannelSwitch(
   env,
   { spawn = spawnSync } = {},
 ) {
-  const childEnv = { ...env, [CHANNEL_SWITCH_ENV]: '1' };
+  const childEnv = { ...env, [CHANNEL_SWITCH_ENV]: CHANNEL_SWITCHED };
   // First make npm resolve and boot the target package without executing the
   // requested command. That distinguishes an unavailable tag/network from a
   // legitimate non-zero exit of the handed-off CLI, which must be propagated

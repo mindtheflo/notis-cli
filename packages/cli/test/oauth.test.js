@@ -1854,14 +1854,20 @@ test('login pins the release channel the deployment advertises', async () => {
     };
     const started = await loginWithOAuth(runtime, { mode: 'code' }, null, fetchImpl);
     // Even the command the user is told to paste back belongs to the channel
-    // they just authorized against.
-    assert.match(started.agentAuthorization.redeem_command, /@notis_ai\/cli@beta/);
+    // they just authorized against. A deployment from before the rename still
+    // answers `beta`, which is the nightly channel.
+    assert.match(started.agentAuthorization.redeem_command, /@notis_ai\/cli@nightly /);
 
     const redeemed = await loginWithOAuth(runtime, { code: 'browser-code' }, null, fetchImpl);
-    assert.equal(redeemed.profile.channel, 'beta');
+    assert.equal(redeemed.profile.release_channel, 'nightly');
+    const stored = JSON.parse(readFileSync(configFile, 'utf8')).profiles['beta-channel-test'];
+    // Only the new field is written.
+    assert.equal(stored.release_channel, 'nightly');
+    assert.equal('channel' in stored, false);
+    assert.equal('beta' in stored, false);
     assert.equal(
-      getProfile(loadConfig(), 'beta-channel-test').channel,
-      'beta',
+      getProfile(loadConfig(), 'beta-channel-test').release_channel,
+      'nightly',
     );
   } finally {
     if (previousConfigFile === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
@@ -2000,7 +2006,7 @@ test('a code redemption persistence failure revokes the issued grant and keeps t
   assert.deepEqual(revoked, ['unpersisted-code-refresh']);
 });
 
-test('legacy beta metadata still prints a beta redemption command', async () => {
+test('a deployment that advertises no channel resolves nightly from the nightly API host', async () => {
   const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-legacy-channel-')), 'config.json');
   const previousConfigFile = process.env.NOTIS_CLI_CONFIG_FILE;
   process.env.NOTIS_CLI_CONFIG_FILE = configFile;
@@ -2026,7 +2032,7 @@ test('legacy beta metadata still prints a beta redemption command', async () => 
       profileName: 'legacy-beta',
       config: normalizeConfig({}),
     }, { mode: 'code' }, null, fetchImpl);
-    assert.match(started.agentAuthorization.redeem_command, /@notis_ai\/cli@beta/);
+    assert.match(started.agentAuthorization.redeem_command, /@notis_ai\/cli@nightly /);
   } finally {
     if (previousConfigFile === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
     else process.env.NOTIS_CLI_CONFIG_FILE = previousConfigFile;
@@ -2357,6 +2363,9 @@ test('an agent login hands the browser callback to a detached listener, with no 
   );
   assert.equal(authorization.redeem_command, undefined);
   assert.match(authorization.confirm_command, /start$/);
+  // No explicit route was asked for, so confirming must stay free to follow
+  // the account to its release channel.
+  assert.doesNotMatch(authorization.confirm_command, /--api-base/);
   // The child must be handed the verifier for the challenge the user is sent.
   assert.equal(
     createHash('sha256').update(calls[0].verifier, 'ascii').digest('base64url'),

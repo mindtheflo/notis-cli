@@ -10,6 +10,7 @@ import {
   loadConfig,
 } from '../runtime/profiles.js';
 import { ensureFreshOAuthCredential, loginWithOAuth } from '../runtime/oauth.js';
+import { followAccountReleaseChannel } from '../runtime/release-channel.js';
 import { runToolCommand } from './helpers.js';
 import { loginAgentAuthorizationPresentation } from './auth.js';
 import { installLocalAgentContext } from './agents.js';
@@ -207,8 +208,30 @@ async function startHandler(ctx) {
     }
   }
 
+  // An agent confirms a browser sign-in by re-running start, so a profile
+  // that is already signed in still has to land on its account's channel.
+  const followChannel = (result) => followAccountReleaseChannel(runtime, result, {
+    login: loginWithOAuth,
+    options: { browser: true, mode: options.mode },
+    output,
+  });
+  const authorizationResult = (authorization) => {
+    const presentation = loginAgentAuthorizationPresentation(authorization.agentAuthorization);
+    return output.emitSuccess({
+      command: 'start',
+      data: {
+        authenticated: false,
+        profile: runtime.profileName,
+        ...authorization.agentAuthorization,
+      },
+      ...presentation,
+    });
+  };
+
   // Safe to re-run: an already-authorized profile skips straight to the brief.
   if (isAuthenticated(runtime)) {
+    const followed = await followChannel({ profile: getProfile(loadConfig(), runtime.profileName) });
+    if (followed?.agentAuthorization) return authorizationResult(followed);
     return authenticatedResult(ctx);
   }
 
@@ -224,22 +247,13 @@ async function startHandler(ctx) {
   // Browser authorization is the whole signup path: it creates the account when
   // the address is new and authorizes this machine either way. There is nothing
   // for the CLI to collect up front, and nothing to wait on afterwards.
-  const authorization = await loginWithOAuth(
+  const authorization = await followChannel(await loginWithOAuth(
     runtime,
     { browser: true, mode: options.mode, reusePersistedCredential: true },
     output,
-  );
+  ));
   if (authorization?.agentAuthorization) {
-    const presentation = loginAgentAuthorizationPresentation(authorization.agentAuthorization);
-    return output.emitSuccess({
-      command: 'start',
-      data: {
-        authenticated: false,
-        profile: runtime.profileName,
-        ...authorization.agentAuthorization,
-      },
-      ...presentation,
-    });
+    return authorizationResult(authorization);
   }
 
   // A failed authorization leaves whatever stale credential got us here in

@@ -12,7 +12,8 @@ const NESTED_KEYS = ['error', 'details', 'data', 'result', 'response', 'entitlem
 
 const PORTAL_ORIGINS = {
   'api.notis.ai': 'https://app.notis.ai',
-  'api-beta.notis.ai': 'https://beta.notis.ai',
+  'api-nightly.notis.ai': 'https://app-nightly.notis.ai',
+  'api-beta.notis.ai': 'https://app-nightly.notis.ai',
 };
 
 function isUpsellBody(value) {

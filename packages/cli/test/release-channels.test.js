@@ -34,3 +34,47 @@ test('resolveSelectedChannels does not depend on any ref/branch input', () => {
   // changing this contract and failing the tests above.
   assert.equal(resolveSelectedChannels.length, 1);
 });
+
+const {
+  BRANCH_RELEASES, PACKAGE_CHANNELS, RETIRED_DIST_TAG, branchForChannel, channelForBranch, distTagForChannel,
+  isPackageChannel, prereleaseIdForChannel, versionMatchesChannel,
+} = require('../scripts/release-channels.cjs');
+
+test('one table maps each source branch to its package channel and npm tag', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(BRANCH_RELEASES)), {
+    beta: { channel: 'nightly', distTag: 'nightly' },
+    production: { channel: 'stable', distTag: 'latest' },
+  });
+  assert.deepEqual([...SUPPORTED_CHANNELS], ['beta', 'production']);
+  assert.deepEqual([...PACKAGE_CHANNELS], ['nightly', 'stable']);
+  assert.equal(channelForBranch('beta'), 'nightly');
+  assert.equal(channelForBranch('production'), 'stable');
+  assert.equal(branchForChannel('nightly'), 'beta');
+  assert.equal(branchForChannel('stable'), 'production');
+  assert.equal(distTagForChannel('nightly'), 'nightly');
+  assert.equal(distTagForChannel('stable'), 'latest');
+  for (const unknown of ['beta', 'production', 'latest', 'constructor', '']) {
+    assert.equal(isPackageChannel(unknown), false, unknown);
+    assert.throws(() => distTagForChannel(unknown), /Unsupported release channel/);
+  }
+  assert.throws(() => channelForBranch('nightly'), /Unsupported channel/);
+  assert.throws(() => channelForBranch('constructor'), /Unsupported channel/);
+});
+
+test('nightly releases are -nightly. prereleases; stable releases are plain semver; beta is retired', () => {
+  assert.equal(prereleaseIdForChannel('nightly'), 'nightly');
+  assert.equal(prereleaseIdForChannel('stable'), null);
+  assert.equal(versionMatchesChannel('0.2.0-nightly.17.1', 'nightly'), true);
+  assert.equal(versionMatchesChannel('0.2.0-beta.17.1', 'nightly'), false);
+  assert.equal(versionMatchesChannel('0.2.23', 'nightly'), false);
+  assert.equal(versionMatchesChannel('0.2.23', 'stable'), true);
+  assert.equal(versionMatchesChannel('0.2.0-nightly.17.1', 'stable'), false);
+  assert.equal(RETIRED_DIST_TAG, 'beta');
+  assert.ok(!Object.values(BRANCH_RELEASES).some(release => release.distTag === RETIRED_DIST_TAG));
+});
+
+test('the published CLI resolves the same channel -> npm tag mapping as the publisher', async () => {
+  const { RELEASE_CHANNELS, packageTagForChannel } = await import('../src/runtime/channel.js');
+  assert.deepEqual([...RELEASE_CHANNELS].sort(), [...PACKAGE_CHANNELS].sort());
+  for (const channel of PACKAGE_CHANNELS) assert.equal(packageTagForChannel(channel), distTagForChannel(channel));
+});
