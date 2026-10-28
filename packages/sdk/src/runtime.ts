@@ -449,8 +449,21 @@ export interface NotisRuntimeUI {
   ReportFrame?: ComponentType<NotisReportFrameProps>;
   ShareControl?: ComponentType<NotisShareControlProps>;
   SpacePageFrame?: ComponentType<NotisSpacePageFrameProps>;
-  /** Starts reading a record (and the page's code) before it opens, for example when a list row is hovered. */
-  prefetchRecord?: (recordKey: string) => void;
+  /**
+   * Starts reading a record (and the page's code) before it opens, for example when a list row is hovered. Without
+   * `hint` (a Space's own call) the read always starts after a short hover delay; with it (the toolkit list does
+   * this for its rows) the host reads only where the Space opens records as document pages, at once for the
+   * cursor row and soon after for its neighbours, and may paint `title` while the record loads.
+   */
+  prefetchRecord?: (recordKey: string, hint?: RecordPrefetchHint) => void;
+}
+
+/** Why the toolkit reads a record ahead (see `NotisRuntimeUI.prefetchRecord`). */
+export interface RecordPrefetchHint {
+  /** 'cursor': the keyboard cursor is on its row; 'neighbour': next to it; 'hover': a pointer over it. */
+  intent: 'cursor' | 'neighbour' | 'hover';
+  /** The row's title, shown in the page while the record loads. */
+  title?: string | null;
 }
 
 // ---------------------------------------------------------------------------

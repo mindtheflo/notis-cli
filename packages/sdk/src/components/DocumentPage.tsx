@@ -7,6 +7,8 @@ import { DocumentEditor } from './DocumentEditor';
 import { HtmlFrame, ShareControl } from './RecordComponents';
 import { Skeleton } from './Skeleton';
 import { renderIcon } from '../ui/icons';
+import { useIsoLayoutEffect } from '../ui/util';
+import { beginWait, isWaiting } from '../perf';
 import type { NotisDocumentPageProps } from '../runtime';
 
 const copy = {
@@ -50,8 +52,10 @@ function columnStyle(width: NotisDocumentPageProps['width'] = 'standard'): CSSPr
  * same column width and gutter, so the page replaces it without a layout shift. Hosts show it while the
  * record and the editor load; a Space can show it while its own data decides which record opens.
  */
-export function DocumentPageSkeleton({ width = 'standard', className, label }: {
+export function DocumentPageSkeleton({ width = 'standard', className, label, title }: {
   width?: NotisDocumentPageProps['width']; className?: string; label?: string;
+  /** The record's title when already known (from the list row that opened it): shown in place of its bar. */
+  title?: string | null;
 }): ReactElement {
   const t = useCopy();
   return <div role="status" aria-busy="true" aria-label={label || t.loading} data-notis-skeleton="document-page" className={className}
@@ -64,7 +68,9 @@ export function DocumentPageSkeleton({ width = 'standard', className, label }: {
     </div>
     <div className={`${SKELETON}__column`} style={{ ...columnStyle(width), display: 'flex', flexDirection: 'column' }}>
       <Skeleton className={`${SKELETON}__icon`} style={{ borderRadius: 12, height: undefined }} />
-      <Skeleton style={{ width: '58%', height: 36, margin: '2px 0 10px' }} />
+      {title ? <div data-notis-skeleton-title="" style={{ margin: '2px 0 10px', minHeight: 36, fontSize: 32, lineHeight: '36px',
+        fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+        : <Skeleton style={{ width: '58%', height: 36, margin: '2px 0 10px' }} />}
       <Skeleton style={{ width: '72%', height: 14, margin: '15px 0' }} />
       <div style={{ display: 'grid', gap: 12, marginTop: 24 }}>
         {[100, 96, 88, 100, 64].map((size, index) => <Skeleton key={index} style={{ width: `${size}%`, height: 16 }} />)}
@@ -171,6 +177,9 @@ export function DocumentPage(props: NotisDocumentPageProps): ReactElement {
   }, [recordKey, onTitle]);
   const title = reported?.recordKey === recordKey ? reported.title : null;
   useTopBarTitleLeaf(leaf && title !== null ? title.trim() || t.untitled : null, back, { recordKey });
+  // Another record opening here is timed until the host paints it (a list's open has started that wait already).
+  const timed = Boolean(Host);
+  useIsoLayoutEffect(() => { if (timed && recordKey && !isWaiting('notis:record-open')) beginWait('notis:record-open'); }, [recordKey, timed]);
   return Host ? <Host {...props} topBarTitle={inTopBar} onTitle={reportTitle} /> : <DocumentPageFallback {...props} />;
 }
 

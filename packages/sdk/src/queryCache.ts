@@ -85,11 +85,17 @@ export interface OptimisticWrite {
   rollback(): void;
 }
 
+/**
+ * A read. `publish` (given by current clients) shows a first part of the answer while the rest loads, such as the
+ * first page of a read of every page: the snapshot then holds it, still fetching, until the read answers.
+ */
+export type QueryRead<T> = (publish?: (partial: T) => void) => Promise<T>;
+
 export interface NotisQueryClient {
   getSnapshot<T>(key: string): QuerySnapshot<T>;
   subscribe(key: string, listener: () => void): () => void;
-  fetch<T>(key: string, read: () => Promise<T>, options?: QueryFetchOptions): Promise<T>;
-  prefetch<T>(key: string, read: () => Promise<T>, options?: QueryFetchOptions): Promise<T>;
+  fetch<T>(key: string, read: QueryRead<T>, options?: QueryFetchOptions): Promise<T>;
+  prefetch<T>(key: string, read: QueryRead<T>, options?: QueryFetchOptions): Promise<T>;
   invalidate(key?: string): void;
   clear(): void;
   /** Host-only: permanently retire a revoked security scope. */
@@ -233,7 +239,12 @@ type Entry = {
   applied: string;
   /** A read answered while a new row of its database was being saved: shown once that write settles. */
   deferred?: { data: unknown; seq: number; updatedAt: number };
+  /** `raw.data` is an answer kept from an earlier visit (`seed`) that no read of this client confirmed yet. */
+  seeded?: boolean;
 };
+
+/** An answer a host kept from an earlier visit: shown at once, then read again on first use (it is never fresh). */
+export interface QuerySeed { data: unknown; rows?: RowsDescriptor }
 
 type Write = { id: number; changes: RowChange[]; bindings: Set<string>; committed: number | null; since: number;
   /** When it was sent, on the client's `seq` clock. */
@@ -258,6 +269,15 @@ export function createQueryClient(options: {
   schedule?: ReturnType<typeof createPrefetchQueue>;
   /** Bounds idempotent reads only; never retries the underlying callback. */
   readTimeoutMs?: number;
+  /**
+   * Answers the host kept from an earlier visit of the same access scope, by key: shown at once and read again on
+   * first use. A read that fails takes its kept answer away instead of showing it with the error.
+   */
+  seed?: ReadonlyMap<string, QuerySeed>;
+  /** Told every answer a read returned (the host may keep it for a later visit). */
+  onAnswer?: (key: string, data: unknown, rows?: RowsDescriptor) => void;
+  /** Told every read that failed (the host forgets what it kept for it). */
+  onFailure?: (key: string, error: Error) => void;
 } = {}): NotisQueryClient {
   const entries = new Map<string, Entry>();
   const now = options.now ?? Date.now;
@@ -416,7 +436,7 @@ export function createQueryClient(options: {
       value.listeners.add(listener);
       return () => { value.listeners.delete(listener); prune(); };
     },
-    fetch<T>(key: string, read: () => Promise<T>, fetchOptions: QueryFetchOptions = {}) {
+    fetch<T>(key: string, read: QueryRead<T>, fetchOptions: QueryFetchOptions = {}) {
       if (disposed) return Promise.reject(new SdkQueryError('scopeUnavailable'));
       const value = entry(key);
       if (fetchOptions.rows) value.rows = fetchOptions.rows;
@@ -435,20 +455,45 @@ export function createQueryClient(options: {
         // Node-based verification must not stay alive for a retired browser read.
         if (typeof timeout === 'object' && 'unref' in timeout) timeout.unref();
       });
-      const request = Promise.race([Promise.resolve().then(read), deadline]).then((data) => {
+      // A first part shows only while this read is still the entry's own and the entry has no answer yet: a reread
+      // keeps every row it showed until the whole answer is back.
+      // Nor while a new row of its database sent before it is being saved: the part could hold it twice.
+      let settled = false;
+      let partShown = false;
+      const partial = (data: T) => {
+        if (settled || !canCommit() || value.pending !== request || (value.raw.hasData && !partShown)) return;
+        const binding = value.rows?.binding;
+        if (binding && writes.some((write) => write.committed === null && write.sent < startSeq
+          && write.changes.some((change) => change.insert && change.binding === binding))) return;
+        partShown = true;
+        value.deferred = undefined;
+        value.dataSeq = startSeq;
+        publish(value, { ...value.raw, data, hasData: true, isFetching: true, error: null, updatedAt: 0 });
+      };
+      const request: Promise<T> = Promise.race([Promise.resolve().then(() => read(partial)), deadline]).then((data) => {
+        settled = true;
         if (canCommit() && savingInsert(value, startSeq)) {
           value.deferred = { data, seq: startSeq, updatedAt: now() };
           publish(value, { ...value.raw, isFetching: false, error: null });
         } else if (canCommit()) {
           value.deferred = undefined;
           value.dataSeq = startSeq;
+          value.seeded = false;
           publish(value, { ...value.raw, data, hasData: true, isFetching: false, error: null, updatedAt: now() });
           if (hidden.size) sweep();
+          options.onAnswer?.(key, data, value.rows);
         }
         return data;
       }, (reason) => {
+        settled = true;
         const error = reason instanceof Error ? reason : new Error(String(reason));
-        if (canCommit()) publish(value, { ...value.raw, isFetching: false, error });
+        // A first part, or an answer kept from an earlier visit, never stands for an answer that failed.
+        if (canCommit()) {
+          publish(value, partShown || value.seeded ? { ...EMPTY, invalidation: value.raw.invalidation, error }
+            : { ...value.raw, isFetching: false, error });
+          value.seeded = false;
+        }
+        options.onFailure?.(key, error);
         throw error;
       }).finally(() => {
         clearTimeout(timeout);
@@ -461,7 +506,7 @@ export function createQueryClient(options: {
       publish(value, { ...value.raw, isFetching: true, error: null });
       return request;
     },
-    prefetch<T>(key: string, read: () => Promise<T>, fetchOptions?: QueryFetchOptions) {
+    prefetch<T>(key: string, read: QueryRead<T>, fetchOptions?: QueryFetchOptions) {
       const requestEpoch = epoch;
       return schedule(() => {
         if (epoch !== requestEpoch) throw new SdkQueryError('scopeCleared');
@@ -566,5 +611,13 @@ export function createQueryClient(options: {
       };
     },
   };
+  // Kept answers show at once. They carry no time (`updatedAt` 0), so their first use always reads again.
+  for (const [key, kept] of options.seed ?? []) {
+    if (entries.size >= maxEntries) break;
+    const value = entry(key);
+    if (kept.rows) value.rows = kept.rows;
+    value.seeded = true;
+    publish(value, { ...EMPTY, data: kept.data, hasData: true });
+  }
   return client;
 }

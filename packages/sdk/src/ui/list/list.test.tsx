@@ -2114,6 +2114,34 @@ test('crumb: the open item adds its leaf to the top bar title in every open mode
   assert.equal(last(), null, 'a null crumbLabel adds no leaf');
 });
 
+test('read ahead: the record under the cursor at once, its J/K neighbours, a hovered row; never a disabled row', async () => {
+  const asks: Array<[string, string, string | null | undefined]> = [];
+  const runtime = runtimeWith({ ui: { prefetchRecord: (key: string, hint?: { intent: string; title?: string | null }) => {
+    asks.push([key, hint?.intent ?? 'none', hint?.title]);
+  } } } as Partial<NotisRuntime>);
+  const records = TICKETS.map((ticket) => ({ ...ticket, record_key: `rec-${ticket.id}` }));
+  await mount(<NotisProvider runtime={runtime}>{list({ items: records, isDisabled: (t) => t.id === 'c' })}</NotisProvider>);
+  assert.equal(asks.length, 0, 'nothing before a cursor');
+  await press('j');
+  assert.deepEqual(asks, [['rec-a', 'cursor', 'Ticket A'], ['rec-b', 'neighbour', 'Ticket B']], 'the row\'s record_key by default, with its title');
+  asks.length = 0;
+  await press('j');
+  assert.deepEqual(asks, [['rec-b', 'cursor', 'Ticket B'], ['rec-a', 'neighbour', 'Ticket A']], 'a disabled neighbour is not read');
+  asks.length = 0;
+  await act(async () => {
+    q('[data-nui-item="d"]')!.dispatchEvent(new dom.window.MouseEvent('pointerover', { bubbles: true, relatedTarget: doc.body }));
+  });
+  assert.deepEqual(asks, [['rec-d', 'hover', 'Ticket D']]);
+
+  asks.length = 0;
+  await mount(<NotisProvider runtime={runtime}>{list({ items: records, prefetchKey: false })}</NotisProvider>);
+  await press('j');
+  assert.equal(asks.length, 0, 'prefetchKey false reads nothing ahead');
+  await mount(<NotisProvider runtime={runtime}>{list({ prefetchKey: (t) => `own-${t.id}` })}</NotisProvider>);
+  await press('j');
+  assert.deepEqual(asks.map(([key]) => key), ['own-a', 'own-b'], 'a custom prefetchKey names the record');
+});
+
 test('crumb: a second ListReader with nothing open never clears the first one\'s leaf (R2-01)', async () => {
   const leaves: Array<{ label: string; onBack?: () => void } | null> = [];
   const runtime = runtimeWith({ setTopBarTitleLeaf: (leaf: { label: string; onBack?: () => void } | null) => { leaves.push(leaf); } });

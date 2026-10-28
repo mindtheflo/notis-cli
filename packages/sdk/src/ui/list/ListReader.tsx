@@ -38,6 +38,8 @@ import { useTopBarTitleLeaf } from '../../hooks/useTopBarTitleLeaf';
 import { useMarqueeSelection } from '../../hooks/useMarqueeSelection';
 import { MultiSelectDragOverlay } from '../../components/MultiSelectDragOverlay';
 import { writeViewParams } from '../../hooks/useViewParams';
+import { beginWait, cancelWait, endWaitWhenContent } from '../../perf';
+import type { RecordPrefetchHint } from '../../runtime';
 import {
   DEFAULT_KEYMAP, SHELL_WORDS, actionErrorReason, isWords, keyList, toWords, w, type ActionOption, type ActionRef,
   type KeySpec, type Words,
@@ -329,6 +331,12 @@ export interface ListReaderProps<T> {
   isPending?: (item: T) => boolean;
   /** This item cannot be opened, selected, dragged or acted on. */
   isDisabled?: (item: T) => boolean;
+  /**
+   * The record a row opens, read ahead so the open paints at once: the cursor row's at once, its neighbours' soon
+   * after, a hovered row's after a short pause. Default the item's `recordKey` or `record_key`; false turns it off.
+   * The host reads ahead only where the Space opens its records as document pages.
+   */
+  prefetchKey?: false | ((item: T) => string | null | undefined);
   /** Group headings fold their rows away. Default false. */
   collapsible?: boolean;
   /** Controlled folded group ids; pair with `onCollapsedChange`. */
@@ -453,6 +461,16 @@ export function rankActions<A extends { id: string; key?: KeySpec; tone?: string
 
 /** How many `readerActions` the reader bar shows; the rest fold into More. */
 const READER_ACTIONS_MAX = 3;
+
+/** The least distance before the end of the list at which the next page is asked for. */
+export const LOAD_AHEAD_MIN_PX = 240;
+
+/** The default `prefetchKey`: the item's `recordKey` or `record_key`, when it is a string. */
+function defaultPrefetchKey<T>(item: T): string | null {
+  const record = item as { recordKey?: unknown; record_key?: unknown } | null;
+  const key = record?.recordKey ?? record?.record_key;
+  return typeof key === 'string' && key ? key : null;
+}
 
 function defaultGetId<T>(item: T): string {
   const id = (item as { id?: unknown } | null)?.id;
@@ -707,6 +725,7 @@ function ListReaderInner<T>({
   selected: controlledSelected, onSelectedChange, afterAction = 'clear', draggable, onDragStart, loading = false,
   hasMore = false, onLoadMore, loadingMore = false, isPending, isDisabled, collapsible = false,
   collapsed: controlledCollapsed, onCollapsedChange, groupCounts = true, apiRef, items: naturalItems, reorder, board,
+  prefetchKey = defaultPrefetchKey,
 }: ListReaderProps<T>) {
   const t = useT();
   const labelled = useLabelValue();
@@ -908,6 +927,10 @@ function ListReaderInner<T>({
     const { onOpen: notify, byId: map } = latest.current;
     notify?.(shownId === null ? null : map.get(shownId) ?? lastShown.current?.item ?? null);
   }, [latest, missing, openId, openItem, reader, shownId]);
+  // The open ends its wait on the first frame the reader shows it without a skeleton.
+  useEffect(() => {
+    if (shownId !== null) endWaitWhenContent('notis:record-open', readerRef.current);
+  }, [shownId]);
 
   /**
    * Opens `id` (null closes). Returns false when it did not: the item is disabled, or the page kept its open item
@@ -924,8 +947,11 @@ function ListReaderInner<T>({
     }
     const kept = latest.current.openId;
     if (id === kept) return true;
+    // Timed from the key press or click until the reader shows the item (perf.ts).
+    if (id !== null) beginWait('notis:record-open');
     // The page kept its open item (onOpenChange refused): the cursor goes back to it, if the list still holds it.
     if (!setOpenId(id, !!options.quiet, !!options.noStep)) {
+      if (id !== null) cancelWait('notis:record-open');
       if (kept !== null && latest.current.ids.includes(kept)) setCursor(kept);
       return false;
     }
@@ -1174,6 +1200,26 @@ function ListReaderInner<T>({
     onReachEnd: hasMore && onLoadMore ? loadMore : undefined, grid: layout === 'tiles',
     board: boardOn ? laneIds : undefined, onTravel: (direction, to) => sayTravel(direction, to),
   });
+
+  // ---- read ahead: the record of the cursor row at once, its J/K neighbours soon after, a hovered row after a pause ----
+  const prefetchRecord = runtime?.ui?.prefetchRecord;
+  const prefetchRef = useLatest({ prefetchKey, prefetchRecord, crumbLabel });
+  const readAhead = useCallback((id: string | undefined, intent: RecordPrefetchHint['intent']) => {
+    const { prefetchKey: keyOf, prefetchRecord: read, crumbLabel: titleOf } = prefetchRef.current;
+    const item = id === undefined ? undefined : latest.current.byId.get(id);
+    if (!read || keyOf === false || item === undefined || latest.current.disabledIds.has(id!)) return;
+    const recordKey = keyOf(item);
+    if (recordKey) read(recordKey, { intent, title: titleOf(item) });
+  }, [latest, prefetchRef]);
+  useEffect(() => {
+    if (cursor === null || !prefetchRecord) return;
+    readAhead(cursor, 'cursor');
+    const list = latest.current.navIds;
+    const at = list.indexOf(cursor);
+    if (at === -1) return;
+    readAhead(list[at + 1], 'neighbour');
+    readAhead(list[at - 1], 'neighbour');
+  }, [cursor, latest, prefetchRecord, readAhead]);
 
   // ---- drag to select: a marquee from empty space selects the rows under it (Manager `enableDragSelect`) ----
   const marquee = useMarqueeSelection({
@@ -1570,6 +1616,7 @@ function ListReaderInner<T>({
     const href = disabled ? null : hrefOf(item, id);
     const own = {
       ...props,
+      ...(prefetchRecord && prefetchKey !== false ? { onPointerEnter: () => readAhead(id, 'hover') } : {}),
       ...(href ? { [ITEM_HREF_ATTRIBUTE]: href } : {}),
       ...(pending ? { 'data-pending': '', 'aria-busy': true } : {}),
       ...(disabled ? { 'data-disabled': '', 'aria-disabled': true } : {}),
@@ -1664,14 +1711,16 @@ function ListReaderInner<T>({
     });
   }
 
-  // ---- load more: a button at the end, pressed for you as it scrolls into view ----
+  // ---- load more: a button at the end, pressed for you a screen before it scrolls into view ----
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!hasMore || !onLoadMore || !sentinel || typeof IntersectionObserver === 'undefined') return undefined;
+    // The next page is asked for one list height ahead (at least LOAD_AHEAD_MIN_PX), so it is there when reached.
+    const ahead = Math.max(LOAD_AHEAD_MIN_PX, scrollRef.current?.clientHeight ?? 0);
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) loadMore();
-    }, { root: scrollRef.current, rootMargin: '0px 0px 240px 0px' });
+    }, { root: scrollRef.current, rootMargin: `0px 0px ${ahead}px 0px` });
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [hasMore, onLoadMore, loadMore, items.length]);

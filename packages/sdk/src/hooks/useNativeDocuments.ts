@@ -44,27 +44,33 @@ export function useNativeDocuments(binding: string, options: {
     return () => { cancelled = true; setLive(false); stop?.(); };
   }, [runtime, binding, follow]);
   const locale = runtime?.context?.locale === 'fr' ? 'fr' : 'en';
-  const query = useQuery(['native-documents', binding, options.query ?? {}, Boolean(options.fetchAll), locale], async () => {
+  const query = useQuery<{ documents: DocumentRecord[]; schemaRevision: number }>(['native-documents', binding, options.query ?? {}, Boolean(options.fetchAll), locale], async (publish) => {
     const action = actionFor(runtime, binding, 'query');
     if (options.query?.mode && !['rows', 'search'].includes(options.query.mode)) throw new Error('Use useActionQuery for counts and aggregates.');
     const rows: unknown[] = [];
     let offset = options.query?.offset ?? 0;
     let revision: number | undefined;
+    const answerOf = (list: unknown[]) => {
+      const answer = { documents: list.map((row) => normalizeDocumentRecord(row, { locale })), schemaRevision: revision! };
+      // The flattened documents drop property types and option ids; writes shown at once need them.
+      Object.defineProperty(answer, NATIVE_ROWS, { value: list, enumerable: false });
+      return answer;
+    };
     while (true) {
       const result = await runtime!.callAction!<{ rows: unknown[]; schema_revision: number; has_more: boolean; next_offset: number | null }>(
         action, { request: { ...options.query, offset } }, { readOnly: true, dedupe: true, schemaRevision: revision });
       if (!result || !Array.isArray(result.rows) || !Number.isSafeInteger(result.schema_revision)) throw new SdkQueryError('responseIncomplete', 'Native query must return rows and a safe integer schema_revision.');
       if (revision !== undefined && revision !== result.schema_revision) throw new SdkQueryError('schemaChanged');
+      const first = revision === undefined;
       revision = result.schema_revision;
       rows.push(...result.rows);
       if (!options.fetchAll || !result.has_more) break;
       if (typeof result.next_offset !== 'number' || result.next_offset <= offset) throw new SdkQueryError('responseIncomplete', 'Native query pagination did not advance next_offset.');
+      // Every page is asked for: the first one shows at once (still fetching) while the next ones load.
+      if (first) publish?.(answerOf(rows.slice()));
       offset = result.next_offset;
     }
-    const answer = { documents: rows.map((row) => normalizeDocumentRecord(row, { locale })), schemaRevision: revision! };
-    // The flattened documents drop property types and option ids; writes shown at once need them.
-    Object.defineProperty(answer, NATIVE_ROWS, { value: rows, enumerable: false });
-    return answer;
+    return answerOf(rows);
   }, { readOnly: true, enabled: options.enabled, staleTimeMs: options.staleTimeMs,
     rows: { binding, at: 'documents', shape: 'document', query: options.query ?? {} } });
   return { ...query, documents: query.data?.documents ?? EMPTY_DOCUMENTS, schemaRevision: query.data?.schemaRevision, live };

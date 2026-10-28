@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNotisRuntime } from '../provider';
 import type { NotisRuntime } from '../runtime';
-import { useQuery, type UseQueryResult } from './useQuery';
+import { queryKey } from '../queryCache';
+import { useQuery, useQueryClient, type UseQueryResult } from './useQuery';
 import { SdkQueryError } from '../queryErrors';
 import type { SpaceDefinition, SpaceShownOptions, SpaceShownResult, SpaceViewParam } from '../space';
 import { isViewDate, isViewPeriod } from '../viewPeriod';
@@ -139,6 +140,9 @@ export interface UseShownOptions extends SpaceShownOptions {
 /** The most pages `useShown({ allPages: true })` reads. */
 export const SHOWN_ALL_PAGES_MAX = 50;
 const SHOWN_ALL_PAGES_SIZE = 200;
+/** The most other tabs (enum values) of a shown list read ahead, and how long after it shows. */
+export const SHOWN_SIBLING_TABS_MAX = 4;
+const SHOWN_SIBLING_TABS_DELAY_MS = 300;
 
 /** True when a declared list has an authorized host reader (Editor or exact record Site). */
 export function useShownAvailable(name: string): boolean {
@@ -167,8 +171,8 @@ export function useShown<TRow = Record<string, unknown>>(name: string, options: 
   // already shown instead of reading the same list again. The read itself always sends every param.
   const keyed = useMemo(() => reads ? Object.fromEntries(Object.entries(params).filter(([param]) => reads.includes(param))) : params,
     [params, reads]);
-  const result = useQuery(['shown', name, keyed, sorts ?? null, pageSize ?? null, offset ?? null, includeContent ?? false,
-    allPages], async () => {
+  const result = useQuery<SpaceShownResult & { rows: TRow[] }>(['shown', name, keyed, sorts ?? null, pageSize ?? null, offset ?? null, includeContent ?? false,
+    allPages], async (publish) => {
     if (!runtime?.shown) throw new SdkQueryError('listUnavailable');
     if (!allPages) {
       return runtime.shown<SpaceShownResult & { rows: TRow[] }>(name, params as Record<string, unknown>,
@@ -184,12 +188,42 @@ export function useShown<TRow = Record<string, unknown>>(name: string, options: 
       const pageRows = Array.isArray(answer?.rows) ? answer.rows : [];
       rows.push(...pageRows);
       if (pageRows.length < size) break;
+      // The first page shows at once (still fetching) while the next ones load.
+      if (page === 0) publish?.({ ...answer, rows: rows.slice() } as SpaceShownResult & { rows: TRow[] });
     }
     const merged = { ...(first as SpaceShownResult & { rows: TRow[] }), rows } as SpaceShownResult & { rows: TRow[] };
     return merged;
   }, { readOnly: true, enabled: available && !missing.length && options.enabled !== false, staleTimeMs: options.staleTimeMs,
     // The list's filter stays on the server: only its sorts are known here.
     rows: list && 'database' in list ? { binding: list.database, at: 'rows', list: name, query: { sorts } } : undefined });
+  // The other tabs of this list (the values of an enum param its filter reads) are read once it shows, so switching
+  // tab shows its rows at once. One page lists only, a few values, in the host's background queue.
+  const { prefetch } = useQueryClient();
+  const settled = result.hasData && !result.isPreviousData && !result.isFetching && !result.error;
+  const siblingsKey = settled && !allPages && reads && list && 'database' in list ? queryKey([name, keyed, sorts ?? null, pageSize ?? null,
+    offset ?? null, includeContent ?? false]) : null;
+  const siblingRead = useRef({ params, keyed });
+  siblingRead.current = { params, keyed };
+  useEffect(() => {
+    if (!siblingsKey || !runtime?.shown || !reads || !list || !('database' in list)) return undefined;
+    const declared = runtime.space?.params ?? {};
+    const tab = reads.find((param) => declared[param]?.type === 'enum' && (declared[param]?.values?.length ?? 0) > 1);
+    if (!tab) return undefined;
+    const { params: current, keyed: currentKeyed } = siblingRead.current;
+    const values = declared[tab]!.values!.filter((value) => value !== current[tab]).slice(0, SHOWN_SIBLING_TABS_MAX);
+    const timer = setTimeout(() => {
+      for (const value of values) {
+        const nextParams = { ...current, [tab]: value };
+        void prefetch(['shown', name, { ...currentKeyed, [tab]: value }, sorts ?? null, pageSize ?? null, offset ?? null,
+          includeContent ?? false, false], () => runtime.shown!<SpaceShownResult & { rows: TRow[] }>(name, nextParams as Record<string, unknown>,
+          { sorts, pageSize, offset, includeContent }), { readOnly: true, staleTimeMs: options.staleTimeMs,
+          rows: { binding: list.database, at: 'rows', list: name, query: { sorts } } }).catch(() => {});
+      }
+    }, SHOWN_SIBLING_TABS_DELAY_MS);
+    return () => clearTimeout(timer);
+    // The key names every input of the reads; the latest params are read from the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siblingsKey, runtime, prefetch]);
   const unavailable = runtime !== null && !available && options.enabled !== false;
   const error = useMemo(() => unavailable ? new SdkQueryError('listUnavailable', `The list "${name}" is unavailable in this view: declare it in \`shows\` `
     + `with a database, or gate it on useShownAvailable("${name}").`, runtime?.context?.locale) : null, [unavailable, name, runtime?.context?.locale]);
