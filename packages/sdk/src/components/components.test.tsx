@@ -190,6 +190,88 @@ test('ViewSkeleton repeats a captured row until the visible pane is filled (VIEW
   });
 });
 
+test('ViewSkeleton stretches a captured frame of panes to the visible pane and clips what lay below (VIEW-053)', async () => {
+  // A list beside its detail, captured in a 900 px window; the detail pane's content ran on to 1196 px.
+  const frame = { schema: 'notis-space-skeleton/v1', sourceHash: 'a'.repeat(64), regions: { main: { '1440': { en: { height: 1196, bones: [
+    [0, 0, 66.67, 900, 0, 1], [0, 44, 66.6, 50, 0, 1], [66.67, 0, 33.33, 900, 0, 1], [68.89, 844, 28.89, 352, 12, 1], [70, 120, 20, 16, 4, 0],
+  ] } } } } };
+  const heights = () => bones().map((bone) => bone.style.height);
+  await laidOut({ width: 1600, pane: 982 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(frame)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '982px', 'the pane, not the capture window or the content below it');
+    assert.equal(region().style.overflow, 'hidden');
+    assert.deepEqual(heights(), ['982px', '50px', '982px', '352px', '16px'], 'only the panes stretch');
+  });
+  const layout = { width: 1600, pane: 700 };
+  await laidOut(layout, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(frame)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '700px', 'a shorter pane shrinks the frame instead of running past it');
+    assert.deepEqual(heights().slice(0, 3), ['700px', '50px', '700px']);
+    layout.pane = 820;
+    await act(async () => {
+      region().parentElement!.dispatchEvent(new dom.window.Event('scroll'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    assert.equal(region().style.height, '820px', 'scrolling shows more of the pane and the frame follows');
+  });
+  await laidOut({ width: 1600, pane: 80 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(frame)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '120px', 'a sliver of pane still shows the frame at its 120 px minimum');
+  });
+  await laidOut({ width: 1600, pane: 0 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(frame)}><ViewSkeleton /></NotisProvider>);
+    assert.equal(region().style.height, '1196px', 'unmeasured: the captured height');
+  });
+  // One box at the top of a longer page is content, not a frame.
+  const page = { ...frame, regions: { main: { '1440': { en: { height: 1400, bones: [[5, 0, 90, 400, 12, 1], [5, 420, 90, 16, 4, 0]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(page)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '1400px');
+    assert.equal(heights()[0], '400px');
+  });
+  // Nor is one inset card nearly as wide as the page: a frame across the width is panes side by side.
+  const card = { ...frame, regions: { main: { '1440': { en: { height: 1400, bones: [[1.1, 0, 97.8, 400, 12, 1], [5, 420, 90, 16, 4, 0]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(card)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '1400px');
+    assert.equal(heights()[0], '400px');
+  });
+  // Nor is a wide card with a card nested in it, both ending on one line above the capture bottom.
+  const nested = { ...frame, regions: { main: { '1440': { en: { height: 800, bones: [[1, 0, 97, 400, 12, 1], [2, 0, 40, 400, 8, 2]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(nested)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '800px');
+    assert.deepEqual(heights(), ['400px', '400px']);
+  });
+  // Nor is a rounded card that ends the capture; a phone's one square-cornered pane ending it is a frame.
+  const lastCard = { ...frame, regions: { main: { '1440': { en: { height: 400, bones: [[1, 0, 97, 400, 12, 1]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(lastCard)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '400px');
+    assert.deepEqual(heights(), ['400px']);
+  });
+  const phonePane = { ...frame, regions: { main: { '1440': { en: { height: 700, bones: [[0, 0, 100, 700, 0, 1], [4, 20, 60, 16, 4, 0]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(phonePane)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '900px');
+    assert.deepEqual(heights(), ['900px', '16px']);
+  });
+  // Nor is a row of stat tiles across the width with the page going on below it.
+  const tiles = { ...frame, regions: { main: { '1440': { en: { height: 1400, bones: [[0, 0, 49, 140, 8, 1], [51, 0, 49, 140, 8, 1], [0, 160, 100, 600, 12, 2]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(tiles)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '1400px');
+    assert.deepEqual(heights(), ['140px', '140px', '600px']);
+  });
+  // A divider on the panes' own bottom edge is not content below them.
+  const edged = { ...frame, regions: { main: { '1440': { en: { height: 800, bones: [[0, 0, 50, 600, 0, 1], [50, 0, 50, 600, 0, 1], [0, 599, 50, 1, 0, 3]] } } } } };
+  await laidOut({ width: 1600, pane: 900 }, async () => {
+    await mount(<NotisProvider runtime={withSkeleton(edged)}>{inPane(<ViewSkeleton />)}</NotisProvider>);
+    assert.equal(region().style.height, '900px');
+    assert.deepEqual(heights().slice(0, 2), ['900px', '900px']);
+  });
+});
+
 test('ViewSkeleton keeps its variant with no captured region, and ignores a malformed skeleton (VIEW-044)', async () => {
   const isVariant = (key: string) => {
     const root = region();

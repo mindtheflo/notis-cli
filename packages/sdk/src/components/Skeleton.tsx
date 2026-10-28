@@ -1,6 +1,6 @@
 import { useRef, useState, type CSSProperties } from 'react';
 import { useNotisRuntime } from '../provider';
-import { isNotisSpaceSkeleton, pickSkeletonEntry, type NotisSpaceSkeleton, type SkeletonBone } from '../skeleton';
+import { isNotisSpaceSkeleton, pickSkeletonEntry, type NotisSkeletonEntry, type NotisSpaceSkeleton, type SkeletonBone } from '../skeleton';
 import { useIsoLayoutEffect } from '../ui/util';
 import { pick, type Locale, type Words } from '../words/types';
 
@@ -25,6 +25,11 @@ const MAX_ROW_COPIES = 200;
 const MAX_ROW_ELEMENTS = 4000;
 /** Under this own width the region draws its 390 px capture, else its 1440 px one. */
 const NARROW_UNDER = 800;
+/** Shortest pane a captured frame stretches, and the line tolerance of its edges, in px. */
+const FRAME_MIN = 120;
+const FRAME_EDGE = 2;
+/** How far, in percent of the width, two panes side by side may overlap at their shared edge. */
+const FRAME_SEAM = 1;
 
 /** Skeletons already checked, so many regions on one page check a shared file once. */
 const checked = new WeakMap<object, boolean>();
@@ -40,6 +45,46 @@ function boneStyle([x, y, w, h, r, t]: SkeletonBone): CSSProperties {
     ...(t === 2 ? { boxShadow: BONE_OUTLINE } : { background: BONE_FILL[t] }) };
 }
 
+const isPane = ([, y, , h, , t]: SkeletonBone) => (t === 1 || t === 2) && y <= FRAME_EDGE && h >= FRAME_MIN;
+const bottomOf = (bone: SkeletonBone) => bone[1] + bone[3];
+
+/**
+ * The bottom of the captured app frame, else null. A frame is panes that start at the region top and end on one line,
+ * two or more side by side across the width (a list beside its detail) with nothing starting below them, or
+ * square-cornered ones across the width ending at the bottom of the capture. They were measured at the capture's window height, so the drawing stretches them to
+ * the visible pane instead.
+ */
+const frames = new WeakMap<NotisSkeletonEntry, number | null>();
+function frameBottomOf(entry: NotisSkeletonEntry): number | null {
+  if (!frames.has(entry)) frames.set(entry, findFrameBottom(entry));
+  return frames.get(entry) ?? null;
+}
+
+function findFrameBottom({ height, bones, rows }: NotisSkeletonEntry): number | null {
+  const panes = bones.filter(isPane);
+  let frame: number | null = null;
+  for (const bottom of new Set(panes.map(bottomOf))) {
+    const line = panes.filter((pane) => Math.abs(bottomOf(pane) - bottom) <= FRAME_EDGE);
+    const spans = line.map(([x, , w]) => [x, x + w] as const).sort((a, b) => a[0] - b[0]);
+    // Side by side counts panes that start where the ones before them end; a card nested in a pane adds none.
+    let covered = 0, reach = 0, sideBySide = 0;
+    for (const [start, end] of spans) {
+      if (start >= reach - FRAME_SEAM) sideBySide += 1;
+      covered += Math.max(0, end - Math.max(start, reach));
+      reach = Math.max(reach, end);
+    }
+    // One wide card alone (or with cards nested in it) is content, not a frame: across the width it takes panes side by
+    // side. A row of tiles with the page going on below it is content too (a divider on the panes' own bottom edge is
+    // not below them). At the bottom of the capture, square-cornered panes across the whole width are the app's own
+    // (a phone shows one pane at a time); a rounded card there is still just the last content.
+    const edge = Math.max(...line.map(bottomOf));
+    const below = bones.some((bone) => bone[1] >= edge) || (rows ?? []).some((row) => row.y >= edge);
+    const atCaptureBottom = Math.abs(bottom - height) <= FRAME_EDGE && covered >= 95 && line.every((pane) => pane[4] === 0);
+    if ((sideBySide > 1 && covered >= 95 && !below) || atCaptureBottom) frame = Math.max(frame ?? 0, bottom);
+  }
+  return frame;
+}
+
 /** The nearest ancestor that scrolls vertically, else null. */
 function scrollParentOf(node: HTMLElement): HTMLElement | null {
   const view = node.ownerDocument.defaultView;
@@ -51,9 +96,8 @@ function scrollParentOf(node: HTMLElement): HTMLElement | null {
 }
 
 /** The visible height from the box top to the bottom of its scroll parent (or the viewport), else the box's own height. */
-function visibleHeightOf(node: HTMLElement): number {
+function visibleHeightOf(node: HTMLElement, parent = scrollParentOf(node)): number {
   const top = node.getBoundingClientRect().top;
-  const parent = scrollParentOf(node);
   if (parent) return parent.clientHeight - Math.max(0, top - parent.getBoundingClientRect().top);
   const viewport = node.ownerDocument.documentElement.clientHeight;
   if (viewport > 0) return viewport - Math.max(0, top);
@@ -84,17 +128,30 @@ export function ViewSkeleton({ variant = 'table', rows = 5, label, locale, skele
   useIsoLayoutEffect(() => {
     const root = rootRef.current;
     if (!region || !root) return;
+    const parent = scrollParentOf(root);
     const measure = () => {
       if (root.clientWidth > 0) setBoxWidth(root.clientWidth);
-      setPaneHeight(Math.max(0, Math.round(visibleHeightOf(root))));
+      setPaneHeight(Math.max(0, Math.round(visibleHeightOf(root, parent))));
     };
     measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(root);
-    const parent = scrollParentOf(root);
-    if (parent) observer.observe(parent);
-    return () => observer.disconnect();
+    // Scrolling changes how much of the pane a region lower on the page shows; read at most once a frame.
+    const view = root.ownerDocument.defaultView;
+    let frame = 0;
+    const onScroll = () => {
+      if (!view?.requestAnimationFrame) { measure(); return; }
+      if (!frame) frame = view.requestAnimationFrame(() => { frame = 0; measure(); });
+    };
+    root.ownerDocument.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    view?.addEventListener('resize', onScroll);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(root);
+    if (parent) observer?.observe(parent);
+    return () => {
+      root.ownerDocument.removeEventListener('scroll', onScroll, { capture: true });
+      view?.removeEventListener('resize', onScroll);
+      if (frame) view?.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [region]);
 
   const width = boxWidth ?? (typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1440);
@@ -107,10 +164,15 @@ export function ViewSkeleton({ variant = 'table', rows = 5, label, locale, skele
     const budget = Math.floor(MAX_ROW_ELEMENTS / Math.max(1, repeats.reduce((sum, row) => sum + Math.max(1, row.bones.length), 0)));
     const copies = repeats.map((row) => Math.min(MAX_ROW_COPIES, Math.max(1, budget),
       Math.max(1, Math.ceil((paneHeight - row.y) / row.h))));
-    const height = repeats.reduce((most, row, index) => Math.max(most, row.y + copies[index] * row.h), entry.height);
+    // A captured frame fills the visible pane: its panes end at the pane bottom and what lay below is clipped.
+    const frame = paneHeight > 0 ? frameBottomOf(entry) : null;
+    const height = frame !== null ? Math.max(FRAME_MIN, paneHeight)
+      : repeats.reduce((most, row, index) => Math.max(most, row.y + copies[index] * row.h), entry.height);
+    const drawn = (bone: SkeletonBone): SkeletonBone => frame !== null && isPane(bone)
+      && Math.abs(bottomOf(bone) - frame) <= FRAME_EDGE ? [bone[0], bone[1], bone[2], height - bone[1], bone[4], bone[5]] : bone;
     return <div ref={rootRef} {...status}
       style={{ position: 'relative', width: '100%', boxSizing: 'border-box', height, overflow: 'hidden' }}>
-      {entry.bones.map((bone, index) => <span key={index} aria-hidden="true" data-notis-bone={bone[5]} style={boneStyle(bone)} />)}
+      {entry.bones.map((bone, index) => <span key={index} aria-hidden="true" data-notis-bone={bone[5]} style={boneStyle(drawn(bone))} />)}
       {repeats.map((row, rowIndex) => Array.from({ length: copies[rowIndex] }, (_, copy) =>
         <div key={`${rowIndex}:${copy}`} aria-hidden="true" data-notis-bone-row={rowIndex}
           style={{ position: 'absolute', left: 0, right: 0, top: row.y + copy * row.h, height: row.h }}>
