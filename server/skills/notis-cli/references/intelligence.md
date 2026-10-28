@@ -64,7 +64,7 @@ second mapping. Weekly policy changes therefore require no skill edits.
 
 ## Modalities, product assertions and provenance
 
-Image, speech, video, embedding and provider-research engines are capabilities,
+Image, speech, embedding and provider-research engines are capabilities,
 not interchangeable text-reasoning levels. Skills discover the current native
 capability and let its backend select the engine. External scripts requiring an
 exact provider-specific identifier must resolve current supported configuration
