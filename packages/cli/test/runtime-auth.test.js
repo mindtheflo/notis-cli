@@ -60,7 +60,8 @@ test('loadConfig still reads a well-formed config file', async () => {
 
   assert.equal(config.current_profile, 'work');
   assert.equal(profiles.getProfile(config, 'work').oauth_access_token, 'token-123');
-  assert.equal(profiles.getApiBase(config, 'work'), 'https://api-beta.notis.ai');
+  assert.equal(profiles.getProfile(config, 'work').api_base, 'https://api-beta.notis.ai');
+  assert.equal(profiles.getApiBase(config, 'work'), 'https://api-nightly.notis.ai');
 });
 
 // A credential the desktop app wrote is not one anything renews now. Keeping it

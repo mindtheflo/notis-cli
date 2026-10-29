@@ -99,11 +99,21 @@ async function withStubServer(handler, run) {
  * Must not be spawnSync: the stub server runs in this process, so blocking the
  * event loop would stop it ever answering the CLI's request.
  */
+// These flow fixtures model a personal terminal. The delegated-context tests
+// exercise the real cloud guard without this process-local preload.
+const PERSONAL_TERMINAL = `data:text/javascript;base64,${Buffer.from(`
+  import fs from 'node:fs';
+  import { syncBuiltinESMExports } from 'node:module';
+  const exists = fs.existsSync;
+  fs.existsSync = path => path === '/vercel/sandbox' ? false : exists(path);
+  syncBuiltinESMExports();
+`).toString('base64')}`;
+
 function runCli(args, { cwd, apiBase }) {
   const fixtureHome = join(cwd, '..', 'cli-home');
   mkdirSync(fixtureHome, { recursive: true });
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, [CLI, ...args, '--api-base', apiBase], {
+    const child = spawn(process.execPath, ['--import', PERSONAL_TERMINAL, CLI, ...args, '--api-base', apiBase], {
       cwd,
       env: {
         ...process.env,

@@ -19,8 +19,11 @@ for (const [name, nativeScript] of nativeScripts) {
       const bundle = validBundle(true);
       const pkg = { ...bundle.packageManifest, type: 'module', files: ['bin', 'config'],
         scripts: { build: 'node -e "process.exit(0)"' } };
-      for (const sub of ['scripts', 'bin', 'config']) mkdirSync(join(dir, sub));
+      for (const sub of ['scripts', 'bin', 'config', 'tmp']) mkdirSync(join(dir, sub));
       writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg));
+      // Match a cloud temp root inside a CommonJS project; the smoke must still
+      // create its own install boundary below this ancestor.
+      writeFileSync(join(dir, 'tmp/package.json'), JSON.stringify({ private: true, type: 'commonjs' }));
       writeFileSync(join(dir, 'release-plan.json'), bundle.planBytes);
       writeFileSync(join(dir, 'scripts/smoke-package.js'), nativeScript);
       writeFileSync(join(dir, 'config/notis_app_boundary_rules.json'), '{}');
@@ -30,8 +33,12 @@ for (const [name, nativeScript] of nativeScripts) {
         encoding: 'utf8', env: { ...process.env, GITHUB_TOKEN: 'must-not-enter-native-smoke', NODE_AUTH_TOKEN: 'must-not-enter-native-smoke',
           NOTIS_HANDOFF_READ_ONLY: 'true', GITHUB_REPOSITORY: 'mindtheflo/notis', NOTIS_ORCHESTRATION_SHA: 'b'.repeat(40),
           GITHUB_RUN_ID: 'fixture-run', GITHUB_JOB: 'fixture', GITHUB_EVENT_NAME: 'api',
+          // Reproduce a configured temp root inside an existing npm project.
+          TMPDIR: join(dir, 'tmp'), TEMP: join(dir, 'tmp'), TMP: join(dir, 'tmp'),
           NPM_CONFIG_REGISTRY: 'http://127.0.0.1:1', NPM_CONFIG_CACHE: join(dir, 'npm-cache') } });
       assert.equal(result.status, 0, result.stderr + result.stdout);
+      assert.deepEqual(JSON.parse(readFileSync(join(dir, 'package.json'))), pkg,
+        'the temporary install must not change its ancestor project');
       const manifest = JSON.parse(readFileSync(join(dir, 'handoff/handoff-manifest.json')));
       const tarball = readFileSync(join(dir, 'handoff/notis-cli.tgz'));
       verifyArtifact({ manifest, tarball, planBytes: readFileSync(join(dir, 'handoff/release-plan.json')) });

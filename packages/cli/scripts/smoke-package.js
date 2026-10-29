@@ -12,7 +12,7 @@
 // Run locally with `npm run smoke`; run in CI before publishing.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +57,10 @@ if (!existsSync(tarballPath)) {
 
 const sandbox = mkdtempSync(join(tmpdir(), 'notis-cli-smoke-'));
 try {
+  // A configured TMPDIR may sit under another npm project. Give this directory
+  // its own package boundary so npm cannot install into an ancestor instead.
+  writeFileSync(join(sandbox, 'package.json'), JSON.stringify({ private: true }));
+
   // 2) Install the tarball in isolation (pulls commander etc. too).
   run('npm', ['install', '--engine-strict', '--no-audit', '--no-fund', '--silent', tarballPath], { cwd: sandbox });
   const installedRoot = join(sandbox, 'node_modules', ...packageName.split('/'));
