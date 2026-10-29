@@ -11,6 +11,7 @@ import { appFilesDigest } from './app-platform.js';
 import { usageError } from './errors.js';
 
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
+const MAX_SHOWN_FIXTURE_CASES=256;
 // Credentialless worker + non-forwarding proxy own the offline boundary.
 // Source shares the Shadow host realm and may call only this fixture origin.
 const HOST_POLICY="default-src 'none'; script-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'self'; frame-src 'none'; frame-ancestors 'self'; form-action 'none'; base-uri 'none'";
@@ -73,8 +74,11 @@ export function createSpaceFixtureEngine(release) {
   const shownCases=fixtures.shown ?? {};
   if(!object(shownCases)) throw usageError('Declare shown fixtures by list name.');
   for(const [name,cases] of Object.entries(shownCases)) {
-    if(!Object.hasOwn(declaredLists,name) || !Array.isArray(cases) || !cases.length || cases.length>100) {
+    if(!Object.hasOwn(declaredLists,name) || !Array.isArray(cases) || !cases.length) {
       throw usageError(`Declare shown fixtures only for lists this view declares with a filter (${name}).`);
+    }
+    if(cases.length>MAX_SHOWN_FIXTURE_CASES) {
+      throw usageError(`Shown fixtures for ${name} contain ${cases.length} cases; the limit is ${MAX_SHOWN_FIXTURE_CASES}.`);
     }
     const previous=[];
     for(const entry of cases) {

@@ -231,3 +231,37 @@ test('a boolean-gated empty-date filter participates in the SDK query cache key'
   const snapshot = spaceHarnessSnapshot(release, capabilities(), createSpaceFixtureEngine(release));
   assert.deepEqual(snapshot.descriptor.space.shows.tasks.params, ['notPlanned']);
 });
+
+test('shown fixtures retain a complete record/status matrix above 100 exact cases', () => {
+  const release = fixture();
+  release.manifest.shows = { notes: { database: 'rows', where: {} } };
+  const cases = Array.from({ length: 34 }, (_, record) => [undefined, 'Draft', 'Done', 'Inbox'].map(status => ({
+    params: { note: `fictional-${record}`, ...(status ? { status } : {}) },
+    result: { rows: [{ title: `Fictional note ${record}`, status: status ?? null }] },
+  }))).flat();
+  release.sourceFiles['cases.json'] = encode({ actions: {}, shown: { notes: cases } });
+  const engine = createSpaceFixtureEngine(release);
+  for (const entry of cases) assert.deepEqual(engine.executeShown('notes', entry.params), entry.result);
+  const changed = engine.executeShown('notes', cases[0].params); changed.rows[0].title = 'Changed';
+  assert.deepEqual(engine.executeShown('notes', cases[0].params), cases[0].result);
+  assert.throws(() => engine.executeShown('notes', { note: 'fictional-0', status: 'unknown' }), /fixture/);
+  assert.throws(() => engine.executeShown('notes', { ...cases[0].params, extra: true }), /fixture/);
+  assert.throws(() => engine.executeShown('unknown', cases[0].params), /does not declare/);
+  release.sourceFiles['cases.json'] = encode({ actions: {}, shown: { notes: [...cases, cases[0]] } });
+  assert.throws(() => createSpaceFixtureEngine(release), /Ambiguous shown fixture/);
+});
+
+test('shown fixture capacity is finite and overflow names the list and limit without its payload', () => {
+  const release = fixture();
+  release.manifest.shows = { notes: { database: 'rows', where: {} } };
+  const cases = Array.from({ length: 256 }, (_, index) => ({ params: { note: index }, result: { rows: [] } }));
+  release.sourceFiles['cases.json'] = encode({ actions: {}, shown: { notes: cases } });
+  assert.deepEqual(createSpaceFixtureEngine(release).executeShown('notes', { note: 255 }), { rows: [] });
+  cases.push({ params: { note: 'private-fixture-value' }, result: { rows: [] } });
+  release.sourceFiles['cases.json'] = encode({ actions: {}, shown: { notes: cases } });
+  assert.throws(() => createSpaceFixtureEngine(release), error => {
+    assert.match(error.message, /notes.*257.*256/);
+    assert.ok(!error.message.includes('private-fixture-value'));
+    return true;
+  });
+});
