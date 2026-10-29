@@ -1,4 +1,6 @@
 import test from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -131,6 +133,10 @@ test('machine output can emit the authorization URL on stderr before login waits
 });
 
 test('a Notis Vercel sandbox never sends the user browser to its private loopback', () => {
+  if (existsSync('/vercel/sandbox') || existsSync('/.dockerenv')) {
+    assert.equal(loopbackReachesTheUsersBrowser({}, undefined, 'darwin'), false,
+      'the real host markers override even a desktop platform hint outside the fixture');
+  }
   assert.equal(
     loopbackReachesTheUsersBrowser(
       {},
@@ -2173,6 +2179,22 @@ function cliMetadataFetch({ withToken = false } = {}) {
   };
 }
 
+// These cases model a personal terminal. Keep filesystem host detection out of
+// that fixture too: env/platform overrides alone cannot hide a real cloud root.
+// Only the two host markers are absent; config files and listener locks use fs.
+async function onPersonalHost(run) {
+  const original = fs.statSync;
+  fs.statSync = (path, ...args) => {
+    if (path === '/vercel/sandbox' || path === '/.dockerenv') {
+      throw Object.assign(new Error('fixture host marker absent'), { code: 'ENOENT' });
+    }
+    return original(path, ...args);
+  };
+  syncBuiltinESMExports();
+  try { return await run(); }
+  finally { fs.statSync = original; syncBuiltinESMExports(); }
+}
+
 function loginRuntime(overrides = {}) {
   return {
     agentMode: false,
@@ -2649,11 +2671,13 @@ test('Windows listener identity reads the Node command line instead of tasklist 
 // The config path is read from the environment at call time, and these flows
 // stay in-flight across awaits, so the sync withConfigFile helper would restore
 // it mid-login.
+// These in-process login cases use the personal-host filesystem fixture too;
+// explicit remote environment markers still select the remote code flow.
 async function withConfigFileAsync(configFile, run) {
   const previous = process.env.NOTIS_CLI_CONFIG_FILE;
   process.env.NOTIS_CLI_CONFIG_FILE = configFile;
   try {
-    return await run();
+    return await onPersonalHost(run);
   } finally {
     if (previous === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
     else process.env.NOTIS_CLI_CONFIG_FILE = previous;
