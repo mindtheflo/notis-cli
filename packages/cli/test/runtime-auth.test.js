@@ -61,7 +61,18 @@ test('loadConfig still reads a well-formed config file', async () => {
   assert.equal(config.current_profile, 'work');
   assert.equal(profiles.getProfile(config, 'work').oauth_access_token, 'token-123');
   assert.equal(profiles.getProfile(config, 'work').api_base, 'https://api-beta.notis.ai');
-  assert.equal(profiles.getApiBase(config, 'work'), 'https://api-nightly.notis.ai');
+  const previousApiBase = process.env.NOTIS_API_BASE;
+  try {
+    delete process.env.NOTIS_API_BASE;
+    assert.equal(profiles.getApiBase(config, 'work'), 'https://api-beta.notis.ai');
+    process.env.NOTIS_API_BASE = 'https://api-nightly.notis.ai';
+    assert.equal(profiles.getApiBase(config, 'work'), 'https://api-nightly.notis.ai');
+    assert.equal(profiles.getApiBase(config, 'work', 'http://localhost:3456'), 'http://localhost:3456');
+    assert.equal(profiles.getProfile(config, 'work').api_base, 'https://api-beta.notis.ai');
+  } finally {
+    if (previousApiBase === undefined) delete process.env.NOTIS_API_BASE;
+    else process.env.NOTIS_API_BASE = previousApiBase;
+  }
 });
 
 // A credential the desktop app wrote is not one anything renews now. Keeping it
