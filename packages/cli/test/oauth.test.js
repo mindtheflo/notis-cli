@@ -1462,12 +1462,13 @@ test('interactive loopback login closes its listener after timeout', async () =>
       profileName: 'default',
       config: normalizeConfig({}),
       config_file: configFile,
-      // This case verifies the local loopback receiver. GitHub Actions sets
-      // CI/GITHUB_ACTIONS, which intentionally selects the remote code handoff
-      // unless the test supplies an explicit local host environment.
+      // This case verifies the local loopback receiver. Explicit browser mode
+      // reaches it even when /vercel/sandbox or /.dockerenv correctly makes
+      // automatic mode choose the code handoff on the test host.
       hostEnvironment: {},
       hostPlatform: 'darwin',
     }, {
+        mode: 'browser',
         browser: false,
         printUrl: true,
         timeoutMs: 20,
