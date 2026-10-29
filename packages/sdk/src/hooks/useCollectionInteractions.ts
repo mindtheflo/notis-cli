@@ -285,6 +285,13 @@ export function useCollectionInteractions<T>(
   );
   const selectableIdsRef = useRef(selectableIds);
   selectableIdsRef.current = selectableIds;
+  // The list as it was when it last held the active item: J/K from an item that left the list go on from its place.
+  const activePlaceRef = useRef<{ id: string; ids: string[] } | null>(null);
+  const droppedActiveIdRef = useRef<string | null>(null);
+  const lastPlace = activePlaceRef.current;
+  if (activeId && (lastPlace?.id !== activeId || lastPlace.ids !== selectableIds) && selectableIds.includes(activeId)) {
+    activePlaceRef.current = { id: activeId, ids: selectableIds };
+  }
 
   const getItemsForIds = useCallback((ids: ReadonlySet<string>) => {
     return itemsRef.current.filter((item) => ids.has(getIdRef.current(item)));
@@ -421,7 +428,17 @@ export function useCollectionInteractions<T>(
     }
     const pruned = new Set(Array.from(selectedIdsRef.current).filter((id) => allowed.has(id)));
     if (!setsEqual(pruned, selectedIdsRef.current)) commitSelection(pruned, 'items-changed');
-    if (activeIdRef.current && !allowed.has(activeIdRef.current)) setActive(null, 'items-changed');
+    const active = activeIdRef.current;
+    if (active && !allowed.has(active)) {
+      // Dropped once: a controller that keeps the item active (still open beside the list) is not told again on
+      // every list change, which would set its state on each render.
+      if (droppedActiveIdRef.current !== active) {
+        droppedActiveIdRef.current = active;
+        setActive(null, 'items-changed');
+      }
+    } else {
+      droppedActiveIdRef.current = null;
+    }
     if (anchorIdRef.current && !allowed.has(anchorIdRef.current)) {
       setAnchor(null, 'items-changed');
     }
@@ -466,6 +483,14 @@ export function useCollectionInteractions<T>(
       items: itemsRef.current,
       orderedIds: ids,
     }) ?? null;
+    const place = activePlaceRef.current;
+    if (!next && current && place?.id === current && !ids.includes(current)) {
+      // The active item left the list (it is still open beside it): the nearest item still listed that way.
+      const present = new Set(ids);
+      const at = place.ids.indexOf(current);
+      const way = forward ? place.ids.slice(at + 1) : place.ids.slice(0, at).reverse();
+      next = way.find((id) => present.has(id)) ?? null;
+    }
     if (!next) {
       const currentIndex = current ? ids.indexOf(current) : -1;
       const nextIndex = currentIndex === -1
