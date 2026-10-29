@@ -1,7 +1,6 @@
 ---
 name: notis-query
 description: Discover native Notis databases and query their records with exact structured filters, current Space authority and view-qualified links.
-feature_flag: spaces
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_DATABASE_*"]
 mcp_references: ["references/database-discovery.md", "references/documents.md", "references/query.md"]
