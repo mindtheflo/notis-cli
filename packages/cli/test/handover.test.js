@@ -29,8 +29,19 @@ function makeRepo() {
   return dir;
 }
 
-function runCli(args, env = {}) {
-  const result = spawnSync(process.execPath, [CLI, ...args], {
+// Only validation fixtures simulate a personal terminal. The real subprocess guard
+// remains in use for delegated-context tests; production has no test override.
+const PERSONAL_TERMINAL = `data:text/javascript;base64,${Buffer.from(`
+  import fs from 'node:fs';
+  import { syncBuiltinESMExports } from 'node:module';
+  const exists = fs.existsSync;
+  fs.existsSync = path => path === '/vercel/sandbox' ? false : exists(path);
+  syncBuiltinESMExports();
+`).toString('base64')}`;
+
+function runCli(args, env = {}, { personalTerminal = false } = {}) {
+  const preload = personalTerminal ? ['--import', PERSONAL_TERMINAL] : [];
+  const result = spawnSync(process.execPath, [...preload, CLI, ...args], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -38,6 +49,7 @@ function runCli(args, env = {}) {
       NOTIS_JWT: 'test-token',
       NOTIS_OUTPUT: 'json',
       NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1',
+      ...(personalTerminal ? { NOTIS_AGENT: '', NOTIS_DELEGATED_CONTEXT: '' } : {}),
       ...env,
     },
   });
@@ -48,6 +60,10 @@ function runCli(args, env = {}) {
     parsed = null;
   }
   return { ...result, parsed };
+}
+
+function runPersonalCli(args) {
+  return runCli(args, {}, { personalTerminal: true });
 }
 
 test('handover commands are registered under their own group', () => {
@@ -100,6 +116,7 @@ test('handover status reads threads through the same tool', () => {
 test('a delegated context is detected from each marker Notis sets', () => {
   const never = () => false;
   assert.equal(delegatedContextReason({}, { fileExists: never }), null);
+  assert.match(delegatedContextReason({}, { fileExists: path => path === '/vercel/sandbox' }), /Notis cloud computer/);
   assert.match(
     delegatedContextReason({ NOTIS_DELEGATED_CONTEXT: '1' }, { fileExists: never }),
     /delegated coding agent/,
@@ -122,25 +139,25 @@ test('handover start refuses inside a Notis-delegated run', () => {
 });
 
 test('handover start validates every choice and the branch mode before touching git', () => {
-  const badRoute = runCli(['handover', 'start', 'x', '--route', 'gpt5']);
+  const badRoute = runPersonalCli(['handover', 'start', 'x', '--route', 'gpt5']);
   assert.equal(badRoute.parsed.error.code, 'usage_error');
   assert.match(badRoute.parsed.error.message, /--route must be one of: notis, codex, claude, auto$/);
 
-  const badIntelligence = runCli(['handover', 'start', 'x', '--intelligence', 'ultra']);
+  const badIntelligence = runPersonalCli(['handover', 'start', 'x', '--intelligence', 'ultra']);
   assert.equal(badIntelligence.parsed.error.code, 'usage_error');
   assert.match(badIntelligence.parsed.error.message, /--intelligence must be one of: low, medium, high, auto$/);
 
-  const badSpeed = runCli(['handover', 'start', 'x', '--speed', 'turbo']);
+  const badSpeed = runPersonalCli(['handover', 'start', 'x', '--speed', 'turbo']);
   assert.equal(badSpeed.parsed.error.code, 'usage_error');
   assert.match(badSpeed.parsed.error.message, /--speed must be one of: normal, priority, flex$/);
 
-  const badMode = runCli(['handover', 'start', 'x', '--branch-mode', 'sideways']);
+  const badMode = runPersonalCli(['handover', 'start', 'x', '--branch-mode', 'sideways']);
   assert.equal(badMode.parsed.error.code, 'usage_error');
   assert.match(badMode.parsed.error.message, /--branch-mode must be one of/);
 });
 
 test('handover start makes the caller name the agent, intelligence and speed', () => {
-  const none = runCli(['handover', 'start', 'x']);
+  const none = runPersonalCli(['handover', 'start', 'x']);
   assert.equal(none.parsed.error.code, 'usage_error');
   assert.deepEqual(none.parsed.error.details.missing, ['--route', '--intelligence', '--speed']);
   // One refusal lists every missing choice with its values, and asks for the
@@ -150,14 +167,14 @@ test('handover start makes the caller name the agent, intelligence and speed', (
   assert.match(none.parsed.error.message, /--intelligence low\|medium\|high\|auto/);
   assert.match(none.parsed.error.message, /--speed normal\|priority\|flex/);
 
-  const some = runCli(['handover', 'start', 'x', '--route', 'codex']);
+  const some = runPersonalCli(['handover', 'start', 'x', '--route', 'codex']);
   assert.deepEqual(some.parsed.error.details.missing, ['--intelligence', '--speed']);
 });
 
 test('flex is refused unless Notis runs it, since Codex and Claude have no flex speed', () => {
   // auto too: Notis may pick Codex or Claude, which would then inherit flex.
   for (const route of ['codex', 'claude', 'claude_cloud', 'auto']) {
-    const { parsed } = runCli(['handover', 'start', 'x', '--route', route, '--intelligence', 'medium', '--speed', 'flex']);
+    const { parsed } = runPersonalCli(['handover', 'start', 'x', '--route', route, '--intelligence', 'medium', '--speed', 'flex']);
     assert.equal(parsed.error.code, 'usage_error', route);
     assert.match(parsed.error.message, /--speed flex runs on Notis only/, route);
   }
