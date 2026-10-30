@@ -97,6 +97,11 @@ export interface NotisQueryClient {
   fetch<T>(key: string, read: QueryRead<T>, options?: QueryFetchOptions): Promise<T>;
   prefetch<T>(key: string, read: QueryRead<T>, options?: QueryFetchOptions): Promise<T>;
   invalidate(key?: string): void;
+  /**
+   * Host-only: takes one key's answer away and shows `error` instead, without reading it again (a host that showed
+   * an earlier answer ahead of its source, and the source then failed). The read's `refetch` asks again.
+   */
+  fail?(key: string, error: Error): void;
   clear(): void;
   /** Host-only: permanently retire a revoked security scope. */
   dispose?(): void;
@@ -524,6 +529,19 @@ export function createQueryClient(options: {
         if (value.deferred) value.deferred.updatedAt = 0;
         publish(value, { ...value.raw, updatedAt: 0, isFetching: false, invalidation: value.raw.invalidation + 1 });
       }
+    },
+    fail(key, error) {
+      const value = entries.get(key);
+      if (!value) return;
+      revision += 1;
+      value.generation += 1;
+      value.pending = undefined;
+      value.pendingSeq = undefined;
+      value.deferred = undefined;
+      value.seeded = false;
+      // The same invalidation count: the read shows the error and is not asked again on its own.
+      publish(value, { ...EMPTY, invalidation: value.raw.invalidation, error });
+      options.onFailure?.(key, error);
     },
     dispose() { disposed = true; client.clear(); },
     clear() {

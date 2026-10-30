@@ -11,6 +11,7 @@ export { NotisProvider, useNotisRuntime } from './provider';
 
 // Hooks
 export { useAction, useActionQuery } from './hooks/useAction';
+export type { UseActionQueryOptions } from './hooks/useAction';
 export { useNativeDocuments, useNativeMutation, useNativeDelete, type NativeDeleteManyResult, type NativeMutationOptions } from './hooks/useNativeDocuments';
 export type { NativeField, NativeFilter, NativeQuery, NativeInsert, NativeUpdate, NativeDelete, NativeMutationReceipt } from './nativeData';
 export type { SpaceDatabaseCreate, SpaceResourceReference } from './space';

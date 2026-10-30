@@ -21,8 +21,18 @@ export function useAction<TInput extends Record<string, unknown> = Record<string
   return { call, loading: pending > 0, error };
 }
 
+export interface UseActionQueryOptions extends UseQueryOptions {
+  /**
+   * Always the provider's current answer, even while the view opens (a check made right before a send, say): see
+   * `SpaceActionOptions.fresh`. A fresh read keeps its own cached answer, apart from the same read without it.
+   */
+  fresh?: boolean;
+}
+
 export function useActionQuery<TResult = unknown>(actionId: string, inputs: Record<string, unknown>,
-  options: UseQueryOptions = { readOnly: true }): UseQueryResult<TResult> {
+  options: UseActionQueryOptions = { readOnly: true }): UseQueryResult<TResult> {
   const { call } = useAction<Record<string, unknown>, TResult>(actionId);
-  return useQuery(['action', actionId, inputs], () => call(inputs, { readOnly: true, dedupe: true }), options);
+  const fresh = options.fresh === true;
+  return useQuery(fresh ? ['action', actionId, inputs, 'fresh'] : ['action', actionId, inputs],
+    () => call(inputs, { readOnly: true, dedupe: true, ...(fresh ? { fresh: true } : {}) }), options);
 }

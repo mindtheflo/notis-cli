@@ -313,6 +313,13 @@ export interface SpaceActionOptions {
    * and the batch calls `queryClient.invalidate()` once at the end. Hosts that predate it ignore it.
    */
   deferRefresh?: boolean;
+  /**
+   * A cached read (`dedupe`) that must show the provider's current answer even while the view opens
+   * (a check made right before a send, say). Without it, a signed-in host may first answer a provider
+   * read with the person's last result of that exact read, then refresh the view with the provider's
+   * answer a moment later. Hosts that predate it ignore it.
+   */
+  fresh?: boolean;
 }
 
 export type SpaceDocumentBodyRequest = {

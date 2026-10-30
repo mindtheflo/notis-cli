@@ -89,3 +89,25 @@ test('a kept answer whose read is refused is taken away, never shown with the er
   assert.equal(after.error?.message, 'refused');
   assert.deepEqual(failures, ['k']);
 });
+
+test('a host failing one key takes its answer away and shows the error without reading it again', async () => {
+  const failures: string[] = [];
+  const client = createQueryClient({ onFailure: (key) => { failures.push(key); } });
+  await client.fetch('shown', async () => ['earlier']);
+  await client.fetch('other', async () => ['kept']);
+  const before = client.getSnapshot('shown').invalidation;
+  let reads = 0;
+  const running = client.fetch('shown', async () => { reads += 1; return ['late']; }, { force: true });
+  client.fail!('shown', new Error('provider refused'));
+  await running;
+  const after = client.getSnapshot<string[]>('shown');
+  assert.equal(after.hasData, false, 'the earlier answer is never shown with the error');
+  assert.equal(after.data, undefined);
+  assert.equal(after.error?.message, 'provider refused');
+  assert.equal(after.invalidation, before, 'not asked again on its own');
+  assert.deepEqual(client.getSnapshot<string[]>('other').data, ['kept']);
+  assert.deepEqual(failures, ['shown']);
+  assert.equal(reads, 1, 'a read already running never lands over the error');
+  client.fail!('unknown', new Error('nothing'));
+  assert.equal(client.getSnapshot('unknown').hasData, false);
+});
