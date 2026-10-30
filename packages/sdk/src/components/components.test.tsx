@@ -400,6 +400,13 @@ test('DocumentPage fallback crumb: slashes only between parts, each part ellipsi
   assert.ok(iconOnly!.querySelector('svg.nui-icon'), 'the icon draws');
   assert.equal(iconOnly!.textContent, '', 'no label beside the icon');
   assert.equal(textOnly!.textContent, 'Copy', 'an item without an icon keeps its label');
+  // REC-004: at 390px in French the icon-only item shrank to 21px (its icon cut) and 'Archive' was clipped without an
+  // ellipsis. The icon item never shrinks; the text item is an inline block, the one box that ellipsizes its own words.
+  assert.match(iconOnly!.getAttribute('style') ?? '', /flex: 0 0 auto/);
+  assert.doesNotMatch(iconOnly!.getAttribute('style') ?? '', /min-width: 0/);
+  assert.match(textOnly!.getAttribute('style') ?? '', /display: inline-block/);
+  assert.match(textOnly!.getAttribute('style') ?? '', /flex: 0 1 auto/);
+  assert.match(textOnly!.getAttribute('style') ?? '', /text-overflow: ellipsis/);
 });
 
 test('ShareControl outside Notis is a short muted label; the tooltip says where sharing works (C11)', async () => {

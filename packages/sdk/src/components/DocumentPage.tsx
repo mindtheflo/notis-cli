@@ -123,10 +123,12 @@ function DocumentPageFallback(props: NotisDocumentPageProps) {
         {actions}
         {share ? <ShareControl recordKey={recordKey} /> : null}
         {/* The host's '...' menu is not available here: its entries show as buttons, icon only when they carry one. */}
+        {/* REC-004: an icon-only item never shrinks (its icon would be cut); a text item shortens its label with an ellipsis,
+          which a flex box never draws for its own words, so the text item is an inline block. */}
         {menuItems.map((item, index) => <button key={`${item.label}-${index}`} type="button" onClick={item.onSelect} disabled={item.disabled} title={item.label}
           aria-label={item.icon ? item.label : undefined}
-          style={{ display: 'inline-flex', alignItems: 'center', background: 'none', border: 0, padding: item.icon ? 6 : '4px 8px', borderRadius: 6, cursor: item.disabled ? 'default' : 'pointer', font: 'inherit', fontSize: 13,
-            flex: '0 1 auto', minWidth: 0, maxWidth: CRUMB_MAX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: item.destructive ? 'hsl(var(--destructive))' : 'hsl(var(--muted-foreground))', opacity: item.disabled ? 0.5 : 1 }}>{item.icon ? <span style={ICON_BOX}>{renderIcon(item.icon)}</span> : item.label}</button>)}
+          style={{ display: item.icon ? 'inline-flex' : 'inline-block', alignItems: 'center', verticalAlign: 'middle', background: 'none', border: 0, padding: item.icon ? 6 : '4px 8px', borderRadius: 6, cursor: item.disabled ? 'default' : 'pointer', font: 'inherit', fontSize: 13, lineHeight: '20px',
+            flex: item.icon ? 'none' : '0 1 auto', minWidth: item.icon ? undefined : 0, maxWidth: CRUMB_MAX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: item.destructive ? 'hsl(var(--destructive))' : 'hsl(var(--muted-foreground))', opacity: item.disabled ? 0.5 : 1 }}>{item.icon ? <span style={ICON_BOX}>{renderIcon(item.icon)}</span> : item.label}</button>)}
       </div>
     </div> : null}
     {props.viewer === 'html' ? <HtmlFrame recordKey={recordKey} /> :
