@@ -75,5 +75,5 @@ test('provider-independent beta versions remain above existing registry sequence
   assert.equal(computePrereleasePublishVersion({ packageVersion: '0.2.0', prereleaseTag: 'beta',
     releaseNumber: '100', latestRegistryVersion: '0.4.0-beta.10.1' }), '0.4.0-beta.100.1');
   assert.throws(() => computePrereleasePublishVersion({ packageVersion: '0.2.0', prereleaseTag: 'beta',
-    releaseNumber: 'depot-uuid' }), /numeric/);
+    releaseNumber: 'build-uuid' }), /numeric/);
 });

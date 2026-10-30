@@ -4,7 +4,7 @@
 // ahead of the server it talks to, and it compares against the source commit of
 // the version the channel's npm tag points at, not against a date window.
 //
-// CommonJS (.cjs) on purpose, like release-channels.cjs: the Depot workflow's
+// CommonJS (.cjs) on purpose, like release-channels.cjs: the CI workflow's
 // github-script step requires this file. Unit tests: test/release-trigger.test.js.
 
 const { execFileSync } = require('node:child_process');
@@ -19,7 +19,7 @@ const PACKAGE_NAME = '@notis_ai/cli';
 const CHANNEL_TAGS = Object.freeze(Object.fromEntries(
   Object.entries(BRANCH_RELEASES).map(([branch, release]) => [branch, release.distTag])));
 
-// The push paths of .depot/workflows/publish-cli-package.yml, as git pathspecs.
+// The push paths of .github/workflows/build-cli-package.yml, as git pathspecs.
 // A change here is a CLI change. A test keeps the two lists equal.
 const WATCHED_PATHS = Object.freeze([
   'packages/cli',
@@ -30,10 +30,10 @@ const WATCHED_PATHS = Object.freeze([
   'server/skills/notis-query',
   'server/skills/notis-cli',
   'server/config/notis_app_boundary_rules.json',
-  '.depot/workflows/publish-cli-package.yml',
+  '.github/workflows/build-cli-package.yml',
 ]);
 
-// The push paths of .depot/workflows/temporal-release.yml. A change here is not
+// The push paths of .github/workflows/temporal-release.yml. A change here is not
 // live until its release, and that release publishes the CLI when it is.
 const RELEASE_INPUT_PATHS = Object.freeze([
   'server',
@@ -45,7 +45,7 @@ const RELEASE_INPUT_PATHS = Object.freeze([
   'infra',
   'packages/view-renderer',
   '.github/scripts/sync_voice_agent_prompt.py',
-  '.depot/workflows/temporal-release.yml',
+  '.github/workflows/temporal-release.yml',
 ]);
 
 const SHA = /^[0-9a-f]{40}$/;

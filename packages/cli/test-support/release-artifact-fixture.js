@@ -3,8 +3,8 @@ import { createArtifactManifest, PACKAGE_NAME } from '../scripts/release-artifac
 
 export const sourceSha = 'a'.repeat(40);
 export const version = '0.2.0-nightly.123.1';
-export const builder = { provider: 'depot', repository: 'mindtheflo/notis',
-  workflow: '.depot/workflows/publish-cli-package.yml', orchestrationSha: 'b'.repeat(40),
+export const builder = { provider: 'boat', repository: 'mindtheflo/notis',
+  workflow: '.github/workflows/build-cli-package.yml', orchestrationSha: 'b'.repeat(40),
   runId: 'run_123', jobId: 'build-1', event: 'api', smoke: 'native-exact-tarball' };
 
 export function tarEntry(name, data, type = '0') {

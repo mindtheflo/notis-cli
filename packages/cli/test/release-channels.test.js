@@ -62,7 +62,7 @@ test('one table maps each source branch to its package channel and npm tag', () 
 });
 
 test('the renamed branches and their old names release the same channel', () => {
-  // The branches were renamed on 2026-10-27; the release key (the Depot
+  // The branches were renamed on 2026-10-27; the release key (the CI
   // environment and finalizer channel) kept its old name.
   assert.equal(channelForBranch('nightly'), 'nightly');
   assert.equal(channelForBranch('stable'), 'stable');

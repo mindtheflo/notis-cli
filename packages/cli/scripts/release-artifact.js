@@ -83,14 +83,14 @@ export function verifyArtifact({ manifest, tarball, planBytes, expected = {} }) 
     throw new Error('Unsupported publishConfig override of trusted finalizer options');
   }
   const builder = manifest.builder;
-  if (builder?.provider !== 'depot' || builder.repository !== 'mindtheflo/notis'
-      || builder.workflow !== '.depot/workflows/publish-cli-package.yml'
+  if (builder?.provider !== 'boat' || builder.repository !== 'mindtheflo/notis'
+      || builder.workflow !== '.github/workflows/build-cli-package.yml'
       || !/^[0-9a-f]{40}$/.test(builder.orchestrationSha || '')
       || !/^[A-Za-z0-9_-]+$/.test(builder.runId || '') || typeof builder.jobId !== 'string'
       || !/^[A-Za-z0-9_. -]+$/.test(builder.jobId) || builder.smoke !== 'native-exact-tarball'
       // push: a merge, or a release calling the publisher with its own event.
       || !['api', 'push', 'schedule', 'workflow_call', 'workflow_dispatch'].includes(builder.event)) {
-    throw new Error('Invalid Depot build provenance');
+    throw new Error('Invalid CI build provenance');
   }
   return { plan, packageManifest };
 }

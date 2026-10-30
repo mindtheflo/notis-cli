@@ -12,8 +12,8 @@
 
 // The one table that maps a release to its git branches, the package channel
 // it publishes and that channel's npm dist-tag. Every release script reads it.
-// The key is the release's identity in the Depot environments
-// (notis-depot-cli-<key>), the release flags and the finalizer's channel input,
+// The key is the release's identity in the CI environments
+// (notis-ci-cli-<key>), the release flags and the finalizer's channel input,
 // so it kept its name when the git branches were renamed on 2026-10-27
 // (beta -> nightly, production -> stable). `branches` lists the current branch
 // name first, then the old one, which a push may still use during the switch.

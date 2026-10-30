@@ -42,7 +42,7 @@ export async function stageHandoff({ manifest, tarball, planBytes, api, records,
   }
   const previous = await records.read(kinds.binding, identity);
   if (previous) {
-    // A whole-workflow retry reuses the original attested Depot bytes, not a
+    // A whole-workflow retry reuses the original attested CI bytes, not a
     // fresh build whose timestamp or toolchain output may differ.
     const old = await downloadHandoff({ binding: previous.record, api });
     if (previous.record.intentRefSha !== intentRefSha || old.manifest.version !== version || old.manifest.readOnly !== readOnly) throw new Error('Existing handoff version/mode conflict');
@@ -126,7 +126,7 @@ export async function downloadHandoff({ binding, api }) {
   }
   const manifest = JSON.parse(bytes.manifest);
   const verified = verifyArtifact({ manifest, tarball: bytes.tarball, planBytes: bytes.plan, expected: binding });
-  requireSame(manifest.builder, binding.builder, 'Depot build provenance');
+  requireSame(manifest.builder, binding.builder, 'CI build provenance');
   if (manifest.tarball.integrity !== binding.integrity) throw new Error('Handoff npm integrity mismatch');
   return { ...verified, manifest, tarball: bytes.tarball, planBytes: bytes.plan };
 }

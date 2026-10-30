@@ -81,7 +81,7 @@ test('plan identity binds reserved intent, version, source, channel and npm dist
 
 test('builder provenance cannot switch provider, repository, workflow or use malformed source/run/job IDs', () => {
   for (const changes of [{ provider: 'github' }, { repository: 'other/repo' },
-    { workflow: '.depot/workflows/other.yml' }, { orchestrationSha: 'not-a-sha' },
+    { workflow: '.github/workflows/other.yml' }, { orchestrationSha: 'not-a-sha' },
     { runId: 'run with spaces' }, { runId: '' }, { jobId: '' },
     { jobId: true }, { jobId: { id: 'job' } }, { jobId: 'job/invalid' }]) {
     assert.throws(() => fixture({ builder: changes }), /provenance/, JSON.stringify(changes));

@@ -57,9 +57,9 @@ test('modes: manual runs preview, pushes merge, only the two callers publish aft
 test('the watched paths are the CLI package inputs, matched by whole path segment', () => {
   for (const file of ['packages/cli/src/index.js', 'packages/sdk/index.js', 'packages/view-renderer/a.ts',
     'portal/src/lib/blockNote.ts', 'server/skills/notis-cli/SKILL.md', 'server/config/notis_app_boundary_rules.json',
-    '.depot/workflows/publish-cli-package.yml']) assert.ok(isWatched(file), file);
+    '.github/workflows/build-cli-package.yml']) assert.ok(isWatched(file), file);
   for (const file of ['packages/clix/a.js', 'portal/src/lib/blockNote.tsx', 'server/skills/notis-docs/SKILL.md',
-    'server/app.py', '.depot/workflows/temporal-release.yml']) assert.ok(!isWatched(file), file);
+    'server/app.py', '.github/workflows/temporal-release.yml']) assert.ok(!isWatched(file), file);
   assert.equal(new Set(WATCHED_PATHS).size, WATCHED_PATHS.length);
 });
 

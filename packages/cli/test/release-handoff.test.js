@@ -98,7 +98,7 @@ for (const readOnly of [true, false]) {
   });
 }
 
-test('whole workflow retry reuses immutable original Depot bytes and reconciles one dispatch', async () => {
+test('whole workflow retry reuses immutable original CI bytes and reconciles one dispatch', async () => {
   const h = harness(false);
   await h.stage();
   h.bundle.manifest.builder.runId = 'second-attempt';
@@ -126,7 +126,7 @@ ${['source_sha', 'channel', 'release_id', 'handoff_ref_sha', 'read_only', 'hando
 `;
 
 // The real GitHub store behind a scripted API, so the read/claim/POST order is
-// exercised exactly as Depot runs it. `failOnce` fails one matching request.
+// exercised exactly as CI runs it. `failOnce` fails one matching request.
 function githubHarness(failOnce, readOnly) {
   const h = harness(readOnly);
   const sourceSha = h.bundle.manifest.sourceSha;
