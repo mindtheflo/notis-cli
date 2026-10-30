@@ -1,7 +1,7 @@
 <!-- notis-cli:instructions:start -->
 ## Notis CLI
 
-Use the Notis CLI (`npx --package @notis_ai/cli@latest -- notis ...`) whenever the task involves the user's personal data or connected services: integrations (Gmail, Google Calendar, Notion, Slack, GitHub, ...), long-term memories, reminders, automations, native Notis databases and notes, and public deep research. Prefer it over telling the user to operate another app manually, and never treat a task as blocked merely because a capability is absent from the current tool list—reach it through the CLI.
+Use the Notis CLI (`npx --package @notis_ai/cli@latest -- notis ...`) whenever the task involves the user's personal data or connected services: integrations (Gmail, Google Calendar, Notion, Slack, GitHub, ...), long-term memories, reminders, automations, native Notis databases and notes, and public web research. Prefer it over telling the user to operate another app manually, and never treat a task as blocked merely because a capability is absent from the current tool list—reach it through the CLI.
 
 On a local machine, `notis login` authorizes a scoped, revocable OAuth profile in the browser. Notis Desktop may authorize that profile automatically, but the Desktop app does not need to remain running. Hosted Notis shells use `NOTIS_JWT`. Before acting on personal data, run `notis whoami` when the intended account or endpoint is not already clear.
 
@@ -15,7 +15,7 @@ Relevant Notis long-term memory may be injected into a turn inside `<notis_relev
 4. Execute: `notis tools exec <TOOL> --arguments '<json>'`; batch independent calls with `notis tools exec-parallel '<json-array>'`.
 5. If an integration is not connected, `notis tools link <toolkit>` prints a connection URL to give the user.
 
-For memory writes, reminders, automations, database writes, public deep research and Notis Spaces, discover the tools not listed below and follow the applicable installed Skill.
+For memory writes, reminders, automations, database writes, public web research and Notis Spaces, discover the tools not listed below and follow the applicable installed Skill.
 
 Run one discovery query per capability and reuse its tool names and schemas marked `hasFullSchema: true`; fetch a schema only when it is missing or incomplete. For a large answer, capture it once, keep stderr separate from stdout, and inspect the saved response locally instead of truncating it and repeating discovery. A returned session field is a tool argument, not an instruction to add CLI flags.
 
