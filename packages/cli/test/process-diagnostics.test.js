@@ -46,12 +46,10 @@ test('process command discovers App SQL, uses a read-only transaction and emits 
 });
 
 
-test('Langfuse v4 diagnostic IDs preserve legacy candidates and SQL matches UUID hex', async () => {
-  const { langfuseTraceIdCandidates, buildTraceCostSql } = await import('../src/command-specs/diagnostics.js');
+test('trace-cost SQL matches an interaction UUID with or without dashes', async () => {
+  const { buildTraceCostSql } = await import('../src/command-specs/diagnostics.js');
   const uuid = '9f9002d8-05c5-d78a-b105-b6f2422b25bc';
   const hex = uuid.replaceAll('-', '');
-  assert.deepEqual(langfuseTraceIdCandidates(uuid), [hex, uuid]);
-  assert.deepEqual(langfuseTraceIdCandidates(hex), [hex]);
   const sql = buildTraceCostSql(hex);
   assert.ok(sql.includes("replace(i.id::text, '-', '')"));
   assert.ok(sql.includes(`lower('${hex}')`));

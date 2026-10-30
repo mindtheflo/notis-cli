@@ -474,14 +474,6 @@ async function debugEntitlementOverrideHandler(ctx) {
   });
 }
 
-export function langfuseTraceIdCandidates(reference) {
-  const value = String(reference);
-  const compact = value.replaceAll('-', '').toLowerCase();
-  const providerId = /^[0-9a-f]{32}$/.test(compact) && !/^0+$/.test(compact)
-    ? compact : createHash('sha256').update(value).digest('hex').slice(0, 32);
-  return [...new Set([providerId, value])];
-}
-
 export function buildTraceCostSql(reference) {
   const literal = sqlLiteral(reference);
   return `
@@ -618,10 +610,7 @@ async function debugTraceCostHandler(ctx) {
     refund_basis: refundableEstimate === null
       ? 'Requires confirmed Notis bug evidence and an explicit bug-attributable cost. Misunderstandings and service limitations are not goodwill bugs.'
       : 'Capped at the lower of recorded provider cost and the explicitly attributed true-bug amount.',
-    interactions: interactions.map((item) => ({
-      ...item,
-      langfuse_trace_id_candidates: langfuseTraceIdCandidates(item.trace_id || item.id),
-    })),
+    interactions,
     trace_file: traceDiagnostics,
   };
   return ctx.output.emitSuccess({
@@ -724,7 +713,7 @@ export const diagnosticCommandSpecs = [
     summary: 'Attribute latency, retries, failures, generations, and refundable cost for a trace.',
     when_to_use: 'Use when investigating looping, unexpectedly expensive, or failed Notis work.',
     args_schema: {
-      arguments: [{ token: '<trace-or-interaction>', key: 'traceOrInteraction', description: 'Interaction UUID or Langfuse trace id.' }],
+      arguments: [{ token: '<trace-or-interaction>', key: 'traceOrInteraction', description: 'Interaction UUID, with or without dashes.' }],
       options: [
         { flags: '--trace-file <path>', description: 'Optional exported trace JSON for generation and tool-failure attribution.' },
         { flags: '--confirmed-bug', description: 'Mark that evidence confirms a true Notis bug.' },
