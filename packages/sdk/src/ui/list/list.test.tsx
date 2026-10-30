@@ -1129,6 +1129,11 @@ test('loading: the skeleton fills the visible pane and the title keeps its count
   assert.equal(q('.nui-lr-title-count')!.hasAttribute('data-reserved'), false);
   await mount(list({ items: [], loading: true, title: { text: 'Tickets' } }));
   assert.equal(q('.nui-lr-title-count'), null, 'a title with no count reserves nothing');
+  // The slot is the same width before and after the count arrives: the rule that gives it 2ch is not gated on data-reserved.
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  const rule = css.split('\n').find((line) => line.startsWith('.nui-lr-title-count {'))!;
+  assert.match(rule, /min-width: 2ch/, 'the count slot keeps 2ch once the count is shown');
+  assert.equal(css.includes('.nui-lr-title-count[data-reserved]'), false, 'no reserved-only width that a loaded count would lose');
 });
 
 test('loading: skeleton rows first, Load more at the end, J on the last row loads more', async () => {

@@ -238,8 +238,8 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-toolbar { display: flex; flex-shrink: 0; flex-wrap: nowrap; align-items: center; gap: 4px; min-height: 44px; padding: 0 8px 0 6px; box-sizing: border-box; border-bottom: 1px solid hsl(var(--border) / .5); min-width: 0; }
 .nui-lr-title { display: inline-flex; flex: 0 1 auto; align-items: baseline; gap: 6px; min-width: 0; margin: 0; padding-inline: 10px 4px; font-size: 14px; line-height: 20px; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; overflow: hidden; }
 .nui-lr-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.nui-lr-title-count { flex-shrink: 0; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
-.nui-lr-title-count[data-reserved] { display: inline-block; min-width: 2ch; }
+/* The count keeps its 2ch slot before and after it loads (VIEW-046): a one-digit count must not move the tabs and pills beside it. */
+.nui-lr-title-count { flex-shrink: 0; display: inline-block; min-width: 2ch; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
 .nui-lr-toolbar-spacer { flex: 1 1 0; min-width: 0; }
 /* The select-all, as the Manager's: lined up over the rows' checkboxes (and the title over their titles). While nothing
    is selected it stays hidden, keeping its room, until hovered or focused; on touch, until a selection starts. */
