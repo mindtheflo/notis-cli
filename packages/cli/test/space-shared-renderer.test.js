@@ -61,6 +61,29 @@ test('a DocumentPage with the HTML viewer renders its stored HTML file, never th
   } finally { await pool.close(); }
 });
 
+test('an HTML viewer still opening its file is a loading capture, not a timeout', async () => {
+  const release = fixture(`export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);return R.createElement(runtime.ui.DocumentPage,{recordKey:'${record}',viewer:'html'})}`);
+  release.manifest.resources = { notes: { kind: 'database', key: 'notes' } };
+  release.manifest.params = { note: { type: 'record', database: 'notes', main: true } };
+  release.fixturePath = 'fixtures.json';
+  release.sourceFiles['fixtures.json'] = b({ actions: {}, context: { params: { note: record } }, recordViews: [
+    { operation: 'html', record_key: record, result: { record_key: record, html: '<h1>Fictional saved report</h1>', title: 'Fixture' } },
+  ] });
+  const capabilities = { actions: {}, bindings: { notes: { kind: 'database' } } };
+  const pool = renderer.createBrowserPool();
+  try {
+    // The loading capture holds the file read: the frame must count as mounted while it opens, or the capture
+    // waits out its whole timeout (45 s per locale in verification) before the test can even tear down.
+    const started = Date.now();
+    const broker = createSpaceFixtureBroker({ release, capabilities, width: 390, outputs: ['markdown'] });
+    const result = await renderer.renderView({ broker, pool, width: 390, outputs: ['markdown'], pending: true, locale: 'en', timeoutMs: 10_000 });
+    assert.equal(result.pending.static, false);
+    assert.equal(result.pending.reads, 1);
+    assert.equal(result.pending.appBlank, false, 'the opening status counts as content');
+    assert.ok(Date.now() - started < 10_000, 'the loading capture returned before its timeout');
+  } finally { await pool.close(); }
+});
+
 test('body fixtures stay Markdown snapshots without BlockNote room initialization', async () => {
   const release = fixture(`export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);const [value,setValue]=R.useState('Waiting');R.useEffect(()=>{runtime.documentBody({operation:'read',binding:'notes',readAction:'read',recordKey:'${record}'}).then(v=>setValue(v.content_markdown))},[]);return R.createElement('h1',null,value)}`);
   const inputs = { type: 'object', required: ['request'], properties: { request: { type: 'object' } } };
