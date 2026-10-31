@@ -267,5 +267,5 @@ test('StatusIcon: ready for review is its own group, a fuller circle in the acti
   await mount(<StatusIcon status="review" />, 'en');
   assert.equal(doc.querySelector('.nui-st')?.getAttribute('aria-label'), 'Ready for review');
   assert.match(cssRule('.nui-st[data-st="review"]') ?? '', /--nui-st-review, var\(--muted-foreground\)/);
-  assert.match(toolkitCss, /--nui-st-review: var\(--status-live, 142 71% 45%\);/, 'the active colour, from the one palette');
+  assert.match(toolkitCss, /--nui-st-review: var\(--status-live, var\(--nui-st-live, 142 71% 33%\)\);/, 'the active colour, from the one palette');
 });

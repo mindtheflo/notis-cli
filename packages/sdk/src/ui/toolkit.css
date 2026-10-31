@@ -33,6 +33,13 @@
   --nui-elev: 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06);
   --nui-elev-lg: 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12);
   --nui-elev-today: 0 10px 30px rgb(0 0 0 / .25);
+  /* Readable over the list (muted at 40% over the page) and the open row (--nui-blue at --nui-a-open over it):
+     text at 4.5:1, 16px glyphs at 3:1 (portal/src/components/ui/spaceListContrast.test.ts). The live green is the
+     --status-live fallback; the danger tone is the destructive red in light and a lighter red in dark, like the
+     warning tone; the count is a grey the light list can carry at 12px. */
+  --nui-st-live: 142 71% 33%;
+  --nui-tone-danger: var(--destructive);
+  --nui-count-fg: 0 0% 40%;
 }
 .dark, [data-notis-theme="dark"] {
   --nui-a-open: .20;
@@ -42,12 +49,15 @@
   --nui-elev: 0 0 #0000;
   --nui-elev-lg: 0 0 #0000;
   --nui-elev-today: 0 0 #0000;
+  --nui-st-live: 142 71% 45%;
+  --nui-tone-danger: 0 90% 76%;
+  --nui-count-fg: var(--muted-foreground);
 }
 /* The status groups, one palette (the Manager's signal colours). A Space maps its statuses, never picks a colour.
    Declared on every theme scope so var(--muted-foreground) resolves against the scope's own value. */
 :root, :host, .dark, [data-notis-theme] {
   --nui-st-backlog: var(--muted-foreground); --nui-st-todo: var(--muted-foreground); --nui-st-cancelled: var(--muted-foreground);
-  --nui-st-active: var(--status-live, 142 71% 45%); --nui-st-review: var(--status-live, 142 71% 45%);
+  --nui-st-active: var(--status-live, var(--nui-st-live, 142 71% 33%)); --nui-st-review: var(--status-live, var(--nui-st-live, 142 71% 33%));
   --nui-st-waiting: var(--muted-foreground); --nui-st-done: var(--muted-foreground);
   --nui-st-failed: var(--destructive); --nui-st-up: var(--muted-foreground); --nui-st-down: var(--destructive);
 }
@@ -148,7 +158,7 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .dark .nui-star { color: hsl(38 92% 60%); }
 .nui-row-label[data-tone="warning"] { color: hsl(32 95% 40%); }
 .dark .nui-row-label[data-tone="warning"] { color: hsl(38 92% 60%); }
-.nui-row-label[data-tone="danger"] { color: hsl(var(--destructive)); }
+.nui-row-label[data-tone="danger"] { color: hsl(var(--nui-tone-danger, var(--destructive))); }
 .nui-row-tags { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; }
 .nui-row-tag { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: 22px; padding: 0 8px; border-radius: 6px; background: hsl(var(--foreground) / .06); font-size: 12px; line-height: 16px; color: hsl(var(--foreground) / .75); white-space: nowrap; }
 .nui-row-tag[data-removable] { padding-right: 2px; }
@@ -896,7 +906,7 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 
 /* Group headings: a count, and a fold toggle when collapsible. */
 .nui-group-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nui-group-count { font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground) / .8); font-weight: 400; }
+.nui-group-count { font-variant-numeric: tabular-nums; color: hsl(var(--nui-count-fg, var(--muted-foreground))); font-weight: 400; }
 .nui-group-toggle { display: flex; align-items: center; gap: 6px; width: 100%; height: 100%; min-width: 0; padding: 0; margin: 0 -2px; border-radius: 5px; font: inherit; color: inherit; text-align: left; }
 .nui-group-toggle:hover { color: hsl(var(--foreground)); }
 .nui-group-toggle:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 0; }
