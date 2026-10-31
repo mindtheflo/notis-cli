@@ -50,3 +50,32 @@ test('toSpace returns the host navigation: it settles when the host has taken it
   const hostless = await navigationFor(undefined);
   await assert.rejects(hostless.toSpace('s2'), /current Notis host/);
 });
+
+test('toRoute and toApp report a host refusal instead of leaving an unhandled rejection', async () => {
+  const warnings: unknown[][] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const refused = await navigationFor(async () => { throw new Error('This Space context is no longer active.'); });
+    const route = refused.toRoute('/notes', { resourceId: 'r1' });
+    const app = refused.toApp();
+    // The caller that awaits still sees the refusal; one that does not is never an unhandled rejection.
+    await assert.rejects(route, /no longer active/);
+    await assert.rejects(app, /no longer active/);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(unhandled, []);
+    assert.deepEqual(warnings.map((args) => args[1]), ['This Space context is no longer active.', 'This Space context is no longer active.']);
+    const throwing = await navigationFor((() => { throw new Error('Closed before the call.'); }) as NotisRuntime['navigate']);
+    await assert.rejects(throwing.toApp(), /Closed before/);
+    const taken: unknown[] = [];
+    const accepted = await navigationFor((payload) => { taken.push(payload); });
+    await accepted.toRoute('/notes');
+    assert.deepEqual(taken, [{ kind: 'route', path: '/notes', resourceId: null }]);
+  } finally {
+    console.warn = warn;
+    process.off('unhandledRejection', onUnhandled);
+  }
+});

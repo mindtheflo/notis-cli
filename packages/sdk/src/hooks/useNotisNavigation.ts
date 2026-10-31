@@ -19,9 +19,9 @@ interface NavigationActions {
    */
   toSpace: (spaceId: string, options?: SpaceNavigationOptions) => Promise<void>;
   /** Navigate to a route within the app by its path. */
-  toRoute: (path: string, options?: { resourceId?: string | null }) => void;
+  toRoute: (path: string, options?: { resourceId?: string | null }) => Promise<void>;
   /** Navigate to the app's default route. */
-  toApp: () => void;
+  toApp: () => Promise<void>;
 }
 
 /**
@@ -34,6 +34,21 @@ interface NavigationActions {
  * nav.toSpace(spaceId, { recordKey });
  * ```
  */
+/**
+ * A navigation the host refuses (its Manager draft context ended, the Space closed) is reported
+ * and returned to the caller, never left as an unhandled rejection: `toRoute` and `toApp` are
+ * fire-and-forget in most Spaces (PostHog "This Space context is no longer active." unhandled on
+ * app-nightly, 2026-10-30).
+ */
+function settled(navigate: () => void | Promise<void>): Promise<void> {
+  let outcome: Promise<void>;
+  try { outcome = Promise.resolve(navigate()); } catch (error) { outcome = Promise.reject(error); }
+  outcome.catch((error: unknown) => {
+    console.warn('The Notis host refused the navigation.', error instanceof Error ? error.message : error);
+  });
+  return outcome;
+}
+
 export function useNotisNavigation(): NavigationActions {
   const runtime = useNotisRuntime();
 
@@ -51,19 +66,21 @@ export function useNotisNavigation(): NavigationActions {
 
   const toRoute = useCallback((path: string, options?: { resourceId?: string | null }) => {
     if (runtime?.navigate) {
-      runtime.navigate({ kind: 'route', path, resourceId: options?.resourceId ?? null });
+      return settled(() => runtime.navigate!({ kind: 'route', path, resourceId: options?.resourceId ?? null }));
     } else if (typeof window !== 'undefined') {
       const url = new URL(path, window.location.href);
       if (options?.resourceId) url.searchParams.set('resource', options.resourceId);
       else url.searchParams.delete('resource');
       window.location.href = url.toString();
     }
+    return Promise.resolve();
   }, [runtime]);
 
   const toApp = useCallback(() => {
     if (runtime?.navigate) {
-      runtime.navigate({ kind: 'app' });
+      return settled(() => runtime.navigate!({ kind: 'app' }));
     }
+    return Promise.resolve();
   }, [runtime]);
 
   return { toNamedSpace, toSpace, toRoute, toApp };
