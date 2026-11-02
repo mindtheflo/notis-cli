@@ -293,7 +293,7 @@ test('a Space SDK sync that cannot reach npm keeps going and says how to repair 
     && message.includes('run npm install')), messages.join('\n'));
 });
 
-test('a Space SDK sync asks npm for the lock only, retries once, and shows npm\'s own reason', { skip: process.platform === 'win32' && 'POSIX npm stand-in' }, t => {
+test("a Space SDK sync asks npm for the lock only, retries once, and shows npm's own reason", { skip: process.platform === 'win32' && 'POSIX npm stand-in' }, t => {
   const root = mkdtempSync(join(tmpdir(), 'notis-space-sdk-lock-npm-'));
   const pathBefore = process.env.PATH;
   t.after(() => { process.env.PATH = pathBefore; rmSync(root, { recursive: true, force: true }); });

@@ -269,7 +269,7 @@ function ParamsProbe({ onApi }: { onApi: (api: ReturnType<typeof useViewParams>)
   return null;
 }
 
-test('useViewParams().setParams changes the Space\'s own params: merged, null removes, replace on request, refused outside a Space', async () => {
+test("useViewParams().setParams changes the Space's own params: merged, null removes, replace on request, refused outside a Space", async () => {
   const sent: Array<Record<string, unknown>> = [];
   let fail = false;
   const space = (params: Record<string, string>): NotisRuntime => ({

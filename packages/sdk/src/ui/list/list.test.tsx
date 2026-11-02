@@ -1352,7 +1352,7 @@ test('open item in the page URL outside a Space: open pushes ?open=, popstate re
   assert.equal(new URL(dom.window.location.href).searchParams.get('open'), null, 'openInUrl={false}: local only');
 });
 
-test('open item in a Space URL: a write the host refuses puts the list back on the URL\'s item and says so (G-URL)', async () => {
+test("open item in a Space URL: a write the host refuses puts the list back on the URL's item and says so (G-URL)", async () => {
   let params: Record<string, string> = {};
   let refuseNext = false;
   const calls: Array<Record<string, string>> = [];
@@ -2316,7 +2316,7 @@ test('search: the top bar search filters the list by title, or by `match`; J/K w
   assert.equal(binding, null, 'unmounting lets the top bar go');
 });
 
-test('toolbar: one line, the title and count, then "+" (its key creates; C stays the host\'s) and the view menu with its actions', async () => {
+test(`toolbar: one line, the title and count, then "+" (its key creates; C stays the host's) and the view menu with its actions`, async () => {
   const created: number[] = [];
   const sorted: string[] = [];
   await mount(list({

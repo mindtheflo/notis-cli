@@ -139,7 +139,7 @@ test('barShape keeps a zero bar, so its label still draws; a missing value has n
   assert.deepEqual(labels(), ['2', '0', '5']);
 });
 
-test('Chart stacks horizontal bars with each row\'s total after it, zero rows included (follow-up B13)', async () => {
+test("Chart stacks horizontal bars with each row's total after it, zero rows included (follow-up B13)", async () => {
   const data = [{ label: 'A', a: 3, b: 2 }, { label: 'B', a: 0, b: 0 }, { label: 'C', a: 4, b: null }];
   await mount(
     <Chart kind="bar" horizontal stacked data={data} locale="en"
