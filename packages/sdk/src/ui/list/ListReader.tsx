@@ -29,7 +29,7 @@
  */
 
 import {
-  useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent as ReactDragEvent,
+  startTransition, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent as ReactDragEvent,
   type ReactNode, type Ref,
 } from 'react';
 import { useNotisRuntime } from '../../provider';
@@ -419,6 +419,12 @@ export const LIST_DRAG_TYPE = 'application/x-notis-items';
 
 /** How many skeleton rows the first load shows before the pane is measured. */
 const SKELETON_ROWS = 8;
+
+/**
+ * How many rows a long list draws in the commit that shows it; the rest follow in a transition after that paint.
+ * Opening the Skills page (about 190 rows, 90 percent below the fold) waited 230 ms on drawing every row.
+ */
+export const FIRST_ROWS = 40;
 
 /** The string `title`, else `name`, of an item, else null. */
 function textOf(item: unknown): string | null {
@@ -888,6 +894,26 @@ function ListReaderInner<T>({
   const missing = !!reader && openId !== null && !known && !loading && !hasMore && items.length > 0;
   const readerOpen = openItem !== null || missing;
   const [cursor, setCursor] = useState<string | null>(openId);
+  // A long list shows its first rows (through the open and current row) at once, and draws the others just after.
+  const [allRows, setAllRows] = useState(() => ids.length <= FIRST_ROWS);
+  const [drawnCount, setDrawnCount] = useState(ids.length);
+  if (drawnCount !== ids.length) {
+    // A list that arrives long after an empty or short first render (a load, a refresh) also draws its first rows first.
+    setDrawnCount(ids.length);
+    if (drawnCount <= FIRST_ROWS && ids.length > FIRST_ROWS) setAllRows(false);
+  }
+  useEffect(() => {
+    if (allRows) return undefined;
+    if (typeof requestAnimationFrame === 'undefined') { setAllRows(true); return undefined; }
+    const frame = requestAnimationFrame(() => startTransition(() => setAllRows(true)));
+    return () => cancelAnimationFrame(frame);
+  }, [allRows]);
+  const drawnIds = useMemo(() => {
+    if (allRows) return null;
+    const through = Math.max(FIRST_ROWS, navIds.indexOf(openId ?? '') + 1, navIds.indexOf(cursor ?? '') + 1);
+    return new Set(navIds.slice(0, through));
+  }, [allRows, cursor, navIds, openId]);
+  const drawn = <E extends { id: string }>(entries: E[]) => (drawnIds ? entries.filter((entry) => drawnIds.has(entry.id)) : entries);
   const allowed = normalizeAllowed(openAs);
   const storeKey = useOpenModeKey(undefined, listId);
   const [mode, setMode] = useOpenMode({ allowed, listId });
@@ -1680,7 +1706,7 @@ function ListReaderInner<T>({
           <div className="nui-board-body" role="presentation" data-drop={dropHere && drop!.before === null ? 'end' : undefined}
             onDragOver={onColumnDragOver(column.id)} onDragLeave={onColumnDragLeave} onDrop={onColumnDrop(column.id)}>
             {entries.length
-              ? entries.map(({ item, id }) => renderRow(item, id))
+              ? drawn(entries).map(({ item, id }) => renderRow(item, id))
               : <div className="nui-board-empty">{t(board!.emptyColumn ?? BOARD_WORDS.emptyColumn)}</div>}
           </div>
         </section>
@@ -1693,7 +1719,7 @@ function ListReaderInner<T>({
         <tbody role="presentation">
           {groups.flatMap(({ group, entries }) => [
             ...(group ? [<tr key={`g:${group.id}`} role="presentation"><td className="nui-group-head" colSpan={999}>{groupHead(group, entries.length)}</td></tr>] : []),
-            ...(group && collapsedSet.has(group.id) ? [] : entries.map(({ item, id }) => renderRow(item, id))),
+            ...(group && collapsedSet.has(group.id) ? [] : drawn(entries).map(({ item, id }) => renderRow(item, id))),
           ])}
         </tbody>
       </table>
@@ -1701,7 +1727,7 @@ function ListReaderInner<T>({
   } else {
     body = groups.map(({ group, entries }, index) => {
       const folded = !!group && collapsedSet.has(group.id);
-      const rows = folded ? null : entries.map(({ item, id }) => renderRow(item, id));
+      const rows = folded ? null : drawn(entries).map(({ item, id }) => renderRow(item, id));
       return (
         <div key={group ? `g:${group.id}` : `n:${index}`} role="presentation" data-collapsed={flag(folded)}>
           {group && <div className="nui-group-head" role="presentation">{groupHead(group, entries.length)}</div>}
@@ -1715,7 +1741,8 @@ function ListReaderInner<T>({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!hasMore || !onLoadMore || !sentinel || typeof IntersectionObserver === 'undefined') return undefined;
+    // Not before every row is drawn: under the first rows alone the sentinel would ask for the next page too soon.
+    if (!allRows || !hasMore || !onLoadMore || !sentinel || typeof IntersectionObserver === 'undefined') return undefined;
     // The next page is asked for one list height ahead (at least LOAD_AHEAD_MIN_PX), so it is there when reached.
     const ahead = Math.max(LOAD_AHEAD_MIN_PX, scrollRef.current?.clientHeight ?? 0);
     const observer = new IntersectionObserver((entries) => {
@@ -1723,7 +1750,7 @@ function ListReaderInner<T>({
     }, { root: scrollRef.current, rootMargin: `0px 0px ${ahead}px 0px` });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, onLoadMore, loadMore, items.length]);
+  }, [allRows, hasMore, onLoadMore, loadMore, items.length]);
 
   const barShown = bar.visible;
   // Under the list while it shows; above the reader while the open item covers the list (else it would be hidden).

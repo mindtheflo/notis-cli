@@ -17,7 +17,7 @@ import { ActionToast } from '../actions/ActionToast';
 import { availableActions, resolveActions } from '../actions/useActions';
 import { useToast, type ToastController } from '../actions/useToast';
 import {
-  LIST_DRAG_TYPE, LIST_READER_WORDS, ListReader, rankActions, successorOf, type ListReaderApi, type ListReaderProps, type OpenChangeReason, type OpenChangeVerdict,
+  FIRST_ROWS, LIST_DRAG_TYPE, LIST_READER_WORDS, ListReader, rankActions, successorOf, type ListReaderApi, type ListReaderProps, type OpenChangeReason, type OpenChangeVerdict,
   type ReaderCtx,
 } from './ListReader';
 import { Row, RowMore, STAR_WORDS, StarMark, StatusIcon, formatReaderAgo, formatRowAgo, formatRowTime, statusGroup } from './Row';
@@ -299,6 +299,28 @@ test('select all: a partial selection shows mixed, and a click selects the rest'
   assert.deepEqual(selectedIds(), ['a', 'b', 'c', 'd']);
   await press('a', { meta: true });
   assert.equal(selectAll().getAttribute('aria-checked'), 'true', 'Mod+A and the checkbox agree');
+});
+
+test('long lists: the first rows (through the open one) draw at once, the rest on the next frame, also when rows arrive later', async () => {
+  const frames: FrameRequestCallback[] = [];
+  const realFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (fn: FrameRequestCallback) => frames.push(fn);
+  try {
+    const many: Ticket[] = Array.from({ length: FIRST_ROWS * 3 }, (_, i) => ({ id: `t${i}`, title: `Ticket ${i}` }));
+    const drawn = () => doc.querySelectorAll('.nui-row').length;
+    const render = await mount(list({ items: many, open: `t${FIRST_ROWS + 9}` }));
+    assert.equal(drawn(), FIRST_ROWS + 10);
+    await act(async () => { frames.splice(0).forEach((fn) => fn(0)); });
+    assert.equal(drawn(), many.length);
+
+    await render(list({ items: [] }));
+    await render(list({ items: many }));
+    assert.equal(drawn(), FIRST_ROWS);
+    await act(async () => { frames.splice(0).forEach((fn) => fn(0)); });
+    assert.equal(drawn(), many.length);
+  } finally {
+    globalThis.requestAnimationFrame = realFrame;
+  }
 });
 
 test('select all: pending and disabled rows stay out, and more rows to load are named', async () => {
