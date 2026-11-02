@@ -5,7 +5,8 @@
  * (`useCollectionInteractions`) and the toolkit list (`ListReader`), so both run the same code.
  *
  * - A press starts a marquee only on empty space inside the container: not on an item, not on a control
- *   (button, link, field). A press on a control does nothing here; a press on an item is left to the item.
+ *   (button, link, field). A press on a control does nothing here; a press on an item is left to the item. A press
+ *   outside the container's DOM (a portaled menu or popover React bubbles through it) is not on its space either.
  * - The marquee shows once the pointer moved past `threshold` px; the text selection is cleared then.
  * - While dragging, every selectable item the rectangle intersects is selected, live (`onSelect`, in DOM order;
  *   the last one is the anchor).
@@ -106,6 +107,10 @@ export function useMarqueeSelection(options: UseMarqueeSelectionOptions): Marque
     if (!enabled || event.button !== 0) return;
     const target = event.target as HTMLElement | null;
     if (!target || typeof target.closest !== 'function') return;
+    if (!(event.currentTarget as HTMLElement).contains(target)) {
+      clickShouldClearRef.current = false;
+      return;
+    }
     const itemTarget = target.closest(`[${itemAttribute}]`);
     const interactiveTarget = target.closest(interactiveSelector);
     if (interactiveTarget && interactiveTarget !== itemTarget) {

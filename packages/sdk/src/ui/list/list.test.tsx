@@ -2547,3 +2547,79 @@ test('drag to select: off with dragSelect={false}, and on a list that cannot sel
   const live = await marquee(q('.nui-lr-scroll')!, [320, 10], [100, 150]);
   assert.equal(live.overlay, false, 'no bulk action, no selection: no marquee');
 });
+
+// ---- row menu: its panel is portaled, but React bubbles its clicks to the row ----
+
+/** Opens row `id`'s More menu; `item(name)` is its item whose label starts with `name` (keycaps follow the label). */
+async function openRowMenu(id: string): Promise<{ item(name: string): HTMLElement }> {
+  await click(q(`[data-nui-item="${id}"] .nui-row-more`)!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  const items = [...doc.querySelectorAll<HTMLElement>('[role="menu"] [data-nui-menu-item]')];
+  return {
+    item: (name) => items.find((item) => item.querySelector('.nui-menu-label')?.textContent?.startsWith(name))!,
+  };
+}
+
+test('row menu: Star, Delete and a Move to choice run on the row and leave the reader closed; Open and a row click open it', async () => {
+  const ran: string[] = [];
+  const opened: Array<string | null> = [];
+  await mount(list({
+    actions: ['star', 'delete', { id: 'move', label: 'Move to', options: [{ value: 'later', label: 'Later' }] }],
+    handlers: {
+      star: (items: Ticket[]) => { ran.push(`star:${items.map((t) => t.id)}`); },
+      delete: (items: Ticket[]) => { ran.push(`delete:${items.map((t) => t.id)}`); },
+      move: (items: Ticket[], choice) => { ran.push(`move:${items.map((t) => t.id)}:${choice!.value}`); },
+    },
+    onOpen: (ticket) => { opened.push(ticket?.id ?? null); },
+  }));
+  const closed = (why: string) => {
+    assert.equal(q('#reader')?.textContent ?? null, null, why);
+    assert.equal(new URL(dom.window.location.href).searchParams.get('open'), null, `${why}: no ?open`);
+    assert.deepEqual(opened, [], `${why}: no onOpen`);
+  };
+  await click((await openRowMenu('b')).item('Star'));
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(ran, ['star:b']);
+  closed('Star from the row menu');
+  await click((await openRowMenu('c')).item('Delete'));
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(ran, ['star:b', 'delete:c']);
+  closed('Delete from the row menu');
+  await click((await openRowMenu('b')).item('Move to'));
+  await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  closed('opening the Move to sub-menu');
+  const later = [...doc.querySelectorAll<HTMLElement>('[role="menu"] [data-nui-menu-item]')]
+    .find((item) => item.textContent === 'Later')!;
+  await click(later);
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(ran, ['star:b', 'delete:c', 'move:b:later']);
+  closed('a Move to choice');
+  // Open is the menu item that opens, and a plain click on the row still does.
+  await click((await openRowMenu('a')).item('Open'));
+  assert.equal(q('#reader')!.textContent, 'Ticket A');
+  assert.deepEqual(opened, ['a']);
+  await click(q('[data-nui-item="d"]')!);
+  assert.equal(q('#reader')!.textContent, 'Ticket D');
+  assert.deepEqual(opened, ['a', 'd']);
+});
+
+test('row menu: a press on its panel (its line, an item with Mod) neither opens the row nor touches the selection', async () => {
+  const opened: Array<string | null> = [];
+  await mount(list({
+    actions: ['star', 'delete'],
+    handlers: { star: () => {}, delete: () => {} },
+    onOpen: (ticket) => { opened.push(ticket?.id ?? null); },
+  }));
+  layOutRows();
+  await click(q('[data-nui-item="a"]')!, { meta: true });
+  await click(q('[data-nui-item="c"]')!, { meta: true });
+  assert.deepEqual(selectedIds(), ['a', 'c']);
+  const items = await openRowMenu('b');
+  await click(q('[role="menu"] [role="separator"]')!);
+  assert.deepEqual(selectedIds(), ['a', 'c'], 'a press on the menu line is not a press on empty list space');
+  await click(items.item('Star'), { meta: true });
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  assert.deepEqual(selectedIds(), ['a', 'c'], 'Mod on a menu item does not toggle the row');
+  assert.equal(q('#reader')?.textContent ?? null, null, 'the reader stays closed');
+  assert.deepEqual(opened, []);
+});

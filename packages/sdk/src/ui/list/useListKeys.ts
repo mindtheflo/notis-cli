@@ -156,11 +156,17 @@ function focusStaysOnMove(active: Element | null, container: HTMLElement | null)
   return holder !== null && !containsComposed(holder, container);
 }
 
+/**
+ * A press that belongs to a control, not to the row. A press outside the row's DOM reached it through a React portal
+ * (the row's More menu and its sub-menus): it is never a press on the row, so a menu choice does not open the row.
+ */
 function isInteractiveTarget(event: { target: EventTarget | null; currentTarget: EventTarget | null }): boolean {
   const target = event.target as Element | null;
-  if (!target || target === event.currentTarget || typeof target.closest !== 'function') return false;
+  const row = event.currentTarget as Element | null;
+  if (!target || target === row || typeof target.closest !== 'function') return false;
+  if (!row?.contains(target)) return true;
   const hit = target.closest(ROW_INTERACTIVE_SELECTOR);
-  return !!hit && hit !== event.currentTarget && (event.currentTarget as Element | null)?.contains(hit) === true;
+  return !!hit && hit !== row && row.contains(hit);
 }
 
 export function useListKeys(options: UseListKeysOptions): { getRowProps(id: string): RowDomProps; visibleIds(): string[] } {
