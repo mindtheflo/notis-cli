@@ -672,6 +672,66 @@ test('E on rows that stay moves on the way the cursor last went', async () => {
   assert.equal(cursorId(), 'd', 'after J it moves down again');
 });
 
+test('with the reader open, E on a row that jumps to the top before it leaves still continues the way the cursor went', async () => {
+  const tickets: Ticket[] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, title: `Ticket ${id.toUpperCase()}` }));
+  function Board() {
+    const [items, setItems] = useState(tickets);
+    return list({
+      items,
+      actions: ['complete'],
+      handlers: {
+        // Like Tasks: the completed row first sorts to the top of the list, then leaves it.
+        complete: async (done) => {
+          const ids = done.map((ticket) => ticket.id);
+          setItems((current) => [...current.filter((t) => ids.includes(t.id)), ...current.filter((t) => !ids.includes(t.id))]);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          setItems((current) => current.filter((t) => !ids.includes(t.id)));
+        },
+      },
+    });
+  }
+  const run = async () => {
+    await press('e');
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  };
+  await mount(<Board />);
+  await press('k');
+  await press('k');
+  await press('k');
+  await press('Enter');
+  assert.equal(q('#reader')!.textContent, 'Ticket D');
+  await run();
+  assert.equal(q('#reader')!.textContent, 'Ticket C', 'after K the open item goes to the row above, not the first row');
+  assert.equal(cursorId(), 'c');
+  await press('j');
+  assert.equal(q('#reader')!.textContent, 'Ticket E');
+  await run();
+  assert.equal(q('#reader')!.textContent, 'Ticket F', 'after J it goes to the row below');
+  assert.equal(cursorId(), 'f');
+});
+
+test('E on a row the run moves to the top but keeps moves on from where the row was', async () => {
+  function Board() {
+    const [items, setItems] = useState(TICKETS);
+    return list({
+      items,
+      actions: ['complete'],
+      handlers: {
+        complete: (done) => {
+          const ids = done.map((ticket) => ticket.id);
+          setItems((current) => [...current.filter((t) => ids.includes(t.id)), ...current.filter((t) => !ids.includes(t.id))]);
+        },
+      },
+    });
+  }
+  await mount(<Board />);
+  await press('k');
+  await press('k');
+  assert.equal(cursorId(), 'c');
+  await press('e');
+  assert.equal(cursorId(), 'b', 'after K the cursor goes to the row that was above, not stays on the moved row');
+});
+
 test('reader bar: Prev/Next wrap like J/K and Close closes', async () => {
   await mount(list());
   await click(q('[data-nui-item="a"]')!);

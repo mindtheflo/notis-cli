@@ -1,7 +1,7 @@
 import '../ui/testDom';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { act } from 'react';
+import { act, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { NotisProvider } from '../provider';
@@ -133,6 +133,51 @@ test('the standard delete action hides its records while it runs and keeps only 
   assert.deepEqual(shown, ['b'], 'both records leave the list while the delete runs');
   await act(async () => { gate.resolve(undefined); await outcome; });
   assert.deepEqual(shown, ['b', 'c'], 'the record the delete could not remove comes back');
+  await act(async () => { root.unmount(); });
+});
+
+test('a delete action whose run reads its rows from a cached read still finds them, and they leave the list at once', async () => {
+  const gate = deferred();
+  const { runtime, calls } = setup(() => gate.promise);
+  let shown: string[] = [];
+  let controller: ActionsController<{ recordKey?: string }> | null = null;
+  function Probe() {
+    const documents = useNativeDocuments('decks').documents;
+    shown = documents.map((doc) => doc.recordKey!);
+    const [, setRemoving] = useState<string[]>([]);
+    // Like a Space's record writer: it keeps the rows it read and looks each one up when its write's turn comes.
+    const latest = useRef(documents);
+    useLayoutEffect(() => { latest.current = documents; });
+    const trash = useNativeMutation('decks', 'delete').mutate;
+    controller = useActions<{ recordKey?: string }>(['delete'], {
+      delete: async (items) => {
+        setRemoving(items.map((item) => item.recordKey!));
+        await Promise.all(items.map((item) => Promise.resolve().then(() => {
+          const row = latest.current.find((doc) => doc.recordKey === item.recordKey);
+          if (!row) throw new Error('This item is no longer available. Refresh the list and try again.');
+          return trash({ record_key: row.recordKey!, expected_revision: 1 }, { schemaRevision: 1, requestId: row.recordKey! });
+        })));
+      },
+    });
+    return null;
+  }
+  const root = await mount(runtime, Probe);
+  // Pressed in the page, not inside act: React renders on its own schedule, as in a browser.
+  const actEnvironment = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  let outcome: ReturnType<ActionsController<{ recordKey?: string }>['run']>;
+  try {
+    outcome = controller!.run('delete', [{ recordKey: 'b' }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+  }
+  assert.deepEqual(calls.map((call) => (call.inputs?.request as { record_key: string }).record_key), ['b'],
+    'the run found its row and sent the delete');
+  assert.deepEqual(shown, ['a', 'c'], 'the row leaves the list while the delete runs');
+  await act(async () => { gate.resolve({}); await outcome; });
+  assert.equal((await outcome!).status, 'done');
+  assert.deepEqual(shown, ['a', 'c'], 'the deleted row stays gone');
   await act(async () => { root.unmount(); });
 });
 

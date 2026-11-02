@@ -489,6 +489,18 @@ export function successorOf(previous: readonly string[], now: readonly string[],
   return continuationOf(previous, now, gone, direction);
 }
 
+/** Whether `id` sits between other rows in `now` than in `previous` (ignoring rows that came or went). */
+function movedBetween(previous: readonly string[], now: readonly string[], id: string): boolean {
+  const before = new Set(previous);
+  const after = new Set(now);
+  const neighbours = (order: readonly string[], kept: ReadonlySet<string>) => {
+    const shared = order.filter((other) => other === id || kept.has(other));
+    const at = shared.indexOf(id);
+    return `${shared[at - 1] ?? ''}\u0000${shared[at + 1] ?? ''}`;
+  };
+  return neighbours(previous, after) !== neighbours(now, before);
+}
+
 /** A run that did not happen (no such action, a picker closed unchosen). */
 /** Same board columns: same ids, labels and tones in the same order. */
 function sameColumns(a: readonly BoardColumn[], b: readonly BoardColumn[]): boolean {
@@ -928,6 +940,8 @@ function ListReaderInner<T>({
   const travel = useRef<TravelDirection>('next');
   const travelFrom = useRef<string | null>(cursor);
   const travelSaid = useRef<string | null>(null);
+  // The order from before the cursor's or the open row moved on its own (see removals below), by row.
+  const movedFrom = useRef(new Map<string, readonly string[]>());
   const sayTravel = useCallback((direction: TravelDirection | null, to: string | null) => {
     if (direction) travel.current = direction;
     travelSaid.current = to;
@@ -935,6 +949,7 @@ function ListReaderInner<T>({
   useEffect(() => {
     const from = travelFrom.current;
     travelFrom.current = cursor;
+    if (cursor !== from) movedFrom.current.clear();
     const said = travelSaid.current;
     travelSaid.current = null;
     if (cursor === null || cursor === from || said === cursor) return;
@@ -1102,10 +1117,14 @@ function ListReaderInner<T>({
     if (!moveOn || outcome.status !== 'done') return;
     const { ids: list, cursor: current, openId: opened } = latest.current;
     const doneIds = outcome.done.map((item) => getId(item));
-    const at = doneIds.map((id) => list.indexOf(id)).filter((index) => index !== -1);
+    // A row the run moved continues from where it was.
+    const order = movedFrom.current.get((current ?? opened) as string) ?? list;
+    const inList = new Set(list);
+    const stays = (id: string) => !doneIds.includes(id) && inList.has(id);
+    const at = doneIds.map((id) => order.indexOf(id)).filter((index) => index !== -1);
     const next = travel.current === 'previous'
-      ? list.slice(0, Math.min(list.length, ...at)).reverse().find((id) => !doneIds.includes(id)) ?? null
-      : list.slice(Math.max(-1, ...at) + 1).find((id) => !doneIds.includes(id)) ?? null;
+      ? order.slice(0, Math.min(order.length, ...at)).reverse().find(stays) ?? null
+      : order.slice(Math.max(-1, ...at) + 1).find(stays) ?? null;
     if (!next || !doneIds.includes((current ?? opened) as string)) return;
     sayTravel(null, next);
     noteFollow(next);
@@ -1176,6 +1195,8 @@ function ListReaderInner<T>({
   });
 
   // ---- removals: the cursor and an open item move on the way the cursor last went, else the other way ----
+  // A row that moves on its own (a run re-sorts it, then it leaves) continues from where the person left it: the
+  // order from before it moved, kept until the cursor goes elsewhere.
   const previousIds = useRef<readonly string[]>(ids);
   useIsoLayoutEffect(() => {
     const previous = previousIds.current;
@@ -1183,14 +1204,21 @@ function ListReaderInner<T>({
     if (previous === ids) return;
     const present = new Set(ids);
     const { cursor: current, openId: opened } = latest.current;
-    if (current !== null && !present.has(current) && previous.includes(current)) {
-      const next = successorOf(previous, ids, current, travel.current);
+    for (const id of movedFrom.current.keys()) if (id !== current && id !== opened) movedFrom.current.delete(id);
+    const orderOf = (id: string) => movedFrom.current.get(id) ?? previous;
+    for (const id of new Set([current, opened])) {
+      if (id !== null && present.has(id) && !movedFrom.current.has(id) && movedBetween(previous, ids, id)) {
+        movedFrom.current.set(id, previous);
+      }
+    }
+    if (current !== null && !present.has(current) && orderOf(current).includes(current)) {
+      const next = successorOf(orderOf(current), ids, current, travel.current);
       sayTravel(null, next);
       noteFollow(next);
       setCursor(next);
     }
-    if (opened !== null && !present.has(opened) && previous.includes(opened)) {
-      const next = successorOf(previous, ids, opened, travel.current);
+    if (opened !== null && !present.has(opened) && orderOf(opened).includes(opened)) {
+      const next = successorOf(orderOf(opened), ids, opened, travel.current);
       sayTravel(null, next);
       open(next, { quiet: true });
     }

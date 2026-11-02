@@ -23,11 +23,20 @@ class DeleteActionTimeout extends Error {
   constructor() { super(ACTION_WORDS.resultUnknown.en); this.name = 'DeleteActionTimeout'; }
 }
 
+/** Calls `run` now; a throw becomes a rejection. */
+function start<T>(run: () => T | Promise<T>): Promise<T> {
+  try {
+    return Promise.resolve(run());
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
 /** Bound optimistic UI only: the handler may still finish, and is never retried or cancelled here. */
-function withDeleteDeadline<T>(run: () => T | Promise<T>): Promise<T> {
+function withDeleteDeadline<T>(running: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
-    Promise.resolve().then(run),
+    running,
     new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new DeleteActionTimeout()), DELETE_ACTION_TIMEOUT_MS); }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -211,14 +220,20 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
     const targets = action.appliesTo ? items.filter(action.appliesTo) : [...items];
     if (!targets.length) return { status: 'cancelled', done: [], failed: [] };
     markBusy(action.id, true);
-    // Deleted records leave every cached read of the view at once; the ones that fail come back.
-    const keys = action.id === 'delete' ? targets.map(recordKeyOf) : [];
-    const hidden: HiddenRecords | undefined = keys.some(Boolean)
-      ? runtime?.queryClient?.hideRecords?.(keys.filter((key): key is string => !!key)) : undefined;
+    // Deleted records leave every cached read of the view at once; the ones that fail come back. The run starts
+    // first and the records hide a microtask later: a handler that looks its rows up in a cached read (a Space's
+    // record writer, on its write's turn) still finds them, and they leave before the next frame.
+    const keys = action.id === 'delete' ? targets.map(recordKeyOf).filter((key): key is string => !!key) : [];
+    let hidden: HiddenRecords | undefined;
     let settled = false;
+    const hide = () => {
+      if (!hidden && !settled && keys.length) hidden = runtime?.queryClient?.hideRecords?.(keys);
+      return hidden;
+    };
     try {
-      const result = action.id === 'delete'
-        ? await withDeleteDeadline(() => action.run(targets, choice)) : await action.run(targets, choice);
+      const running = start(() => action.run(targets, choice));
+      if (keys.length) queueMicrotask(hide);
+      const result = action.id === 'delete' ? await withDeleteDeadline(running) : await running;
       const ranUndo = typeof result === 'function' ? result as UndoFn
         : isActionResult<T>(result) && typeof result.undo === 'function' ? result.undo : null;
       const detail = isActionResult<T>(result) && typeof result !== 'function' ? result : null;
@@ -226,13 +241,14 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
       const failedSet = new Set<T>(detail?.failed ?? []);
       const failed = targets.filter((item) => failedSet.has(item));
       const done = targets.filter((item) => !failedSet.has(item));
-      if (hidden) {
-        hidden.commit(done.map(recordKeyOf).filter((key): key is string => !!key));
-        hidden.restore(failed.map(recordKeyOf).filter((key): key is string => !!key));
-        settled = true;
+      const hiding = hide();
+      if (hiding) {
+        hiding.commit(done.map(recordKeyOf).filter((key): key is string => !!key));
+        hiding.restore(failed.map(recordKeyOf).filter((key): key is string => !!key));
       }
+      settled = true;
       // Undo brings the records back on screen while the reads refresh.
-      const undo: UndoFn | null = ranUndo && hidden ? async () => { hidden.restore(); await ranUndo(); } : ranUndo;
+      const undo: UndoFn | null = ranUndo && hiding ? async () => { hiding.restore(); await ranUndo(); } : ranUndo;
       const reason = detail?.reason ? toWords(detail.reason) : null;
       if (failed.length && !done.length) {
         notify(ACTION_WORDS.failed, { tone: 'danger', reason });
@@ -261,6 +277,7 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
       return { status: 'failed', done: [], failed: targets };
     } finally {
       if (hidden && !settled) hidden.restore();
+      settled = true;
       markBusy(action.id, false);
     }
   }, [actions, notify, markBusy, runtime]);
