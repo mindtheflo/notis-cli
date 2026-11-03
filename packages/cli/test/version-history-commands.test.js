@@ -124,6 +124,39 @@ test('documents Bin commands send exact requests and permanent removal needs --y
   ]);
 });
 
+test('documents bin list pages with --before and says how to read the next page', async t => {
+  const cursor = '2026-11-01T10:00:00+00:00~batch-100';
+  const pages = [
+    { documents: [{ id: 'doc-new', title: 'Newest' }], next_before: cursor },
+    { documents: [{ id: 'doc-old', title: 'Oldest' }], next_before: null },
+  ];
+  const urls = [];
+  t.mock.method(globalThis, 'fetch', async url => {
+    urls.push(url);
+    return new Response(JSON.stringify(pages[urls.length - 1]), { status: 200 });
+  });
+  const first = await run('documents bin list', { limit: '1' }, {});
+  assert.match(first.humanSummary, /More deletions: rerun with --before '2026-11-01T10:00:00\+00:00~batch-100'/);
+  assert.equal(first.data.next_before, cursor);
+  const second = await run('documents bin list', { before: cursor, limit: '1' }, {});
+  assert.deepEqual(second.data.documents.map(entry => entry.id), ['doc-old']);
+  assert.doesNotMatch(second.humanSummary, /More deletions/);
+  assert.deepEqual(urls, [
+    'https://fixture.invalid/portal_documents/bin?limit=1',
+    `https://fixture.invalid/portal_documents/bin?${new URLSearchParams({ before: cursor, limit: '1' })}`,
+  ]);
+  await assert.rejects(async () => run('documents bin list', { limit: '0' }, {}), /--limit/);
+  await assert.rejects(async () => run('documents bin list', { before: '  ' }, {}), /--before/);
+  assert.equal(urls.length, 2);
+});
+
+test('an older server answer without next_before reads as the last page of the Bin', async t => {
+  recordFetch(t, { documents: [{ id: 'doc-1', title: 'Only' }] });
+  const result = await run('documents bin list', {}, {});
+  assert.deepEqual(result.data.documents.map(entry => entry.id), ['doc-1']);
+  assert.doesNotMatch(result.humanSummary, /More deletions|--before/);
+});
+
 test('document version commands refuse missing inputs before any request', async t => {
   const calls = recordFetch(t);
   const args = { documentId: 'doc-1' };

@@ -6,7 +6,8 @@ const documentArgument = { token: '<document-id>', key: 'documentId', descriptio
 const versionOption = { flags: '--version-id <version-id>', description: 'Saved version ID from versions list.' };
 
 async function remote(ctx, operation, { method = 'POST', body, query, humanSummary } = {}) {
-  const suffix = query ? `?${new URLSearchParams(Object.entries(query).filter(([, value]) => value != null))}` : '';
+  const search = query ? `${new URLSearchParams(Object.entries(query).filter(([, value]) => value != null))}` : '';
+  const suffix = search ? `?${search}` : '';
   const result = await httpRequest({ runtime: ctx.runtime, method, path: `/portal_documents/${operation}${suffix}`, body, spacesProtocol: true });
   return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data: result.payload,
     humanSummary: humanSummary ? humanSummary(result.payload) : JSON.stringify(result.payload, null, 2),
@@ -22,6 +23,14 @@ function limit(value) {
   if (value === undefined) return undefined;
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 100) throw usageError('Pass --limit as a whole number from 1 to 100.');
   return Number(value);
+}
+
+// An older server answers without next_before: that reads as the last page.
+function binSummary(payload) {
+  const text = JSON.stringify(payload, null, 2);
+  const next = payload?.next_before;
+  if (typeof next !== 'string' || !next) return text;
+  return `${text}\nMore deletions: rerun with --before '${next.replaceAll("'", "'\\''")}'`;
 }
 
 function confirmed(options, what) {
@@ -124,11 +133,20 @@ export const documentsCommandSpecs = [
     command_path: ['documents', 'bin', 'list'],
     summary: 'List the documents in your Bin.',
     when_to_use: 'Find a deleted document to bring back, or to remove for good.',
-    args_schema: { arguments: [], options: [] },
-    examples: ['notis documents bin list'], mutates: false, idempotent: true, require_auth: true,
+    args_schema: { arguments: [], options: [
+      { flags: '--before <cursor>', description: 'Read older deletions, from the next_before of the previous page.' },
+      { flags: '--limit <count>', description: 'How many deletions to read (1 to 100).' },
+    ] },
+    examples: ['notis documents bin list', "notis documents bin list --before '<next_before>'"],
+    mutates: false, idempotent: true, require_auth: true,
     backend_call: { type: 'http', path: '/portal_documents/bin' },
     handler(ctx) {
-      return remote(ctx, 'bin', { method: 'GET' });
+      const before = ctx.options.before;
+      if (before !== undefined && (typeof before !== 'string' || !before.trim())) {
+        throw usageError('Pass --before with the next_before of the previous Bin page.');
+      }
+      return remote(ctx, 'bin', { method: 'GET', humanSummary: binSummary,
+        query: { before, limit: limit(ctx.options.limit) } });
     },
   },
   {
