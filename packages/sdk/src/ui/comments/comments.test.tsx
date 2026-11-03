@@ -13,6 +13,7 @@ import {
   type UseCommentsOptions,
 } from '.';
 import * as ui from '..';
+import { SpaceFileError, type SpaceFileUploadInput, type SpaceFilesTransport } from '../../space';
 
 const doc = dom.window.document;
 const proto = dom.window.HTMLDialogElement?.prototype as (HTMLDialogElement & { showModal?: () => void }) | undefined;
@@ -620,4 +621,249 @@ test('Replies show their pictures and links too, and French words', async () => 
   assert.equal(reply.querySelector('.nui-comment-link')!.getAttribute('href'), 'https://x.example/v2');
   assert.equal(reply.querySelector('.nui-comment-attachments')!.getAttribute('aria-label'), 'Images et fichiers');
   assert.ok(button('Agrandir Après'));
+});
+
+// ---------------------------------------------------------------------------
+// Attaching pictures and files
+// ---------------------------------------------------------------------------
+
+const SIGNED = 'https://db.example.supabase.co/storage/v1/object/sign/app-code/native-files/v1/x/y/file.png?token=t';
+const STORED = 'https://db.example.supabase.co/storage/v1/object/authenticated/app-code/native-files/v1/x/y/file.png';
+
+interface FakeFiles extends SpaceFilesTransport { uploads: SpaceFileUploadInput[]; checks: string[][] }
+
+function fakeFiles(behaviour: { fail?: SpaceFileError; failOnce?: SpaceFileError; checkFail?: SpaceFileError; hold?: boolean } = {}): FakeFiles {
+  const uploads: SpaceFileUploadInput[] = [];
+  const checks: string[][] = [];
+  return {
+    uploads, checks,
+    async check(database, column) {
+      checks.push([database, column]);
+      if (behaviour.checkFail) throw behaviour.checkFail;
+      return { available: true, maxBytes: 8 * 1024 * 1024, extensions: ['png', 'pdf'] };
+    },
+    async upload(input) {
+      uploads.push(input);
+      input.onProgress?.(0, input.file.size);
+      if (behaviour.hold) await new Promise(() => {});
+      if (behaviour.fail) throw behaviour.fail;
+      if (behaviour.failOnce && uploads.length === 1) throw behaviour.failOnce;
+      const name = input.name ?? 'file';
+      return { file: { name, url: STORED.replace('file.png', `file.${name.split('.').pop()}`) }, previewUrl: SIGNED,
+        sizeBytes: input.file.size, contentType: input.file.type, sha256: 'a'.repeat(64), requestId: 'r' };
+    },
+  };
+}
+
+/** Rows of a Comments table that has the Attachments files column. */
+const FILE_ROWS = ROWS.map(item => ({ ...item, properties: { ...(item.properties as object), Attachments: { type: 'files', files: [] } } }));
+
+function withFiles(runtime: NotisRuntime, files: SpaceFilesTransport | undefined): NotisRuntime {
+  return { ...runtime, spaceFiles: files } as NotisRuntime;
+}
+
+const picture = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'image.png', { type: 'image/png' });
+const pdf = () => new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'brief.pdf', { type: 'application/pdf' });
+
+async function paste(el: Element, files: File[], text = '') {
+  const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: { files, getData: () => text } });
+  await act(async () => { el.dispatchEvent(event); });
+  await settle();
+  return event;
+}
+
+async function drop(el: Element, files: File[]) {
+  for (const type of ['dragover', 'drop']) {
+    const event = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files, dropEffect: 'none' } });
+    await act(async () => { el.dispatchEvent(event); });
+  }
+  await settle();
+}
+
+async function pick(input: HTMLInputElement, files: File[]) {
+  Object.defineProperty(input, 'files', { value: files, configurable: true });
+  await act(async () => { input.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+  await settle();
+}
+
+async function openNewBox() {
+  await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+  await settle();
+  return doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+}
+
+test('Attach: a pasted picture uploads at once, shows as a chip and is saved in Attachments with the comment', async () => {
+  const calls: Call[] = [];
+  const files = fakeFiles();
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls), files));
+  assert.equal(controller!.attach, 'on', 'the rows show the column: no check request');
+  assert.equal(files.checks.length, 0);
+  const field = await openNewBox();
+  const event = await paste(field, [picture()]);
+  assert.equal(event.defaultPrevented, true, 'a pasted picture is not pasted as text');
+  assert.equal(files.uploads.length, 1);
+  assert.equal(files.uploads[0]!.database, 'comments');
+  assert.equal(files.uploads[0]!.column, 'Attachments');
+  assert.match(files.uploads[0]!.name!, /^pasted-.*\.png$/, 'a pasted "image.png" gets a dated name');
+  const chip = doc.querySelector('.nui-comment-new-box .nui-comment-file')!;
+  assert.equal(chip.getAttribute('data-state'), 'ready');
+  assert.ok(chip.querySelector('img'), 'a picture chip shows its thumbnail');
+  assert.ok(button(`Remove ${files.uploads[0]!.name}`), 'each chip has its remove control');
+  await type(field, 'Like this');
+  await key(field, 'Enter');
+  const insert = calls.find(call => call.action === 'comments.insert')!;
+  const props = insert.request.properties as Record<string, unknown>;
+  assert.deepEqual(props.Attachments, [{ name: files.uploads[0]!.name, url: STORED }]);
+  assert.deepEqual(insert.request.columns, { title: 'Like this' });
+  assert.equal(doc.querySelector('.nui-comment-new-box'), null);
+});
+
+test('Attach: a picture alone can be sent, and the sent draft shows it before the rows come back', async () => {
+  const calls: Call[] = [];
+  const files = fakeFiles();
+  const runtime = withFiles(fakeRuntime(FILE_ROWS, calls), files);
+  await mount(<Harness {...base} />, runtime);
+  const field = await openNewBox();
+  await paste(field, [picture()]);
+  await click(button('Send')!);
+  const insert = calls.find(call => call.action === 'comments.insert')!;
+  assert.deepEqual(insert.request.columns, { title: '' });
+  assert.equal(doc.querySelector('.nui-comment-thumb img')!.getAttribute('src'), SIGNED, 'the draft shows the signed preview');
+});
+
+test('Attach: files dropped on a reply and picked with the paperclip upload and go with the reply', async () => {
+  const calls: Call[] = [];
+  const files = fakeFiles();
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls), files));
+  const box = doc.querySelector('[data-thread="c1"] .nui-comment-compose-box')!;
+  await drop(box, [pdf()]);
+  assert.equal(files.uploads.length, 1);
+  assert.equal(files.uploads[0]!.name, 'brief.pdf');
+  assert.equal(box.querySelector('.nui-comment-file img'), null, 'a file chip shows a file icon');
+  assert.ok(box.querySelector('.nui-comment-file svg'));
+  const input = box.querySelector('input[type="file"]') as HTMLInputElement;
+  assert.ok(button('Attach pictures or files'));
+  assert.equal(input.multiple, true);
+  await pick(input, [picture()]);
+  assert.equal(files.uploads.length, 2);
+  assert.equal(box.querySelectorAll('.nui-comment-file').length, 2);
+  await click(button(`Remove ${files.uploads[1]!.name}`)!);
+  assert.equal(box.querySelectorAll('.nui-comment-file').length, 1);
+  const field = box.querySelector('textarea') as HTMLTextAreaElement;
+  await type(field, 'The brief');
+  await key(field, 'Enter');
+  const insert = calls.find(call => call.action === 'comments.insert')!;
+  assert.deepEqual((insert.request.properties as Record<string, unknown>).Attachments,
+    [{ name: 'brief.pdf', url: STORED.replace('file.png', 'file.pdf') }]);
+  assert.equal((insert.request.properties as Record<string, unknown>).Thread, 'c1');
+});
+
+test('Attach: a failed upload keeps the text and the chip, says why in EN and FR, and holds Send until it is retried or removed', async () => {
+  const calls: Call[] = [];
+  const failing = fakeFiles({ fail: new SpaceFileError('too big', 'space_file_too_large', 413) });
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls), failing));
+  const field = await openNewBox();
+  await type(field, 'Keep me');
+  await paste(field, [pdf()]);
+  const chip = doc.querySelector('.nui-comment-file')!;
+  assert.equal(chip.getAttribute('data-state'), 'failed');
+  assert.match(doc.body.textContent!, /brief\.pdf is over 8 MB/);
+  assert.equal(field.value, 'Keep me', 'the typed comment stays');
+  assert.equal(button('Send')!.disabled, true, 'nothing is sent without the file the person attached');
+  assert.equal(button('Try brief.pdf again'), undefined, 'the same file is still too large: no Try again');
+  await click(button('Remove brief.pdf')!);
+  assert.equal(button('Send')!.disabled, false);
+  assert.equal(calls.length, 0);
+
+  const lost = fakeFiles({ failOnce: new SpaceFileError('offline', 'space_file_offline') });
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, []), lost));
+  const again = await openNewBox();
+  await paste(again, [pdf()]);
+  assert.equal(doc.querySelector('.nui-comment-file')!.getAttribute('data-state'), 'failed');
+  await click(button('Try brief.pdf again')!);
+  await settle();
+  assert.equal(doc.querySelector('.nui-comment-file')!.getAttribute('data-state'), 'ready', 'a lost upload goes through on Try again');
+  assert.equal(lost.uploads.length, 2);
+
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, [], { locale: 'fr' }), fakeFiles({
+    fail: new SpaceFileError('nope', 'space_file_type_unsupported', 415) })), 'fr');
+  const champ = await openNewBox();
+  await paste(champ, [pdf()]);
+  assert.match(doc.body.textContent!, /brief\.pdf ne peut pas être joint/);
+});
+
+test('Attach: a save that fails after the upload keeps the text and the files for another try', async () => {
+  const calls: Call[] = [];
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls, { fail: true }), fakeFiles()));
+  const field = await openNewBox();
+  await type(field, 'Try me');
+  await paste(field, [pdf()]);
+  await key(field, 'Enter');
+  assert.ok(calls.find(call => call.action === 'comments.insert'));
+  assert.match(doc.body.textContent!, /Could not save that change/);
+  const kept = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  assert.equal(kept.value, 'Try me');
+  assert.equal(doc.querySelectorAll('.nui-comment-new-box .nui-comment-file[data-state="ready"]').length, 1);
+});
+
+test('Attach: Send waits while a file uploads', async () => {
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, []), fakeFiles({ hold: true })));
+  const field = await openNewBox();
+  await type(field, 'Wait');
+  await paste(field, [pdf()]);
+  assert.equal(doc.querySelector('.nui-comment-file')!.getAttribute('data-state'), 'uploading');
+  assert.match(doc.querySelector('.nui-comment-file [role="status"]')!.textContent!, /Uploading brief\.pdf, 0%/);
+  assert.equal(button('Send')!.disabled, true);
+});
+
+test('Attach: text only without the Attachments column, without a host transport, and after a refused check', async () => {
+  const warnings: unknown[][] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    const files = fakeFiles();
+    await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, []), files));
+    assert.equal(controller!.attach, 'off', 'the rows show no Attachments column');
+    assert.equal(button('Attach pictures or files'), undefined);
+    assert.ok(warnings.some(args => /no files column named "Attachments"/.test(String(args[0]))), 'the developer is told');
+    const field = await openNewBox();
+    const event = await paste(field, [picture()]);
+    assert.equal(event.defaultPrevented, false, 'a text-only pane leaves the paste to the browser');
+    assert.equal(files.uploads.length, 0);
+
+    await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, []), undefined));
+    assert.equal(controller!.attach, 'off', 'a Site, a preview or an older host uploads nothing');
+    assert.equal(button('Attach pictures or files'), undefined);
+
+    const refused = fakeFiles({ checkFail: new SpaceFileError('no column', 'space_file_column_missing', 409) });
+    await mount(<Harness {...base} />, withFiles(fakeRuntime([], []), refused));
+    assert.deepEqual(refused.checks, [['comments', 'Attachments']], 'an empty table asks the host once');
+    assert.equal(controller!.attach, 'off');
+
+    const empty = fakeFiles();
+    await mount(<Harness {...base} />, withFiles(fakeRuntime([], []), empty));
+    assert.equal(controller!.attach, 'on');
+    assert.ok(button('Attach pictures or files') === undefined, 'no box is open yet');
+    await openNewBox();
+    assert.ok(button('Attach pictures or files'));
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test('Attach: an expired picture address reads the comments again, at most twice a minute', async () => {
+  let reads = 0;
+  const runtime = withFiles(fakeRuntime([row('e1', { body: 'Look', slide: 'slide-1', files: [{ name: 'a.png', url: SIGNED }] })], []), fakeFiles());
+  const shown = runtime.shown!.bind(runtime);
+  (runtime as { shown: typeof shown }).shown = async (...args: Parameters<typeof shown>) => { reads += 1; return shown(...args); };
+  await mount(<Harness {...base} />, runtime);
+  const before = reads;
+  const img = doc.querySelector('.nui-comment-thumb img')!;
+  await act(async () => { img.dispatchEvent(new dom.window.Event('error')); });
+  await settle();
+  await act(async () => { img.dispatchEvent(new dom.window.Event('error')); });
+  await settle();
+  assert.equal(reads - before, 1);
 });

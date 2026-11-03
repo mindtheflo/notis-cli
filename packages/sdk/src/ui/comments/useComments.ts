@@ -9,12 +9,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { useNativeMutation } from '../../hooks/useNativeDocuments';
 import { useShown } from '../../hooks/useViewParams';
 import { useNotisRuntime } from '../../provider';
+import { SPACE_FILE_MAX_BYTES, SpaceFileError, type SpaceFileUploadResult } from '../../space';
 import { fillWords, pick, type Locale, type Words } from '../../words';
 import { useToast, type ToastController } from '../actions/useToast';
 import { ESCAPE_PRIORITY } from '../engine/core';
 import { useEscapeLayer, useToolkitLocale } from '../engine/hooks';
 import {
-  applyCommentPatches, clipCommentAnswer, commentChangesSince, commentColumns, commentDigest, commentRowsOf,
+  applyCommentPatches, clipCommentAnswer, commentAttachmentList, commentChangesSince, commentRowsHaveColumn, commentColumns, commentDigest, commentRowsOf,
   commentThreads, commentTimeOf, inCommentScope, newCommentId, readCommentRow, writeCommentClipboard,
   type CommentAnchor, type CommentChange, type CommentColumns, type CommentDigestOptions, type CommentPatch,
   type CommentRecord, type CommentScope, type CommentThread,
@@ -46,9 +47,21 @@ export interface CommentZoneHandlers {
 /** A drag shorter than this (in pixels, either way) is a click: it drops a pin. */
 const ZONE_MIN_PX = 4;
 
+/**
+ * A file uploaded for a comment that is not sent yet: `name` and `url` go into the Attachments column, `previewUrl`
+ * shows it until the saved comment is read back.
+ */
+export interface CommentFile { name: string; url: string; previewUrl?: string | null }
+
+/** Whether new comments and replies can carry pictures and files. */
+export type CommentAttachMode = 'on' | 'off' | 'checking';
+
 export interface CommentActions {
-  /** Adds a reply. A reply reopens a resolved thread and answers an open input ask. True once saved. */
-  reply(thread: CommentThread, body: string): Promise<boolean>;
+  /**
+   * Adds a reply, with the files already uploaded for it. A reply reopens a resolved thread and answers an open input
+   * ask. True once saved.
+   */
+  reply(thread: CommentThread, body: string, files?: readonly CommentFile[]): Promise<boolean>;
   /** Answers a check or choice ask. */
   answer(root: CommentRecord, answer: string): void;
   setStatus(root: CommentRecord, status: 'Open' | 'Resolved'): void;
@@ -133,8 +146,20 @@ export interface CommentController {
   /** In Add comment mode: a click on the element drops a pin, a press and drag marks a zone. */
   zoneHandlers(anchorKey: string | null): CommentZoneHandlers;
   cancelPin(): void;
-  /** Saves the new comment. True once saved. */
-  sendNew(body: string): Promise<boolean>;
+  /** Saves the new comment with the files already uploaded for it. True once saved. */
+  sendNew(body: string, files?: readonly CommentFile[]): Promise<boolean>;
+
+  /**
+   * 'on' when people can attach pictures and files: the table has the Attachments column and the host uploads files
+   * (signed-in Editors in Notis; never on a Site, a link or a preview). 'off' leaves the pane text only.
+   */
+  attach: CommentAttachMode;
+  /** The largest file the host takes, in bytes. */
+  maxFileBytes: number;
+  /** Uploads one file for a comment not sent yet. Throws a `SpaceFileError` with a code the pane words. */
+  uploadFile(file: File, options?: { onProgress?(sent: number, total: number): void; signal?: AbortSignal }): Promise<CommentFile>;
+  /** A shown picture failed to load (its signed address expired): reads the comments again, at most twice a minute. */
+  refreshFiles(): void;
 
   deleting: CommentRecord | null;
   cancelDelete(): void;
@@ -337,8 +362,9 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
 
   const insert = useCallback(async (fields: {
     body: string; anchor: CommentAnchor | undefined; thread: string; x: number | null; y: number | null;
-    w: number | null; h: number | null; change: 'created' | 'replied';
+    w: number | null; h: number | null; change: 'created' | 'replied'; files?: readonly CommentFile[];
   }): Promise<string | false> => {
+    const files = columns.attachments ? fields.files ?? [] : [];
     if (schemaRevision == null) { fail(new Error('Comments schema revision unknown')); return false; }
     const at = new Date().toISOString();
     const tempKey = `draft-${newCommentId()}`;
@@ -348,7 +374,8 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       scopeIds: currentScope ? [currentScope.id] : [], anchorIds: fields.anchor ? [fields.anchor.id] : [],
       thread: fields.thread, author: me, x: fields.x, y: fields.y,
       w: columns.w && columns.h ? fields.w : null, h: columns.w && columns.h ? fields.h : null, status: 'Open', needs: 'none', options: [], answer: '',
-      answeredAt: null, change: fields.change, changedAt: at, example: false, createdAt: at, attachments: [],
+      answeredAt: null, change: fields.change, changedAt: at, example: false, createdAt: at,
+      attachments: commentAttachmentList(files.map(file => ({ name: file.name, url: file.previewUrl || file.url }))),
     };
     setDrafts(current => [...current, { comment, serverKey: null }]);
     const properties: Record<string, unknown> = {
@@ -358,6 +385,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     if (columns.scope && currentScope) properties[columns.scope] = [currentScope.id];
     if (columns.anchor && fields.anchor) properties[columns.anchor] = [fields.anchor.id];
     if (fields.thread) properties[columns.thread] = fields.thread;
+    if (columns.attachments && files.length) properties[columns.attachments] = files.map(({ name, url }) => ({ name, url }));
     if (fields.x != null && fields.y != null) {
       properties[columns.x] = Number(fields.x.toFixed(4));
       properties[columns.y] = Number(fields.y.toFixed(4));
@@ -381,9 +409,9 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   }, [schemaRevision, me, columns, changeProps, insertMutation, refetch, fail]);
 
   const actions: CommentActions = useMemo(() => ({
-    reply: async (thread, body) => {
+    reply: async (thread, body, files = []) => {
       const { root } = thread;
-      if (root.recordKey.startsWith('draft-')) return false;
+      if (root.recordKey.startsWith('draft-') || (!body.trim() && !files.length)) return false;
       const rootFields: Partial<CommentRecord> = {};
       const rootProps: Record<string, unknown> = {};
       const at = new Date().toISOString();
@@ -392,12 +420,13 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
         Object.assign(rootProps, changeProps('reopened', at, { [columns.status]: 'Open' }));
       }
       if (root.needs === 'input' && !root.answer) {
-        const answer = clipCommentAnswer(body);
+        const answer = clipCommentAnswer(body.trim() || files.map(file => file.name).join(', '));
         Object.assign(rootFields, { answer, answeredAt: at });
         Object.assign(rootProps, { [columns.answer]: answer, [columns.answeredAt]: at });
       }
       const [inserted] = await Promise.all([
-        insert({ body, anchor: thread.anchor, thread: root.recordKey, x: null, y: null, w: null, h: null, change: 'replied' }),
+        insert({ body: body.trim(), anchor: thread.anchor, thread: root.recordKey, x: null, y: null, w: null, h: null,
+          change: 'replied', files }),
         Object.keys(rootProps).length ? updateRoot(root, rootFields, rootProps) : Promise.resolve(true),
       ]);
       if (inserted && root.status === 'Resolved') setStatusFilter('open');
@@ -501,11 +530,12 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     };
   }, [commenting, zones, placePin, endDrag]);
 
-  const sendNew = useCallback(async (body: string) => {
+  const sendNew = useCallback(async (body: string, files: readonly CommentFile[] = []) => {
     const pin = draftPin;
-    if (!pin || !body.trim()) return false;
+    if (!pin || (!body.trim() && !files.length)) return false;
     const target = anchors.find(item => item.recordKey === pin.anchorKey);
-    const key = await insert({ body: body.trim(), anchor: target, thread: '', x: pin.x, y: pin.y, w: pin.w, h: pin.h, change: 'created' });
+    const key = await insert({ body: body.trim(), anchor: target, thread: '', x: pin.x, y: pin.y, w: pin.w, h: pin.h,
+      change: 'created', files });
     if (!key) return false;
     setDraftPin(null);
     setThreadKey(key);
@@ -526,6 +556,56 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   // Escape leaves Add comment mode (and drops a zone being dragged) before anything else on the page reacts.
   useEscapeLayer(`comments.${database}.mode`, () => { endDrag(); setCommentingState(false); return true; },
     { priority: ESCAPE_PRIORITY.selection + 2, enabled: commenting });
+
+  // Files: the host's transport and the table's files column. Rows tell whether the column exists; an empty table
+  // asks the host once. A missing column leaves the pane text only and tells the Space's developer in the console.
+  const files = runtime?.spaceFiles;
+  const fileColumn = columns.attachments;
+  const rowsHaveFiles = useMemo(() => query.hasData ? commentRowsHaveColumn(commentRowsOf(query.data), fileColumn) : null,
+    [query.hasData, query.data, fileColumn]);
+  const [checked, setChecked] = useState<{ key: string; mode: CommentAttachMode; maxBytes: number } | null>(null);
+  const checkKey = `${database}|${fileColumn ?? ''}`;
+  useEffect(() => {
+    if (!files || !fileColumn || rowsHaveFiles !== null || !query.hasData || checked?.key === checkKey) return undefined;
+    let current = true;
+    files.check(database, fileColumn).then(
+      answer => { if (current) setChecked({ key: checkKey, mode: 'on', maxBytes: answer.maxBytes }); },
+      (error: unknown) => {
+        if (!current) return;
+        const code = error instanceof SpaceFileError ? error.code : '';
+        // No answer is not a refusal: the pane offers files and an upload says what went wrong.
+        const refused = ['space_file_column_missing', 'space_file_write_required', 'editor_required', 'sign_in_required',
+          'space_unavailable', 'unknown_database'].includes(code);
+        setChecked({ key: checkKey, mode: refused ? 'off' : 'on', maxBytes: SPACE_FILE_MAX_BYTES });
+      });
+    return () => { current = false; };
+  }, [files, fileColumn, rowsHaveFiles, query.hasData, checked?.key, checkKey, database]);
+  const attach: CommentAttachMode = !files || !fileColumn || rowsHaveFiles === false ? 'off'
+    : rowsHaveFiles ? 'on' : checked?.key === checkKey ? checked.mode : 'checking';
+  const warned = useRef(false);
+  useEffect(() => {
+    if (warned.current || !files || !fileColumn || !(rowsHaveFiles === false || checked?.key === checkKey && checked.mode === 'off')) return;
+    warned.current = true;
+    console.warn(`[comments] "${database}" has no files column named "${fileColumn}" this view can write, so comments `
+      + `take text only. Add a files column named "${fileColumn}" to the Comments database (or pass columns.attachments).`);
+  }, [files, fileColumn, rowsHaveFiles, checked, checkKey, database]);
+  const maxFileBytes = checked?.key === checkKey ? checked.maxBytes : SPACE_FILE_MAX_BYTES;
+
+  const uploadFile = useCallback(async (file: File, upload: {
+    onProgress?(sent: number, total: number): void; signal?: AbortSignal;
+  } = {}): Promise<CommentFile> => {
+    if (!files || !fileColumn) throw new SpaceFileError('Files cannot be attached here.', 'space_file_column_missing');
+    const result: SpaceFileUploadResult = await files.upload({ database, column: fileColumn, file, name: file.name,
+      onProgress: upload.onProgress, signal: upload.signal });
+    return { name: result.file.name, url: result.file.url, previewUrl: result.previewUrl };
+  }, [files, fileColumn, database]);
+
+  const refreshedAt = useRef(0);
+  const refreshFiles = useCallback(() => {
+    if (Date.now() - refreshedAt.current < 30000) return;
+    refreshedAt.current = Date.now();
+    void refetchRef.current();
+  }, []);
 
   const copyChanges = useCallback(async (host: HTMLElement | null) => {
     if (!changes.length || copying) return false;
@@ -555,6 +635,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     scope, anchors, anchorKey, anchor,
     filter: effectiveFilter, setFilter, statusFilter, setStatusFilter, threadKey, setThreadKey, selectThread,
     actions, commenting, setCommenting, toggleCommenting, draftPin, placePin, placePinFromEvent, cancelPin, sendNew,
+    attach, maxFileBytes, uploadFile, refreshFiles,
     zones, dragZone, zoneHandlers,
     deleting, cancelDelete: () => setDeleting(null), confirmDelete, copyChanges, copying,
     busy, now, toaster, words, say, locale, me,

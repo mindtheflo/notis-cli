@@ -3,3 +3,4 @@ export * from './commentModel';
 export * from './commentWords';
 export * from './useComments';
 export * from './CommentPane';
+export * from './commentFiles';

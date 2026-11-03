@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { defineSpecimen, type SpecimenRenderContext } from '../../specimen';
-import { NotisProvider, type NotisRuntime } from '../../../src';
+import { NotisProvider, SpaceFileError, type NotisRuntime, type SpaceFilesTransport } from '../../../src';
 import {
-  CommentAvatar, CommentPane, CommentPins, CommentThreadCard, useComments,
+  CommentAttachButton, CommentAvatar, CommentDropVeil, CommentFileChips, CommentPane, CommentPins, CommentThreadCard,
+  useCommentFiles, useComments,
   type CommentAnchor, type CommentScope, type UseCommentsOptions,
 } from '../../../src/ui/index';
 import { w } from '../../../src/words/index';
@@ -103,6 +104,20 @@ function commentRuntime(lang: Ctx['lang'], empty: boolean, seeds: Seed[] = SEEDS
   } as unknown as NotisRuntime;
 }
 
+/** A host that uploads: pictures finish, a PDF keeps uploading, and a file over the limit is refused. */
+const SHOT = 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAeCAIAAADlxgqWAAAANElEQVR42u3OMREAMAgAMXxipcpZQEQHGPL3AhJ9rAACAgLaBuWrUwMBAQEBAQEBAQEB/T3tbDKVJhI70wAAAABJRU5ErkJggg==';
+const SHOT_URL = `data:image/png;base64,${SHOT}`;
+const FILES: SpaceFilesTransport = {
+  check: async () => ({ available: true, maxBytes: 8 * 1024 * 1024, extensions: ['png', 'pdf'] }),
+  upload: async input => {
+    const name = input.name ?? 'file';
+    if (name.endsWith('.pdf')) { input.onProgress?.(input.file.size * 0.4, input.file.size); return new Promise(() => {}); }
+    if (name.endsWith('.mov')) throw new SpaceFileError('Unsupported', 'space_file_type_unsupported', 415);
+    return { file: { name, url: SHOT_URL }, previewUrl: SHOT_URL, sizeBytes: input.file.size, contentType: 'image/png',
+      sha256: '0'.repeat(64), requestId: 'fixture' };
+  },
+};
+
 type Draft = 'pin' | 'zone' | 'whole' | 'commenting';
 
 function Deck({ anchorKey, draft, options }: { anchorKey: string; draft?: Draft; options?: Partial<UseCommentsOptions> }) {
@@ -147,6 +162,45 @@ function PicturesPane() {
   return <div style={{ maxWidth: 360 }}><CommentPane controller={controller} /></div>;
 }
 
+function AttachingDemo({ ctx }: { ctx: Ctx }) {
+  const runtime = useMemo(() => {
+    const base = commentRuntime(ctx.lang, true);
+    return { ...base, spaceFiles: FILES } as NotisRuntime;
+  }, [ctx.lang]);
+  return <NotisProvider runtime={runtime}><AttachingBox lang={ctx.lang} /></NotisProvider>;
+}
+
+/** A Space that lays out its own comment box with the toolkit's attachment pieces: chips, the paperclip, the drop veil. */
+function AttachingBox({ lang }: { lang: Ctx['lang'] }) {
+  const controller = useComments({ scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1', words: SLIDE_WORDS });
+  const files = useCommentFiles(controller);
+  const started = useRef(false);
+  const { attach } = controller;
+  const { add } = files;
+  useEffect(() => {
+    if (attach !== 'on' || started.current) return;
+    started.current = true;
+    const bytes = Uint8Array.from(atob(SHOT), char => char.charCodeAt(0));
+    add([new File([bytes], 'Menu overlap.png', { type: 'image/png' }), new File([new Uint8Array(4096)], 'Brief.pdf', { type: 'application/pdf' }),
+      new File([new Uint8Array(16)], 'Screen recording.mov', { type: 'video/quicktime' })]);
+  }, [attach, add]);
+  return (
+    <div style={{ maxWidth: 360 }}>
+      <div className="nui-comment-new-box" {...files.boxHandlers}>
+        <p className="nui-comment-new-title">{controller.say('newCommentOn', { n: 1 })}</p>
+        <textarea className="nui-comment-input" rows={2} readOnly aria-label={controller.say('commentPlaceholder')}
+          value={lang === 'fr' ? 'Le menu passe sous le bouton.' : 'The menu slides under the button.'} />
+        <CommentFileChips controller={controller} files={files} />
+        <div className="nui-comment-new-actions">
+          <CommentAttachButton controller={controller} files={files} />
+          <span className="nui-comment-new-gap" />
+        </div>
+        <CommentDropVeil controller={controller} files={files} />
+      </div>
+    </div>
+  );
+}
+
 function CardOnly({ ctx }: { ctx: Ctx }) {
   const runtime = useMemo(() => commentRuntime(ctx.lang, false), [ctx.lang]);
   return <NotisProvider runtime={runtime}><Card /></NotisProvider>;
@@ -170,8 +224,9 @@ export const specimen = defineSpecimen({
   name: 'CommentPane',
   group: 'blocks',
   from: '@notis/sdk/ui',
-  covers: ['CommentPane', 'CommentThreadCard', 'NewCommentBox', 'CommentPins', 'CommentAvatar'],
-  summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files, asks the agent waits on (answered from under a picture), Resolve and Copy changes.',
+  covers: ['CommentPane', 'CommentThreadCard', 'NewCommentBox', 'CommentPins', 'CommentAvatar', 'CommentFileChips',
+    'CommentAttachButton', 'CommentDropVeil'],
+  summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files (pasted, dropped or picked before Send), asks the agent waits on (answered from under a picture), Resolve and Copy changes.',
   states: [
     {
       id: 'threads',
@@ -207,6 +262,11 @@ export const specimen = defineSpecimen({
       id: 'pictures',
       label: 'Asks with pictures: pick the before or the after, a check with the agent\'s own answers, a link and a file',
       render: ctx => <PicturesDemo ctx={ctx} />,
+    },
+    {
+      id: 'attaching',
+      label: 'Files attached before Send: a picture ready, a PDF uploading, a file that cannot be attached',
+      render: ctx => <AttachingDemo ctx={ctx} />,
     },
     {
       id: 'empty',

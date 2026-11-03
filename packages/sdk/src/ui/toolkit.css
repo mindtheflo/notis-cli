@@ -1170,7 +1170,7 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 .nui-comment-card:hover { background: hsl(var(--foreground) / .06); }
 .nui-comment-card[data-selected] { background: hsl(var(--foreground) / .08); }
 .nui-comment-card:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
-.nui-comment-card[data-resolved] > :not(.nui-comment-compose):not(.nui-comment-head) { opacity: .7; }
+.nui-comment-card[data-resolved] > :not(.nui-comment-compose-box):not(.nui-comment-head) { opacity: .7; }
 .nui-comment-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .nui-comment-who { display: flex; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 0 6px; min-width: 0; }
 .nui-comment-author { font-weight: 600; }
@@ -1220,10 +1220,36 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 .nui-comment-input:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
 .nui-comment-input::placeholder { color: hsl(var(--muted-foreground)); }
 
-.nui-comment-new-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
+.nui-comment-new-box { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
   background: hsl(var(--foreground) / .06); }
 .nui-comment-new-title { margin: 0; font-weight: 600; }
 .nui-comment-new-actions, .nui-comment-dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.nui-comment-new-actions { align-items: center; }
+.nui-comment-new-gap { flex: 1; }
+
+/* Files attached before Send: chips with a thumbnail, the name, progress and remove; a veil while files are dragged. */
+.nui-comment-compose-box { position: relative; display: flex; flex-direction: column; gap: 6px; cursor: default; }
+.nui-comment-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.nui-comment-file { position: relative; display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  height: 36px; padding: 0 2px 0 4px; border-radius: 8px; overflow: hidden; background: hsl(var(--foreground) / .06);
+  font-size: 12px; }
+.nui-comment-file[data-state="failed"] { background: hsl(var(--destructive) / .12); color: hsl(var(--destructive)); }
+.nui-comment-file-thumb { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 28px;
+  height: 28px; border-radius: 6px; overflow: hidden; background: hsl(var(--foreground) / .06); }
+.nui-comment-file-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.nui-comment-file[data-state="uploading"] .nui-comment-file-thumb { opacity: .6; }
+.nui-comment-file-name { flex: 1; min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-comment-file-btn { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 28px;
+  height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.nui-comment-file-btn:hover { background: hsl(var(--foreground) / .08); }
+.nui-comment-file-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
+.nui-comment-file-progress { position: absolute; inset: auto 0 0 0; height: 2px; background: hsl(var(--foreground) / .08); }
+.nui-comment-file-progress > span { display: block; height: 100%; background: hsl(var(--nui-blue, 217 91% 60%));
+  transition: width .15s; }
+.nui-comment-drop { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; background: hsl(var(--background) / .85); box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%));
+  color: hsl(var(--foreground)); font-weight: 600; pointer-events: none; }
+@media (max-width: 480px) { .nui-comment-file-name { max-width: 120px; } }
 
 /* A pin: a numbered drop whose point sits on the commented spot. Put CommentPins in a positioned element. */
 .nui-comment-pin { position: absolute; z-index: 2; display: flex; align-items: center; justify-content: center; width: 26px;

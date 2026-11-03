@@ -138,6 +138,14 @@ rather than from a copy.
   button, `viewerActions` adds viewer buttons (class `nui-viewer-btn`) and
   `onNotice` hears copy and download results. Use `ImageViewer` alone for a
   picture that opens full screen. Do not build your own lightbox.
+- **Comments**: `useComments` with `CommentPane` and `CommentPins` give review
+  threads on a Comments database (pins, zones, replies, asks, Resolve, Copy
+  changes). To let people attach pictures and files to a comment or a reply
+  (paste, drop or the paperclip), give the Comments database a files column
+  named `Attachments` (or pass `columns.attachments`); there is nothing to add
+  in the view. Without the column the pane takes text only. Files open from
+  the rows for an hour, for whoever may read the row; an agent downloads one
+  from the `url` its query returns, or queries again for a fresh one.
 - **Presenting on a second screen**: `useAudienceScreen({ onAction, onClose,
   title })` works like PowerPoint. `secondScreen` says whether another screen
   is connected; call `open(anchor)` from the Present press itself. It answers

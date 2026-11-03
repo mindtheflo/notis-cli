@@ -9,6 +9,9 @@
  *   item" starts a comment on the whole anchor, with no pin.
  * - `CommentThreadCard`, `NewCommentBox` and `CommentAvatar` for Spaces that lay the pane out themselves.
  *
+ * Files: with an Attachments files column and a host that uploads (`runtime.spaceFiles`), a new comment and a reply take
+ * pictures and files: paste, drop on the box or the paperclip (`commentFiles`). Otherwise the boxes take text only.
+ *
  * Keyboard: Enter sends a reply or a new comment and Shift+Enter adds a line; Escape in an empty new comment drops it
  * (with text, the first Escape leaves the field); Escape leaves Add comment mode; a thread card selects with Enter.
  */
@@ -29,6 +32,7 @@ import {
   COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, commentAttachmentFor, commentBodyParts, commentRelativeTime, isCommentZone,
   scrollCommentIntoView, type CommentAttachment, type CommentRecord, type CommentThread,
 } from './commentModel';
+import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles } from './commentFiles';
 import type { CommentController } from './useComments';
 
 // ---------------------------------------------------------------------------
@@ -117,7 +121,7 @@ function CommentAttachments({ controller, comment, choices = [], onAnswer }: {
               <figure key={item.url} className="nui-comment-figure" data-chosen={chosen ? '' : undefined}>
                 <button type="button" className="nui-comment-thumb" aria-label={controller.say('enlarge', { name: item.label })}
                   onClick={() => setViewing(index)}>
-                  <img src={item.url} alt={item.label} loading="lazy" />
+                  <img src={item.url} alt={item.label} loading="lazy" onError={controller.refreshFiles} />
                 </button>
                 {option != null && onAnswer ? (
                   <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAnswer(option)}>
@@ -169,6 +173,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
   const { actions, locale, now, isNew, me } = controller;
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const files = useCommentFiles(controller);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -181,13 +186,14 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
     if (selected && cardRef.current) scrollCommentIntoView(cardRef.current);
   }, [selected]);
 
+  const canSend = (Boolean(draft.trim()) || files.ready.length > 0) && files.settled && !sending;
   const send = async () => {
-    const body = draft.trim();
-    if (!body || sending) return;
+    if (!canSend) return;
     setSending(true);
-    const ok = await actions.reply(thread, body);
+    // A failed save keeps the text and the attached files in the box.
+    const ok = await actions.reply(thread, draft.trim(), files.ready);
     setSending(false);
-    if (ok) setDraft('');
+    if (ok) { setDraft(''); files.clear(); }
   };
 
   const attach = async (file: File | undefined) => {
@@ -314,19 +320,25 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
         </ol>
       ) : null}
 
-      <div className="nui-comment-compose" onClick={stop} onKeyDown={stop}>
-        <textarea
-          ref={replyRef}
-          className="nui-comment-input"
-          value={draft}
-          rows={1}
-          placeholder={replyLabel}
-          aria-label={replyLabel}
-          onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => { if (sendsOnEnter(event)) { event.preventDefault(); void send(); } }}
-        />
-        <IconAction label={controller.say('send')} icon="paper-plane-right" disabled={!draft.trim() || sending}
-          onClick={() => void send()} />
+      <div className="nui-comment-compose-box" data-dragging={files.dragging ? '' : undefined} onClick={stop} onKeyDown={stop}
+        {...files.boxHandlers}>
+        <CommentFileChips controller={controller} files={files} />
+        <div className="nui-comment-compose">
+          <textarea
+            ref={replyRef}
+            className="nui-comment-input"
+            value={draft}
+            rows={1}
+            placeholder={replyLabel}
+            aria-label={replyLabel}
+            onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => { if (sendsOnEnter(event)) { event.preventDefault(); void send(); } }}
+          />
+          <CommentAttachButton controller={controller} files={files} disabled={sending} />
+          <IconAction label={controller.say('send')} icon="paper-plane-right" disabled={!canSend}
+            onClick={() => void send()} />
+        </div>
+        <CommentDropVeil controller={controller} files={files} />
       </div>
     </article>
   );
@@ -345,6 +357,7 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
   const pin = controller.draftPin;
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const files = useCommentFiles(controller);
   const ref = useRef<HTMLTextAreaElement>(null);
   const cancel = controller.cancelPin;
   const where = pin?.anchorKey ?? null;
@@ -358,16 +371,19 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
   const heading = anchor && pin.x == null ? controller.say('newCommentWhole', { n: anchor.order })
     : anchor ? controller.say('newCommentOn', { n: anchor.order }) : controller.say('newComment');
 
+  const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !sending;
   const send = async () => {
-    if (!body.trim() || sending) return;
+    if (!canSend) return;
     setSending(true);
-    const ok = await controller.sendNew(body.trim());
+    // A failed save keeps the text and the attached files in the box.
+    const ok = await controller.sendNew(body.trim(), files.ready);
     setSending(false);
-    if (ok) setBody('');
+    if (ok) { setBody(''); files.clear(); }
   };
 
   return (
-    <div className="nui-comment-new-box" role="group" aria-label={heading}>
+    <div className="nui-comment-new-box" role="group" aria-label={heading} data-dragging={files.dragging ? '' : undefined}
+      {...files.boxHandlers}>
       <p className="nui-comment-new-title">{heading}</p>
       <textarea
         ref={ref}
@@ -381,15 +397,19 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
           if (sendsOnEnter(event)) { event.preventDefault(); void send(); }
           if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
             event.preventDefault();
-            if (body.trim()) event.currentTarget.blur(); else cancel();
+            if (body.trim() || files.drafts.length) event.currentTarget.blur(); else cancel();
           }
         }}
       />
+      <CommentFileChips controller={controller} files={files} />
       <div className="nui-comment-new-actions">
+        <CommentAttachButton controller={controller} files={files} disabled={sending} />
+        <span className="nui-comment-new-gap" />
         <Button size="sm" variant="ghost" onClick={cancel}>{controller.words.cancel}</Button>
-        <Button size="sm" variant="primary" disabled={!body.trim() || sending} icon="paper-plane-right"
+        <Button size="sm" variant="primary" disabled={!canSend} icon="paper-plane-right"
           onClick={() => void send()}>{controller.words.send}</Button>
       </div>
+      <CommentDropVeil controller={controller} files={files} />
     </div>
   );
 }

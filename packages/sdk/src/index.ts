@@ -32,6 +32,8 @@ export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudCo
 export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadInput, SpaceViewerReadResult, SpaceViewerLink,
   SpaceViewerDatabase, SpaceViewerDatabaseSchema, SpaceViewerSkill, SpaceViewerSkillPage } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
+export { SpaceFileError, SPACE_FILE_EXTENSIONS, SPACE_FILE_MAX_BYTES } from './space';
+export type { SpaceFileUploadInput, SpaceFileUploadResult, SpaceFileReference, SpaceFilesCheck, SpaceFilesTransport } from './space';
 export type { SpaceActionFailureDetails } from './space';
 export { useQuery, useQueryClient } from './hooks/useQuery';
 export type { UseQueryOptions, UseQueryResult } from './hooks/useQuery';

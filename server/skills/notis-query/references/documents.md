@@ -57,6 +57,13 @@ uncertain upload retries only the identical byte/intent request; it never replac
 an existing shared retry object. Preserve previous files unless the user asked
 for their removal.
 
+Reading files: a query returns each files value as `{name, url}`. Files people
+attached from a Space (comment pictures, for example) are private: their `url`
+is signed for one hour on every read. Download one within the hour (`curl -o
+<name> "<url>"`) or query the row again for a fresh address. When you update a
+row, keep its files as you read them; the signed address is saved back as the
+lasting reference.
+
 For HTML pages and reports, use the Save HTML Skill that comes with Notis Notes,
 which owns their complete save/update/sharing workflow (see the reports guidance
 in `notis-spaces`).

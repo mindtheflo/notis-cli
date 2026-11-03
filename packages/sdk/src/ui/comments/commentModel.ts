@@ -23,8 +23,9 @@
  * Every column name can be renamed with `CommentColumns`; the defaults are the Slides names, so a Space that copies
  * the Slides table needs no mapping and no migration. Zones are opt-in: a table that adds W and H number columns
  * passes `{ w: 'W', h: 'H' }`. Without them (`w` and `h` null, the default) a drag on the anchor places a pin where it
- * started, and nothing writes a column the table does not have. Attachments are only read (agents add them), so a
- * table without the column simply shows none.
+ * started, and nothing writes a column the table does not have. Attachments are shown when the table has the files
+ * column; the pane also lets people attach pictures and files to a new comment or a reply when the host can upload
+ * them (`runtime.spaceFiles`). A table without the column shows none and takes text only.
  */
 
 export type CommentRow = Record<string, unknown>;
@@ -171,7 +172,11 @@ function pathOf(url: string): string {
 
 /** The files of a files column: `{ name, url }`, `{ name, file: { url } }`, `{ name, external: { url } }` or a URL. */
 function attachmentsOf(row: CommentRow, name: string | null): CommentAttachment[] {
-  const value = property(row, name);
+  return commentAttachmentList(property(row, name));
+}
+
+/** A files value (`{ name, url }` items, the other shapes above, or URLs) as the pictures and files a comment shows. */
+export function commentAttachmentList(value: unknown): CommentAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap<CommentAttachment>(item => {
     const entry = asObject(item);
@@ -235,6 +240,19 @@ const CHANGES: CommentChange[] = ['created', 'replied', 'answered', 'resolved', 
 
 function oneOf<T extends string>(value: string, allowed: T[], fallback: T): T {
   return (allowed as string[]).includes(value) ? value as T : fallback;
+}
+
+/**
+ * Whether the rows show the files column: true or false from the first row that carries properties, null when no row
+ * does (an empty table). A list row carries every property of its database by name, filled or empty.
+ */
+export function commentRowsHaveColumn(rows: readonly CommentRow[], name: string | null): boolean | null {
+  if (!name) return false;
+  for (const row of rows) {
+    const properties = asObject(row.properties);
+    if (properties) return Object.hasOwn(properties, name);
+  }
+  return null;
 }
 
 /** One Comments row as a comment. An author outside `authors` (when given) reads as `fallbackAuthor`. */

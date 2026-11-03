@@ -65,6 +65,56 @@ export interface SpaceCloudComputerUploadInput {
   request_id?: string;
 }
 export interface SpaceCloudComputerUploadResult { status?: string; path?: string; size?: number; message?: string; code?: string }
+
+/**
+ * A file a signed-in Editor attaches from a view to a database's files column (a comment's picture), uploaded
+ * before the row that holds it is written. Stored privately in the EU: the row keeps `file`, and every read of
+ * the row signs it for an hour, so it opens only for people (and agents) who can read that row.
+ */
+export interface SpaceFileUploadInput {
+  /** The database binding alias the view declares (its `resources` key). */
+  database: string;
+  /** The files column the reference goes into. */
+  column: string;
+  file: Blob;
+  /** The file's name with its extension. Default: the File's own name. */
+  name?: string;
+  /** One key per file: the same file sent again after an uncertain answer keeps it. Default: a new key per call. */
+  requestId?: string;
+  /** Bytes sent so far, for a progress bar. */
+  onProgress?(sent: number, total: number): void;
+  signal?: AbortSignal;
+}
+/** What a files column stores. */
+export interface SpaceFileReference { name: string; url: string }
+export interface SpaceFileUploadResult {
+  /** Write this into the files column with the row's insert or update. */
+  file: SpaceFileReference;
+  /** A signed address to show the file before the row is read back (an hour), or null. */
+  previewUrl: string | null;
+  sizeBytes: number; contentType: string; sha256: string; requestId: string;
+}
+/** The database column takes files from this view, with the limits the host enforces. */
+export interface SpaceFilesCheck { available: true; maxBytes: number; extensions: string[] }
+/**
+ * Codes a file upload fails with: `space_file_too_large`, `space_file_type_unsupported`, `space_file_empty`,
+ * `space_file_column_missing`, `space_file_write_required`, `space_file_unconfirmed` (try again),
+ * `space_file_offline` (no answer), `sign_in_required`, `editor_required`, or another server code.
+ */
+export class SpaceFileError extends Error {
+  constructor(message: string, public readonly code: string, public readonly status = 0) {
+    super(message); this.name = 'SpaceFileError';
+  }
+}
+/** Host transport for files attached from a view. Absent on Sites, previews, verification harnesses and older hosts. */
+export interface SpaceFilesTransport {
+  check(database: string, column: string): Promise<SpaceFilesCheck>;
+  upload(input: SpaceFileUploadInput): Promise<SpaceFileUploadResult>;
+}
+/** Extensions a files column accepts from a view, before the host's own check answers. */
+export const SPACE_FILE_EXTENSIONS: readonly string[] = Object.freeze(['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'docx',
+  'xlsx', 'pptx', 'odt', 'ods', 'odp', 'doc', 'xls', 'ppt', 'rtf', 'txt', 'md', 'csv', 'tsv', 'json']);
+export const SPACE_FILE_MAX_BYTES = 8 * 1024 * 1024;
 /** Host transport. Approval is only ever given in host UI the person clicks; the view can only ask. */
 export interface SpaceCloudComputerTransport {
   status(): Promise<SpaceCloudComputerStatus>;
