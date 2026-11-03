@@ -1750,7 +1750,7 @@ test('reader properties: the plain dl grid never reaches a field list, whose row
   assert.match(cssRule('.nui-lr-reader-inner dl:not(.nui-fields-list) > :is(dt, dd)') ?? '', /overflow-wrap: anywhere/);
   assert.match(cssRule('.nui-lr-reader-inner dl:not(.nui-fields-list) > div > :is(dt, dd)') ?? '', /overflow-wrap: anywhere/);
 });
-test('row divider: a painted line, never a border, so an open or cursor row keeps a 1px ring on all four sides', () => {
+test('row divider: a painted line, never a border, that steps aside around an open or cursor row', () => {
   assert.match(cssRule('div.nui-row + div.nui-row') ?? '', /background-image: linear-gradient\(hsl\(var\(--border\) \/ \.5\)/);
   assert.doesNotMatch(cssRule('div.nui-row + div.nui-row') ?? '', /border(-top)?:/);
   // The line above and below an open or cursor row steps aside, so its ring is never doubled at the top or bottom.
