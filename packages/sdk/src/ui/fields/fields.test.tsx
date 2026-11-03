@@ -274,6 +274,88 @@ test('the save bar keeps Save clear of the floating Notis button only while it s
   assert.match(toolkitCss, /\n\.nui-fields-bar\[data-fab\] \{ padding-inline-end: var\(--nui-fab-safe-end, var\(--notis-fab-safe-end, 0px\)\); \}/);
 });
 
+/** A reader at 390 x 844: a title, then a description as the last field, inside the reader's own scrolling body. */
+function TaskReader() {
+  const [saved] = useState({ title: 'CV 14:03', description: '' });
+  const form = useFieldDraft(saved);
+  return (
+    <div className="reader-body" style={{ overflowY: 'auto' }}>
+      <EditableFields dirty={form.dirty} onSave={() => undefined} onCancel={form.reset}>
+        <FieldRow label="Title"><FieldText label="Title" value={form.draft.title} onChange={(value) => form.set('title', value)} /></FieldRow>
+        <FieldRow label="Description" stacked>
+          <FieldLongText label="Description" value={form.draft.description} onChange={(value) => form.set('description', value)} />
+        </FieldRow>
+      </EditableFields>
+    </div>
+  );
+}
+
+test('the field holding focus is never left under the sticky save bar', async () => {
+  // jsdom has no layout: the reader body is 0-844 px and scrolls; the bar sticks at 772-844 once it shows; the
+  // description sits at 808-844 (and grows to 880 when typing makes it taller) before the body scrolls; the title at 80-112.
+  let scrollTop = 0;
+  let descriptionBottom = 844;
+  const proto = dom.window.HTMLElement.prototype;
+  const own = Object.getOwnPropertyDescriptor(proto, 'getBoundingClientRect');
+  Object.defineProperty(proto, 'getBoundingClientRect', {
+    configurable: true,
+    value(this: HTMLElement) {
+      const rect = this.classList.contains('reader-body') ? { top: 0, bottom: 844 }
+        : this.classList.contains('nui-fields-bar') ? { top: 772, bottom: 844 }
+          : this.tagName === 'TEXTAREA' ? { top: 808 - scrollTop, bottom: descriptionBottom - scrollTop }
+            : this.tagName === 'INPUT' ? { top: 80 - scrollTop, bottom: 112 - scrollTop } : { top: 0, bottom: 0 };
+      const { top, bottom } = rect;
+      return { left: 0, right: 390, top, bottom, x: 0, y: top, width: 390, height: bottom - top, toJSON: () => rect };
+    },
+  });
+  const settle = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); }); };
+  const setTextarea = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!;
+  const typeInto = async (area: HTMLTextAreaElement, value: string) => {
+    await act(async () => {
+      setTextarea.call(area, value);
+      area.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    });
+    await settle();
+  };
+  try {
+    await mount(<TaskReader />);
+    const body = doc.querySelector<HTMLElement>('.reader-body')!;
+    Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => 1032 });
+    Object.defineProperty(body, 'clientHeight', { configurable: true, get: () => 844 });
+    const description = doc.querySelector('textarea')!;
+    const barTop = 772;
+    const clear = () => description.getBoundingClientRect().bottom <= barTop;
+
+    await act(async () => { description.focus(); });
+    await settle();
+    assert.equal(scrollTop, 0, 'no bar yet: focusing the last field moves nothing');
+    await typeInto(description, 'Call the printer');
+    assert.ok(doc.querySelector('.nui-fields-bar'), 'typing shows the save bar');
+    assert.ok(clear(), `the bar appears over the focused description: the body scrolls it clear (bottom ${description.getBoundingClientRect().bottom})`);
+    assert.ok(scrollTop <= 72 + 16, 'it moves just enough, not a page');
+
+    descriptionBottom = 880;
+    await typeInto(description, 'Call the printer\nand ask for the proofs');
+    assert.ok(clear(), 'a description growing while typing stays clear of the bar');
+
+    const title = doc.querySelector('input')!;
+    const before = scrollTop;
+    await act(async () => { title.focus(); });
+    await settle();
+    assert.equal(scrollTop, before, 'a field already clear of the bar does not move the body');
+    scrollTop = 0;
+    descriptionBottom = 844;
+    await act(async () => { description.focus(); });
+    await settle();
+    assert.ok(clear(), 'focus moving back to a field under the bar scrolls it clear');
+    assert.ok(buttonNamed('Save') && buttonNamed('Cancel'), 'the bar still shows Save and Cancel');
+  } finally {
+    if (own) Object.defineProperty(proto, 'getBoundingClientRect', own);
+    else Reflect.deleteProperty(proto, 'getBoundingClientRect');
+  }
+});
+
 /** A form over a record the test replaces from outside (a refresh), one text field per key. */
 let refresh: (next: Record<string, string>) => void = () => undefined;
 function RecordForm({ initial }: { initial: Record<string, string> }) {

@@ -12,7 +12,8 @@
  * until the next save, a cancel or a clean form. Save shows Saving while the returned promise runs.
  *
  * The bar is sticky at the bottom. Only while it sits in the corner of the floating Notis button (bottom right of the
- * window, from the host's --notis-fab-safe-* vars) does it keep Save clear of the button (data-fab).
+ * window, from the host's --notis-fab-safe-* vars) does it keep Save clear of the button (data-fab). The field holding
+ * focus never stays under the bar: the reader scrolls it clear when the bar appears, on focus and while typing.
  */
 
 import {
@@ -67,6 +68,7 @@ export function EditableFields({
   const running = useRef(false);
   const mounted = useRef(true);
   const barRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDListElement>(null);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -110,6 +112,7 @@ export function EditableFields({
   const canSave = dirty && !busy && !saveDisabled;
   const barShown = Boolean(dirty || shown);
   const inFabCorner = useInFabCorner(barRef, barShown);
+  const keepClear = useFocusClearOfBar(listRef, barRef, barShown);
   return (
     <div
       className={cx('nui-fields', className)}
@@ -118,7 +121,7 @@ export function EditableFields({
       data-dirty={flag(dirty)}
       data-saving={flag(busy)}
     >
-      <dl className="nui-fields-list">{children}</dl>
+      <dl ref={listRef} className="nui-fields-list" onFocus={keepClear} onInput={keepClear}>{children}</dl>
       {footer}
       {barShown ? (
         <div
@@ -243,6 +246,67 @@ function useInFabCorner(ref: RefObject<HTMLElement | null>, shown: boolean): boo
     };
   }, [ref, shown]);
   return inCorner;
+}
+
+/** The nearest box that scrolls `el`, across shadow roots; the page's scrolling element when none does. */
+function scrollBoxOf(el: HTMLElement): HTMLElement | null {
+  const doc = el.ownerDocument;
+  const view = doc.defaultView;
+  let box: Element | null = el.parentElement;
+  while (box && view) {
+    if (box === doc.body || box === doc.documentElement) break;
+    const style = view.getComputedStyle(box);
+    if (/(auto|scroll)/.test(style.overflowY) && box.scrollHeight > box.clientHeight + 1) return box as HTMLElement;
+    const root = box.parentElement ? null : box.getRootNode();
+    box = box.parentElement ?? (root && 'host' in root ? (root as ShadowRoot).host : null);
+  }
+  return (doc.scrollingElement as HTMLElement | null) ?? null;
+}
+
+/** Room kept between the field and the bar above it, in px. */
+const BAR_CLEARANCE = 8;
+
+/**
+ * Keeps the field that holds focus (the caret while typing) from sitting under the sticky save bar: when the bar
+ * appears, when focus moves to a field, and when typing makes a field taller, the nearest scrolling box scrolls by just
+ * enough to show the field above the bar. A field taller than the room above the bar shows the caret's end: its
+ * bottom while typing at the end, else its top. A field already clear of the bar moves nothing.
+ */
+function useFocusClearOfBar(listRef: RefObject<HTMLElement | null>, barRef: RefObject<HTMLElement | null>, shown: boolean) {
+  const frame = useRef(0);
+  const reveal = useCallback(() => {
+    const list = listRef.current;
+    const bar = barRef.current;
+    if (!list || !bar) return;
+    const active = (list.getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null;
+    if (!active || !list.contains(active)) return;
+    const field = active.getBoundingClientRect();
+    const barTop = bar.getBoundingClientRect().top;
+    if (field.bottom <= barTop || field.top >= bar.getBoundingClientRect().bottom) return;
+    const box = scrollBoxOf(list);
+    if (!box) return;
+    const doc = list.ownerDocument;
+    const boxTop = box === doc.scrollingElement ? 0 : box.getBoundingClientRect().top;
+    let delta = field.bottom - barTop + BAR_CLEARANCE;
+    const text = active as Partial<Pick<HTMLInputElement, 'value' | 'selectionEnd'>>;
+    const typingAtEnd = typeof text.value === 'string' && text.selectionEnd === text.value.length;
+    // Taller than the room above the bar: keep the top in view unless the caret sits at the end.
+    if (!typingAtEnd) delta = Math.min(delta, field.top - boxTop);
+    if (delta > 0) box.scrollTop += delta;
+  }, [listRef, barRef]);
+  // The bar has just appeared (the first change): it may cover the field being typed in.
+  useIsoLayoutEffect(() => { if (shown) reveal(); }, [shown, reveal]);
+  useEffect(() => () => {
+    if (frame.current && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(frame.current);
+  }, []);
+  // On focus and on typing, after the render the change causes (the bar, a taller field).
+  return useCallback(() => {
+    if (frame.current || typeof requestAnimationFrame === 'undefined') return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      reveal();
+    });
+  }, [reveal]);
 }
 
 /** Registered only while the form is dirty, so two forms on a page never hold the key at once. */
