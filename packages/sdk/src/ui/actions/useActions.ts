@@ -15,7 +15,6 @@ import {
 import { ACTION_WORDS, failedItemsWords } from './actionWords';
 import { useToast, type ActionToastState, type ToastOptions } from './useToast';
 import { useNotisRuntime } from '../../provider';
-import type { HiddenRecords } from '../../queryCache';
 
 const DELETE_ACTION_TIMEOUT_MS = 120_000;
 class DeleteActionTimeout extends Error {
@@ -220,28 +219,27 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
     const targets = action.appliesTo ? items.filter(action.appliesTo) : [...items];
     if (!targets.length) return { status: 'cancelled', done: [], failed: [] };
     markBusy(action.id, true);
-    // Deleted records leave every cached read of the view at once; the ones that fail come back. The run starts
-    // first and the records hide a microtask later: a handler that looks its rows up in a cached read (a Space's
-    // record writer, on its write's turn) still finds them, and they leave before the next frame.
+    // Deleted records leave every cached read when their write is sent: the SDK's delete writes (useNativeMutation,
+    // deleteMany) hide each record then. Until that moment the rows stay listed, so a handler that first asks the
+    // person to confirm keeps them on screen and still finds them in its cached reads. Once the run answers, the
+    // removed records stay hidden and the failed ones come back; a throw or a stalled run brings every one back.
     const keys = action.id === 'delete' ? targets.map(recordKeyOf).filter((key): key is string => !!key) : [];
-    let hidden: HiddenRecords | undefined;
+    const client = runtime?.queryClient;
     let settled = false;
-    const hide = () => {
-      if (!hidden && !settled && keys.length) hidden = runtime?.queryClient?.hideRecords?.(keys);
-      return hidden;
-    };
     try {
       const running = start(() => action.run(targets, choice));
-      if (keys.length) queueMicrotask(hide);
       const result = action.id === 'delete' ? await withDeleteDeadline(running) : await running;
       const ranUndo = typeof result === 'function' ? result as UndoFn
         : isActionResult<T>(result) && typeof result.undo === 'function' ? result.undo : null;
       const detail = isActionResult<T>(result) && typeof result !== 'function' ? result : null;
-      if (detail?.cancelled) return { status: 'cancelled', done: [], failed: [] };
+      if (detail?.cancelled) {
+        settled = true;
+        return { status: 'cancelled', done: [], failed: [] };
+      }
       const failedSet = new Set<T>(detail?.failed ?? []);
       const failed = targets.filter((item) => failedSet.has(item));
       const done = targets.filter((item) => !failedSet.has(item));
-      const hiding = hide();
+      const hiding = keys.length ? client?.hideRecords?.(keys) : undefined;
       if (hiding) {
         hiding.commit(done.map(recordKeyOf).filter((key): key is string => !!key));
         hiding.restore(failed.map(recordKeyOf).filter((key): key is string => !!key));
@@ -276,7 +274,8 @@ export function useActions<T>(refs: readonly ActionRef<T>[], handlers: ActionHan
       optionsRef.current.onError?.(error, { id: action.id });
       return { status: 'failed', done: [], failed: targets };
     } finally {
-      if (hidden && !settled) hidden.restore();
+      // A throw or a stalled run: every record comes back, including the ones its writes hid.
+      if (!settled && keys.length) client?.hideRecords?.(keys).restore();
       settled = true;
       markBusy(action.id, false);
     }

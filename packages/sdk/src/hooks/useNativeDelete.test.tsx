@@ -115,15 +115,25 @@ test('a single trash hides its row until the write answers and restores it when 
 });
 
 test('the standard delete action hides its records while it runs and keeps only the failed ones on screen', async () => {
-  const { runtime } = setup(async () => ({}));
+  const gate = deferred();
+  const { runtime } = setup(async (call) => {
+    await gate.promise;
+    if ((call.inputs?.request as { record_key: string }).record_key === 'c') throw new Error('conflict');
+    return {};
+  });
   let shown: string[] = [];
   let controller: ActionsController<{ recordKey?: string }> | null = null;
-  const gate = deferred();
   function Probe() {
     const documents = useNativeDocuments('decks').documents;
     shown = documents.map((doc) => doc.recordKey!);
+    const trash = useNativeMutation('decks', 'delete').mutate;
     controller = useActions<{ recordKey?: string }>(['delete'], {
-      delete: async (items) => { await gate.promise; return { failed: items.filter((item) => item.recordKey === 'c') }; },
+      delete: async (items) => {
+        const failed: Array<{ recordKey?: string }> = [];
+        await Promise.all(items.map((item) => trash({ record_key: item.recordKey!, expected_revision: 1 },
+          { schemaRevision: 1, requestId: item.recordKey! }).catch(() => { failed.push(item); })));
+        return { failed };
+      },
     });
     return null;
   }
@@ -181,6 +191,71 @@ test('a delete action whose run reads its rows from a cached read still finds th
   await act(async () => { root.unmount(); });
 });
 
+test('a delete action that waits for a confirmation keeps its row listed until the person confirms, then finds and trashes it', async () => {
+  const gate = deferred();
+  const { runtime, calls } = setup(() => gate.promise);
+  let shown: string[] = [];
+  let controller: ActionsController<{ recordKey?: string }> | null = null;
+  const confirmed = deferred();
+  function Probe() {
+    const documents = useNativeDocuments('decks').documents;
+    shown = documents.map((doc) => doc.recordKey!);
+    // Like the Tasks Inbox: the handler opens "Delete this task?" and looks its row up only once Delete is pressed.
+    const latest = useRef(documents);
+    useLayoutEffect(() => { latest.current = documents; });
+    const trash = useNativeMutation('decks', 'delete').mutate;
+    controller = useActions<{ recordKey?: string }>(['delete'], {
+      delete: async (items) => {
+        if (!await confirmed.promise) return { cancelled: true };
+        for (const item of items) {
+          const row = latest.current.find((doc) => doc.recordKey === item.recordKey);
+          if (!row) throw new Error('This item is no longer available. Refresh the list and try again.');
+          await trash({ record_key: row.recordKey!, expected_revision: 1 }, { schemaRevision: 1, requestId: row.recordKey! });
+        }
+      },
+    });
+    return null;
+  }
+  const root = await mount(runtime, Probe);
+  let outcome: ReturnType<ActionsController<{ recordKey?: string }>['run']> | null = null;
+  await act(async () => { outcome = controller!.run('delete', [{ recordKey: 'b' }]); });
+  await settle();
+  assert.deepEqual(shown, ['a', 'b', 'c'], 'the row stays listed while the dialog asks');
+  assert.equal(calls.length, 0);
+  // Delete is pressed a macrotask later.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); confirmed.resolve(true); });
+  assert.deepEqual(calls.map((call) => (call.inputs?.request as { record_key: string }).record_key), ['b'],
+    'the handler found its row and sent the trash for it');
+  assert.deepEqual(shown, ['a', 'c'], 'the row leaves the list as soon as the delete is sent');
+  await act(async () => { gate.resolve({}); await outcome; });
+  assert.equal((await outcome!).status, 'done');
+  assert.deepEqual(shown, ['a', 'c'], 'the deleted row stays gone');
+  await act(async () => { root.unmount(); });
+});
+
+test('a delete action whose confirmation is cancelled leaves its row in place', async () => {
+  const { runtime, calls } = setup(async () => ({}));
+  let shown: string[] = [];
+  let controller: ActionsController<{ recordKey?: string }> | null = null;
+  const confirmed = deferred();
+  function Probe() {
+    shown = useNativeDocuments('decks').documents.map((doc) => doc.recordKey!);
+    controller = useActions<{ recordKey?: string }>(['delete'], {
+      delete: async () => { await confirmed.promise; return { cancelled: true }; },
+    });
+    return null;
+  }
+  const root = await mount(runtime, Probe);
+  let outcome: ReturnType<ActionsController<{ recordKey?: string }>['run']> | null = null;
+  await act(async () => { outcome = controller!.run('delete', [{ recordKey: 'a' }]); });
+  assert.deepEqual(shown, ['a', 'b', 'c'], 'the row stays listed while the dialog asks');
+  await act(async () => { confirmed.resolve(false); await outcome; });
+  assert.equal((await outcome!).status, 'cancelled');
+  assert.deepEqual(shown, ['a', 'b', 'c']);
+  assert.equal(calls.length, 0);
+  await act(async () => { root.unmount(); });
+});
+
 test('a delete action that throws brings every record back', async () => {
   const { runtime } = setup(async () => ({}));
   let shown: string[] = [];
@@ -197,15 +272,19 @@ test('a delete action that throws brings every record back', async () => {
 });
 
 test('a stalled delete restores its rows and busy state without resending, and its late result cannot settle a newer run', async (t) => {
-  const { runtime } = setup(async () => ({}));
   const old = deferred(), newer = deferred();
   let calls = 0, settled = false;
+  const { runtime } = setup(() => (calls === 1 ? old.promise : newer.promise));
   let shown: string[] = [];
   let controller: ActionsController<{ recordKey?: string }> | null = null;
   function Probe() {
     shown = useNativeDocuments('decks').documents.map((doc) => doc.recordKey!);
+    const trash = useNativeMutation('decks', 'delete').mutate;
     controller = useActions<{ recordKey?: string }>(['delete'], {
-      delete: async () => { calls += 1; await (calls === 1 ? old.promise : newer.promise); },
+      delete: async (items) => {
+        calls += 1;
+        await trash({ record_key: items[0]!.recordKey!, expected_revision: 1 }, { schemaRevision: 1, requestId: `run${calls}` });
+      },
     });
     return null;
   }
