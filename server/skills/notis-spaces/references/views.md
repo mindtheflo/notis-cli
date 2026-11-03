@@ -81,8 +81,38 @@ export default defineSpace({
 ```
 
 The saved `read` action is deliberately constrained to one native record for
-body/Site reads; `shows.notes` owns the Editor's collection list. Keep both tied
-to the same declared resource.
+body and record-Site reads; `shows.notes` owns the Editor's collection list. Keep
+both tied to the same declared resource.
+
+A Site of the whole Space (or of one of its pages) runs each `shows` list
+through such an action too, and that one-record action refuses the list's
+request. Publishing is then refused with `site_list_action_required`. For a
+Space meant to be published, give each listed database a `read` action that
+accepts exactly that list: its `filter` fixed to the list's `where` (with
+declared defaults filled in), plus the paging the list sends. Anyone with the
+Site link can call it, so never leave `filter` open on a database that holds
+more than the Site shows. A Site uses one such action per database, the
+first by action name.
+
+```ts
+// For shows: { notes: { database: 'notes', where: { field: { property: 'Status' }, op: 'equals', value: 'published' } } }
+read: {
+  tool: 'LOCAL_NOTIS_DATABASE_QUERY',
+  inputs: { type: 'object', additionalProperties: false,
+    required: ['request'], properties: { request: {
+      type: 'object', additionalProperties: false, required: ['filter'],
+      properties: {
+        filter: { const: { field: { property: 'Status' }, op: 'equals', value: 'published' } },
+        mode: { const: 'rows' },
+        page_size: { type: 'integer', minimum: 1, maximum: 100 },
+        offset: { type: 'integer', minimum: 0 },
+        include_content: { type: 'boolean' },
+        sorts: { type: 'array' },
+      },
+    } } },
+  arguments: { database_id: { $asset: 'notes' }, request: { $input: 'request' } },
+},
+```
 
 ## Write the view
 
