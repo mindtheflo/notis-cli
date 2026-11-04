@@ -260,6 +260,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-check:focus-visible { opacity: 1; outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; }
 .nui-lr-check:not([data-state="none"]) { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; color: #fff; }
 .nui-lr-check:disabled { cursor: default; }
+.nui-lr-check[data-reserved] { visibility: hidden; }
 @media (hover: none) { .nui-lr-check[data-state="none"] { visibility: hidden; } }
 [data-touch] .nui-lr-check[data-state="none"] { visibility: hidden; }
 .nui-lr-tools { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }

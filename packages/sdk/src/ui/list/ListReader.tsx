@@ -1804,7 +1804,10 @@ function ListReaderInner<T>({
     <SelectAllCheck state={allState} disabled={!selectableIds.length}
       onToggle={() => { if (allState === 'all') selection.clear(); else selection.selectAll(); }} />
   ) : null;
-  const leadOf = (lead: ReactNode) => (selectAllNode ? <>{selectAllNode}{lead}</> : lead);
+  // A list without selection keeps the checkbox's room, so its title and tabs start where a selectable list's do
+  // (the Automations tabs do not move between a tab that selects and one that does not).
+  const checkSlot = selectAllNode ?? <span className="nui-lr-check" data-reserved="" aria-hidden="true" />;
+  const leadOf = (lead: ReactNode) => <>{checkSlot}{lead}</>;
   const tools = toolbarActions || create || viewMenu ? (
     <span className="nui-lr-tools">
       {toolbarActions}

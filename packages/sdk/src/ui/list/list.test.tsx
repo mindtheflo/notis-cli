@@ -268,6 +268,16 @@ test('not selectable without a bulk action: X does nothing and rows have no chec
   assert.equal(q('[data-part="select-all"]'), null, 'no select-all either');
 });
 
+test('a list that cannot select keeps the checkbox room before its tabs, so they line up with one that can', async () => {
+  const tabs = { role: 'filter' as const, items: [{ id: 'open', label: 'Open' }], value: 'open', onChange: () => {} };
+  await mount(list({ tabs }));
+  const slot = q('.nui-tabrow .nui-lr-check[data-reserved]');
+  assert.ok(slot, 'the room is kept');
+  assert.equal(slot!.getAttribute('aria-hidden'), 'true');
+  await mount(list({ tabs, actions: ['complete'], handlers: { complete: () => {} } }));
+  assert.equal(q('.nui-lr-check[data-reserved]'), null, 'a selectable list shows its checkbox there instead');
+});
+
 // ---- select all ----
 
 const selectAll = () => q('[data-part="select-all"]')!;
@@ -2390,7 +2400,8 @@ test(`toolbar: one line, the title and count, then "+" (its key creates; C stays
     },
   }));
   const bar = q('.nui-lr-list > .nui-lr-toolbar')!;
-  assert.deepEqual([...bar.children].map((el) => el.className), ['nui-lr-title', 'nui-lr-toolbar-spacer', 'nui-lr-tools']);
+  // The first slot is the checkbox's room, kept on a list that cannot select.
+  assert.deepEqual([...bar.children].map((el) => el.className), ['nui-lr-check', 'nui-lr-title', 'nui-lr-toolbar-spacer', 'nui-lr-tools']);
   assert.equal(q('.nui-lr-title-text')!.textContent, 'Tickets');
   assert.equal(q('.nui-lr-title-count')!.textContent, '4');
   assert.deepEqual([...bar.querySelectorAll('[data-part]')].map((el) => el.getAttribute('data-part')), ['create', 'view-menu']);
