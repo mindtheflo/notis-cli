@@ -5,6 +5,7 @@ import { appFilesDigest, buildArtifact, freezeSourceWorkspace, prepareAppRelease
 import { validateProjectBoundary, validateProjectDesign, validateSourceDesign } from './app-boundary-validator.js';
 import { collectSelectedSpaceSource, loadSelectedSpace } from './space-source.js';
 import { viewManifestFields } from './space-view-manifest.js';
+import { editorsOnlySummary, manifestActions, manifestResources } from './space-audience.js';
 import { usageError } from './errors.js';
 import { assertSourceRoot } from './source-root.js';
 
@@ -19,14 +20,18 @@ export function requireSpaceIcon(manifest, key) {
 
 export function generateSpaceManifest(selection) {
   const definition = selection.definition;
+  const editorsOnly = editorsOnlySummary(definition);
   return { schema: 'notis-space/v1', kind: selection.entry ? 'presentation' : 'container', local_key: selection.key,
     name: definition.name, description: definition.description || '', icon: definition.icon || '', accent: definition.accent || null,
-    resources: definition.resources || {}, actions: definition.actions || {},
+    // Editor-only markers never ride on the copied items: the one editors_only key below carries them.
+    resources: manifestResources(definition.resources), actions: manifestActions(definition.actions),
     ...(definition.navigation ? { navigation: definition.navigation } : {}),
     // Absent when none, so manifests without viewer reads stay byte-identical.
     ...(definition.viewerReads?.length ? { viewer_reads: [...definition.viewerReads].sort() } : {}),
     // Absent when undeclared, for the same reason.
     ...(definition.cloudComputer ? { cloud_computer: definition.cloudComputer } : {}),
+    // Absent when nothing is editor-only (SPC-073: unmarked means public).
+    ...(editorsOnly ? { editors_only: editorsOnly } : {}),
     readable_context: definition.readableContext || '', collection: definition.collection || null,
     // V4 declarations are mandatory for every presentation; the wire schema stays v1.
     ...viewManifestFields(definition, { entry: selection.entry, resources: definition.resources || {} }),

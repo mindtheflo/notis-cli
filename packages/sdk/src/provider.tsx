@@ -4,6 +4,7 @@ import React, { createContext, useContext, useMemo, type Context, type ReactNode
 import type { NotisRuntime } from './runtime';
 import { ShortcutProvider } from './interactions/shortcuts';
 import { guardSpaceRuntime } from './space';
+import { publicRecordUI } from './spacePublicUI';
 
 const NOTIS_CONTEXT_SYMBOL = Symbol.for('notis.sdk.runtime_context');
 
@@ -29,7 +30,7 @@ export function NotisProvider({ children, runtime, onProtocolError, shortcutsAva
   children: ReactNode; runtime: NotisRuntime | null; onProtocolError?: (error: Error) => void;
   shortcutsAvailable?: () => boolean;
 }) {
-  const scopedRuntime = useMemo(() => guardSpaceRuntime(runtime, onProtocolError), [runtime, onProtocolError]);
+  const scopedRuntime = useMemo(() => guardSpaceRuntime(runtime, onProtocolError, { publicRecordUI }), [runtime, onProtocolError]);
   if (runtime === undefined) {
     throw new Error('NotisProvider requires an explicit runtime prop.');
   }

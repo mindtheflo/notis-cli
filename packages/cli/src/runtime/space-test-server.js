@@ -36,6 +36,11 @@ function shownListParams(where, params) {
   return [...names].sort();
 }
 /** Public runtime declarations (server declared_view_runtime): params, list names and chrome, never filters (nor a record page's rule). */
+/** The runtime descriptor's editorsOnly summary (server/lib/space_audience.py runtime_editors_only). */
+function editorsOnlyDescriptor(value) {
+  return {...(value.view===true?{view:true}:{}),shows:[...(value.shows || [])],actions:[...(value.actions || [])],
+    params:[...(value.params || [])],columns:structuredClone(value.columns || {})};
+}
 function viewDeclarations(manifest) {
   const shows=Object.fromEntries(Object.entries(manifest.shows || {}).map(([name,value])=>[name,Object.hasOwn(value,'where')
     ? {database:value.database,...(value.open?{open:value.open}:{}),params:shownListParams(value.where,manifest.params)} : {about:value.about,...(value.services?.length?{services:value.services}:{})}]));
@@ -265,7 +270,9 @@ export function spaceHarnessSnapshot(release,capabilities,engine,{authorizationM
     cacheKey:`${artifact}:${engine.digest}`,exportCandidates:['SpaceView'],
     descriptor:{resource:{kind:'space',id:identity,revision:1},
       space:{id:identity,revision:1,cacheScope:`stub:${artifact}:${engine.digest}`,actions,bindings,...(navigation.length?{navigation}:{}),
-        ...(viewerReads.length?{viewerReads}:{}),...viewDeclarations(manifest)},
+        ...(viewerReads.length?{viewerReads}:{}),...viewDeclarations(manifest),
+        // A local verification renders as an Editor, with the editor-only summary the server gives Editors.
+        audience:'editor',...(manifest.editors_only?{editorsOnly:editorsOnlyDescriptor(manifest.editors_only)}:{})},
       app:{id:identity,name:manifest.name},route:{slug:'view',path:'/',name:manifest.name},context:engine.context} };
 }
 

@@ -1,5 +1,5 @@
 /** Portable Space source contracts. Grants and account identities are host-owned. */
-import type { NotisRuntime, ToolInputSchema } from './runtime';
+import type { HandoverPayload, NotisRuntime, NotisRuntimeUI, SubscribeDatabaseOptions, ToolInputSchema } from './runtime';
 import type { NativeFilter, NativeMutationReceipt, NativeQuery } from './nativeData';
 import { SdkQueryError, type QueryErrorKey } from './queryErrors';
 
@@ -10,6 +10,8 @@ export interface SpaceActionTemplate {
   tool: string;
   inputs: ToolInputSchema;
   arguments: Record<string, SpaceJson>;
+  /** Only the Space's editors can call it; the public never sees it. Default: public. */
+  editorsOnly?: true;
 }
 
 /**
@@ -181,15 +183,23 @@ export interface SpaceDatabaseCreate {
   schema: Record<string, SpaceJson>;
   starterRows?: Array<Record<string, SpaceJson>>;
 }
+/**
+ * Database columns only the Space's editors read and write, by property name. The server leaves them out of every
+ * row the public reads through this Space and refuses public writes to them.
+ */
+export type SpaceResourceColumns = Record<string, { editorsOnly: true }>;
 export type SpaceResourceReference = {
   kind: 'database' | 'document' | 'skill' | 'automation';
   /** Portable resource key, resolved against this profile's explicit bindings. */
   key: string;
   create?: never;
+  /** Database resources only. */
+  columns?: SpaceResourceColumns;
 } | {
   kind: 'database';
   create: SpaceDatabaseCreate;
   key?: never;
+  columns?: SpaceResourceColumns;
 };
 
 /** Optional V4 marker. Presentations always require path, description and memory at build time. */
@@ -219,6 +229,8 @@ export interface SpaceViewParam {
   page?: { where: NativeFilter };
   /** IANA timezone for relative dates/periods (UTC if omitted). */
   timezone?: string;
+  /** Only editors can set it; for the public it is dropped like an unknown param. A required one needs a default. */
+  editorsOnly?: true;
 }
 /**
  * Notis data the view lists: exactly this native filter over a declared database, with `{param}`,
@@ -227,8 +239,8 @@ export interface SpaceViewParam {
 export type SpaceViewFilter = { and: SpaceViewFilter[] } | { or: SpaceViewFilter[] }
   | (Extract<NativeFilter, { field: unknown }> & { /** Apply only when this boolean param is true. */ when?: string });
 export type SpaceShows =
-  | { database: string; where: SpaceViewFilter | Record<string, never>; open?: string }
-  | { about: string; services?: readonly string[] };
+  | { database: string; where: SpaceViewFilter | Record<string, never>; open?: string; /** Editors only. Default: public. */ editorsOnly?: true }
+  | { about: string; services?: readonly string[]; editorsOnly?: true };
 /** When view snapshots go to memory: on render, on a UTC cron (fixed minute), or after changes settle. */
 export type SpaceMemorySnapshot = 'on_render' | { scheduled: string } | { on_change: { debounceSeconds: number } };
 /** What this view sends to memory; records follow their database's main view. See the memory guide. */
@@ -268,6 +280,12 @@ export interface SpaceMarkdownInput {
 
 export interface SpaceDefinition {
   name: string;
+  /**
+   * The whole view is for the Space's editors: for the public it does not exist (missing from navigation, its
+   * address is the Site's not-found). Lists, actions, params and database columns take their own `editorsOnly`.
+   * Anything unmarked is public, for reads and writes alike.
+   */
+  editorsOnly?: true;
   /** Optional marker (2); omitting it does not waive a presentation's required declarations. */
   specVersion?: typeof SPACE_VIEW_SPEC_VERSION;
   /** Words used in this view's links, such as `notes` or `seo/keywords`. */
@@ -328,11 +346,46 @@ export interface SpaceActionDescriptor {
   readOnly: boolean;
 }
 
+/** Who the Space is drawn for: its editors, or the public (Site and link visitors, signed-in people who cannot edit). */
+export type SpaceAudience = 'editor' | 'public';
+/** What the published view marks editor-only; sent to editors only. */
+export interface SpaceEditorsOnly {
+  view?: true;
+  shows?: string[];
+  actions?: string[];
+  params?: string[];
+  /** Database binding alias to its editor-only property names. */
+  columns?: Record<string, string[]>;
+}
+
+/**
+ * The editor-only column names a definition declares on one database resource:
+ * `EditorOnlyColumns<typeof definition, 'tickets'>`.
+ */
+export type EditorOnlyColumns<D extends Pick<SpaceDefinition, 'resources'>, A extends keyof NonNullable<D['resources']>> =
+  NonNullable<D['resources']>[A] extends { columns: infer C } ? Extract<{ [K in keyof C]: C[K] extends { editorsOnly: true } ? K : never }[keyof C], string>
+    : never;
+/**
+ * A row as one audience reads it: for the public, the editor-only columns are absent from `properties` (or from the
+ * row itself when it has no `properties`). `AudienceRow<Row, EditorOnlyColumns<typeof definition, 'tickets'>>`.
+ */
+export type AudienceRow<Row, Cols extends string, A extends SpaceAudience = 'public'> = A extends 'editor' ? Row
+  : Row extends { properties: infer P } ? Omit<Row, 'properties'> & { properties: Omit<P, Cols> } : Omit<Row, Cols>;
+
 export interface SpaceRuntimeDescriptor {
   id: string;
   revision: number;
   /** Opaque host identity includes actor/link, record context and live policy version. */
   cacheScope: string;
+  /** Who the server drew this descriptor for. Absent on older servers, which means `public`. */
+  audience?: SpaceAudience;
+  /** Editors only: what this view marks editor-only, so the host can offer View as the public. */
+  editorsOnly?: SpaceEditorsOnly;
+  /**
+   * Host-set: an editor is viewing this Space as the public. The SDK applies the public floors in the page
+   * (editor-only lists, actions, params and columns gone); anything still allowed runs as the editor.
+   */
+  viewAs?: 'public';
   navigation?: string[];
   /** Declared viewer reads; present only for a signed-in viewer, never on a Site. */
   viewerReads?: SpaceViewerReadFamily[];
@@ -441,11 +494,174 @@ export function spaceQueryKey(runtime: NotisRuntime | null, key: readonly unknow
   if (!space?.cacheScope || space.id !== runtime.resource.id || space.revision !== runtime.resource.revision) {
     throw new Error('The host must provide this Space revision and access context.');
   }
-  return ['space', space.id, space.revision, space.cacheScope, ...key];
+  // Viewing as the public reads other rows than editing: never share their cache entries.
+  return ['space', space.id, space.revision, space.cacheScope, ...(space.viewAs === 'public' ? ['view-as-public'] : []), ...key];
 }
 
-/** SDK defense in depth. The host/server independently reject these transports. */
-export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?: (error: Error) => void): NotisRuntime | null {
+/** Who the page is drawn for: `editor` only for an editor who is not viewing the Space as the public. */
+export function spaceAudience(space: SpaceRuntimeDescriptor | null | undefined): SpaceAudience {
+  return space?.audience === 'editor' && space.viewAs !== 'public' ? 'editor' : 'public';
+}
+
+/** Whether the person is an editor who could view this Space as the public (the view marks something editor-only). */
+export function spaceMarksEditorsOnly(space: SpaceRuntimeDescriptor | null | undefined): boolean {
+  const marks = space?.editorsOnly;
+  if (space?.audience !== 'editor' || !marks) return false;
+  return Boolean(marks.view || marks.shows?.length || marks.actions?.length || marks.params?.length
+    || Object.values(marks.columns ?? {}).some(columns => columns.length));
+}
+
+const without = <T>(record: Record<string, T> | undefined, names: readonly string[] | undefined): Record<string, T> | undefined =>
+  record && names?.length ? Object.fromEntries(Object.entries(record).filter(([name]) => !names.includes(name))) : record;
+
+/**
+ * The descriptor the public receives, computed from an editor's: editor-only lists, actions, params and the row
+ * operations backed by them removed, and the signed-in-only reads a Site never gets. Same floors as the server.
+ */
+export function publicSpaceDescriptor(space: SpaceRuntimeDescriptor): SpaceRuntimeDescriptor {
+  const marks = space.editorsOnly ?? {};
+  const actions = without(space.actions, marks.actions) ?? {};
+  const bindings = Object.fromEntries(Object.entries(space.bindings ?? {}).map(([alias, binding]) => [alias, binding.operations
+    ? { ...binding, operations: Object.fromEntries(Object.entries(binding.operations).filter(([, id]) => Boolean(id && Object.hasOwn(actions, id)))) }
+    : binding]));
+  const { editorsOnly: _marks, viewerReads: _reads, cloudComputer: _computer, ...rest } = space;
+  return { ...rest, audience: 'public', actions, bindings,
+    ...(space.shows ? { shows: without(space.shows, marks.shows) } : {}),
+    ...(space.params ? { params: without(space.params, marks.params) } : {}) };
+}
+
+const fold = (name: string) => name.toLowerCase();
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * The editor-only columns of what one read or write touches, while an editor views the Space as the public.
+ * `hidden`: folded property names (a declared name may also be a property id, which the server accepts).
+ * `ids`: property ids known to be editor-only (learned from a schema or `runtime.databases`).
+ * `title`: the database's title column is editor-only, so the row's `title` is too.
+ */
+interface ColumnFloor {
+  hidden: ReadonlySet<string>;
+  ids: ReadonlySet<string>;
+  title: boolean;
+  /** Told the real names of the editor-only properties a row carried, and whether its title was one of them. */
+  seen?: (names: readonly string[], title: boolean) => void;
+}
+
+/**
+ * Whether the row's title is the value of an editor-only column. Rows do not name their title property, but they
+ * carry it among their properties under its name: an editor-only property holding exactly the row's title is taken
+ * to be the title column. A coincidence over-strips the title, which the preview accepts.
+ */
+function titleColumnHidden(row: Record<string, unknown>, hidden: ReadonlySet<string>): boolean {
+  const { title, properties } = row;
+  return typeof title === 'string' && title !== '' && isRecord(properties)
+    && Object.entries(properties).some(([name, value]) => hidden.has(fold(name)) && value === title);
+}
+
+/** One row (or record) as the public reads it, the server's floor (`ColumnFloor.row` in space_audience.py). */
+function floorRow<T>(row: T, floor: ColumnFloor): T {
+  if (!isRecord(row) || !floor.hidden.size) return row;
+  const result: Record<string, unknown> = { ...row };
+  const title = floor.title || titleColumnHidden(row, floor.hidden);
+  const named: string[] = [];
+  const visible = (fields: Record<string, unknown>) => Object.fromEntries(Object.entries(fields).filter(([name]) => {
+    const hidden = floor.hidden.has(fold(name)) || floor.ids.has(name);
+    if (hidden) named.push(name);
+    return !hidden;
+  }));
+  let nested = false;
+  for (const field of ['properties', 'property_states']) {
+    const fields = result[field];
+    if (isRecord(fields)) { nested = true; result[field] = visible(fields); }
+  }
+  // A row without `properties` carries its columns itself (see AudienceRow).
+  if (!nested) {
+    const kept = visible(result);
+    for (const key of Object.keys(result)) if (!Object.hasOwn(kept, key)) delete result[key];
+  }
+  if (title) delete result.title;
+  floor.seen?.(named, title);
+  return result as T;
+}
+
+/** A schema the public reads: the editor-only properties gone, their ids and title learned for later checks. */
+function floorSchema(schema: Record<string, unknown>, floor: ColumnFloor, learn: (ids: string[], names: string[], title: boolean) => void) {
+  const properties = schema.properties;
+  if (!isRecord(properties)) return schema;
+  const ids = Object.entries(properties).filter(([id, property]) => floor.hidden.has(fold(id)) || floor.ids.has(id)
+    || (isRecord(property) && typeof property.name === 'string' && floor.hidden.has(fold(property.name)))).map(([id]) => id);
+  if (!ids.length) return schema;
+  const names = ids.map(id => properties[id]).filter(isRecord).map(property => property.name).filter((name): name is string => typeof name === 'string');
+  learn(ids, names, typeof schema.title_property_id === 'string' && ids.includes(schema.title_property_id));
+  return { ...schema, properties: Object.fromEntries(Object.entries(properties).filter(([id]) => !ids.includes(id))),
+    ...(Array.isArray(schema.property_order) ? { property_order: schema.property_order.filter(id => !ids.includes(id as string)) } : {}) };
+}
+
+/**
+ * A native answer as the public reads it: its rows, its single `row`, `record` or `document`, a record read that is
+ * the row itself, and its schema (the server's `ColumnFloor.result`).
+ */
+function floorResult<T>(value: T, floor: ColumnFloor, learn: (ids: string[], names: string[], title: boolean) => void = () => {}): T {
+  if (!floor.hidden.size) return value;
+  if (Array.isArray(value)) return value.map(row => floorRow(row, floor)) as T;
+  if (!isRecord(value)) return value;
+  let title = floor.title;
+  let result: Record<string, unknown> = { ...value };
+  if (isRecord(result.schema)) {
+    result.schema = floorSchema(result.schema, floor, (ids, names, hiddenTitle) => { title ||= hiddenTitle; learn(ids, names, hiddenTitle); });
+  }
+  const rows = { ...floor, title };
+  if (Array.isArray(result.rows)) result.rows = result.rows.map(row => floorRow(row, rows));
+  for (const name of ['row', 'record', 'document']) if (isRecord(result[name])) result[name] = floorRow(result[name], rows);
+  if (isRecord(result.properties) && ('record_key' in result || 'id' in result)) result = floorRow(result, rows);
+  return result as T;
+}
+
+/** Rows with these properties removed (matched case-insensitively), as the server sends them to the public. */
+export function withoutEditorColumns<T>(rows: readonly T[], columns: readonly string[]): T[] {
+  if (!columns.length) return rows.slice();
+  const floor: ColumnFloor = { hidden: new Set(columns.map(fold)), ids: new Set(), title: false };
+  return rows.map(row => floorRow(row, floor));
+}
+
+/**
+ * Whether a read or write names an editor-only column: a `property` or `property_id` reference anywhere (filters,
+ * sorts, search, aggregate, projection), a written `properties` key, and the title (`{column: 'title'}` or a
+ * `columns.title` write) once the title column is known to be editor-only.
+ *
+ * A `property_id` is matched against the ids learned from a schema or `runtime.databases`; the Space descriptor itself
+ * carries no schema, so before one is learned only an id equal to a declared editor-only name (the server accepts an
+ * exact id there) is refused, and an id of an editor-only column declared by name is not.
+ */
+function namesEditorColumn(value: unknown, floor: ColumnFloor): boolean {
+  if (Array.isArray(value)) return value.some(item => namesEditorColumn(item, floor));
+  if (!isRecord(value)) return false;
+  const { property, property_id: propertyId, column, properties: written, columns } = value;
+  if (typeof property === 'string' && floor.hidden.has(fold(property))) return true;
+  if (typeof propertyId === 'string' && (floor.ids.has(propertyId) || floor.hidden.has(fold(propertyId)))) return true;
+  if (floor.title && column === 'title') return true;
+  // A row write names its columns as the keys of `properties`.
+  if (isRecord(written) && Object.keys(written).some(name => floor.hidden.has(fold(name)) || floor.ids.has(name))) return true;
+  if (floor.title && isRecord(columns) && Object.hasOwn(columns, 'title')) return true;
+  return Object.values(value).some(item => namesEditorColumn(item, floor));
+}
+
+/** Host record components held to the public floor; `columns` reads the editor-only names known at render time. */
+export type SpacePublicRecordUI = (ui: NotisRuntimeUI, columns: () => readonly string[]) => NotisRuntimeUI;
+
+/**
+ * SDK defense in depth. The host/server independently reject these transports.
+ * With `space.viewAs === 'public'` it also applies the public floors in the page (View as the public): the
+ * descriptor the public would receive, editor-only lists and actions refused, editor-only columns left out of every
+ * row the page can read (actions, lists, document bodies, the collection item, host record components) and refused
+ * in every read or write that names them. Actions still run as the editor, so this floor is what keeps the preview
+ * true; real public visitors are held to it by the server.
+ *
+ * `options.publicRecordUI` holds the host record components to the floor (the provider passes the React one). Without
+ * it, the host components that draw a record's properties are left out while viewing as the public.
+ */
+export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?: (error: Error) => void,
+  options: { publicRecordUI?: SpacePublicRecordUI } = {}): NotisRuntime | null {
   if (runtime?.resource?.kind !== 'space') return runtime;
   spaceQueryKey(runtime, []);
   const protocolError = (message: string, key?: QueryErrorKey) => {
@@ -455,10 +671,12 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
   const deny = async (): Promise<never> => { throw protocolError('Use a declared Space action; account-wide tool and backend calls are unavailable.'); };
   const callAction = runtime.callAction;
   if (!callAction) throw new Error('This host needs the current Space action protocol.');
-  const viewerRead = runtime.viewerRead;
+  const asPublic = runtime.space!.viewAs === 'public';
+  const space = asPublic ? publicSpaceDescriptor(runtime.space!) : runtime.space!;
+  const viewerRead = asPublic ? undefined : runtime.viewerRead;
   const shown = runtime.shown;
-  const cloudComputer = runtime.spaceCloudComputer;
-  const cloudLevel = runtime.space!.cloudComputer;
+  const cloudComputer = asPublic ? undefined : runtime.spaceCloudComputer;
+  const cloudLevel = space.cloudComputer;
   const guardedCloud = (operation: SpaceCloudComputerOperation) => {
     if (!cloudComputer || !spaceCloudComputerAllows(cloudLevel, operation)) {
       throw protocolError(operation === 'facts' ? 'This Space does not use the cloud computer.'
@@ -466,14 +684,110 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
     }
     return cloudComputer;
   };
-  return Object.freeze({ ...runtime, callTool: deny, request: deny, listTools: deny,
+  const undeclared = (key?: QueryErrorKey) => protocolError('This action is not declared by the published Space.', key);
+  const columnRefused = (key?: QueryErrorKey) => protocolError('The public cannot read or write this column.', key);
+
+  // View as the public: what is editor-only, by binding alias, plus what the page learns while it reads.
+  const hiddenColumns = asPublic ? runtime.space!.editorsOnly?.columns ?? {} : {};
+  const declared = (alias?: string): readonly string[] => alias === undefined ? Object.values(hiddenColumns).flat()
+    : (Object.hasOwn(hiddenColumns, alias) ? hiddenColumns[alias] : undefined) ?? [];
+  const anyHidden = new Set(declared().map(fold));
+  /** Real names of editor-only properties seen in rows and schemas, for the host components that match names exactly. */
+  const observed = new Set<string>();
+  /** Editor-only property ids, learned from schemas and `runtime.databases`. */
+  const hiddenIds = new Set<string>();
+  /** Aliases whose title column is editor-only; `titleSomewhere` when a database names no alias. */
+  const hiddenTitles = new Set<string>();
+  let titleSomewhere = false;
+  if (anyHidden.size) {
+    for (const database of runtime.databases ?? []) {
+      const alias = database?.slug && Object.hasOwn(hiddenColumns, database.slug) ? database.slug : undefined;
+      const hidden = alias === undefined ? anyHidden : new Set(declared(alias).map(fold));
+      for (const property of database?.properties ?? []) {
+        if (!property?.name || !(hidden.has(fold(property.name)) || (property.id && hidden.has(fold(property.id))))) continue;
+        if (property.id) hiddenIds.add(property.id);
+        observed.add(property.name);
+        if (property.type === 'title') { if (alias === undefined) titleSomewhere = true; else hiddenTitles.add(alias); }
+      }
+    }
+  }
+  /**
+   * The floor of one database (`alias`), or of every database when the alias is unknown or ambiguous: an action can
+   * then return rows of any of them, so the union of their editor-only columns is left out (over-stripping is safe).
+   */
+  const floorOf = (alias: string | undefined): ColumnFloor => {
+    const hidden = alias === undefined ? anyHidden : new Set(declared(alias).map(fold));
+    return { hidden, ids: hiddenIds,
+      title: hidden.size > 0 && (titleSomewhere || (alias === undefined ? hiddenTitles.size > 0 : hiddenTitles.has(alias))),
+      seen: (names, title) => {
+        for (const name of names) observed.add(name);
+        if (title && alias !== undefined) hiddenTitles.add(alias);
+      } };
+  };
+  const learnOf = (alias: string | undefined) => (ids: string[], names: string[], title: boolean) => {
+    for (const id of ids) hiddenIds.add(id);
+    for (const name of names) observed.add(name);
+    if (title) { if (alias === undefined) titleSomewhere = true; else hiddenTitles.add(alias); }
+  };
+  /** The one binding an action belongs to (one of its row operations); undefined when none or several. */
+  const aliasOfAction = (actionId: string) => {
+    const aliases = Object.entries(space.bindings ?? {}).filter(([, binding]) =>
+      binding.operations && Object.values(binding.operations).includes(actionId)).map(([alias]) => alias);
+    return aliases.length === 1 ? aliases[0] : undefined;
+  };
+  const declaredBinding = (alias: unknown): alias is string => typeof alias === 'string' && Object.hasOwn(space.bindings ?? {}, alias);
+  const documentBody = runtime.documentBody;
+  const subscribeDatabase = runtime.subscribeDatabase;
+  const draftHandover = runtime.draftHandover;
+  const collectionItem = runtime.context?.collectionItem;
+
+  const publicFloors: Partial<NotisRuntime> = !asPublic ? {} : {
+    // Document bodies are not columns, but the read and write actions must be the public's, and the title is a column.
+    ...(documentBody ? { documentBody: async (request: SpaceDocumentBodyRequest): Promise<SpaceDocumentBodyResult> => {
+      const actionIds = isRecord(request) ? [request.readAction, ...(request.operation === 'save' ? [request.writeAction] : [])] : [];
+      if (!actionIds.length || !declaredBinding(request.binding)
+        || actionIds.some(id => typeof id !== 'string' || !Object.hasOwn(space.actions, id))) throw undeclared();
+      const result = await documentBody(request);
+      // The answer does not say which column is the title: it is left out once the page has learned that.
+      return request.operation === 'read' && floorOf(request.binding).title && isRecord(result) && 'content_markdown' in result
+        ? { ...result, title: null } : result;
+    } } : {}),
+    // A change signal carries no rows; only the public descriptor's databases have one.
+    ...(subscribeDatabase ? { subscribeDatabase: (slug: string, onChange: () => void, config?: SubscribeDatabaseOptions) => {
+      if (!declaredBinding(slug) || space.bindings[slug].kind !== 'database') { config?.onStatusChange?.(false); return () => {}; }
+      return subscribeDatabase(slug, onChange, config);
+    } } : {}),
+    // The selected row goes to the editor's own Manager draft, never to the page; its read must be the public's.
+    ...(draftHandover ? { draftHandover: async (payload: HandoverPayload) => {
+      const record = payload && typeof payload === 'object' ? payload.record : undefined;
+      if (record && (!declaredBinding(record.binding) || typeof record.readAction !== 'string'
+        || !Object.hasOwn(space.actions, record.readAction))) throw undeclared();
+      return draftHandover(payload);
+    } } : {}),
+    ...(anyHidden.size && isRecord(collectionItem) ? { context: { ...runtime.context, collectionItem: (() => {
+      const item = floorRow(collectionItem, floorOf(undefined));
+      return { ...item, title: typeof item.title === 'string' ? item.title : '' };
+    })() } } : {}),
+    // Host record components read and write with the editor's authority: hold what they draw to the floor.
+    ...(anyHidden.size && runtime.ui ? { ui: options.publicRecordUI
+      ? options.publicRecordUI(runtime.ui, () => [...new Set([...declared(), ...observed])])
+      : { ...runtime.ui, DocumentEditor: undefined, DocumentPage: undefined, RecordProperties: undefined } } : {}),
+  };
+
+  return Object.freeze({ ...runtime, space, callTool: deny, request: deny, listTools: deny, ...publicFloors,
     shown: shown ? async function guardedShown<TResult>(name: string, params: Record<string, unknown> = {},
       options: SpaceShownOptions = {}): Promise<TResult> {
-      const list = runtime.space!.shows && Object.hasOwn(runtime.space!.shows, name) ? runtime.space!.shows[name] : null;
+      const list = space.shows && Object.hasOwn(space.shows, name) ? space.shows[name] : null;
       if (!list || !('database' in list)) throw protocolError('This view does not declare that list with a filter.', 'listUnavailable');
-      return shown<TResult>(name, params, options);
+      if (!asPublic) return shown<TResult>(name, params, options);
+      const visible = space.params ? Object.fromEntries(Object.entries(params).filter(([param]) => Object.hasOwn(space.params!, param))) : params;
+      const floor = floorOf(list.database);
+      // The declared filter may read an editor-only column; the caller's sorts may not.
+      if (floor.hidden.size && namesEditorColumn(options, floor)) throw columnRefused('readUnavailable');
+      return floorResult(await shown<TResult>(name, visible, options), floor, learnOf(list.database));
     } : undefined,
     handover: undefined,
+    ...(asPublic ? { spaceFiles: undefined } : {}),
     // The legacy facts hook keeps working in a Space that declares the cloud computer.
     cloudComputerFacts: cloudComputer && cloudLevel ? async (options?: { refresh?: boolean }) => guardedCloud('facts').facts(options) : undefined,
     spaceCloudComputer: cloudComputer && cloudLevel ? Object.freeze({
@@ -487,14 +801,21 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
       input: Record<string, unknown> = {}): Promise<TResult> {
       const family = Object.hasOwn(SPACE_VIEWER_READ_OPERATIONS, operation) ? SPACE_VIEWER_READ_OPERATIONS[operation] : null;
       if (!family) throw protocolError('Viewer reads never change data. Choose a supported read.', 'readUnavailable');
-      if (!runtime.space!.viewerReads?.includes(family)) throw protocolError(`This Space does not declare viewer reads of ${family}.`, 'readUnavailable');
+      if (!space.viewerReads?.includes(family)) throw protocolError(`This Space does not declare viewer reads of ${family}.`, 'readUnavailable');
       return viewerRead<TResult>(operation, input);
     } : undefined,
     async callAction<TResult>(id: string, inputs: Record<string, unknown> = {}, options: SpaceActionOptions = {}): Promise<TResult> {
-      const descriptor = Object.hasOwn(runtime.space!.actions, id) ? runtime.space!.actions[id] : null;
-      if (!descriptor) throw protocolError('This action is not declared by the published Space.', options.readOnly || options.dedupe ? 'actionUnavailable' : undefined);
+      const descriptor = Object.hasOwn(space.actions, id) ? space.actions[id] : null;
+      if (!descriptor) throw undeclared(options.readOnly || options.dedupe ? 'actionUnavailable' : undefined);
       if ((options.readOnly || options.dedupe) && !descriptor.readOnly) throw protocolError('A write action cannot run as a cached read.', 'readUnavailable');
-      return callAction<TResult>(id, inputs, options);
+      if (!asPublic) return callAction<TResult>(id, inputs, options);
+      // A row operation of one binding reads that binding; a named action, or one several bindings share, any of them.
+      const alias = aliasOfAction(id);
+      const floor = floorOf(alias);
+      // Every input is checked, not only `request`: a named action's inputs may carry a filter or a row write too.
+      // A template that maps a plain input onto an editor-only column cannot be seen from here; the server refuses it.
+      if (floor.hidden.size && namesEditorColumn(inputs, floor)) throw columnRefused(options.readOnly || options.dedupe ? 'readUnavailable' : undefined);
+      return floorResult(await callAction<TResult>(id, inputs, options), floor, learnOf(alias));
     },
   });
 }

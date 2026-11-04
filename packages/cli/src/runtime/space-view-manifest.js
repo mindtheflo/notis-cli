@@ -7,6 +7,7 @@
  * specVersion. Containers remain non-executable; explicit specVersion 2 is unchanged.
  */
 import { usageError } from './errors.js';
+import { editorsOnlyFlag, manifestDeclarations } from './space-audience.js';
 import portalRouteRoots from '../../config/portal-route-roots.json' with { type: 'json' };
 const RESERVED_PATHS = new Set(portalRouteRoots);
 
@@ -15,7 +16,8 @@ export const VIEW_DEFINITION_FIELDS = Object.freeze(['specVersion', 'path', 'par
 export const VIEW_PARAM_TYPES = Object.freeze(['record', 'enum', 'text', 'number', 'date', 'period', 'boolean']);
 const RELATIVE_DATES = ['today', 'tomorrow'];
 const PERIODS = [...RELATIVE_DATES, 'this_week', 'last_week', 'this_month', 'last_month'];
-const RESERVED_PARAMS = new Set(['record', 'assistantThread']);
+// `view_as` is the Portal's View as the public (server/lib/space_view_manifest.py RESERVED_PARAMS).
+const RESERVED_PARAMS = new Set(['record', 'assistantThread', 'view_as']);
 const PAGE_ONLY = ['params', 'shows', 'memory', 'chrome', 'markdown', 'questions'];
 const NAME = /^[a-z][A-Za-z0-9_]{0,63}$/;
 // Credentials never ride in links, so no view param may look like one (the Portal drops these names).
@@ -131,7 +133,7 @@ export function viewParamValue(declaration, value) {
 
 function validateParam(name, declaration, resources) {
   if (!NAME.test(name) || RESERVED_PARAMS.has(name) || CREDENTIAL_PARAM.test(name)) throw usageError(`Param names are camelCase words; "${name}" is not available.`);
-  const allowed = new Set(['type', 'description', 'required', 'default', 'values', 'database', 'main', 'slugProperty', 'page', 'timezone']);
+  const allowed = new Set(['type', 'description', 'required', 'default', 'values', 'database', 'main', 'slugProperty', 'page', 'timezone', 'editorsOnly']);
   if (!plain(declaration) || Object.keys(declaration).some(field => !allowed.has(field)) || !VIEW_PARAM_TYPES.includes(declaration.type)) {
     throw usageError(`Declare param "${name}" as { type, description, ... } with type ${VIEW_PARAM_TYPES.join(', ')}.`);
   }
@@ -143,6 +145,16 @@ function validateParam(name, declaration, resources) {
     } catch { throw usageError(`Param "${name}": timezone is an IANA timezone for a date or period.`); }
   }
   if ('required' in declaration && typeof declaration.required !== 'boolean') throw usageError(`Param "${name}": required is true or false.`);
+  // The public never sets an editor-only param, so it must open the view without it (its default, if any, applies).
+  const editorOnly = editorsOnlyFlag(declaration.editorsOnly, `Param "${name}"`);
+  if (editorOnly && declaration.required === true) {
+    throw usageError(`Param "${name}": an editor-only param cannot be required, or the public could never open this view. Give it a default instead.`);
+  }
+  // A record param chooses the record a page or a record Site shows: hidden from the public, its filters would
+  // read as unset and widen to every record (server/lib/space_audience.py refuses it too).
+  if (editorOnly && declaration.type === 'record') {
+    throw usageError(`Param "${name}": a record param chooses the record this view shows, so it cannot be editors-only. Mark the lists or columns it reveals instead.`);
+  }
   if (declaration.type === 'enum') {
     const values = declaration.values;
     if (!Array.isArray(values) || values.length < 1 || values.length > 100 || new Set(values).size !== values.length
@@ -276,6 +288,11 @@ function validatePage(name, page, resource) {
 function validateShows(name, declaration, params, resources, collection) {
   const where = `shows.${name}`;
   if (!NAME.test(name)) throw usageError(`Shows names are camelCase words; "${name}" is not available.`);
+  editorsOnlyFlag(declaration?.editorsOnly, where);
+  if (plain(declaration) && 'editorsOnly' in declaration) {
+    const { editorsOnly, ...rest } = declaration;
+    declaration = rest;
+  }
   if (plain(declaration) && 'about' in declaration) {
     const services = declaration.services ?? [];
     if (Object.keys(declaration).some(field => !['about', 'services'].includes(field)) || !text(declaration.about, 500)
@@ -359,8 +376,9 @@ export function viewManifestFields(definition, { entry, resources }) {
     ...(version !== undefined ? { spec_version: version } : {}),
     ...(definition.path !== undefined ? { path: definition.path } : {}),
     ...(definition.questions !== undefined ? { questions: definition.questions } : {}),
-    ...(definition.params !== undefined ? { params } : {}),
-    ...(definition.shows !== undefined ? { shows: definition.shows } : {}),
+    // Editor-only markers leave the copied items; the manifest's editors_only key carries them (space-audience.js).
+    ...(definition.params !== undefined ? { params: manifestDeclarations(params) } : {}),
+    ...(definition.shows !== undefined ? { shows: manifestDeclarations(definition.shows) } : {}),
     ...(definition.memory !== undefined ? { memory: definition.memory } : {}),
     ...(definition.chrome !== undefined ? { chrome: definition.chrome } : {}),
     ...(definition.markdown !== undefined ? { markdown: { export_name: 'SpaceMarkdown' } } : {}),

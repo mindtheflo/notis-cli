@@ -454,3 +454,40 @@ test('a record param page rule: one per view, exactly { where }, fixed values ov
     await assert.rejects(loadSelectedSpace(root, 'a'), /page belong to record params/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('editorsOnly marks leave the copied items and write one sorted editors_only manifest key', async () => {
+  const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
+  const root = fixture();
+  const write = body => writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'Tasks',entry:'./view.tsx',specVersion:2,path:'tasks',description:'Every task.',memory:{markdown:false,attachments:false,screenshot:false,snapshots:[]},${body}};`);
+  const resources = `resources:{tasks:{kind:'database',key:'tasks',columns:{Cost:{editorsOnly:true},Budget:{editorsOnly:true}}}}`;
+  const params = `params:{status:{type:'enum',values:['inbox','done'],default:'inbox',description:'Status.'},audit:{type:'boolean',default:false,description:'Audit mode.',editorsOnly:true}}`;
+  const shows = `shows:{open:{database:'tasks',where:{}},costs:{database:'tasks',where:{},editorsOnly:true}}`;
+  const action = marker => `{tool:'LOCAL_NOTIS_DATABASE_QUERY',inputs:{type:'object',properties:{},additionalProperties:false},arguments:{database_id:{$asset:'tasks'},request:{}}${marker}}`;
+  const actions = `actions:{zap:${action(',editorsOnly:true')},read:${action('')},archive:${action(',editorsOnly:true')}}`;
+  try {
+    write(`editorsOnly:true,${resources},${params},${shows},${actions}`);
+    const manifest = generateSpaceManifest(await loadSelectedSpace(root, 'a'));
+    assert.deepEqual(manifest.editors_only, { view: true, shows: ['costs'], actions: ['archive', 'zap'], params: ['audit'],
+      columns: { tasks: ['Budget', 'Cost'] } });
+    assert.equal(JSON.stringify(manifest).includes('editorsOnly'), false, 'no copied item keeps its marker');
+    assert.equal(Object.hasOwn(manifest.resources.tasks, 'columns'), false);
+    write(`resources:{tasks:{kind:'database',key:'tasks'}},${shows.replace(',editorsOnly:true', '')}`);
+    assert.equal(Object.hasOwn(generateSpaceManifest(await loadSelectedSpace(root, 'a')), 'editors_only'), false);
+    for (const [body, message] of [
+      [`editorsOnly:false,resources:{tasks:{kind:'database',key:'tasks'}}`, /editorsOnly/],
+      [`resources:{tasks:{kind:'database',key:'tasks'}},shows:{open:{database:'tasks',where:{},editorsOnly:'yes'}}`, /editorsOnly/],
+      [`resources:{tasks:{kind:'database',key:'tasks',columns:{Cost:{editorsOnly:false}}}}`, /editorsOnly: true/],
+      [`resources:{tasks:{kind:'database',key:'tasks'}},params:{audit:{type:'boolean',required:true,description:'Audit.',editorsOnly:true}}`, /cannot be required/],
+      // A record param chooses the record a record Site pins: hidden, the public's lists would widen to every record.
+      [`resources:{tasks:{kind:'database',key:'tasks'}},params:{task:{type:'record',database:'tasks',description:'Task.',editorsOnly:true}}`, /record param chooses the record this view shows/],
+    ]) {
+      write(body);
+      await assert.rejects(loadSelectedSpace(root, 'a').then(selection => generateSpaceManifest(selection)), message);
+    }
+    // The Portal's View as the public (?view_as=public) owns this param name.
+    write(`resources:{tasks:{kind:'database',key:'tasks'}},params:{view_as:{type:'text',description:'Clashes.'}}`);
+    await assert.rejects(loadSelectedSpace(root, 'a').then(selection => generateSpaceManifest(selection)), /"view_as" is not available/);
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'A',editorsOnly:true};`);
+    await assert.rejects(loadSelectedSpace(root, 'a'), /container/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

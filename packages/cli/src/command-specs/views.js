@@ -12,6 +12,7 @@ export function viewRenderCommandSpec({ screenshotOnly = false } = {}) {
     args_schema: { arguments: [{ token: '<url>', key: 'url', description: 'Current view-qualified or record link.' }], options: [
       ...(!screenshotOnly ? [{ flags: '--outputs <kinds>', description: 'Comma-separated markdown,screenshot (default both).' }] : []),
       { flags: '--width <pixels>', description: '1440 (default) or 390.' },
+      { flags: '--view-as <audience>', description: 'public: render the view as the public sees it (no editor-only parts).' },
       { flags: '--output-dir <path>', description: 'New output directory; defaults to a unique .notis/renders directory. Existing files are never overwritten.' },
     ] }, examples: [screenshotOnly ? 'notis spaces screenshot <view-link> --width 390' : 'notis views render <view-link> --outputs markdown,screenshot'],
     mutates: false, idempotent: true, require_auth: true,
@@ -22,12 +23,14 @@ export function viewRenderCommandSpec({ screenshotOnly = false } = {}) {
         throw usageError('Choose markdown, screenshot, or markdown,screenshot.');
       }
       const width = ctx.options.width === undefined ? 1440 : Number(ctx.options.width);
+      const viewAs = ctx.options.viewAs;
+      if (viewAs !== undefined && viewAs !== 'public') throw usageError('--view-as accepts only public.');
       const directory = resolve(ctx.options.outputDir || `.notis/renders/${randomUUID()}`);
       const controller = new AbortController(), cancel = () => controller.abort();
       process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
       try {
         const { result, artifacts } = await renderViewWithCliRuntime({ runtime: ctx.runtime,
-          url: ctx.args.url, outputs, width, directory, signal: controller.signal });
+          url: ctx.args.url, outputs, width, viewAs, directory, signal: controller.signal });
         const data = { ...result, artifacts };
         if (data.screenshot) {
           const { data_base64: _bytes, ...metadata } = data.screenshot;

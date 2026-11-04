@@ -5,8 +5,9 @@ import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { collectSourceFiles, loadAppConfig } from './app-platform.js';
 import { usageError } from './errors.js';
 import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifest.js';
+import { editorOnlyColumns, editorsOnlyFlag, withoutMarker } from './space-audience.js';
 
-const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'collection', 'sourceIncludes', 'verificationFixtures', ...VIEW_DEFINITION_FIELDS]);
+const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
 /** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-spaces-platform.md. */
 export const VIEWER_READ_FAMILIES = Object.freeze(['databases', 'skills']);
 const WORKSPACE_INDEXES = new Set(['notis.config.ts', 'notis.config.js', 'notis.config.mjs']);
@@ -130,11 +131,16 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
     if (!target || typeof target !== 'object' || Object.keys(target).join(',') !== 'key') throw usageError('A navigation reference needs one portable key.');
     key(target.key, 'Navigation target');
   }
+  // Editor-only parts (SPC-074): the whole view here, its columns on each database resource below.
+  if (editorsOnlyFlag(definition.editorsOnly, 'This view') && !entry) {
+    throw usageError('A container has no page, so it cannot be editors-only. Mark the views inside it.');
+  }
   for (const [alias, resource] of Object.entries(resources)) {
     key(alias, 'Resource alias');
+    editorOnlyColumns(alias, resource);
     if (resource?.kind === 'database' && resource.create != null) {
       const value = resource.create;
-      if (Object.keys(resource).some(name => !['kind', 'create'].includes(name))
+      if (Object.keys(resource).some(name => !['kind', 'create', 'columns'].includes(name))
         || !value || typeof value !== 'object' || Array.isArray(value)
         || Object.keys(value).some(name => !['name', 'schema', 'starterRows'].includes(name))
         || typeof value.name !== 'string' || !value.name.trim() || value.name.length > 200
@@ -149,7 +155,9 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
       continue;
     }
     if (!resource || !['database', 'document', 'skill', 'automation'].includes(resource.kind) || typeof resource.key !== 'string'
-      || Object.keys(resource).some(name => !['kind', 'key'].includes(name))) throw usageError(`Invalid resource reference: ${alias}`);
+      || Object.keys(resource).some(name => !['kind', 'key', ...(resource.kind === 'database' ? ['columns'] : [])].includes(name))) {
+      throw usageError(`Invalid resource reference: ${alias}`);
+    }
   }
   if (definition.viewerReads != null && (!Array.isArray(definition.viewerReads)
     || definition.viewerReads.some(family => !VIEWER_READ_FAMILIES.includes(family))
@@ -164,8 +172,10 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
   if (definition.collection && (resources[definition.collection.database]?.kind !== 'database' || !definition.collection.titleProperty)) {
     throw usageError('A collection needs a declared database binding and title property.');
   }
-  for (const [actionId, template] of Object.entries(definition.actions || {})) {
+  for (const [actionId, declared] of Object.entries(definition.actions || {})) {
     key(actionId, 'Action');
+    editorsOnlyFlag(declared?.editorsOnly, `Action ${actionId}`);
+    const template = withoutMarker(declared);
     if (!template || typeof template.tool !== 'string' || !template.tool || Object.keys(template).sort().join(',') !== 'arguments,inputs,tool'
       || template.inputs?.type !== 'object' || template.inputs?.additionalProperties !== false || !template.arguments || Array.isArray(template.arguments)) {
       throw usageError(`Action ${actionId} needs the canonical closed inputs/tool/arguments template.`);

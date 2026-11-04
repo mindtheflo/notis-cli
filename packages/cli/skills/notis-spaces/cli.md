@@ -123,6 +123,7 @@ When to use: Check the actual deployed view; writes are blocked and current acce
 
 Options:
 - `--width <pixels>` — 1440 (default) or 390.
+- `--view-as <audience>` — public: render the view as the public sees it (no editor-only parts).
 - `--output-dir <path>` — New output directory; defaults to a unique .notis/renders directory. Existing files are never overwritten.
 
 Examples:
@@ -534,6 +535,7 @@ When to use: Check the actual deployed view; writes are blocked and current acce
 Options:
 - `--outputs <kinds>` — Comma-separated markdown,screenshot (default both).
 - `--width <pixels>` — 1440 (default) or 390.
+- `--view-as <audience>` — public: render the view as the public sees it (no editor-only parts).
 - `--output-dir <path>` — New output directory; defaults to a unique .notis/renders directory. Existing files are never overwritten.
 
 Examples:

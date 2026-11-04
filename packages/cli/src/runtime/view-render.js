@@ -15,10 +15,10 @@ async function rendererLibrary() {
 
 /** Root command registration supplies flags/output formatting; this adapter holds no browser JWT. */
 export async function renderViewWithCliRuntime({ runtime, url, outputs = ['markdown', 'screenshot'], width = 1440,
-  directory, signal, loadLibrary = rendererLibrary, request = httpRequest }) {
+  viewAs, directory, signal, loadLibrary = rendererLibrary, request = httpRequest }) {
   if (typeof url !== 'string' || !url.trim() || ![390, 1440].includes(width)) throw usageError('Choose a view link and width 390 or 1440.');
   const ticket = (await request({ runtime, method: 'POST', path: '/portal_view_render/prepare', spacesProtocol: true,
-    body: { url, outputs, width }, signal })).payload;
+    body: { url, outputs, width, ...(viewAs === 'public' ? { view_as: 'public' } : {}) }, signal })).payload;
   if (typeof ticket?.credential !== 'string') throw usageError('The short-lived render ticket is missing.');
   const library = await loadLibrary();
   const broker = library.createRemoteRenderBroker({ apiBase: runtime.apiBase, credential: ticket.credential });

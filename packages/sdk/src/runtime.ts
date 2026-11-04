@@ -583,6 +583,11 @@ export interface NotisRuntime {
    * signed-in Editor. Absent on Sites and older hosts.
    */
   shown?<TResult = unknown>(name: string, params?: Record<string, unknown>, options?: SpaceShownOptions): Promise<TResult>;
+  /**
+   * Space-only: an editor switches View as the public on (`'public'`) or off (`null`). The host repaints the Space
+   * with `space.viewAs` set; it never adds rights. Absent where the viewer is not an editor and on older hosts.
+   */
+  setSpaceViewAs?(mode: 'public' | null): void;
   /** Space-only unsent Manager draft; distinct from legacy App activation. */
   draftHandover?(payload: HandoverPayload): Promise<HandoverResult>;
   /**

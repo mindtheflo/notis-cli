@@ -238,6 +238,32 @@ signed-in viewer already reaches. It creates no shared grant. Use
 `useViewerRead(operation, input)`. Anonymous Sites cannot use these families.
 Explicit synthetic `viewerReads` fixtures stand in for the viewer's reads offline.
 
+## Editors and the public
+
+Everything a Space declares is public unless it is marked `editorsOnly: true`
+(only the literal `true`). The public is everyone who is not an Editor: Site and
+link visitors and signed-in people without Editor rights.
+
+- The whole view: `defineSpace({ editorsOnly: true, ... })`. For the public it
+  does not exist (a Site answers not-found). A container cannot be marked; mark
+  the views inside it.
+- A list, action or param: `shows[name].editorsOnly`, `actions[id].editorsOnly`,
+  `params[name].editorsOnly`. An editor-only param cannot be required: give it a
+  default, which the public always gets.
+- Database columns: `resources[alias].columns: { Cost: { editorsOnly: true } }`
+  (property names of that database). The server removes them from every row the
+  public reads, and refuses a public query that filters, sorts, searches or
+  aggregates on one, or a public write that sets one (`editor_only_column`).
+
+The server enforces this on every request; hiding a part in the page is not
+enough. In the page, wrap Editor-only UI in `<Editors>` and public-only UI in
+`<Public>`, read `useAudience()` (`audience`, `viewingAsPublic`,
+`canViewAsPublic`), and type public rows with
+`AudienceRow<Row, EditorOnlyColumns<typeof definition, 'alias'>>`. Editors can
+view a Space as the public (`<ViewAsPublic />`, the Share menu); agents check the
+same with `LOCAL_NOTIS_RENDER_VIEW` and `view_as: "public"` (CLI
+`notis views render <link> --view-as public`). Actions still run as the Editor.
+
 ## The viewer's cloud computer
 
 `cloudComputer: 'shell'` (or `'read'` for facts only) lets a page run one command

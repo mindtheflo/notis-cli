@@ -32,6 +32,10 @@ export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudCo
 export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadInput, SpaceViewerReadResult, SpaceViewerLink,
   SpaceViewerDatabase, SpaceViewerDatabaseSchema, SpaceViewerSkill, SpaceViewerSkillPage } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
+export { spaceAudience, spaceMarksEditorsOnly, publicSpaceDescriptor, withoutEditorColumns } from './space';
+export type { SpaceAudience, SpaceEditorsOnly, SpaceResourceColumns, EditorOnlyColumns, AudienceRow } from './space';
+export { useAudience, Editors, Public, ViewAsPublic, AUDIENCE_WORDS } from './components/Audience';
+export type { UseAudienceResult, ViewAsPublicProps } from './components/Audience';
 export { SpaceFileError, SPACE_FILE_EXTENSIONS, SPACE_FILE_MAX_BYTES } from './space';
 export type { SpaceFileUploadInput, SpaceFileUploadResult, SpaceFileReference, SpaceFilesCheck, SpaceFilesTransport } from './space';
 export type { SpaceActionFailureDetails } from './space';
