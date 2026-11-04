@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   AgentTargets,
+  CloudSkill,
   LocalSkill,
   NotisSyncState,
   SkillSyncFailure,
@@ -467,6 +468,24 @@ function applyLegacyFirstRunState(
   };
 }
 
+/**
+ * The files the previous write applied. A native folder whose state row lost that
+ * record (state written before it existed, or a row rebuilt while the Skill was
+ * unavailable) still names them in its identity marker; when every one of them is
+ * unedited they are the previous sync's output, so a newer revision replaces them
+ * instead of failing as a local conflict on every sync.
+ */
+function previouslyAppliedFiles(
+  skill: CloudSkill,
+  local: LocalSkill | undefined,
+  previousState: NotisSyncState,
+): readonly string[] | undefined {
+  const recorded = previousNativeState(previousState, skill)?.appliedFiles;
+  if (recorded || !isNativeSkill(skill) || !local?.nativeManagedFiles) return recorded;
+  return local.nativeFilesCurrent === true && local.cloudId === skill.id
+    && local.folderHash === local.nativeBaseFolderHash ? local.nativeManagedFiles : undefined;
+}
+
 async function writePulledSkillsToScopedMirror(
   pullResponse: SyncPullResponse,
   localSkills: LocalSkill[],
@@ -507,7 +526,7 @@ async function writePulledSkillsToScopedMirror(
         deps.writeCloudSkillToDisk(skill, bundleBytes, syncPaths, {
           // What the last write put there. Everything else in the folder was
           // produced locally and survives this one.
-          previouslyApplied: previousNativeState(previousState, skill)?.appliedFiles,
+          previouslyApplied: previouslyAppliedFiles(skill, local, previousState),
           ...(isNativeSkill(skill) && local ? { expectedFolderHash: local.folderHash } : {}),
           ...(legacyBaseline ? { legacyBaseline } : {}),
         }),

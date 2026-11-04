@@ -68,6 +68,8 @@ export interface LocalSkill {
   nativeScope?: string;
   nativeFilesCurrent?: boolean;
   nativeBaseFolderHash?: string;
+  /** Every file the identity marker says the last native write applied, the marker included. */
+  nativeManagedFiles?: string[];
 }
 
 export interface BundleFile {

@@ -752,6 +752,7 @@ export async function scanLocalSkills(
           const editedName = nativeFrontmatterName(skillMd);
           Object.assign(skill, { cloudId: identity.cloudId, nativeReference: identity.reference,
             nativeScope: identity.scope, nativeBaseFolderHash: identity.folderHash, nativeFilesCurrent: current,
+            nativeManagedFiles: [...Object.keys(identity.files), NATIVE_IDENTITY_FILE].sort(),
             displayName: editedName && editedName !== identity.frontmatterName ? editedName : identity.displayName });
         }
         if (sourceUrls[entry.name]) {
