@@ -71,6 +71,18 @@ export const COMMENT_WORDS = Object.freeze({
   newActivity: w('New since last turn', 'Nouveau depuis le dernier tour'),
   pin: w('{who}: {body}', `{who}${NNBSP}: {body}`),
   zone: w('{who}, on a zone: {body}', `{who}, sur une zone${NNBSP}: {body}`),
+  // Comments on a passage of the text (`usePassageComments`).
+  comment: w('Comment', 'Commenter'),
+  commentOnSelection: w('Comment on the selected text', 'Commenter le texte sélectionné'),
+  openFieldComments: w('Open the comments on this field', 'Ouvrir les commentaires de ce champ'),
+  textChanged: w('Text changed', 'Texte modifié'),
+  textChangedHint: w('This passage is no longer in the text.', 'Ce passage n’est plus dans le texte.'),
+  selectToComment: w('Select a passage to comment on it.', 'Sélectionne un passage pour le commenter.'),
+  emptyPassages: w('No comments yet. Select a passage to comment on it.',
+    'Aucun commentaire pour le moment. Sélectionne un passage pour le commenter.'),
+  inGroup: w('{n} on {group}', '{n} sur {group}'),
+  closeComments: w('Close comments', 'Fermer les commentaires'),
+  readError: w('Comments could not be read.', 'Impossible de lire les commentaires.'),
 }) satisfies Readonly<Record<string, Words>>;
 
 export type CommentWordKey = keyof typeof COMMENT_WORDS;

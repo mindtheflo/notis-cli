@@ -10,7 +10,8 @@ import type { NotisRuntime } from '../runtime';
 import { SKELETON_WORDS, ViewSkeleton } from './Skeleton';
 import { DOCUMENT_EDITOR_WORDS, DocumentEditor } from './DocumentEditor';
 import { DOCUMENT_HOOK_WORDS } from '../hooks/useDocument';
-import { MARKDOWN_EDITOR_WORDS, MarkdownEditor } from './MarkdownEditor';
+import { MARKDOWN_EDITOR_WORDS, MarkdownEditor, useMarkdownEditorDraft } from './MarkdownEditor';
+import type { NotisMarkdownEditorProps } from '../runtime';
 import { DocumentPage } from './DocumentPage';
 import { HtmlFrame, RECORD_COMPONENT_WORDS, ShareControl, SpacePageFrame, spacePageLink } from './RecordComponents';
 import type { NotisHtmlFrameProps, NotisSpacePageFrameProps } from '../runtime';
@@ -456,4 +457,37 @@ test('SpacePageFrame hands every prop to the host frame when the host draws it',
   assert.ok(doc.querySelector('[data-host-frame]'));
   assert.equal(doc.querySelector('[data-notis-space-page-card]'), null);
   assert.deepEqual(seen.at(-1), { href: '/slides', title: 'Deck', interactive: true, className: 'h-64' });
+});
+
+test('MarkdownEditor: the host editor shares the save contract; a new resourceKey opens the new value', async () => {
+  let edit: (markdown: string) => void = () => {};
+  function HostEditor(props: NotisMarkdownEditorProps) {
+    const state = useMarkdownEditorDraft(props);
+    edit = state.change;
+    return <output data-host="">{state.draft}</output>;
+  }
+  const runtime = { context: { locale: 'en' }, ui: { MarkdownEditor: HostEditor } } as unknown as NotisRuntime;
+  const saved: Array<{ markdown: string; expectedRevision?: string | null }> = [];
+  const dirty: boolean[] = [];
+  const changes: string[] = [];
+  const onSave = async (payload: { markdown: string; expectedRevision?: string | null }) => { saved.push(payload); return { revision: 'r2' }; };
+  const editor = (resourceKey: string, value: string) => (
+    <NotisProvider runtime={runtime}>
+      <MarkdownEditor resourceKey={resourceKey} value={value} revision="r1" autosaveMs={250} onSave={onSave}
+        onChange={(markdown) => changes.push(markdown)} onDirtyChange={(next) => dirty.push(next)} />
+    </NotisProvider>
+  );
+  await mount(editor('a', 'One'));
+  assert.equal(doc.querySelector('[data-host]')?.textContent, 'One');
+  assert.equal(doc.querySelector('textarea'), null, 'the host editor shows, not the fallback');
+  await act(async () => { edit('One more'); });
+  assert.deepEqual(changes, ['One more']);
+  assert.deepEqual(dirty, [true]);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+  assert.deepEqual(saved, [{ markdown: 'One more', expectedRevision: 'r1' }]);
+  assert.deepEqual(dirty, [true, false]);
+  await act(async () => { edit('One more'); });
+  assert.deepEqual(changes, ['One more'], 'the same text is not a change');
+  await mount(editor('b', 'Two'));
+  assert.equal(doc.querySelector('[data-host]')?.textContent, 'Two');
 });

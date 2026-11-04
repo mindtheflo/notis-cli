@@ -128,6 +128,11 @@ function textOf(row: CommentRow, name: string | null): string {
   return '';
 }
 
+/** The text of one column of a comment row (text, select, number or date), '' when empty or missing. */
+export function commentText(row: CommentRow, name: string | null): string {
+  return textOf(row, name);
+}
+
 function numberOf(row: CommentRow, name: string | null): number | null {
   const value = property(row, name);
   if (typeof value === 'number' && Number.isFinite(value)) return value;

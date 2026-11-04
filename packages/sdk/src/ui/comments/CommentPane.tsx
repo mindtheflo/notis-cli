@@ -74,7 +74,8 @@ function answerLabel(controller: CommentController, answer: string): string {
 
 function stop(event: { stopPropagation(): void }) { event.stopPropagation(); }
 
-function sendsOnEnter(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+/** Enter sends a comment; Shift+Enter, and Enter while composing an accented letter, add to the text. */
+export function sendsOnEnter(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
   return event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing;
 }
 

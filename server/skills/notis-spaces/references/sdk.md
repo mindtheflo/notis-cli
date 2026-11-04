@@ -22,6 +22,21 @@ For a toolkit select, import `NativeSelect` from `@notis/sdk/ui` and pass
 selected string, not a DOM event; its options come from `options`, not child
 `<option>` elements. Keep the visible field label in the surrounding layout.
 
+Text a person writes and reviews:
+
+- `MarkdownEditor` (from `@notis/sdk`) inside a Space is Notis' block editor and
+  saves the Markdown it opened byte for byte (linked images and Markdown it
+  cannot show as blocks are kept as written). In a form with its own Save, pass
+  `onChange` and change `resourceKey` after Cancel or a save so the editor
+  reopens on the value.
+- Comments on selected words of a text property (a Markdown body, a subject)
+  come from `@notis/sdk/ui`: `usePassageComments` with `CommentableText` around
+  an input or textarea, `CommentableRichText` around the `MarkdownEditor` or
+  rendered Markdown, and `PassageCommentPane` in a `SidePane`. The Comments
+  database needs Field, Quote, Prefix and Suffix columns; a thread whose words
+  are gone reads Text changed. Do not build your own highlights. Pins on a page
+  use `useComments` with `CommentPane` (see Comments under Toolkit pieces).
+
 ## Records and declared reads
 
 | API | Use |

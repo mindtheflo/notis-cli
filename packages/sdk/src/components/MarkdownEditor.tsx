@@ -21,19 +21,30 @@ const readOnlyStyle: CSSProperties = {
   cursor: 'default', outline: 'none',
 };
 
-function MarkdownEditorFallback({
+/** What `useMarkdownEditorDraft` gives an editor: the text to show, and what to call on a change or a save key. */
+export interface MarkdownEditorDraft {
+  draft: string;
+  /** The editor's text changed (typed, pasted, a block edited). */
+  change: (markdown: string) => void;
+  /** Saves now (Cmd-S), when there is something to save. */
+  save: () => Promise<void>;
+}
+
+/**
+ * The editing state every MarkdownEditor shares, the host's and the fallback's: takes a new `value` while nothing
+ * is typed, autosaves `autosaveMs` after the last change through `onSave` (with the revision it opened or last
+ * saved), saves again when typing went on during a save, and saves what is left when the editor goes away.
+ */
+export function useMarkdownEditorDraft({
   value,
   revision,
   readOnly,
   autosaveMs = 1500,
-  placeholder,
-  className,
   onChange,
   onSave,
   onDirtyChange,
   onSavingChange,
-}: NotisMarkdownEditorProps) {
-  const locale = useNotisRuntime()?.context?.locale === 'fr' ? 'fr' : 'en';
+}: NotisMarkdownEditorProps): MarkdownEditorDraft {
   const [draft, setDraft] = useState(value);
   const [saveAttempt, setSaveAttempt] = useState(0);
   const draftRef = useRef(value);
@@ -99,37 +110,56 @@ function MarkdownEditorFallback({
     return () => window.clearTimeout(timer);
   }, [autosaveMs, draft, onSave, readOnly, save, saveAttempt]);
 
-  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    const next = event.currentTarget.value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  onDirtyChangeRef.current = onDirtyChange;
+  const change = useCallback((next: string) => {
+    if (next === draftRef.current) return;
     draftRef.current = next;
     setDraft(next);
     if (!dirtyRef.current) {
       dirtyRef.current = true;
-      onDirtyChange?.(true);
+      onDirtyChangeRef.current?.(true);
     }
-    onChange?.(next);
-  };
+    onChangeRef.current?.(next);
+  }, []);
 
+  return { draft, change, save };
+}
+
+/** The plain EN/FR textarea for a draft: the fallback outside Notis, and the host's when its editor cannot open. */
+export function MarkdownTextArea({ state, readOnly, placeholder, className }: {
+  state: MarkdownEditorDraft;
+  readOnly?: boolean;
+  placeholder?: string;
+  className?: string;
+}) {
+  const locale = useNotisRuntime()?.context?.locale === 'fr' ? 'fr' : 'en';
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
-      void save();
+      void state.save();
     }
   };
-
   return (
     <textarea
-      value={draft}
+      value={state.draft}
       readOnly={readOnly}
       aria-readonly={readOnly || undefined}
       data-readonly={readOnly ? '' : undefined}
       placeholder={readOnly ? undefined : placeholder ?? pick(MARKDOWN_EDITOR_WORDS.placeholder, locale)}
       className={className}
-      onChange={handleChange}
+      onChange={(event: ChangeEvent<HTMLTextAreaElement>) => state.change(event.currentTarget.value)}
       onKeyDown={handleKeyDown}
       style={readOnly ? readOnlyStyle : editableStyle}
     />
   );
+}
+
+function MarkdownEditorFallback(props: NotisMarkdownEditorProps) {
+  const state = useMarkdownEditorDraft(props);
+  return <MarkdownTextArea state={state} readOnly={props.readOnly} placeholder={props.placeholder} className={props.className} />;
 }
 
 /** Use Notis' editor while leaving persistence entirely under app control; outside Notis a plain EN/FR textarea stands in. */
