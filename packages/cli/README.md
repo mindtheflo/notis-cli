@@ -185,7 +185,7 @@ Examples:
 
 Inspect a native Skill through direct ownership or an editable Space link.
 
-When to use: Read the exact target and content version before editing. A Space target uses its current Editor authority, never a personal fallback.
+When to use: Read the exact target and content version before editing. A Skill ID opens your own Skill, or a Space Skill through a Space where you are an Editor, and answers that link as its target; a Space target uses its current Editor authority, never a personal fallback. A refusal names the Skill and what is missing.
 
 Options:
 - `--files` — Include every verified supporting file as base64.

@@ -271,8 +271,8 @@ export const skillsCommandSpecs = [
   {
     command_path: ['skills', 'read'],
     summary: 'Inspect a native Skill through direct ownership or an editable Space link.',
-    when_to_use: 'Read the exact target and content version before editing. A Space target uses its current Editor authority, never a personal fallback.',
-    args_schema: { arguments: [{ token: '[skill-id]', key: 'skillId', description: 'Exact directly owned Skill ID; omit when passing --target.' }],
+    when_to_use: 'Read the exact target and content version before editing. A Skill ID opens your own Skill, or a Space Skill through a Space where you are an Editor, and answers that link as its target; a Space target uses its current Editor authority, never a personal fallback. A refusal names the Skill and what is missing.',
+    args_schema: { arguments: [{ token: '[skill-id]', key: 'skillId', description: 'Exact Skill ID from skills list; omit when passing --target.' }],
       options: [{ flags: '--files', description: 'Include every verified supporting file as base64.' },
         { flags: '--target <json>', description: 'Exact {skill_id} or {space_id,binding_id} read target; do not combine with a Skill ID.' }] },
     examples: ['notis skills read <skill-id> --files', 'notis skills read --target \'{"space_id":"<id>","binding_id":"<binding>"}\' --files'],
