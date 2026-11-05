@@ -453,6 +453,22 @@ test('store publish forwards only the request and shows server refusals for find
   }
 });
 
+test('store publish shares by link, and store list keeps to the listed channels', async t => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    calls.push({ url, body: request.body ? JSON.parse(request.body) : null });
+    return new Response(JSON.stringify({ listing_id: 'link-listing', status: 'published' }), { headers: { 'content-type': 'application/json' } });
+  });
+  const ctx = context('spaces store publish', { channel: 'link', requestId: 'share-1' }, { spaceId: 'root-space' });
+  await ctx.spec.handler(ctx);
+  assert.deepEqual(calls[0].body, { space_id: 'root-space', channel: 'link', request_id: 'share-1', dry_run: false });
+  const other = context('spaces store publish', { channel: 'everyone', requestId: 'share-2' }, { spaceId: 'root-space' });
+  assert.throws(() => other.spec.handler(other), /--channel link, --channel team or --channel public/);
+  assert.equal(calls.length, 1);
+  const list = context('spaces store list');
+  assert.match(list.spec.args_schema.options[0].flags, /<team\|public>/);
+});
+
 test('deploy and preview refuse a Space whose icon is still empty, before any request', async t => {
   const root = await sourceFixture(t), calls = [];
   writeFileSync(join(root, 'one.ts'), "export default {name:'One',icon:''};");

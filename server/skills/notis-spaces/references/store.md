@@ -1,18 +1,20 @@
 # Store publishing
 
-Use this when the user asks to publish a Space, or an update to one, in the
-Store. You prepare everything; the user chooses where it goes and presses
-Publish on the submission page. Store publication stays separate from deploying
+Use this when the user asks to share or publish a Space, or an update to one,
+in the Store. You prepare everything; the user chooses where it goes and presses
+Share on the submission page. Store publication stays separate from deploying
 the installed Space ([Delivery](release.md)).
 
 ## Never publish for the user
 
 There is no agent publish operation, and you never press, simulate or script
-the Publish button. Only the page's Publish button publishes, after the user
-picks Team or Public there. Asking you to publish means: prepare the submission
-and send the page link. A team listing goes live as soon as the user presses
-Publish; a public listing goes to the sandbox reviewer, and Notis messages the
-user with its result.
+the Share button. Do not search for a publish or share tool: none exists, and
+looking for one only delays the page link. Only the page's Share button publishes, after the user picks
+the places there: anyone with the link, their team's Store or the public Store.
+Asking you to share or publish means: prepare the submission and send the page
+link. A link or team listing goes live as soon as the user presses Share; a
+public listing goes to the sandbox reviewer, and Notis messages the user with
+its result.
 
 ## The flow
 
@@ -42,8 +44,10 @@ status, listing text, locales, sample rows and counts, screenshots, findings,
    views show.
 4. **Handle the findings** (see below): ask about privacy, fix the rest in the
    source Space, and list every fix.
-5. **Send the link.** When `can_publish` is true, give the user the page
-   `link`, one short line on what is ready, the fixes you made and their answers.
+5. **Send the link.** When `can_publish` is true, say it is ready to share and
+   give the user the submission page `link`, where they choose the places and
+   press Share; add the fixes you made and their answers. Never say it is ready
+   to publish or that it is published: nothing is shared until they press Share.
    If it stays false, say what still blocks it from `blocked_reason` and what
    they can do.
 
@@ -113,6 +117,6 @@ Update available card and update when their owner chooses.
 ## Status
 
 Read the submission with `store_submission_read {submission_id}`. `ready` means
-the page can publish; `in_review` means the public review is running and Notis
+it is ready to share from its submission page; `in_review` means the public review is running and Notis
 will message the user with the result; `published` is live; `rejected` lists what
 to fix, which starts again from step 4 with a new `store_prepare`.

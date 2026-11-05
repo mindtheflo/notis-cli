@@ -634,14 +634,28 @@ When to use: See which installed copies have an update or conflicts to resolve.
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces store installs`
 
+### `npx --package @notis_ai/cli@latest -- notis spaces store check <listing-id>`
+
+Check a Store listing, or the update of an installed copy, before installing it.
+
+When to use: Always before store install or store update: it returns the risks in plain words, a recommendation, the trust line of a Space shared by link and a receipt valid one hour. Tell the person, wait for their yes, then install with --receipt and --confirmed.
+
+Options:
+- `--install <install-id>` — Check only what the update of this installed copy changes.
+- `--locale <en|fr>` — The person's language for the risks and the trust line.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces store check <listing-id>`
+- `npx --package @notis_ai/cli@latest -- notis spaces store check <listing-id> --install <install-id> --locale fr`
+
 ### `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id>`
 
 Publish a Space and its sub-Spaces as the next Store version.
 
-When to use: Share a Space you own as an installable template: team listings publish at once, public ones wait for review. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.
+When to use: Share a Space you own as an installable template: link and team listings publish at once, public ones wait for review. A link listing never shows in the Store; only people with its link see it. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.
 
 Options:
-- `--channel <team|public>` — Where to publish.
+- `--channel <link|team|public>` — Where to publish: anyone with the link, your team or everyone.
 - `--metadata <json>` — Listing name, tagline, description, category, icon, accent.
 - `--starter <json>` — Starter row IDs per database ({"<database-id>":["<record-key>"]}).
 - `--notes <text>` — Release notes for this version.
@@ -650,21 +664,24 @@ Options:
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id> --channel team --request-id publish-1 --dry-run`
+- `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id> --channel link --request-id share-link-1`
 
 ### `npx --package @notis_ai/cli@latest -- notis spaces store install <listing-id>`
 
 Install a Store listing as your own independent copy.
 
-When to use: Add a published Space template to your account; your copy keeps your changes on later updates.
+When to use: Add a published Space template to your account after store check and the person's yes; your copy keeps your changes on later updates and its automations arrive paused.
 
 Options:
 - `--name <name>` — Name of the installed top Space.
 - `--parent <space-id>` — Install under one of your Spaces.
+- `--receipt <receipt-id>` — The receipt_id store check returned for this exact version.
+- `--confirmed` — The person said yes to the risks store check reported.
 - `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
 - `--dry-run` — Show what the copy contains without installing.
 
 Examples:
-- `npx --package @notis_ai/cli@latest -- notis spaces store install <listing-id> --request-id install-1`
+- `npx --package @notis_ai/cli@latest -- notis spaces store install <listing-id> --request-id install-1 --receipt <receipt-id> --confirmed`
 
 ### `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id>`
 
@@ -674,11 +691,14 @@ When to use: Take a newer Store version: unchanged parts update, your edits stay
 
 Options:
 - `--resolve <json>` — Per conflict key: "keep_mine" or "take_theirs".
+- `--receipt <receipt-id>` — The receipt_id store check returned for this exact version.
+- `--confirmed` — The person said yes to the risks store check reported.
 - `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
 - `--dry-run` — Show the three-way plan without changing anything.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id> --request-id update-1 --dry-run`
+- `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id> --request-id update-1 --receipt <receipt-id> --confirmed`
 - `npx --package @notis_ai/cli@latest -- notis spaces store update <install-id> --resolve '{"skill:<key>":"keep_mine"}' --request-id resolve-1`
 
 ### `npx --package @notis_ai/cli@latest -- notis spaces store unpublish <listing-id>`

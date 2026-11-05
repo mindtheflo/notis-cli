@@ -133,6 +133,25 @@ export function normalizeBackendError(status, payload, runtime) {
     });
   }
 
+  if (status === 409 && (backendError === 'store_check_required' || payload?.error_code === 'store_check_required')) {
+    // The Store refused an install or update without a check receipt the person confirmed: the agent sees that code
+    // and its reason (missing, expired, used, other_version, not_confirmed, unknown), with the check as the next step.
+    const reason = typeof payload?.reason === 'string' && payload.reason ? payload.reason : null;
+    return new CliError({
+      code: 'store_check_required',
+      message: reason ? `${message} (store_check_required: ${reason})` : `${message} (store_check_required)`,
+      exitCode: EXIT_CODES.conflict,
+      retryable: false,
+      details: { ...(payload || {}), ...(reason ? { reason } : {}) },
+      hints: [
+        { command: 'notis spaces store check <listing-id>', reason: 'Check the Space, tell the person the risks and wait for their yes' },
+        { command: 'notis spaces store install <listing-id> --request-id <id> --receipt <receipt_id> --confirmed',
+          reason: 'Install with the check receipt once they said yes (update: notis spaces store update <install-id> ...)' },
+        ...(payload?.hints || []),
+      ],
+    });
+  }
+
   if (status === 409) {
     return new CliError({
       code: 'conflict',

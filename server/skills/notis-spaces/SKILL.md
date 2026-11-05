@@ -94,7 +94,8 @@ user asked, and quote their words in `user_words`. The CLI equivalents are
 | Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md) |
 | Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
 | Diagnose a failed check or release | [Troubleshooting](references/troubleshooting.md) |
-| Publish a Space or its update in the Store | [Store publishing](references/store.md) |
+| Publish or share a Space or its update in the Store | [Store publishing](references/store.md): you only prepare the submission and send its page; the person publishes there. No tool publishes |
+| Install or update a Space from the Store | Load `notis-space-install`: check, ask, then install |
 
 Use ordinary native data tools when they answer the question. For what a page
 actually displays, resolve its current link and render the deployed view.
@@ -204,7 +205,7 @@ Sites are standalone, scoped view websites, not memberships. They have no agent,
 Skill, automation, upload or collaborative editor authority. Store installations
 are independent copies with three-way updates. Publishing to a Store is separate
 from deploying an installed Space and requires the user's explicit authority;
-you prepare it and only the submission page's Publish button publishes.
+you prepare it and only the submission page's Share button publishes.
 
 ## Reports, HTML and context
 

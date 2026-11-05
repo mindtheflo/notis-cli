@@ -84,6 +84,37 @@ async function fetchBrief(apiBase, timeoutMs) {
   }
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function spaceListing(options) {
+  if (options.space === undefined) return null;
+  if (typeof options.space !== 'string' || !UUID_PATTERN.test(options.space)) {
+    throw new CliError({
+      code: 'invalid_arguments',
+      message: 'Pass --space <listing-id> with the Store listing ID from the Space link.',
+      exitCode: EXIT_CODES.usage,
+    });
+  }
+  return options.space.toLowerCase();
+}
+
+/**
+ * The Space step for `start --space <listing-id>`: the person arrived from a Space link, so the agent
+ * checks it, asks, installs it with the check receipt, then follows its onboarding Skill. The server
+ * refuses an agent install without the receipt and the person's yes (store_check_required).
+ */
+function spaceSteps(listingId) {
+  return [
+    '## Install the Space this person came for',
+    '',
+    `1. Check it: \`notis spaces store check ${listingId}\` (add \`--locale fr\` for a French speaker).`,
+    '2. Tell the person, in plain words, what it brings, each item of `risks` and the `recommendation`. If the result has a `trust_line`, say it word for word.',
+    '3. Wait for an explicit yes. A question or "maybe" is not a yes.',
+    `4. Install it: \`notis spaces store install ${listingId} --request-id space-${listingId} --receipt <receipt_id> --confirmed\`. Its automations arrive paused.`,
+    '5. If the result has `onboarding_skill`, follow its `instructions` now. Never ask again for what you already know, and never call LOCAL_NOTIS_COMPLETE_TUTORIAL from it.',
+  ].join('\n');
+}
+
 function isAuthenticated(runtime) {
   return Boolean(runtime.jwt)
     && !credentialIsExpired(runtime, getProfile(loadConfig(), runtime.profileName));
@@ -136,6 +167,7 @@ function agentSetupHints(results) {
  * brief, so `brief: null` is a positive signal to the agent, not a failure.
  */
 async function authenticatedResult(ctx) {
+  const listingId = spaceListing(ctx.options);
   const state = await fetchOnboardingState(ctx.runtime);
   const onboardingComplete = state?.onboardingComplete === true;
   const base = {
@@ -155,6 +187,27 @@ async function authenticatedResult(ctx) {
     // Authentication and onboarding remain usable if a local vendor config is
     // malformed or read-only. `notis agents install` reports the exact path.
     base.agent_setup = [];
+  }
+
+  if (listingId) base.space = { listing_id: listingId, steps: spaceSteps(listingId) };
+
+  if (onboardingComplete && listingId) {
+    // Already onboarded: only the Space's check, install and onboarding-Skill steps.
+    return ctx.output.emitSuccess({
+      command: 'start',
+      data: { ...base, brief: base.space.steps, brief_source: 'space' },
+      humanSummary: `Profile "${ctx.runtime.profileName}" is set up. Check and install Space listing ${listingId}.`,
+      renderHuman: () => [
+        'This account has already completed onboarding. Do not run an onboarding',
+        'flow and do not call LOCAL_NOTIS_COMPLETE_TUTORIAL.',
+        '',
+        base.space.steps,
+      ].join('\n'),
+      hints: [
+        { command: `notis spaces store check ${listingId}`, reason: 'Check the Space before installing it' },
+        ...agentSetupHints(base.agent_setup),
+      ],
+    });
   }
 
   if (onboardingComplete) {
@@ -182,7 +235,11 @@ async function authenticatedResult(ctx) {
     });
   }
 
-  const brief = await fetchBrief(ctx.runtime.apiBase, ctx.runtime.timeoutMs);
+  const fetched = await fetchBrief(ctx.runtime.apiBase, ctx.runtime.timeoutMs);
+  // A new account from a Space link: the basics first, then this Space step, then the rest of the brief.
+  const brief = listingId
+    ? { ...fetched, markdown: [fetched.markdown, `${base.space.steps}\n\nDo this step right after the basics (step 1), before connections.`].filter(Boolean).join('\n\n') }
+    : fetched;
   const setupSummary = renderAgentSetup(base.agent_setup);
   return ctx.output.emitSuccess({
     command: 'start',
@@ -198,6 +255,7 @@ async function authenticatedResult(ctx) {
 
 async function startHandler(ctx) {
   const { runtime, options, output } = ctx;
+  spaceListing(options);
   if (runtime.credentialKind === 'oauth') {
     try {
       await ensureFreshOAuthCredential(runtime);
@@ -281,6 +339,7 @@ export const onboardingCommandSpecs = [
       arguments: [],
       options: [
         { flags: '--brief-only', description: 'Print the onboarding brief for an already-signed-in profile.' },
+        { flags: '--space <listing-id>', description: 'The Store Space the person came for: adds its check, install and onboarding-Skill steps (the only steps for an account already set up).' },
         { flags: '--mode <mode>', description: 'auto (default) hands the browser callback to a background listener when this command cannot wait; browser waits in-process; code shows a one-time code to copy.' },
       ],
     },
@@ -289,10 +348,11 @@ export const onboardingCommandSpecs = [
       'notis start --profile work',
       'notis start --mode browser',
       'notis start --brief-only',
+      'notis start --space <listing-id>',
       'notis start --json',
     ],
     output_schema:
-      'Returns {authenticated, profile, api_base, onboarding_complete, known_settings, missing_settings, agent_setup, brief, brief_source} once signed in — brief is null when onboarding_complete is true — or {authorize_url, expires_in, hand_off, ...} while waiting for browser authorization. hand_off is "browser_callback" when signing in finishes the login by itself (re-run confirm_command to see it land) or "code" when the user must be asked for the code the page shows and it redeemed with redeem_command.',
+      'Returns {authenticated, profile, api_base, onboarding_complete, known_settings, missing_settings, agent_setup, brief, brief_source, space} once signed in — brief is null when onboarding_complete is true, except with --space, where it holds only the Space steps (brief_source "space") — or {authorize_url, expires_in, hand_off, ...} while waiting for browser authorization. hand_off is "browser_callback" when signing in finishes the login by itself (re-run confirm_command to see it land) or "code" when the user must be asked for the code the page shows and it redeemed with redeem_command.',
     mutates: true,
     idempotent: true,
     require_auth: false,

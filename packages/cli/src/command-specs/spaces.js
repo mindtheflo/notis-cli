@@ -47,9 +47,14 @@ function object(value, label) {
   return parsed;
 }
 
-async function remote(ctx, operation, { method = 'POST', body, query } = {}) {
+// Checking, publishing, installing or updating a Store copy reads and copies the whole Space: often 20 to 40 s, more on
+// a busy server, so these commands wait at least three minutes instead of the default 30 s.
+const STORE_COPY_TIMEOUT_MS = 180_000;
+
+async function remote(ctx, operation, { method = 'POST', body, query, minTimeoutMs = 0 } = {}) {
   const suffix = query ? `?${new URLSearchParams(Object.entries(query).filter(([, value]) => value != null))}` : '';
-  const result = await httpRequest({ runtime: ctx.runtime, method, path: `/portal_spaces/${operation}${suffix}`, body, spacesProtocol: true });
+  const runtime = minTimeoutMs ? { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, minTimeoutMs) } : ctx.runtime;
+  const result = await httpRequest({ runtime, method, path: `/portal_spaces/${operation}${suffix}`, body, spacesProtocol: true });
   return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data: result.payload,
     humanSummary: JSON.stringify(result.payload, null, 2), meta: { mutating: method !== 'GET' && !body?.dry_run && ctx.spec.mutates !== false, request_id: result.requestId } });
 }
@@ -316,6 +321,15 @@ function refreshPulledSdk(projectDir) {
 const idArgument = { token: '<space-id>', key: 'spaceId', description: 'Exact existing Space ID.' };
 const recordOption = { flags: '--record <record-key>', description: 'Fixed record context, when this is a record-scoped Space.' };
 const requestOption = { flags: '--request-id <key>', description: 'Stable intent key. Reuse after timeouts or lost replies.' };
+const receiptOption = { flags: '--receipt <receipt-id>', description: 'The receipt_id store check returned for this exact version.' };
+const confirmedOption = { flags: '--confirmed', description: 'The person said yes to the risks store check reported.' };
+
+/** The Store check an agent install or update carries; the server refuses one without it. */
+function checkedBody(ctx) {
+  if (ctx.options.confirmed && !ctx.options.receipt) throw usageError('Pass --receipt <receipt-id> from notis spaces store check with --confirmed.');
+  return { ...(ctx.options.receipt ? { receipt_id: ctx.options.receipt } : {}),
+    ...(ctx.options.confirmed ? { confirmed: true } : {}) };
+}
 
 function historyRevision(value, flag) {
   if (typeof value !== 'string' || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
@@ -759,18 +773,34 @@ export const spacesCommandSpecs = [
     handler: ctx => remote(ctx, 'store-installs', { method: 'GET' }),
   },
   {
+    command_path: ['spaces', 'store', 'check'], summary: 'Check a Store listing, or the update of an installed copy, before installing it.',
+    when_to_use: 'Always before store install or store update: it returns the risks in plain words, a recommendation, the trust line of a Space shared by link and a receipt valid one hour. Tell the person, wait for their yes, then install with --receipt and --confirmed.',
+    args_schema: { arguments: [{ token: '<listing-id>', key: 'listingId', description: 'Exact listing ID.' }],
+      options: [{ flags: '--install <install-id>', description: 'Check only what the update of this installed copy changes.' },
+        { flags: '--locale <en|fr>', description: "The person's language for the risks and the trust line." }] },
+    examples: ['notis spaces store check <listing-id>', 'notis spaces store check <listing-id> --install <install-id> --locale fr'],
+    mutates: true, idempotent: false, require_auth: true, backend_call: { type: 'http', path: '/portal_spaces/store-check' },
+    handler(ctx) {
+      if (ctx.options.locale && !['en', 'fr'].includes(ctx.options.locale)) throw usageError('Pass --locale en or --locale fr.');
+      return remote(ctx, 'store-check', { minTimeoutMs: STORE_COPY_TIMEOUT_MS, body: { listing_id: ctx.args.listingId,
+        ...(ctx.options.install ? { install_id: ctx.options.install } : {}),
+        ...(ctx.options.locale ? { locale: ctx.options.locale } : {}) } });
+    },
+  },
+  {
     command_path: ['spaces', 'store', 'publish'], summary: 'Publish a Space and its sub-Spaces as the next Store version.',
-    when_to_use: 'Share a Space you own as an installable template: team listings publish at once, public ones wait for review. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.',
-    args_schema: { arguments: [idArgument], options: [{ flags: '--channel <team|public>', description: 'Where to publish.' },
+    when_to_use: 'Share a Space you own as an installable template: link and team listings publish at once, public ones wait for review. A link listing never shows in the Store; only people with its link see it. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.',
+    args_schema: { arguments: [idArgument], options: [{ flags: '--channel <link|team|public>', description: 'Where to publish: anyone with the link, your team or everyone.' },
       { flags: '--metadata <json>', description: 'Listing name, tagline, description, category, icon, accent.' },
       { flags: '--starter <json>', description: 'Starter row IDs per database ({"<database-id>":["<record-key>"]}).' },
       { flags: '--notes <text>', description: 'Release notes for this version.' },
       requestOption, { flags: '--dry-run', description: 'Show the package counts and review diff without publishing.' }] },
-    examples: ['notis spaces store publish <space-id> --channel team --request-id publish-1 --dry-run'],
+    examples: ['notis spaces store publish <space-id> --channel team --request-id publish-1 --dry-run',
+      'notis spaces store publish <space-id> --channel link --request-id share-link-1'],
     mutates: true, idempotent: true, require_auth: true, backend_call: { type: 'http', path: '/portal_spaces/store-publish' },
     handler(ctx) {
-      if (!['team', 'public'].includes(ctx.options.channel)) throw usageError('Pass --channel team or --channel public.');
-      return remote(ctx, 'store-publish', { body: { space_id: ctx.args.spaceId, channel: ctx.options.channel, request_id: requestId(ctx),
+      if (!['link', 'team', 'public'].includes(ctx.options.channel)) throw usageError('Pass --channel link, --channel team or --channel public.');
+      return remote(ctx, 'store-publish', { minTimeoutMs: STORE_COPY_TIMEOUT_MS, body: { space_id: ctx.args.spaceId, channel: ctx.options.channel, request_id: requestId(ctx),
         ...(ctx.options.metadata ? { metadata: object(ctx.options.metadata, '--metadata') } : {}),
         ...(ctx.options.starter ? { starter: object(ctx.options.starter, '--starter') } : {}),
         ...(ctx.options.notes ? { notes: ctx.options.notes } : {}), dry_run: Boolean(ctx.options.dryRun) } });
@@ -778,28 +808,32 @@ export const spacesCommandSpecs = [
   },
   {
     command_path: ['spaces', 'store', 'install'], summary: 'Install a Store listing as your own independent copy.',
-    when_to_use: 'Add a published Space template to your account; your copy keeps your changes on later updates.',
+    when_to_use: 'Add a published Space template to your account after store check and the person\'s yes; your copy keeps your changes on later updates and its automations arrive paused.',
     args_schema: { arguments: [{ token: '<listing-id>', key: 'listingId', description: 'Exact listing ID.' }],
       options: [{ flags: '--name <name>', description: 'Name of the installed top Space.' },
         { flags: '--parent <space-id>', description: 'Install under one of your Spaces.' },
+        receiptOption, confirmedOption,
         requestOption, { flags: '--dry-run', description: 'Show what the copy contains without installing.' }] },
-    examples: ['notis spaces store install <listing-id> --request-id install-1'],
+    examples: ['notis spaces store install <listing-id> --request-id install-1 --receipt <receipt-id> --confirmed'],
     mutates: true, idempotent: true, require_auth: true, backend_call: { type: 'http', path: '/portal_spaces/store-install' },
-    handler: ctx => remote(ctx, 'store-install', { body: { listing_id: ctx.args.listingId, request_id: requestId(ctx),
+    handler: ctx => remote(ctx, 'store-install', { minTimeoutMs: STORE_COPY_TIMEOUT_MS, body: { listing_id: ctx.args.listingId, request_id: requestId(ctx),
       ...(ctx.options.name ? { name: ctx.options.name } : {}), ...(ctx.options.parent ? { parent_space_id: ctx.options.parent } : {}),
-      dry_run: Boolean(ctx.options.dryRun) } }),
+      ...checkedBody(ctx), dry_run: Boolean(ctx.options.dryRun) } }),
   },
   {
     command_path: ['spaces', 'store', 'update'], summary: 'Update an installed copy, keeping your changes, or resolve its conflicts.',
     when_to_use: 'Take a newer Store version: unchanged parts update, your edits stay, and parts both sides changed become conflicts you resolve.',
     args_schema: { arguments: [{ token: '<install-id>', key: 'installId', description: 'Exact install ID from store installs.' }],
       options: [{ flags: '--resolve <json>', description: 'Per conflict key: "keep_mine" or "take_theirs".' },
+        receiptOption, confirmedOption,
         requestOption, { flags: '--dry-run', description: 'Show the three-way plan without changing anything.' }] },
     examples: ['notis spaces store update <install-id> --request-id update-1 --dry-run',
+      'notis spaces store update <install-id> --request-id update-1 --receipt <receipt-id> --confirmed',
       'notis spaces store update <install-id> --resolve \'{"skill:<key>":"keep_mine"}\' --request-id resolve-1'],
     mutates: true, idempotent: true, require_auth: true, backend_call: { type: 'http', path: '/portal_spaces/store-update' },
-    handler: ctx => remote(ctx, 'store-update', { body: { install_id: ctx.args.installId, request_id: requestId(ctx),
-      ...(ctx.options.resolve ? { resolution: object(ctx.options.resolve, '--resolve') } : {}), dry_run: Boolean(ctx.options.dryRun) } }),
+    handler: ctx => remote(ctx, 'store-update', { minTimeoutMs: STORE_COPY_TIMEOUT_MS, body: { install_id: ctx.args.installId, request_id: requestId(ctx),
+      ...(ctx.options.resolve ? { resolution: object(ctx.options.resolve, '--resolve') } : {}), ...checkedBody(ctx),
+      dry_run: Boolean(ctx.options.dryRun) } }),
   },
   {
     command_path: ['spaces', 'store', 'unpublish'], summary: 'Stop new installs of a Store listing.',

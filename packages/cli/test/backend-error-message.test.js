@@ -31,3 +31,24 @@ test('an old Spaces protocol tells the user to update the CLI with the exact com
   assert.equal(SPACES_PROTOCOL, 2);
   assert.equal(CLI_UPDATE_COMMAND, 'npx --package @notis_ai/cli@latest -- notis');
 });
+
+test('a Store install refused without a check says store_check_required and its reason, with the check as the next step', () => {
+  const payload = {
+    error: 'store_check_required', message: 'Check this Space with the person before installing it.',
+    error_code: 'store_check_required', reason: 'missing',
+    hint: 'Run the Store check (spaces store check, or LOCAL_NOTIS_MANAGE_SPACE operation check_install).',
+  };
+  const error = normalizeBackendError(409, payload, runtime);
+  assert.equal(error.code, 'store_check_required');
+  assert.equal(error.message, 'Check this Space with the person before installing it. (store_check_required: missing)');
+  assert.equal(error.exitCode, 5);
+  assert.equal(error.retryable, false);
+  assert.equal(error.details.reason, 'missing');
+  assert.equal(error.details.error_code, 'store_check_required');
+  assert.equal(error.hints[0].command, 'notis spaces store check <listing-id>');
+  assert.ok(error.hints.some((hint) => hint.command.includes('--receipt <receipt_id> --confirmed')));
+  // Without a reason the code still leads, and any other 409 stays a conflict.
+  assert.equal(normalizeBackendError(409, { error: 'store_check_required', message: 'Check it first.' }, runtime).message,
+    'Check it first. (store_check_required)');
+  assert.equal(normalizeBackendError(409, { error: 'store_up_to_date', message: 'Up to date.' }, runtime).code, 'conflict');
+});

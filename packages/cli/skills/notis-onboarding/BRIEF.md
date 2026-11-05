@@ -78,7 +78,17 @@ npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_SAVE_USER_SET
   --arguments '{"first_name":"...","position":"...","language":"...","timezone":"..."}'
 ```
 
-## 2. Connect one app, then immediately read from it
+## 2. Install the Space they came for
+
+Skip this step unless the settings have `store_listing_id` and `notis spaces store installs` does not list that listing yet. You keep the basics, the connections and step 4; the Space's own Skill only adds to them.
+
+1. Check it: `notis spaces store check <store_listing_id>` (add `--locale fr` for a French speaker).
+2. Tell the user, in plain words, what it brings, each item of `risks` and the `recommendation`. If the result has a `trust_line`, quote it on its own line exactly as written: never reword or shorten it.
+3. Wait for an explicit yes in their next message: ask, then end your turn. A question or "maybe" is not a yes.
+4. Install it: `notis spaces store install <store_listing_id> --request-id space-<store_listing_id> --receipt <receipt_id> --confirmed`. Its automations arrive paused; say so.
+5. If the result has `onboarding_skill`, follow its `instructions` now. It never asks again for the basics and never finishes onboarding: step 4 stays yours.
+
+## 3. Connect one app, then immediately read from it
 
 Ask what they use day to day. Gmail, Google Calendar, Notion, Slack, Linear, and
 their CRM are the common answers. For each:
@@ -95,10 +105,10 @@ their most recent email threads, the databases in their Notion. A connected
 integration is a claim; their own data on screen is proof.
 
 If they connect nothing, you may offer a Space from the Space Store instead:
-list them with `notis spaces store list`, then install one with
-`notis spaces store install <listing-id> --request-id <stable-id>`.
+list them with `notis spaces store list`, then check and install the one they
+pick exactly as in step 2.
 
-## 3. Finish onboarding
+## 4. Finish onboarding
 
 **Do this. It is not optional.**
 

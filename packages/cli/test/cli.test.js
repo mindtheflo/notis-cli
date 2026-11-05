@@ -2477,6 +2477,68 @@ test('start withholds the onboarding brief from an account that is already set u
   }
 });
 
+// start --space <listing-id>: the person came from a Space link. A set-up account gets only the
+// check, install and onboarding-Skill steps; a new account gets them after the brief's basics.
+const SPACE_LISTING = '23e18f53-e621-96ff-7d8c-c24ef6c84eff';
+for (const onboarded of [true, false]) {
+test(`start --space gives ${onboarded ? 'a set-up account only the Space steps' : 'a new account the brief and the Space steps'}`, async () => {
+  let briefRequests = 0;
+  const server = createHttpServer(async (req, res) => {
+    if (req.url === '/cli_tools' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'success', onboarding_complete: onboarded, settings: {}, missing_settings: [] }));
+      return;
+    }
+    if (req.url === '/signup/onboarding-brief' && req.method === 'GET') {
+      briefRequests += 1;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ markdown: '# New user onboarding brief' }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const apiBase = `http://127.0.0.1:${server.address().port}`;
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-cli-start-space-')), 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: { default: { api_base: apiBase, oauth_access_token: makeJwt('oauth-user'),
+      oauth_access_expires_at: 4102444800, oauth_user_id: 'oauth-user' } },
+  }));
+  try {
+    const result = await runCliAsync(['--json', '--api-base', apiBase, 'start', '--space', SPACE_LISTING],
+      { NOTIS_CLI_CONFIG_FILE: configFile });
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.data.space.listing_id, SPACE_LISTING);
+    const brief = payload.data.brief;
+    for (const step of [`notis spaces store check ${SPACE_LISTING}`, 'trust_line', 'explicit yes',
+      `notis spaces store install ${SPACE_LISTING} --request-id space-${SPACE_LISTING} --receipt <receipt_id> --confirmed`,
+      'onboarding_skill']) {
+      assert.ok(brief.includes(step), step);
+    }
+    assert.ok(brief.indexOf('store check') < brief.indexOf('store install'));
+    if (onboarded) {
+      assert.equal(payload.data.brief_source, 'space');
+      assert.equal(briefRequests, 0);
+      assert.equal(brief.includes('# New user onboarding brief'), false);
+    } else {
+      assert.equal(payload.data.brief_source, 'server');
+      assert.ok(brief.startsWith('# New user onboarding brief'));
+    }
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+}
+
+test('start --space refuses anything but a listing ID before any request', async () => {
+  const result = await runCliAsync(['--json', '--api-base', 'http://127.0.0.1:9', 'start', '--space', '../x'],
+    { NOTIS_CLI_CONFIG_FILE: join(mkdtempSync(join(tmpdir(), 'notis-cli-start-space-bad-')), 'config.json') });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /--space <listing-id>/);
+});
+
 // Makes the CLI child believe it runs on the Notis cloud computer, whose
 // /vercel/sandbox no ordinary machine or CI runner has.
 function cloudComputerHostEnv() {
