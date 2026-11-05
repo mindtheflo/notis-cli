@@ -17,6 +17,11 @@ const MAX_PAGES = 100;
 // GitHub returns the dispatched run ID before it evaluates `run-name`, so the
 // first readback can still show a provisional title (about 60 s in total).
 const TITLE_SETTLE_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+// A create or dispatch POST answered by a 5xx/429 or lost in transit may still
+// have been applied, and GitHub can list the release or run only later (seen
+// on 5 Nov 2026: a 500 that had created the draft). Re-read the same tag or
+// run name for about 2 minutes before holding; never send the POST again.
+const RECONCILE_DELAYS_MS = [2_000, 4_000, 8_000, 15_000, 30_000, 60_000];
 
 function held(message, code = 'HANDOFF_HELD') {
   const error = new Error(message);
@@ -33,6 +38,13 @@ function postFailure(error) {
     ...(error?.identityChecks && typeof error.identityChecks === 'object'
       ? { identityChecks: Object.fromEntries(Object.entries(error.identityChecks)
         .filter(([, value]) => typeof value === 'boolean')) } : {}) };
+}
+
+// Only an unknown outcome is worth waiting for: a definite 4xx rejection or a
+// failed identity check is read once and held at once.
+function uncertain(error) {
+  return error?.code === 'HANDOFF_UNAVAILABLE'
+    || (error?.code === 'HANDOFF_HTTP_ERROR' && (error.httpStatus === 429 || error.httpStatus >= 500));
 }
 
 function dispatchReceipt(identity, status, runs) {
@@ -157,6 +169,21 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
     throw held('GitHub repository and scoped token are required for release handoff');
   }
   const base = `https://api.github.com/repos/${repository}`;
+  // Re-read (never re-write) until `find` returns a match, retrying an
+  // unknown-outcome read; any other read failure throws at once.
+  async function settle(find, wait = true) {
+    for (let attempt = 0; ; attempt += 1) {
+      let found = null, failure = null;
+      try { found = await find(); }
+      catch (error) { if (!uncertain(error)) throw error; failure = error; }
+      if (found && (!Array.isArray(found) || found.length)) return found;
+      if (!wait || attempt >= RECONCILE_DELAYS_MS.length) {
+        if (failure) throw failure;
+        return found;
+      }
+      await sleep(RECONCILE_DELAYS_MS[attempt]);
+    }
+  }
   const uploads = `https://uploads.github.com/repos/${repository}`;
 
   async function fetchResponse(url, options, label) {
@@ -289,8 +316,9 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
     try {
       // A successful POST gives an authoritative numeric identity. The release
       // listing can lag that write; confirm the same ID without another POST.
+      // An unknown outcome reconciles the exact tag by listing until it settles.
       found = created ? draftRelease(await readReleaseInternal(draftRelease(created, tag).id), tag)
-        : await findReleaseInternal(tag);
+        : await settle(() => findReleaseInternal(tag), uncertain(outcome));
     } catch (error) {
       const failure = unconfirmed('Draft handoff readback unavailable; reconcile the same release ID/tag', 'HANDOFF_CREATE_UNCONFIRMED', outcome);
       failure.readbackOutcome = postFailure(error);
@@ -402,10 +430,12 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
     }));
   }
 
-  async function findFinalizerRuns({ tag, sourceSha, inputs }) {
+  // `settle` re-reads an empty search for about 2 minutes: a run dispatched by
+  // a POST whose response was lost can be indexed late.
+  async function findFinalizerRuns({ tag, sourceSha, inputs, settle: wait = false }) {
     const identity = dispatchIdentity({ repository, tag, sourceSha, inputs });
     await getRepository();
-    return findRuns(identity);
+    return settle(() => findRuns(identity), wait);
   }
 
   async function readRun(identity, tag, runId) {
@@ -509,7 +539,7 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
       }
     }
     let runs = [];
-    try { runs = await findRuns(identity); }
+    try { runs = await settle(() => findRuns(identity), uncertain(outcome)); }
     catch { /* An unknown POST remains held when listing is unavailable. */ }
     if (runs.length) return receipt('reconciled', runs);
     const error = unconfirmed('Finalizer dispatch is unconfirmed; reconcile the same run name without redispatching',

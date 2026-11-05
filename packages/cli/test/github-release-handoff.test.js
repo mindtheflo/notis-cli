@@ -494,3 +494,69 @@ test('invalid resource names and identities fail without fetching', async () => 
   await assert.rejects(store.findRelease('arbitrary-tag'), /intent tag/);
   assert.equal(calls.length, 0);
 });
+
+// Temporal release run 42052281576 (5 Nov 2026): GitHub answered both POSTs
+// with HTTP 500. The draft had been created but was listed only later; the
+// dispatch had not run. Reconcile by the same tag or run name, never re-POST.
+test('a 500 draft creation that GitHub applied but lists late is reconciled by tag, one POST', async () => {
+  let hidden = 0;
+  const { store, state, calls } = api({ intercept(url, request, current) {
+    if (url.pathname.endsWith('/releases') && request.method === 'POST') {
+      current.releases.push(release);
+      hidden = 2;
+      return response(500, { message: 'Server Error' });
+    }
+    if (url.pathname.endsWith('/releases') && request.method === 'GET' && hidden > 0) {
+      hidden -= 1;
+      return response(200, []);
+    }
+  } });
+  assert.equal((await store.ensureDraftRelease({ tag, sourceSha })).id, release.id);
+  assert.equal(posts(calls).length, 1);
+  assert.deepEqual(state.sleeps, [2_000, 4_000]);
+});
+
+test('a 500 dispatch whose run is indexed late is reconciled by run name, one POST', async () => {
+  let pending = 0;
+  const { store, state, calls } = api({ intercept(url, request, current) {
+    if (url.pathname.endsWith('/dispatches') && request.method === 'POST') {
+      current.dispatchBody = JSON.parse(request.body);
+      pending = 3;
+      return response(500, { message: 'Server Error' });
+    }
+    if (url.pathname.endsWith('/runs') && pending > 0 && --pending === 0) {
+      current.runs.push(run({}, { repository, tag, sourceSha, inputs: current.dispatchBody.inputs }));
+    }
+  } });
+  const result = await store.dispatchFinalizer({ tag, inputs });
+  assert.equal(result.status, 'reconciled');
+  assert.equal(result.runs[0].id, 81);
+  assert.equal(posts(calls).length, 1);
+  assert.deepEqual(state.sleeps, [2_000, 4_000]);
+});
+
+test('a 500 dispatch that never runs holds after a bounded wait and never redispatches', async () => {
+  const { store, state, calls } = api({ intercept: (url, request) => url.pathname.endsWith('/dispatches')
+    && request.method === 'POST' ? response(500, { message: token }) : undefined });
+  await assert.rejects(store.dispatchFinalizer({ tag, inputs }), error => {
+    assert.equal(error.code, 'HANDOFF_DISPATCH_UNCONFIRMED');
+    assert.deepEqual(error.postOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: 500 });
+    assert.ok(!(error.stack + JSON.stringify(error)).includes(token));
+    return true;
+  });
+  assert.equal(posts(calls).length, 1);
+  assert.equal(state.sleeps.reduce((total, ms) => total + ms, 0), 119_000);
+});
+
+test('a definite 4xx rejection or a 5xx run listing is never waited on or re-posted', async () => {
+  const rejected = api({ intercept: (url, request) => url.pathname.endsWith('/dispatches')
+    && request.method === 'POST' ? response(422, {}) : undefined });
+  await assert.rejects(rejected.store.dispatchFinalizer({ tag, inputs }), { code: 'HANDOFF_DISPATCH_UNCONFIRMED' });
+  assert.deepEqual(rejected.state.sleeps, []);
+  let listings = 0;
+  const flaky = api({ runs: [run()], intercept: url => url.pathname.endsWith('/runs') && ++listings === 1
+    ? response(502, {}) : undefined });
+  assert.equal((await flaky.store.findFinalizerRuns({ tag, sourceSha, inputs, settle: true })).length, 1);
+  assert.deepEqual(flaky.state.sleeps, [2_000]);
+  assert.equal(posts(flaky.calls).length, 0);
+});

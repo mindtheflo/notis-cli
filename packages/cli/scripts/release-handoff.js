@@ -97,7 +97,7 @@ async function dispatchBoundHandoff({ binding, saved, records, api, repository }
     const recorded = await records.putIfAbsent(kinds.dispatch, identity, claim);
     requireSame({ ...recorded.record, claimId: claim.claimId }, claim, 'Dispatch claim');
     if (!recorded.created || recorded.record.claimId !== claim.claimId) {
-      const runs = await api.findFinalizerRuns(dispatchIdentity);
+      const runs = await api.findFinalizerRuns({ ...dispatchIdentity, settle: true });
       if (!runs.length) throw new Error(`Dispatch already claimed without an indexed run; reconcile ${runName}, never blindly redispatch`);
       result = { status: 'reconciled', handoff_digest: digest, run_name: runName, runs };
     } else {
