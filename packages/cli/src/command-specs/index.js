@@ -12,8 +12,11 @@ import { spacesCommandSpecs } from './spaces.js';
 import { documentsCommandSpecs } from './documents.js';
 import { viewsCommandSpecs } from './views.js';
 import { filesCommandSpecs } from './files.js';
+import { ccCommandSpecs } from './cc.js';
 
 export const GROUP_SUMMARIES = {
+  cc: 'Run commands and background jobs on your Cloud Computer.',
+  job: 'Check, read and stop background jobs.',
   files: 'Upload local files for native records with verified byte receipts.',
   views: 'Discover and render the views you can open.',
   spaces: 'Build independent Spaces and their declared capabilities.',
@@ -37,6 +40,7 @@ export const COMMAND_SPECS = [
   ...documentsCommandSpecs,
   ...viewsCommandSpecs,
   ...filesCommandSpecs,
+  ...ccCommandSpecs,
   ...handoverCommandSpecs,
   ...toolsCommandSpecs,
   ...diagnosticCommandSpecs,

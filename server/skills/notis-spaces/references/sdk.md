@@ -102,7 +102,10 @@ rather than from a copy.
   (a short status with its count at the start of that row, such as "23 to
   triage"), `create` (the "+" at its end), `viewMenu`, `infoLine`,
   `readerLabel` and `readerActions` (the reader bar), `crumbLabel` (the open
-  item in the top bar crumb), `onOpenChange(id, reason)` (`reason` is `user`,
+  item in the top bar crumb), `crumbRecordKey` (its record key when the items
+  are records of the Space's `collection`), `readerLayout` (`'fill'` lays a
+  tool such as an editor or a `CloudComputerFrame` edge to edge at full height
+  instead of the reading column), `onOpenChange(id, reason)` (`reason` is `user`,
   `auto` for a move the list makes itself, or `url`), `renderTile` (tiles), `look` (`two-tone` keeps
   the list tinted) and `autoOpen` (opens the first item). It has no toolbar or
   header slot. `Row` takes `wrap` (title lines) and `now` (a fixed clock for
@@ -155,7 +158,9 @@ rather than from a copy.
   picture that opens full screen. Do not build your own lightbox.
 - **Comments**: `useComments` with `CommentPane` and `CommentPins` give review
   threads on a Comments database (pins, zones, replies, asks, Resolve, Copy
-  changes). To let people attach pictures and files to a comment or a reply
+  changes). For comments on a whole record with nothing to pin on, pass no
+  `anchors` and `columns.anchor: null`: the pane offers New comment itself.
+  To let people attach pictures and files to a comment or a reply
   (paste, drop or the paperclip), give the Comments database a files column
   named `Attachments` (or pass `columns.attachments`); there is nothing to add
   in the view. Without the column the pane takes text only. Files open from
@@ -275,7 +280,13 @@ allows it in the Portal prompt. Use `useCloudComputerShell()`: check `level`, ca
 `upload({ path, content, content_encoding: 'base64', mode: 0o600 })`. Never put
 secrets in a command; send them as upload content. A run is never repeated for one
 request key: pass `requestId` (run option, or `request_id` in the upload) when the
-page retries a run itself; `cloud_computer_already_ran` means it already ran. The
+page retries a run itself; `cloud_computer_already_ran` means it already ran. For a
+file the person picks or drops (a video, a dataset), call
+`upload({ file, dest: { space: 'files/clip.mp4' } })` with the `File`: any size,
+into the Space folder, sent straight to the machine above 1 MiB, with
+`uploadProgress` (`phase`, `sent_bytes`, `total_bytes`) to show while it runs.
+`importUrl(url, { space: 'files/data.zip' }, { sha256 })` has the machine download a
+public URL itself; never fetch a big file in the page to upload it again. The
 approval covers only the exact code the viewer allowed, so every new release asks
 again. Keep a fallback (a Manager draft) for Sites, previews offline and viewers
 who do not allow it. Declare it only when the page's core controls run on the
@@ -304,8 +315,9 @@ extracts tables, lists, controls and visible document/HTML content automatically
   item joins the crumb through `ListReader` `crumbLabel`, or
   `useTopBarTitleLeaf(label, onBack)` on your own layout; the view crumb then
   calls `onBack`. When the item is a record of the Space's `collection`, pass
-  `useTopBarTitleLeaf(label, onBack, { recordKey })` so Editors rename it from
-  the crumb; read its name from your data, which refreshes after the rename. A
+  `useTopBarTitleLeaf(label, onBack, { recordKey })` (on `ListReader`,
+  `crumbRecordKey={row => row.record_key}`) so Editors rename it from the crumb
+  and its own record page keeps one title; read its name from your data, which refreshes after the rename. A
   `DocumentPage` breadcrumb moves into the top bar on wide
   screens and stays in the page only on narrow ones, so never draw your own
   title or breadcrumb row. Do not duplicate host chrome.

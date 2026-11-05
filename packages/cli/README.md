@@ -403,6 +403,23 @@ Options:
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces links remove <space-id> <binding-id> --revision 1 --request-id remove-link-1`
 
+### `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id>`
+
+Show the folder a Space works in on your Cloud Computer or this computer, or map it to a folder of your own.
+
+When to use: Find where a Space keeps its files and builds, or point it at an existing project folder. Each person maps their own folder; clearing a mapping goes back to the Space's own folder, which is never deleted by it.
+
+Options:
+- `--map <path>` — Use this folder instead: inside /vercel/sandbox on the Cloud Computer, absolute or ~/ on this computer.
+- `--unmap` — Go back to the Space's own folder.
+- `--target <where>` — cloud (default) for the Cloud Computer, desktop for this computer through Notis Desktop.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id>`
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id> --map /vercel/sandbox/my-app`
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id> --target desktop --map ~/code/my-app`
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id> --unmap`
+
 ### `npx --package @notis_ai/cli@latest -- notis spaces aliases list`
 
 List the old App page links you manage and the Space each one opens.
@@ -813,6 +830,90 @@ When to use: Use this after a hand-over. Pass the request_id `handover start` re
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis handover status`
 - `npx --package @notis_ai/cli@latest -- notis handover status 6f1c2e8a-4b7d-5c3e-9a1f-2d8b7e6c5a4f`
+
+
+## Cloud Computer
+
+Run commands on your Cloud Computer and follow long work as background jobs. A job started with `--detach` keeps running when the terminal closes; read its output with `notis cc job logs <job-id> --follow`.
+
+### `npx --package @notis_ai/cli@latest -- notis cc run <command>`
+
+Run a shell command on your Cloud Computer, or start it as a background job.
+
+When to use: Use this for builds, installs, scripts and servers on the Cloud Computer. Add --detach for work longer than 12 minutes, then follow it with notis cc job logs. Add --space to run in a Space folder (you must be able to edit that Space).
+
+Options:
+- `--detach` — Start it as a background job and print its job id at once.
+- `--space <space-id>` — Run in this Space folder: NOTIS_SPACE_DIR is set, and without --cwd the command starts there.
+- `--cwd <dir>` — Folder to start in, inside /vercel/sandbox.
+- `--timeout-ms <n>` — Time limit of the command (1000 to 720000), or of the detached job (up to 21600000, 6 hours).
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis cc run "npm test" --cwd /vercel/sandbox/app`
+- `npx --package @notis_ai/cli@latest -- notis cc run "npm run build" --space <space-id> --detach --timeout-ms 3600000`
+
+### `npx --package @notis_ai/cli@latest -- notis cc push <local>`
+
+Copy a file or folder from this computer to your Cloud Computer, straight to the machine.
+
+When to use: Use this for big files and whole project folders (videos, datasets, builds). Small files travel in batches, big ones in 32 MB parts over parallel streams; the bytes never pass through Notis servers. If the link drops or you stop it, run the same command again: it sends only what is missing. Links are followed like scp unless --skip-links is set.
+
+Options:
+- `--space <space-id>` — Put it in this Space folder (you must be able to edit the Space).
+- `--dest <folder>` — With --space: a folder inside the Space folder (default files). Without: a full folder inside /vercel/sandbox.
+- `--streams <n>` — Parallel streams (default 8).
+- `--skip-links` — Do not follow symbolic links.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis cc push ./launch-video --space <space-id> --dest files/launch`
+- `npx --package @notis_ai/cli@latest -- notis cc push dataset.parquet --dest /vercel/sandbox/data`
+
+### `npx --package @notis_ai/cli@latest -- notis cc pull <remote> <local>`
+
+Copy a file or folder from your Cloud Computer to this computer, straight from the machine.
+
+When to use: Use this to bring renders, exports or results back. Downloads resume where they stopped when you run the same command again, and every file is checked against its sha256.
+
+Options:
+- `--space <space-id>` — Read from this Space folder.
+- `--streams <n>` — Parallel streams (default 8).
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis cc pull files/render.mp4 ./ --space <space-id>`
+- `npx --package @notis_ai/cli@latest -- notis cc pull /vercel/sandbox/app/dist ./dist`
+
+### `npx --package @notis_ai/cli@latest -- notis cc job status <job-id>`
+
+Show whether a Cloud Computer job is running, and how it ended.
+
+When to use: Use this after notis cc run --detach to check a background job.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis cc job status <job-id>`
+
+### `npx --package @notis_ai/cli@latest -- notis cc job logs <job-id>`
+
+Read the output of a Cloud Computer job, or follow it until the job ends.
+
+When to use: Use this to see what a background job printed. --follow checks every 2 seconds and prints only new output; pass --offset to continue from an earlier next_offset.
+
+Options:
+- `--offset <n>` — Byte to start reading from (default 0).
+- `--follow` — Keep reading every 2 seconds until the job ends and all output is read.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis cc job logs <job-id>`
+- `npx --package @notis_ai/cli@latest -- notis cc job logs <job-id> --follow`
+- `npx --package @notis_ai/cli@latest -- notis cc job logs <job-id> --offset 65536`
+
+### `npx --package @notis_ai/cli@latest -- notis cc job cancel <job-id>`
+
+Stop a running Cloud Computer job.
+
+When to use: Use this to stop a background job started with notis cc run --detach.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis cc job cancel <job-id>`
 
 
 ## Generic Tools

@@ -11,7 +11,7 @@ import type { AgentContextContent, AgentContextItem, AgentContextSource } from '
 import type { ComponentType, ReactNode } from 'react';
 import type { NotisQueryClient } from './queryCache';
 import type { NotisSpaceSkeleton } from './skeleton';
-import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport } from './space';
+import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport, SpaceThreadsTransport } from './space';
 
 // ---------------------------------------------------------------------------
 // Database types
@@ -504,11 +504,18 @@ export interface HandoverPayload {
    * background calls still open an editable draft.
    */
   autoSend?: boolean;
+  /**
+   * Space only: start a new chat instead of continuing the item's thread. By default the handover continues
+   * the thread the Space's thread rule matches (the same one the side chat and agent wake-ups use).
+   */
+  newChat?: boolean;
 }
 
 export interface HandoverResult {
   /** `drafted` when the user still has to press send, `sent` when it went straight through. */
   status: 'drafted' | 'sent';
+  /** The thread the handover continued, when the host continued one. */
+  threadId?: string | null;
 }
 
 /**
@@ -600,6 +607,12 @@ export interface NotisRuntime {
    * own upload into Notis's private EU storage. Absent on Sites, previews, verification harnesses and older hosts.
    */
   spaceFiles?: SpaceFilesTransport;
+  /**
+   * Space-only thread resolver and agents' queue: the thread an item continues (shared by the side chat,
+   * `useHandover` and agent wake-ups) and each declared agent's latest wake-up. Absent on Sites, links and
+   * older hosts.
+   */
+  spaceThreads?: SpaceThreadsTransport;
   /** Authenticated runtime identity; app below is presentation metadata only. */
   resource?: RuntimeResource;
   /** Optional host-scoped in-memory read cache. Older hosts remain supported. */

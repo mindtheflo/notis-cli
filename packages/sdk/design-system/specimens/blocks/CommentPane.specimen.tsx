@@ -29,14 +29,16 @@ interface Seed {
   key: string; body: { en: string; fr: string }; author: string; slide: string; at: string; thread?: string; x?: number; y?: number;
   w?: number; h?: number;
   needs?: string; options?: string; status?: string; change?: string; files?: { name: string; url: string }[];
+  /** The server's stamp of the agent that wrote it (`row.agent`); a thread link only for its owner. */
+  agent?: { name: string; thread_id?: string };
 }
 
 const SEEDS: Seed[] = [
   { key: 'c1', author: 'Flo', slide: 'slide-1', at: '2026-06-15T08:10:00Z', x: 0.22, y: 0.3, change: 'created',
     body: { en: 'The title is too long for the room.', fr: 'Le titre est trop long pour la salle.' } },
-  { key: 'r1', author: 'Claude', slide: 'slide-1', at: '2026-06-15T08:40:00Z', thread: 'c1',
+  { key: 'r1', author: 'Claude', slide: 'slide-1', at: '2026-06-15T08:40:00Z', thread: 'c1', agent: { name: 'Editor', thread_id: 'thread-editor' },
     body: { en: 'Shortened to five words.', fr: 'Raccourci à cinq mots.' } },
-  { key: 'c2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:05:00Z', x: 0.68, y: 0.62, needs: 'check',
+  { key: 'c2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:05:00Z', x: 0.68, y: 0.62, needs: 'check', agent: { name: 'Editor' },
     body: { en: 'I moved the chart under the title. Keep it?', fr: 'J’ai déplacé le graphique sous le titre. On le garde ?' } },
   { key: 'z1', author: 'Flo', slide: 'slide-1', at: '2026-06-15T09:08:00Z', x: 0.08, y: 0.55, w: 0.32, h: 0.3,
     body: { en: 'This whole block is hard to read.', fr: 'Tout ce bloc est difficile à lire.' } },
@@ -53,6 +55,7 @@ function rows(lang: Ctx['lang'], seeds: Seed[] = SEEDS) {
   const select = (value: string) => ({ type: 'select', select: { name: value } });
   return seeds.map(seed => ({
     id: `id-${seed.key}`, record_key: seed.key, revision: 1, title: seed.body[lang], created_at: seed.at,
+    ...(seed.agent ? { agent: seed.agent } : {}),
     properties: {
       Deck: { type: 'relation', relation: [{ id: 'deck-1' }] },
       Slide: { type: 'relation', relation: [{ id: seed.slide }] },
@@ -101,6 +104,7 @@ function commentRuntime(lang: Ctx['lang'], empty: boolean, seeds: Seed[] = SEEDS
     } as unknown as NotisRuntime['space'],
     shown: async () => ({ rows: empty ? [] : rows(lang, seeds), schema_revision: 1 }),
     callAction: async () => ({ record_key: `book-${next += 1}`, revision: 2 }),
+    spaceThreads: { open: async () => true },
   } as unknown as NotisRuntime;
 }
 
@@ -225,8 +229,8 @@ export const specimen = defineSpecimen({
   group: 'blocks',
   from: '@notis/sdk/ui',
   covers: ['CommentPane', 'CommentThreadCard', 'NewCommentBox', 'CommentPins', 'CommentAvatar', 'CommentFileChips',
-    'CommentAttachButton', 'CommentDropVeil'],
-  summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files (pasted, dropped or picked before Send), asks the agent waits on (answered from under a picture), Resolve and Copy changes.',
+    'CommentAttachButton', 'CommentDropVeil', 'CommentAgentSource'],
+  summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files (pasted, dropped or picked before Send), asks the agent waits on (answered from under a picture), Resolve and Copy changes. A comment an agent wrote is signed From its name, a link to its thread.',
   states: [
     {
       id: 'threads',

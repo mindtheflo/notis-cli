@@ -178,6 +178,8 @@ export interface CommentController {
   say(key: CommentWordKey, vars?: Readonly<Record<string, string | number>>): string;
   locale: Locale;
   me: string;
+  /** Opens an agent's thread in the side chat; undefined on hosts without one. */
+  openThread?: (threadId: string) => void;
   loading: boolean;
   hasData: boolean;
   error: Error | null;
@@ -200,6 +202,10 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   const say = useCallback((key: CommentWordKey, vars?: Readonly<Record<string, string | number>>) =>
     pick(vars ? fillWords(words[key], vars) : words[key], locale), [words, locale]);
   const columns = useMemo(() => commentColumns(options.columns), [options.columns]);
+  const threadTransport = runtime?.resource?.kind === 'space' ? runtime.spaceThreads : undefined;
+  const openThread = useMemo(() => threadTransport
+    ? (threadId: string) => { void threadTransport.open(threadId).catch(() => undefined); }
+    : undefined, [threadTransport]);
   const latest = useRef(options);
   latest.current = options;
 
@@ -312,6 +318,18 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   // ---------------------------------------------------------------------------
 
   const schemaRevision = query.data?.schema_revision;
+  // The columns the Comments database has, as its list answer names them: optional columns it lacks (Needs,
+  // Change, Example...) are left out of a write instead of failing it. Unknown (an older host): every column is sent.
+  const propertyNames = query.data?.property_names;
+  const knownColumns = useMemo(() => Array.isArray(propertyNames)
+    ? new Set(propertyNames.filter((name): name is string => typeof name === 'string').map(name => name.toLowerCase()))
+    : null, [propertyNames]);
+  const knownRef = useRef(knownColumns);
+  knownRef.current = knownColumns;
+  const onlyKnown = useCallback((properties: Record<string, unknown>) => {
+    const known = knownRef.current;
+    return known ? Object.fromEntries(Object.entries(properties).filter(([name]) => known.has(name.toLowerCase()))) : properties;
+  }, []);
 
   const fail = useCallback((error: unknown) => {
     console.warn('[comments] write failed', error);
@@ -337,7 +355,9 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     setPatches(current => ({ ...current, [key]: { fields: { ...(current[key]?.fields ?? {}), ...fields }, revision: null } }));
     setBusyKey(key, true);
     try {
-      const receipt = await updateMutation.mutate({ record_key: key, expected_revision: revision, properties },
+      const sent = onlyKnown(properties);
+      if (!Object.keys(sent).length) throw new Error(`The Comments database has none of the columns ${Object.keys(properties).join(', ')}`);
+      const receipt = await updateMutation.mutate({ record_key: key, expected_revision: revision, properties: sent },
         { schemaRevision, requestId: newCommentId() });
       setPatches(current => current[key] ? { ...current, [key]: { ...current[key], revision: receipt.revision } } : current);
       void refetch();
@@ -353,7 +373,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     } finally {
       setBusyKey(key, false);
     }
-  }, [schemaRevision, updateMutation, refetch, fail, setBusyKey]);
+  }, [schemaRevision, updateMutation, refetch, fail, setBusyKey, onlyKnown]);
 
   /** Status fields and the Change columns, for an update. */
   const changeProps = useCallback((change: CommentChange, at: string, extra: Record<string, unknown> = {}) => ({
@@ -395,8 +415,12 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       }
     }
     try {
+      // A reply is only a reply through its Thread column: never save it as a new thread instead.
+      if (fields.thread && knownRef.current && !knownRef.current.has(columns.thread.toLowerCase())) {
+        throw new Error(`The Comments database has no ${columns.thread} column for replies`);
+      }
       // The draft is the new comment on screen: the list does not add a second one.
-      const receipt = await insertMutation.mutate({ columns: { title: fields.body }, properties },
+      const receipt = await insertMutation.mutate({ columns: { title: fields.body }, properties: onlyKnown(properties) },
         { schemaRevision, requestId: newCommentId(), showIn: [] });
       setDrafts(current => current.map(draft => draft.comment.recordKey === tempKey ? { ...draft, serverKey: receipt.record_key } : draft));
       void refetch();
@@ -406,7 +430,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       fail(error);
       return false;
     }
-  }, [schemaRevision, me, columns, changeProps, insertMutation, refetch, fail]);
+  }, [schemaRevision, me, columns, changeProps, insertMutation, refetch, fail, onlyKnown]);
 
   const actions: CommentActions = useMemo(() => ({
     reply: async (thread, body, files = []) => {
@@ -638,7 +662,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     attach, maxFileBytes, uploadFile, refreshFiles,
     zones, dragZone, zoneHandlers,
     deleting, cancelDelete: () => setDeleting(null), confirmDelete, copyChanges, copying,
-    busy, now, toaster, words, say, locale, me,
+    busy, now, toaster, words, say, locale, me, openThread,
     loading: query.loading && !query.hasData, hasData: query.hasData, error: query.error ?? null, refetch,
   };
 }

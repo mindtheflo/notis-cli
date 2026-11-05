@@ -73,6 +73,21 @@ export interface CommentRecord {
   thread: string; author: string; x: number | null; y: number | null; w: number | null; h: number | null; status: CommentStatus; needs: CommentNeeds;
   options: string[]; answer: string; answeredAt: string | null; change: CommentChange | null; changedAt: string | null;
   example: boolean; createdAt: string | null; attachments: CommentAttachment[];
+  /**
+   * The agent that wrote this comment, from the server's write record (never the Author column): its name and,
+   * for the person whose agent it is, the thread it works in. Absent on comments a person wrote.
+   */
+  agent?: CommentAgent | null;
+}
+
+/** An agent author, as the server stamped it. `threadId` is only given to the agent's owner. */
+export interface CommentAgent { name: string; threadId: string | null; rowId: string | null }
+
+function agentOf(value: unknown): CommentAgent | null {
+  const agent = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!agent || typeof agent.name !== 'string' || !agent.name.trim()) return null;
+  return { name: agent.name.trim(), threadId: typeof agent.thread_id === 'string' && agent.thread_id ? agent.thread_id : null,
+    rowId: typeof agent.row_id === 'string' && agent.row_id ? agent.row_id : null };
 }
 
 /**
@@ -281,6 +296,7 @@ export function readCommentRow(row: CommentRow, options: {
     change: CHANGES.includes(change as CommentChange) ? change as CommentChange : null, changedAt: dateOf(row, c.changedAt),
     example: value === true || value === 'true', createdAt: str(row.created_at) || null,
     attachments: attachmentsOf(row, c.attachments),
+    agent: agentOf((row as Record<string, unknown>).agent),
   };
 }
 

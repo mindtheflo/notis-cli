@@ -7,7 +7,7 @@ import { usageError } from './errors.js';
 import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifest.js';
 import { editorOnlyColumns, editorsOnlyFlag, withoutMarker } from './space-audience.js';
 
-const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
+const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
 /** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-spaces-platform.md. */
 export const VIEWER_READ_FAMILIES = Object.freeze(['databases', 'skills']);
 const WORKSPACE_INDEXES = new Set(['notis.config.ts', 'notis.config.js', 'notis.config.mjs']);
@@ -89,6 +89,64 @@ function localPath(value) {
   return value.replace(/^\.\//, '').replace(/\/$/, '');
 }
 
+const CLOUD_COMPUTER_LEVELS = ['read', 'shell'];
+const CLOUD_COMPUTER_FIELDS = ['access', 'services'];
+const CLOUD_SERVICE_FIELDS = ['id', 'command', 'cwd', 'ready'];
+const CLOUD_SERVICE_ID = /^[a-z][a-z0-9-]{0,39}$/;
+const MAX_CLOUD_SERVICES = 4;
+
+/**
+ * `cloudComputer` is 'read' | 'shell' | { access, services? }. The object is copied
+ * into the manifest as-is, so every rule here matches the server's own check.
+ */
+export function validateCloudComputer(value) {
+  const levels = "cloudComputer is 'read', 'shell' or { access: 'read' | 'shell', services? }: the page uses each signed-in viewer's own cloud computer once that viewer allows it.";
+  if (typeof value === 'string') {
+    if (!CLOUD_COMPUTER_LEVELS.includes(value)) throw usageError(levels);
+    return;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw usageError(levels);
+  const unknown = Object.keys(value).filter(name => !CLOUD_COMPUTER_FIELDS.includes(name)).sort();
+  if (unknown.length) throw usageError(`Unsupported cloudComputer fields: ${unknown.join(', ')}. Use access and services.`);
+  if (!CLOUD_COMPUTER_LEVELS.includes(value.access)) throw usageError(levels);
+  if (value.services === undefined) return;
+  if (!Array.isArray(value.services)) throw usageError('cloudComputer.services is a list of { id, command, cwd?, ready? }.');
+  if (value.services.length && value.access !== 'shell') throw usageError("cloudComputer.services needs access: 'shell'.");
+  if (value.services.length > MAX_CLOUD_SERVICES) throw usageError(`cloudComputer declares at most ${MAX_CLOUD_SERVICES} services.`);
+  const seen = new Set();
+  for (const service of value.services) {
+    if (!service || typeof service !== 'object' || Array.isArray(service)) throw usageError('Each cloudComputer service is { id, command, cwd?, ready? }.');
+    const extra = Object.keys(service).filter(name => !CLOUD_SERVICE_FIELDS.includes(name)).sort();
+    if (extra.length) throw usageError(`Unsupported cloudComputer service fields: ${extra.join(', ')}. Use id, command, cwd and ready.`);
+    if (typeof service.id !== 'string' || !CLOUD_SERVICE_ID.test(service.id)) {
+      throw usageError('A cloudComputer service id starts with a lowercase letter, then up to 39 lowercase letters, digits or dashes.');
+    }
+    if (seen.has(service.id)) throw usageError(`cloudComputer service ${service.id} is declared twice.`);
+    seen.add(service.id);
+    const label = `cloudComputer service ${service.id}`;
+    if (typeof service.command !== 'string' || !service.command.trim() || service.command.length > 4096 || service.command.includes('\0')) {
+      throw usageError(`${label} needs a command of 1 to 4096 characters.`);
+    }
+    if (service.cwd !== undefined) {
+      if (typeof service.cwd === 'string') {
+        if (!service.cwd || service.cwd.length > 1024 || service.cwd.includes('\0')
+          || service.cwd.split('/').some(part => part === '..')
+          || (service.cwd.startsWith('/') && service.cwd !== '/vercel/sandbox' && !service.cwd.startsWith('/vercel/sandbox/'))) {
+          throw usageError(`${label} cwd is a cloud computer folder inside /vercel/sandbox, or { space: '<folder>' } inside the Space folder.`);
+        }
+      } else if (!service.cwd || typeof service.cwd !== 'object' || Array.isArray(service.cwd)
+        || Object.keys(service.cwd).join(',') !== 'space' || typeof service.cwd.space !== 'string'
+        || service.cwd.space.length > 1024 || service.cwd.space.startsWith('/') || service.cwd.space.includes('\0')
+        || service.cwd.space.includes('\\') || service.cwd.space.split('/').some(part => part === '..')) {
+        throw usageError(`${label} cwd { space } is a folder relative to the Space folder, without a leading / or .. ('' or '.' is the Space folder).`);
+      }
+    }
+    if (service.ready !== undefined && (typeof service.ready !== 'string' || !service.ready.startsWith('/') || service.ready.length > 512)) {
+      throw usageError(`${label} ready is a path starting with / of at most 512 characters.`);
+    }
+  }
+}
+
 export async function loadSelectedSpace(projectDir, selectedKey) {
   projectDir = realpathSync(projectDir);
   selectedKey = key(selectedKey, 'Space');
@@ -165,10 +223,9 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
     throw usageError("viewerReads lists 'databases' and/or 'skills' once each: the page reads what each signed-in viewer can open.");
   }
   if (definition.viewerReads?.length && !entry) throw usageError('A container has no page, so it cannot declare viewerReads.');
-  if (definition.cloudComputer != null && !['read', 'shell'].includes(definition.cloudComputer)) {
-    throw usageError("cloudComputer is 'read' or 'shell': the page uses each signed-in viewer's own cloud computer once that viewer allows it.");
-  }
+  if (definition.cloudComputer != null) validateCloudComputer(definition.cloudComputer);
   if (definition.cloudComputer != null && !entry) throw usageError('A container has no page, so it cannot use the cloud computer.');
+  if (definition.agents != null) validateSpaceAgents(definition.agents, resources);
   if (definition.collection && (resources[definition.collection.database]?.kind !== 'database' || !definition.collection.titleProperty)) {
     throw usageError('A collection needs a declared database binding and title property.');
   }
@@ -297,4 +354,35 @@ export function collectSelectedSpaceSource(projectDir, selection, { buildInputs 
   result['notis.config.ts'] = Buffer.from(`import { defineSpaces } from '@notis/sdk/config';\nexport default defineSpaces(${JSON.stringify({ spaces: { [selection.key]: { definition: selection.definitionPath } }, resources, defaultSpace: selection.key }, null, 2)});\n`).toString('base64');
   return result;
   } finally { compiler.close(); }
+}
+
+const AGENT_FIELDS = ['id', 'on', 'thread', 'runtime', 'skill', 'wake', 'columns'];
+const AGENT_COLUMNS = ['thread', 'scope', 'answer', 'author'];
+
+/** The `agents` a Space's database changes wake (server/lib/space_agents.py repeats every check). */
+export function validateSpaceAgents(agents, resources = {}) {
+  if (!Array.isArray(agents) || agents.length < 1 || agents.length > 8) throw usageError('Declare agents as a list of 1 to 8 agents.');
+  const seen = new Set();
+  for (const agent of agents) {
+    if (!agent || typeof agent !== 'object' || Array.isArray(agent) || Object.keys(agent).some(name => !AGENT_FIELDS.includes(name))) {
+      throw usageError(`Each agent takes ${AGENT_FIELDS.join(', ')} only.`);
+    }
+    if (typeof agent.id !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(agent.id) || seen.has(agent.id)) {
+      throw usageError('Each agent needs its own short id: lowercase letters, digits, - and _.');
+    }
+    seen.add(agent.id);
+    const on = agent.on;
+    if (!on || typeof on !== 'object' || Object.keys(on).some(name => !['database', 'event'].includes(name)) || resources[on.database]?.kind !== 'database') {
+      throw usageError(`Agent ${agent.id} watches one of this Space's database resources: on: { database: '<alias>' }.`);
+    }
+    if (on.event != null && !['created', 'changed'].includes(on.event)) throw usageError(`Agent ${agent.id} wakes on 'created' or 'changed'.`);
+    if (agent.thread != null && !['best_match', 'space'].includes(agent.thread)) throw usageError(`Agent ${agent.id} uses thread 'best_match' or 'space'.`);
+    if (agent.runtime != null && !['notis', 'cloud_computer'].includes(agent.runtime)) throw usageError(`Agent ${agent.id} runs on 'notis' or 'cloud_computer'.`);
+    if (agent.wake != null && !['all', 'sent'].includes(agent.wake)) throw usageError(`Agent ${agent.id} wakes for 'all' comments or only those 'sent' to it.`);
+    if (agent.skill != null && resources[agent.skill]?.kind !== 'skill') throw usageError(`Agent ${agent.id} names a Skill this Space links.`);
+    if (agent.columns != null && (typeof agent.columns !== 'object' || Array.isArray(agent.columns)
+      || Object.entries(agent.columns).some(([name, value]) => !AGENT_COLUMNS.includes(name) || typeof value !== 'string' || !value || value.length > 100))) {
+      throw usageError(`Agent ${agent.id} renames only the ${AGENT_COLUMNS.join(', ')} columns.`);
+    }
+  }
 }

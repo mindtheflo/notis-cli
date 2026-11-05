@@ -76,3 +76,8 @@ export * from './fields';
 export * from './comments';
 // The second-screen presenter: slides full screen on the other screen, the presenter view stays here.
 export * from './present';
+// What a page shows while a Cloud Computer service it declares starts.
+export { CloudComputerWaking } from './cloud/CloudComputerWaking';
+export type { CloudComputerWakingProps } from './cloud/CloudComputerWaking';
+export { CloudComputerFrame } from './cloud/CloudComputerFrame';
+export type { CloudComputerFrameProps } from './cloud/CloudComputerFrame';

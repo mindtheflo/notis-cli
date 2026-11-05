@@ -27,11 +27,85 @@ export const SPACE_VIEWER_READ_OPERATIONS: Readonly<Record<SpaceViewerReadOperat
 
 /**
  * Space cloud computer access, declared as `cloudComputer` in `defineSpace`.
- * `read`: facts only. `shell`: facts, one command, one file write. Always the signed-in viewer's own
- * cloud computer, after that viewer allows it; never on a Site, a link or an agent render.
+ * `read`: facts and the Space folder. `shell`: also commands, background jobs, file writes and services.
+ * Always the signed-in viewer's own cloud computer, after that viewer allows it; never on a Site, a link or an
+ * agent render.
  */
 export type SpaceCloudComputerLevel = 'read' | 'shell';
-export type SpaceCloudComputerOperation = 'facts' | 'run' | 'upload';
+
+/**
+ * One agent a Space's database changes wake, declared in `defineSpace({ agents })`.
+ * `thread`: `best_match` (the person's thread linked to the item, else a new one linked to it) or `space`
+ * (one thread per Space and person). `runtime`: hosted (`notis`) or a coding agent on the person's Cloud
+ * Computer. `wake: 'sent'` wakes only for replies to and answers on the agent's own comments.
+ * `columns` renames the comment columns read (defaults: Thread, Deck, Answer, Author).
+ */
+export interface SpaceAgentDeclaration {
+  id: string;
+  on: { database: string; event?: 'created' | 'changed' };
+  thread?: 'best_match' | 'space';
+  runtime?: 'notis' | 'cloud_computer';
+  skill?: string;
+  wake?: 'all' | 'sent';
+  columns?: { thread?: string; scope?: string; answer?: string; author?: string };
+}
+/** The thread an item (a record, or the Space itself) continues, from the Space's thread rule. */
+export interface SpaceItemThread {
+  /** Null when nothing matches yet: the first message creates the thread and links it to the item. */
+  thread_id: string | null;
+  rule: 'best_match' | 'space';
+  /** How closely the thread matches: record, view_params, view, space; null when none. */
+  level: 'record' | 'view_params' | 'view' | 'space' | null;
+}
+/** One Space agent's latest wake-up for the viewer (`useAgentQueue`). */
+export interface SpaceAgentQueue {
+  status: 'idle' | 'queued' | 'working' | 'waiting' | 'failed' | 'done';
+  thread_id: string | null;
+  /** Items waiting in the quiet window or held for approval. */
+  pending: number;
+  /** True until the viewer allows this exact version's agents to wake their threads. */
+  approval_required: boolean;
+  updated_at: string | null;
+}
+export interface SpaceAgentsStatus {
+  declared: string[];
+  approved: boolean;
+  queue?: SpaceAgentQueue;
+}
+/** Space-only transport of the thread resolver and the agents' queue. */
+export interface SpaceThreadsTransport {
+  resolve(input?: { recordKey?: string }): Promise<SpaceItemThread>;
+  /** Open a thread in the host's side chat, optionally with an unsent draft. */
+  open(threadId: string, options?: { draft?: string }): Promise<boolean>;
+  agentStatus(agentId: string, scope?: string): Promise<SpaceAgentsStatus>;
+  approveAgents(): Promise<{ approved: boolean; released: number }>;
+}
+/**
+ * A long-running program the Space keeps up on the viewer's cloud computer while the page is on screen (a dev
+ * server, a media server). It runs with `bash -lc`, listens on `127.0.0.1:$PORT`, and gets `HOST`,
+ * `NOTIS_SPACE_DIR`, `NOTIS_SPACE_ID` and `NOTIS_SERVICE_ID`. Reach it with `useCloudComputerService(id)`.
+ */
+export interface SpaceCloudComputerService {
+  /** `/^[a-z][a-z0-9-]{0,39}$/`, unique in the Space. */
+  id: string;
+  /** Non-empty, at most 4096 characters. */
+  command: string;
+  /** A machine path (relative to /vercel/sandbox or absolute inside it) or `{ space: '<rel>' }` in the Space folder. Default: the Space folder. */
+  cwd?: string | { space: string };
+  /** Readiness path, starting with `/`; default `/`. */
+  ready?: string;
+}
+/** The object form of `cloudComputer`; `'read'` and `'shell'` mean `{ access: <level> }`. */
+export interface SpaceCloudComputerDeclaration {
+  access: SpaceCloudComputerLevel;
+  /** Needs `access: 'shell'`; at most 4. */
+  services?: readonly SpaceCloudComputerService[];
+}
+export type SpaceCloudComputerJobOperation = 'job.status' | 'job.logs' | 'job.cancel';
+/** A direct transfer session: the host uses these for `upload({ file })`; a page never calls them itself. */
+export type SpaceCloudComputerTransferOperation = 'transfer.begin' | 'transfer.status' | 'transfer.commit' | 'transfer.abort';
+export type SpaceCloudComputerOperation = 'facts' | 'run' | 'upload' | SpaceCloudComputerJobOperation | 'service.lease'
+  | 'service.access' | 'folder' | SpaceCloudComputerTransferOperation | 'import';
 export interface SpaceCloudComputerStatus {
   level: SpaceCloudComputerLevel;
   approved: boolean;
@@ -49,7 +123,13 @@ export interface SpaceCloudComputerRelease {
   copied: boolean;
 }
 export interface SpaceCloudComputerRunInput {
-  command: string; cwd?: string; timeout_ms?: number; max_output_length?: number;
+  command: string;
+  /** A machine path, or `{ space: '<rel>' }` inside the Space folder (`''` is its root). Without it a run starts in /vercel/sandbox. */
+  cwd?: string | { space: string };
+  /** With `detach`, bounds the background job: 1000 to 21600000 (6 h), default 3600000. */
+  timeout_ms?: number; max_output_length?: number;
+  /** Start the command as a background job and answer at once with `job_id` and `job`. */
+  detach?: boolean;
   /**
    * One key per run, kept when the page retries that run: a key that already reached the cloud computer is
    * never run again (`cloud_computer_already_ran`). The host makes one when absent and keeps it for a retry
@@ -60,7 +140,71 @@ export interface SpaceCloudComputerRunInput {
 export interface SpaceCloudComputerRunResult {
   status?: 'success' | 'error' | string; stdout?: string; stderr?: string; exit_code?: number;
   message?: string; code?: string; truncated?: boolean;
+  /** A detached run: the background job it started. */
+  job_id?: string; job?: SpaceCloudComputerJobStatus;
 }
+/** `lost`: the cloud computer stopped or forgot the job before it ended. */
+export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'lost';
+export interface SpaceCloudComputerJobStatus {
+  job_id: string; status: JobState; exit_code: number | null; started_at: string | null; ended_at: string | null; log_bytes: number;
+}
+export interface SpaceCloudComputerJobInput {
+  job_id: string;
+  /** `job.logs`: the first byte to read (default 0). */
+  offset?: number;
+  /** `job.logs`: 1 to 200000 bytes (default 65536). */
+  max_bytes?: number;
+}
+export interface SpaceCloudComputerJobLogs {
+  job_id: string; status: JobState; text: string; offset: number; next_offset: number;
+  /** The job ended and every byte was read. */
+  eof: boolean;
+}
+export type SpaceCloudComputerJobResult<O extends SpaceCloudComputerJobOperation> =
+  O extends 'job.logs' ? SpaceCloudComputerJobLogs : SpaceCloudComputerJobStatus;
+export interface SpaceCloudComputerLeaseInput {
+  service: string;
+  /** `true` renews the lease for 120 s and starts the service when needed; `false` stops renewing it. */
+  visible: boolean;
+  /** One id per view instance, kept for its life: 8 to 100 of `A-Z a-z 0-9 . _ : -`. */
+  holder: string;
+}
+export interface SpaceCloudComputerLeaseResult {
+  service: string;
+  status: 'starting' | 'ready' | 'failed' | 'released';
+  lease_expires_at: string | null;
+  /** While starting: ask again after this many seconds. */
+  retry_after_seconds: number | null;
+  /**
+   * While failed: a stable reason and what went wrong. While starting, `restoring` means the machine runs but is still
+   * restoring its files after a pause (it can take minutes), and `launching` that the service runs on the machine and is
+   * getting ready (the machine's own bound decides, so the view keeps waiting).
+   */
+  reason?: string; message?: string;
+  /** The gate that serves the service, and the Bearer pass for it; null until the gate is on. */
+  gate_url: string | null;
+  pass: string | null;
+  pass_expires_at: string | null;
+  price: { hourly_usd: number | null; size: string | null };
+}
+export interface SpaceCloudComputerAccessInput {
+  service: string;
+  /** Service file paths (each starting with `/`, no query) to open in a media element: up to 50, one link each. */
+  media?: string[];
+  /** A one-time code the service frame exchanges for its own session. */
+  frame?: boolean;
+  /** With `frame`: where the frame lands. A root path (`/`) serves the service from the gate root. */
+  path?: string;
+}
+/** One file of one service for ten minutes; seeking (Range) works. */
+export interface SpaceCloudComputerMediaLink { path: string; url: string; expires_at: string }
+/** Load `frame` in an iframe; when it posts `notis-gate-ready`, post `{ type: 'notis-gate-code', code }` to it. */
+export interface SpaceCloudComputerFrameCode { frame: string; action: string; code: string; next: string; expires_at: string }
+export interface SpaceCloudComputerAccessResult {
+  service: string; gate_url: string | null; media: SpaceCloudComputerMediaLink[]; frame: SpaceCloudComputerFrameCode | null;
+}
+/** The folder this Space works in on the cloud computer: `mapped` when the person mapped it to an existing folder. */
+export interface SpaceCloudComputerFolder { path: string; canonical_path: string; mapped: boolean }
 export interface SpaceCloudComputerUploadInput {
   path: string; content: string; content_encoding?: 'base64' | 'utf-8'; overwrite?: boolean; mode?: number;
   /** As for a run: one key per upload, kept when retrying it. */
@@ -117,20 +261,82 @@ export interface SpaceFilesTransport {
 export const SPACE_FILE_EXTENSIONS: readonly string[] = Object.freeze(['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'docx',
   'xlsx', 'pptx', 'odt', 'ods', 'odp', 'doc', 'xls', 'ppt', 'rtf', 'txt', 'md', 'csv', 'tsv', 'json']);
 export const SPACE_FILE_MAX_BYTES = 8 * 1024 * 1024;
-/** Host transport. Approval is only ever given in host UI the person clicks; the view can only ask. */
+/**
+ * A file the page holds (a `File` from an input or a drop, or any `Blob`) for the Space folder. Above 1 MiB its
+ * parts go straight from the browser to the cloud computer, never through Notis servers; the machine checks its
+ * sha256 before it replaces the file at `dest`.
+ */
+export interface SpaceCloudComputerFileUpload {
+  file: Blob;
+  /** `{ space: 'files/clip.mp4' }`: the file's path inside the Space folder. */
+  dest: { space: string };
+  /** Called as the file is read, sent and put in place. */
+  onProgress?(progress: SpaceCloudComputerUploadProgress): void;
+  /** Aborting cancels the upload and drops the parts already sent. */
+  signal?: AbortSignal;
+}
+export interface SpaceCloudComputerUploadProgress {
+  /** `preparing`: reading the file for its sha256. `finishing`: the machine checks it and puts it in place. */
+  phase: 'preparing' | 'sending' | 'finishing' | 'done';
+  path: string; sent_bytes: number; total_bytes: number;
+}
+export interface SpaceCloudComputerFileUploadResult {
+  status: 'success'; path: string; size: number; sha256: string;
+  /** Present when the file went through a direct transfer session. */
+  session_id?: string;
+}
+/** Have the cloud computer download a public `http(s)` URL itself into the Space folder. */
+export interface SpaceCloudComputerImportInput {
+  url: string;
+  /** `{ space: 'files/data.zip' }`: the file's path inside the Space folder. */
+  dest: { space: string };
+  /** When given, the download must match it. */
+  sha256?: string;
+  /** Default true. */
+  overwrite?: boolean;
+  /** As for a run: one key per import, kept when retrying it. */
+  request_id?: string;
+}
+export interface SpaceCloudComputerImportResult {
+  status?: 'success' | 'error' | string; path?: string; size?: number; sha256?: string;
+  /** Bytes a previous unfinished download of the same URL had already fetched. */
+  resumed_from?: number;
+  code?: string; message?: string; retryable?: boolean;
+}
+/**
+ * Host transport. Approval is only ever given in host UI the person clicks; the view can only ask. `lease`, `job`
+ * and `folder` are absent from hosts that predate them.
+ */
 export interface SpaceCloudComputerTransport {
   status(): Promise<SpaceCloudComputerStatus>;
   requestApproval(): Promise<SpaceCloudComputerStatus>;
   facts(options?: { refresh?: boolean }): Promise<import('./runtime').CloudComputerFacts>;
   run(input: SpaceCloudComputerRunInput): Promise<SpaceCloudComputerRunResult>;
   upload(input: SpaceCloudComputerUploadInput): Promise<SpaceCloudComputerUploadResult>;
+  lease?(input: SpaceCloudComputerLeaseInput): Promise<SpaceCloudComputerLeaseResult>;
+  /** Media links and frame codes for a ready service: what an element that cannot send a header needs. */
+  access?(input: SpaceCloudComputerAccessInput): Promise<SpaceCloudComputerAccessResult>;
+  job?<O extends SpaceCloudComputerJobOperation>(operation: O, input: SpaceCloudComputerJobInput): Promise<SpaceCloudComputerJobResult<O>>;
+  folder?(): Promise<SpaceCloudComputerFolder>;
+  /** A file from the page into the Space folder (`upload({ file })`); absent from hosts that predate it. */
+  sendFile?(input: SpaceCloudComputerFileUpload): Promise<SpaceCloudComputerFileUploadResult>;
+  importUrl?(input: SpaceCloudComputerImportInput): Promise<SpaceCloudComputerImportResult>;
 }
 export const SPACE_CLOUD_COMPUTER_OPERATIONS: Readonly<Record<SpaceCloudComputerOperation, SpaceCloudComputerLevel>> = Object.freeze({
-  facts: 'read', run: 'shell', upload: 'shell',
+  facts: 'read', run: 'shell', upload: 'shell', 'job.status': 'shell', 'job.logs': 'shell', 'job.cancel': 'shell',
+  'service.lease': 'shell', 'service.access': 'shell', folder: 'read', 'transfer.begin': 'shell', 'transfer.status': 'shell',
+  'transfer.commit': 'shell', 'transfer.abort': 'shell', import: 'shell',
 });
 export function spaceCloudComputerAllows(level: SpaceCloudComputerLevel | undefined, operation: SpaceCloudComputerOperation): boolean {
-  const needed = SPACE_CLOUD_COMPUTER_OPERATIONS[operation];
+  const needed = Object.hasOwn(SPACE_CLOUD_COMPUTER_OPERATIONS, operation) ? SPACE_CLOUD_COMPUTER_OPERATIONS[operation] : null;
+  if (!needed) return false;
   return level === 'shell' || (level === 'read' && needed === 'read');
+}
+/** The access level of a `cloudComputer` declaration in either form, or null. */
+export function spaceCloudComputerAccess(declaration: SpaceCloudComputerLevel | SpaceCloudComputerDeclaration | null | undefined):
+  SpaceCloudComputerLevel | null {
+  const level = typeof declaration === 'string' ? declaration : declaration?.access;
+  return level === 'read' || level === 'shell' ? level : null;
 }
 
 /** A link the viewer can use (R10); unavailable links are never returned. */
@@ -270,6 +476,8 @@ export interface SpaceShownResult {
   params: Record<string, unknown>;
   /** The list database's schema revision: pass it as `schemaRevision` to a declared row write. */
   schema_revision?: number;
+  /** The list database's column names, in schema order (hosts that send them): write only columns it has. */
+  property_names?: string[];
   [key: string]: unknown;
 }
 /** Input of a `markdown` module's default export (V8 renders). */
@@ -319,9 +527,16 @@ export interface SpaceDefinition {
   viewerReads?: SpaceViewerReadFamily[];
   /**
    * Reviewable declaration that this page uses each signed-in viewer's own cloud computer
-   * (`read`: facts; `shell`: commands and file writes), once that viewer allows it.
+   * (`read`: facts; `shell`: commands, jobs and file writes), once that viewer allows it. The object form adds
+   * `services` the page keeps up while it is on screen.
    */
-  cloudComputer?: SpaceCloudComputerLevel;
+  cloudComputer?: SpaceCloudComputerLevel | SpaceCloudComputerDeclaration;
+  /**
+   * Agents this Space's database changes wake. A person's new comment, reply or answer wakes their own
+   * thread for the item (or, for a reply to an agent's comment, that agent's thread) after a quiet
+   * moment, once that person allowed this Space's agents. Agents' own writes never wake anything.
+   */
+  agents?: SpaceAgentDeclaration[];
   collection?: { database: string; titleProperty: string; parentProperty?: string; allowCreate?: boolean };
   /** Reproducible source dependencies not discovered by the module graph. */
   sourceIncludes?: string[];
@@ -391,6 +606,8 @@ export interface SpaceRuntimeDescriptor {
   viewerReads?: SpaceViewerReadFamily[];
   /** Declared cloud computer access; present only for a signed-in Editor, never on a Site. */
   cloudComputer?: SpaceCloudComputerLevel;
+  /** Declared cloud computer service ids; present only for a signed-in Editor, never on a Site. */
+  cloudComputerServices?: string[];
   /** V4: declared URL params (never a record param's `page` rule), list names and chrome of the executable revision. */
   params?: Record<string, Omit<SpaceViewParam, 'page'>>;
   shows?: Record<string, SpaceShownDescriptor>;
@@ -679,10 +896,19 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
   const cloudLevel = space.cloudComputer;
   const guardedCloud = (operation: SpaceCloudComputerOperation) => {
     if (!cloudComputer || !spaceCloudComputerAllows(cloudLevel, operation)) {
-      throw protocolError(operation === 'facts' ? 'This Space does not use the cloud computer.'
+      throw protocolError(operation === 'facts' || operation === 'folder' ? 'This Space does not use the Cloud Computer.'
         : 'This Space does not declare cloudComputer: shell.');
     }
     return cloudComputer;
+  };
+  // Hosts that predate services, jobs or the folder do not offer them.
+  const lease = cloudComputer?.lease, access = cloudComputer?.access, job = cloudComputer?.job, folder = cloudComputer?.folder;
+  const sendFile = cloudComputer?.sendFile, importUrl = cloudComputer?.importUrl;
+  const declaredService = (service: unknown) => {
+    const declared = runtime.space!.cloudComputerServices;
+    if (typeof service !== 'string' || !Array.isArray(declared) || !declared.includes(service)) {
+      throw protocolError('This Space does not declare that Cloud Computer service.');
+    }
   };
   const undeclared = (key?: QueryErrorKey) => protocolError('This action is not declared by the published Space.', key);
   const columnRefused = (key?: QueryErrorKey) => protocolError('The public cannot read or write this column.', key);
@@ -796,7 +1022,33 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
       facts: async (options?: { refresh?: boolean }) => guardedCloud('facts').facts(options),
       run: async (input: SpaceCloudComputerRunInput) => guardedCloud('run').run(input),
       upload: async (input: SpaceCloudComputerUploadInput) => guardedCloud('upload').upload(input),
-    }) : undefined,
+      lease: lease ? async (input: SpaceCloudComputerLeaseInput) => {
+        guardedCloud('service.lease');
+        declaredService(input?.service);
+        return lease.call(cloudComputer, input);
+      } : undefined,
+      access: access ? async (input: SpaceCloudComputerAccessInput) => {
+        guardedCloud('service.access');
+        declaredService(input?.service);
+        return access.call(cloudComputer, input);
+      } : undefined,
+      job: job ? async <O extends SpaceCloudComputerJobOperation>(operation: O, input: SpaceCloudComputerJobInput) => {
+        if (operation !== 'job.status' && operation !== 'job.logs' && operation !== 'job.cancel') {
+          throw protocolError('Choose a supported Cloud Computer job operation.');
+        }
+        guardedCloud(operation);
+        return cloudComputer.job!<O>(operation, input);
+      } : undefined,
+      folder: folder ? async () => { guardedCloud('folder'); return folder.call(cloudComputer); } : undefined,
+      sendFile: sendFile ? async (input: SpaceCloudComputerFileUpload) => {
+        guardedCloud('transfer.begin');
+        return sendFile.call(cloudComputer, input);
+      } : undefined,
+      importUrl: importUrl ? async (input: SpaceCloudComputerImportInput) => {
+        guardedCloud('import');
+        return importUrl.call(cloudComputer, input);
+      } : undefined,
+    } satisfies SpaceCloudComputerTransport) : undefined,
     viewerRead: viewerRead ? async function guardedViewerRead<TResult>(operation: SpaceViewerReadOperation,
       input: Record<string, unknown> = {}): Promise<TResult> {
       const family = Object.hasOwn(SPACE_VIEWER_READ_OPERATIONS, operation) ? SPACE_VIEWER_READ_OPERATIONS[operation] : null;

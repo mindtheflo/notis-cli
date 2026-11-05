@@ -181,7 +181,8 @@ test('@notis/sdk/ui exports the pane and its pieces', () => {
 interface Call { action: string; request: Record<string, unknown> }
 
 let cacheCounter = 0;
-function fakeRuntime(rows: Record<string, unknown>[], calls: Call[], options: { fail?: boolean; locale?: 'en' | 'fr' } = {}) {
+function fakeRuntime(rows: Record<string, unknown>[], calls: Call[],
+  options: { fail?: boolean; locale?: 'en' | 'fr'; propertyNames?: string[] } = {}) {
   let next = 100;
   return {
     resource: { kind: 'space', id: 's1', revision: 1 },
@@ -192,7 +193,7 @@ function fakeRuntime(rows: Record<string, unknown>[], calls: Call[], options: { 
       bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
     },
     context: { params: {}, locale: options.locale ?? 'en' },
-    shown: async () => ({ rows, schema_revision: 7 }),
+    shown: async () => ({ rows, schema_revision: 7, ...(options.propertyNames ? { property_names: options.propertyNames } : {}) }),
     callAction: async (action: string, input: { request: Record<string, unknown> }) => {
       calls.push({ action, request: input.request });
       if (options.fail) throw new Error('nope');
@@ -316,6 +317,37 @@ test('CommentPane: a reply sends on Enter, Shift+Enter keeps writing, and a repl
   const reopen = calls.find(call => call.action === 'comments.update')!;
   assert.equal((reopen.request.properties as Record<string, unknown>).Status, 'Open');
   assert.equal(reopen.request.expected_revision, 1);
+});
+
+test('A Comments database without the optional columns still takes replies, answers and status changes', async () => {
+  // The list answer names its columns: Needs, Options, Answered at, Change, Changed at and Example are missing.
+  const propertyNames = ['Body', 'Deck', 'Slide', 'Thread', 'Author', 'X', 'Y', 'Status', 'Answer'];
+  const calls: Call[] = [];
+  await mount(<Harness {...base} anchorKey="sk2" />, fakeRuntime(ROWS, calls, { propertyNames }));
+  await click([...doc.querySelectorAll('.nui-seg button, [role="radio"]')].find(el => el.textContent?.startsWith('Resolved'))!);
+  const field = doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement;
+  await type(field, 'Again please');
+  await key(field, 'Enter');
+  const insert = calls.find(call => call.action === 'comments.insert')!;
+  assert.deepEqual(Object.keys(insert.request.properties as object).sort(), ['Author', 'Deck', 'Slide', 'Status', 'Thread']);
+  const reopen = calls.find(call => call.action === 'comments.update')!;
+  assert.deepEqual(reopen.request.properties, { Status: 'Open' }, 'Change and Changed at are left out');
+  assert.doesNotMatch(doc.body.textContent!, /Could not save that change/);
+
+  // Without a Thread column a reply is refused instead of being saved as a new thread.
+  const noThread: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, noThread, { propertyNames: propertyNames.filter(name => name !== 'Thread') }));
+  const reply = doc.querySelector('[data-thread="c1"] textarea') as HTMLTextAreaElement;
+  await type(reply, 'Hello');
+  await key(reply, 'Enter');
+  assert.equal(noThread.filter(call => call.action === 'comments.insert').length, 0);
+  assert.match(doc.body.textContent!, /Could not save that change/);
+
+  // An older host that names no columns: every column is sent, as before.
+  const older: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, older));
+  await click(doc.querySelector('[data-thread="c1"] button[aria-label="Resolve"]')!);
+  assert.deepEqual(Object.keys(older.at(-1)!.request.properties as object).sort(), ['Change', 'Changed at', 'Status']);
 });
 
 test('CommentPane: Resolve, Delete with its confirmation, and a failed write rolls back', async () => {
@@ -499,6 +531,24 @@ test('Comment on the whole item: no pin, its own heading, and no X or Y', async 
   assert.equal(props.X, undefined);
   assert.equal(props.Y, undefined);
   assert.deepEqual(props.Slide, ['slide-1']);
+});
+
+test('Comments on a whole record (no anchors): the pane starts one itself', async () => {
+  const calls: Call[] = [];
+  const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
+  await mount(<Harness scope={project} columns={{ scope: 'Project', anchor: null }} pins={false} />,
+    fakeRuntime([], calls));
+  await click(button('New comment')!);
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment');
+  assert.equal(button('New comment'), undefined, 'the button gives way to the new comment box');
+  const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, 'Cut the first hello');
+  await key(field, 'Enter');
+  const request = calls.find(call => call.action === 'comments.insert')!.request;
+  assert.deepEqual(request.columns, { title: 'Cut the first hello' });
+  const props = request.properties as Record<string, unknown>;
+  assert.deepEqual(props.Project, ['project-1']);
+  assert.equal(props.Slide, undefined);
 });
 
 // ---------------------------------------------------------------------------

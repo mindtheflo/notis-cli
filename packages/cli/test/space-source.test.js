@@ -316,6 +316,58 @@ test('cloudComputer is a reviewable page declaration: read or shell, absent when
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('cloudComputer object form declares access and services and is copied into the manifest as-is', async () => {
+  const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
+  const root = fixture();
+  const write = value => writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'A',${VIEW_DECLARATION},entry:'./view.tsx',cloudComputer:${value}};`);
+  try {
+    const declared = { access: 'shell', services: [
+      { id: 'web', command: 'npm run dev -- --port $PORT', cwd: { space: 'source' }, ready: '/health' },
+      { id: 'api-2', command: 'python -m http.server $PORT', cwd: 'repo/api' },
+      { id: 'root', command: 'node server.js', cwd: { space: '' } },
+    ] };
+    write(JSON.stringify(declared));
+    assert.deepEqual(generateSpaceManifest(await loadSelectedSpace(root, 'a')).cloud_computer, declared);
+    write(`{access:'read'}`);
+    assert.deepEqual(generateSpaceManifest(await loadSelectedSpace(root, 'a')).cloud_computer, { access: 'read' });
+    write(`{access:'shell',services:[]}`);
+    assert.deepEqual(generateSpaceManifest(await loadSelectedSpace(root, 'a')).cloud_computer, { access: 'shell', services: [] });
+    write(`{access:'shell',services:[{id:'x',command:'a',cwd:'/vercel/sandbox/app'}]}`);
+    await loadSelectedSpace(root, 'a');
+    const service = extra => JSON.stringify({ access: 'shell', services: [{ id: 'web', command: 'npm start', ...extra }] });
+    const rejected = [
+      [`{}`, /cloudComputer is/],
+      [`{access:'root'}`, /cloudComputer is/],
+      [`{access:'shell',ports:[3000]}`, /Unsupported cloudComputer fields: ports/],
+      [`{access:'shell',services:{}}`, /services is a list/],
+      [`{access:'read',services:[{id:'web',command:'npm start'}]}`, /needs access: 'shell'/],
+      [JSON.stringify({ access: 'shell', services: ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, command: 'x' })) }), /at most 4 services/],
+      [JSON.stringify({ access: 'shell', services: [{ id: 'web', command: 'a' }, { id: 'web', command: 'b' }] }), /declared twice/],
+      [service({ id: 'Web' }), /service id/],
+      [service({ id: '9web' }), /service id/],
+      [service({ id: 'a'.repeat(41) }), /service id/],
+      [service({ command: '' }), /command of 1 to 4096/],
+      [service({ command: 'x'.repeat(4097) }), /command of 1 to 4096/],
+      [service({ command: 'a\u0000b' }), /command of 1 to 4096/],
+      [service({ port: 3000 }), /Unsupported cloudComputer service fields: port/],
+      [service({ cwd: '/etc' }), /inside \/vercel\/sandbox/],
+      [service({ cwd: '../up' }), /inside \/vercel\/sandbox/],
+      [service({ cwd: { space: '/abs' } }), /relative to the Space folder/],
+      [service({ cwd: { space: 'a/../../b' } }), /relative to the Space folder/],
+      [service({ cwd: { space: 'x'.repeat(1025) } }), /relative to the Space folder/],
+      [service({ cwd: { space: 'a', other: 1 } }), /relative to the Space folder/],
+      [service({ ready: 'health' }), /ready is a path/],
+      [service({ ready: '/' + 'x'.repeat(512) }), /ready is a path/],
+    ];
+    for (const [value, message] of rejected) {
+      write(value);
+      await assert.rejects(loadSelectedSpace(root, 'a'), message, value);
+    }
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'A',cloudComputer:{access:'read'}};`);
+    await assert.rejects(loadSelectedSpace(root, 'a'), /container/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('V4 view manifest: specVersion 2 declares path, described params, shows, memory, chrome and a Markdown module', async () => {
   const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
   const root = fixture();

@@ -2211,6 +2211,30 @@ test('crumb: the open item adds its leaf to the top bar title in every open mode
   assert.equal(last(), null, 'a null crumbLabel adds no leaf');
 });
 
+test('crumb: crumbRecordKey names the open collection record on its leaf; without it the leaf is only a label', async () => {
+  const leaves: Array<{ label: string; recordKey?: string } | null> = [];
+  const runtime = runtimeWith({ setTopBarTitleLeaf: (leaf: { label: string; recordKey?: string } | null) => { leaves.push(leaf); } });
+  const last = () => leaves[leaves.length - 1] ?? null;
+  await mount(<NotisProvider runtime={runtime}>{list({ crumbRecordKey: (t) => `rec-${t.id}` })}</NotisProvider>);
+  await click(q('[data-nui-item="b"]')!);
+  assert.equal(last()?.label, 'Ticket B');
+  assert.equal(last()?.recordKey, 'rec-b', 'the host keeps one title on that record\'s page and offers its rename');
+  await mount(<NotisProvider runtime={runtime}>{list({})}</NotisProvider>);
+  await click(q('[data-nui-item="c"]')!);
+  assert.equal(last()?.label, 'Ticket C');
+  assert.equal(last()?.recordKey, undefined);
+});
+
+test('reader layout: a reading column by default; fill lays a tool edge to edge', async () => {
+  await mount(list({}));
+  await click(q('[data-nui-item="b"]')!);
+  assert.equal(q('.nui-lr-reader-inner')!.hasAttribute('data-fill'), false);
+  await mount(list({ readerLayout: 'fill' }));
+  await click(q('[data-nui-item="b"]')!);
+  assert.equal(q('.nui-lr-reader-inner')!.hasAttribute('data-fill'), true);
+  assert.equal(q('.nui-lr-reader-body')!.hasAttribute('data-fill'), true);
+});
+
 test('read ahead: the record under the cursor at once, its J/K neighbours, a hovered row; never a disabled row', async () => {
   const asks: Array<[string, string, string | null | undefined]> = [];
   const runtime = runtimeWith({ ui: { prefetchRecord: (key: string, hint?: { intent: string; title?: string | null }) => {

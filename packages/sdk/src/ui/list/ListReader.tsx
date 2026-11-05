@@ -284,6 +284,18 @@ export interface ListReaderProps<T> {
    */
   crumbLabel?: (item: T) => string | null;
   /**
+   * The open item's record key when it is a record of the Space's own collection (`row => row.record_key`). On that
+   * record's own page the top bar then keeps one title instead of repeating it, and the Space's Editors can rename
+   * the record from the leaf. Leave out for items that are not collection records.
+   */
+  crumbRecordKey?: (item: T) => string | null | undefined;
+  /**
+   * How the reader lays out its content. 'read' (default): a centred reading column with page padding, for
+   * documents and records. 'fill': the content fills the reader edge to edge at its full height and scrolls on its
+   * own, for a tool (an editor, a framed Cloud Computer service, a canvas, a player).
+   */
+  readerLayout?: 'read' | 'fill';
+  /**
    * Side mode beside the list: open the first item once the list loads (no history step), and with nothing open
    * show "Pick something from the list to read it." in the reader. Default false.
    */
@@ -738,7 +750,7 @@ export function ListReader<T>(props: ListReaderProps<T>) {
 function ListReaderInner<T>({
   getId = defaultGetId, row, reader, actions = [], handlers, openAs, density = 'comfortable', layout = 'list',
   columns, groupBy, selectable, dragSelect = true, wrap = true, empty, title, tabs, toolbarActions, create, viewMenu, infoLine, search, footer,
-  readerLabel, readerActions, crumbLabel = defaultCrumbLabel, autoOpen: autoOpenProp = false, renderTile, tileVariant, look = 'plain',
+  readerLabel, readerActions, crumbLabel = defaultCrumbLabel, crumbRecordKey, readerLayout = 'read', autoOpen: autoOpenProp = false, renderTile, tileVariant, look = 'plain',
   openParam = 'open', onOpen, itemHref, open: controlledOpen, onOpenChange, listId = 'list', label, className, openInUrl = true,
   selected: controlledSelected, onSelectedChange, afterAction = 'clear', draggable, onDragStart, loading = false,
   hasMore = false, onLoadMore, loadingMore = false, isPending, isDisabled, collapsible = false,
@@ -1001,7 +1013,8 @@ function ListReaderInner<T>({
   const close = useCallback(() => open(null), [open]);
 
   // The open item's leaf in the top bar title, in every open mode.
-  useTopBarTitleLeaf(openItem !== null ? crumbLabel(openItem) : null, close);
+  useTopBarTitleLeaf(openItem !== null ? crumbLabel(openItem) : null, close,
+    { recordKey: openItem !== null ? crumbRecordKey?.(openItem) ?? null : null });
 
   // ---- focus follows the cursor when an action moves it on (E, a removed row) ----
   // Noted before the move: focus in the list (or dropped to the page) goes to the new cursor row; focus in the
@@ -1910,7 +1923,7 @@ function ListReaderInner<T>({
         label={readerLabel?.(openItem)} actions={barActions.slice(0, READER_ACTIONS_MAX)} keysYield={selectionKeys}
         keysHidden={anySelected && !listCovered}
         more={itemMenu(openItem, 'reader', barActions.slice(READER_ACTIONS_MAX), !isBlocked(openId!))}
-        center={centerOpen} full={fullOpen}>
+        center={centerOpen} full={fullOpen} fill={readerLayout === 'fill'}>
         {reader(openItem, ctx)}
       </ReaderPane>
     );
@@ -2165,13 +2178,15 @@ interface ReaderPaneProps {
   keysHidden?: boolean;
   center: boolean;
   full: boolean;
+  /** `readerLayout` 'fill': the content fills the body, no reading column. */
+  fill?: boolean;
   children?: ReactNode;
 }
 
 const NO_READER_ACTIONS: readonly ReaderAction[] = Object.freeze([]);
 
 function ReaderPane({ paneRef, ctx, allowed, itemId, sectionSeq, label, actions = NO_READER_ACTIONS, more, keysYield,
-  keysHidden = false, center, full, children }: ReaderPaneProps) {
+  keysHidden = false, center, full, fill = false, children }: ReaderPaneProps) {
   const t = useT();
   const panels = usePanels();
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -2308,8 +2323,8 @@ function ReaderPane({ paneRef, ctx, allowed, itemId, sectionSeq, label, actions 
         )}
         {slide && closeButton}
       </div>
-      <div ref={bodyRef} className="nui-lr-reader-body">
-        <div className="nui-lr-reader-inner">{children}</div>
+      <div ref={bodyRef} className="nui-lr-reader-body" data-fill={fill || undefined}>
+        <div className="nui-lr-reader-inner" data-fill={fill || undefined}>{children}</div>
       </div>
     </div>
   );

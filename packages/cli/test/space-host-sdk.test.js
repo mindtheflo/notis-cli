@@ -212,7 +212,7 @@ test('the built CLI carries the Space SDK package: host types, a Node-only test 
   // Every package the runtime imports resolves from the Space's own install.
   const declared = new Set(Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies }));
   for (const file of readdirSync(join(spaceSdkDir, 'dist'))) {
-    for (const [, specifier] of readFileSync(join(spaceSdkDir, 'dist', file), 'utf8').matchAll(/\b(?:from|import)\s*\(?\s*"([^".][^"]*)"/g)) {
+    for (const [, specifier] of readFileSync(join(spaceSdkDir, 'dist', file), 'utf8').matchAll(/(?<![\w$."'])(?:from|import)\s*\(?\s*"([^".][^"]*)"/g)) {
       const name = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
       assert.ok(declared.has(name), `${file} imports ${specifier}`);
     }

@@ -114,8 +114,8 @@ function describeViewerReads(capabilities) {
 /** Reviewable: a page that uses the cloud computer runs on each viewer's own one, after that viewer allows it. */
 function describeCloudComputer(capabilities) {
   const level = capabilities?.cloudComputer;
-  if (level === 'shell') return " Cloud computer: this page runs commands and writes files on each signed-in viewer's own cloud computer, once that viewer allows it (never on a Site).";
-  if (level === 'read') return " Cloud computer: this page reads whether each signed-in viewer's own cloud computer is running and signed in to GitHub, once that viewer allows it.";
+  if (level === 'shell') return " Cloud Computer: this page runs commands and writes files on each signed-in viewer's own Cloud Computer, once that viewer allows it (never on a Site).";
+  if (level === 'read') return " Cloud Computer: this page reads whether each signed-in viewer's own Cloud Computer is running and signed in to GitHub, once that viewer allows it.";
   return '';
 }
 
@@ -534,6 +534,44 @@ export const spacesCommandSpecs = [
       if (typeof expected !== 'string' || !/^\d+$/.test(expected) || !Number.isSafeInteger(Number(expected))) throw usageError('Pass the link\'s current --revision from spaces links list.');
       return remote(ctx, 'space-link-remove', { body: { space_id: ctx.args.spaceId, binding_id: ctx.args.bindingId,
         binding_revision: Number(expected), request_id: requestId(ctx) } });
+    },
+  },
+  {
+    command_path: ['spaces', 'folder'],
+    summary: 'Show the folder a Space works in on your Cloud Computer or this computer, or map it to a folder of your own.',
+    when_to_use: 'Find where a Space keeps its files and builds, or point it at an existing project folder. Each person maps their own folder; clearing a mapping goes back to the Space\'s own folder, which is never deleted by it.',
+    args_schema: { arguments: [idArgument], options: [
+      { flags: '--map <path>', description: 'Use this folder instead: inside /vercel/sandbox on the Cloud Computer, absolute or ~/ on this computer.' },
+      { flags: '--unmap', description: 'Go back to the Space\'s own folder.' },
+      { flags: '--target <where>', description: 'cloud (default) for the Cloud Computer, desktop for this computer through Notis Desktop.' },
+    ] },
+    examples: ['notis spaces folder <space-id>', 'notis spaces folder <space-id> --map /vercel/sandbox/my-app',
+      'notis spaces folder <space-id> --target desktop --map ~/code/my-app', 'notis spaces folder <space-id> --unmap'],
+    output_schema: 'Returns { space_id, target, canonical_path, mapped_path, path }: path is the folder in use, mapped_path is null when unmapped.',
+    mutates: true, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/space-folder' },
+    async handler(ctx) {
+      const { map, unmap } = ctx.options;
+      if (map !== undefined && unmap) throw usageError('Use --map <path> or --unmap, not both.');
+      const target = ctx.options.target ?? 'cloud';
+      if (!['cloud', 'desktop'].includes(target)) throw usageError('--target is cloud or desktop.');
+      if (map !== undefined && (typeof map !== 'string' || !map.trim() || map.includes('\0'))) throw usageError('--map takes a folder path.');
+      if (map !== undefined && target === 'cloud' && map !== '/vercel/sandbox' && !map.startsWith('/vercel/sandbox/')) {
+        throw usageError('On the Cloud Computer, --map takes a folder inside /vercel/sandbox.');
+      }
+      if (map !== undefined && target === 'desktop' && !map.startsWith('/') && !map.startsWith('~/')) {
+        throw usageError('On this computer, --map takes an absolute folder (/...) or one in your home folder (~/...).');
+      }
+      const action = map !== undefined ? 'set' : unmap ? 'clear' : 'get';
+      const body = { space_id: ctx.args.spaceId, action, target, ...(action === 'set' ? { path: map } : {}) };
+      const result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_spaces/space-folder', body, spacesProtocol: true });
+      const folder = result.payload || {};
+      const where = folder.target === 'desktop' ? 'this computer' : 'the Cloud Computer';
+      const summary = folder.mapped_path
+        ? `On ${where} this Space works in ${folder.path} (mapped; its own folder is ${folder.canonical_path}).`
+        : `On ${where} this Space works in its own folder ${folder.path} (not mapped).`;
+      return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data: folder, humanSummary: summary,
+        requestId: result.requestId, meta: { mutating: action !== 'get' } });
     },
   },
   {

@@ -30,6 +30,8 @@ export function generateSpaceManifest(selection) {
     ...(definition.viewerReads?.length ? { viewer_reads: [...definition.viewerReads].sort() } : {}),
     // Absent when undeclared, for the same reason.
     ...(definition.cloudComputer ? { cloud_computer: definition.cloudComputer } : {}),
+    // Agents its database changes wake; absent when undeclared.
+    ...(definition.agents?.length ? { agents: definition.agents } : {}),
     // Absent when nothing is editor-only (SPC-073: unmarked means public).
     ...(editorsOnly ? { editors_only: editorsOnly } : {}),
     readable_context: definition.readableContext || '', collection: definition.collection || null,

@@ -308,6 +308,9 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-reader-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .nui-lr-reader-inner { max-width: 44rem; margin: 0 auto; padding: 32px 32px max(56px, calc(var(--nui-fab-safe-bottom) + 16px)); box-sizing: border-box; }
 @container nui-lr-reader (max-width: 360px) { .nui-lr-reader-inner { padding: 20px 16px max(40px, calc(var(--nui-fab-safe-bottom) + 16px)); } }
+/* readerLayout 'fill': a tool fills the reader edge to edge at its full height and scrolls on its own. */
+.nui-lr-reader-body[data-fill] { display: flex; flex-direction: column; overflow: hidden; }
+.nui-lr-reader-inner[data-fill], .nui-lr-reader-body[data-fill] > .nui-lr-reader-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; max-width: none; margin: 0; padding: 0; }
 /* Reader properties (RD5) and section heads (RD6). A field list (`.nui-fields-list`) keeps its own rows. */
 .nui-lr-reader-inner dl:not(.nui-fields-list) { display: grid; grid-template-columns: 8rem minmax(0, 1fr); margin: 24px 0 0; }
 .nui-lr-reader-inner dl:not(.nui-fields-list) > :is(dt, dd) { display: flex; align-items: center; min-height: 36px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
@@ -494,6 +497,19 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-notice[data-tone="danger"] { background: hsl(var(--destructive) / .08); color: hsl(var(--destructive)); }
 .nui-notice[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .1); }
 .nui-notice-text { flex: 1; min-width: 0; padding-block: 3px; }
+
+/* CloudComputerWaking: a quiet centred column while a Cloud Computer service starts, fails or is not offered. */
+.nui-ccw { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 160px; padding: 40px 24px; text-align: center; }
+.nui-ccw-spinner { width: 18px; height: 18px; margin-bottom: 8px; border-radius: 9999px; border: 2px solid hsl(var(--muted-foreground) / .35); border-top-color: transparent; animation: nui-spin .8s linear infinite; }
+.nui-ccw-title { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; text-wrap: balance; }
+.nui-ccw-body { margin: 0; max-width: 24rem; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); text-wrap: pretty; overflow-wrap: anywhere; }
+.nui-ccw-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; margin-top: 12px; }
+.nui-ccf { position: relative; width: 100%; height: 100%; min-height: 0; }
+.nui-ccf-frame { display: block; width: 100%; height: 100%; border: 0; background: hsl(var(--background)); }
+.nui-ccf-frame[data-state="opening"] { visibility: hidden; }
+.nui-ccf-cover { position: absolute; inset: 0; }
+.nui-ccw-price { margin: 0; max-width: 16rem; padding: 8px 10px; font-size: 13px; line-height: 18px; }
+@media (prefers-reduced-motion: reduce) { .nui-ccw-spinner { animation-duration: 2.4s; } }
 .nui-metric { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .nui-metric-label { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
 .nui-metric-value { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -1176,6 +1192,13 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 .nui-comment-who { display: flex; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 0 6px; min-width: 0; }
 .nui-comment-author { font-weight: 600; }
 .nui-comment-meta { color: hsl(var(--muted-foreground)); font-size: 12px; }
+.nui-comment-agent { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 4px; border: 0;
+  border-radius: 6px; background: none; color: hsl(var(--muted-foreground)); font: inherit; font-size: 12px; }
+.nui-comment-agent .nui-icon { width: 12px; height: 12px; flex: none; }
+.nui-comment-agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.nui-comment-agent { cursor: pointer; }
+button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
 .nui-comment-new { align-self: center; width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-comment-actions { display: flex; gap: 2px; margin-inline-start: auto; opacity: 0; transition: opacity .12s; }
 .nui-comment-card:hover .nui-comment-actions, .nui-comment-card:focus-within .nui-comment-actions,

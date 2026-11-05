@@ -69,6 +69,8 @@ export const COMMENT_WORDS = Object.freeze({
   fileTooMany: w('Attach up to {n} files to one comment.', 'Joins jusqu’à {n} fichiers à un commentaire.'),
   filesUnavailable: w('These comments take text only.', 'Ces commentaires acceptent seulement du texte.'),
   newActivity: w('New since last turn', 'Nouveau depuis le dernier tour'),
+  fromAgent: w('From {name}', 'De {name}'),
+  openAgentThread: w('Open the conversation of {name}', 'Ouvrir la conversation de {name}'),
   pin: w('{who}: {body}', `{who}${NNBSP}: {body}`),
   zone: w('{who}, on a zone: {body}', `{who}, sur une zone${NNBSP}: {body}`),
   // Comments on a passage of the text (`usePassageComments`).

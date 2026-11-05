@@ -46,6 +46,27 @@ export interface CommentAvatarProps {
   className?: string;
 }
 
+/**
+ * The signature of a comment an agent wrote, like a message one thread sends another: "From {name}", a link to the
+ * agent's thread for the person whose agent it is.
+ */
+export function CommentAgentSource({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
+  const agent = comment.agent;
+  if (!agent) return null;
+  const label = controller.say('fromAgent', { name: agent.name });
+  const content = <><Icon name="arrows-left-right" /><span className="nui-comment-agent-name">{label}</span></>;
+  const open = controller.openThread;
+  if (!agent.threadId || !open) return <span className="nui-comment-agent">{content}</span>;
+  const threadId = agent.threadId;
+  return (
+    <button type="button" className="nui-comment-agent" data-agent-thread={threadId}
+      aria-label={controller.say('openAgentThread', { name: agent.name })}
+      onClick={event => { event.stopPropagation(); open(threadId); }}>
+      {content}
+    </button>
+  );
+}
+
 /** The author's initial. Decorative: the author's name is always written next to it. */
 export function CommentAvatar({ author, me, className }: CommentAvatarProps) {
   return (
@@ -247,6 +268,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
           <span className="nui-comment-author">{root.author}</span>
           <span className="nui-comment-meta">{meta}</span>
           {newDot(root)}
+          <CommentAgentSource controller={controller} comment={root} />
         </div>
         <div className="nui-comment-actions" onClick={stop} onKeyDown={stop}>
           {resolved
@@ -312,6 +334,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
                   <span className="nui-comment-author">{reply.author}</span>
                   <span className="nui-comment-meta">{commentRelativeTime(reply.createdAt, locale, now)}</span>
                   {newDot(reply)}
+                  <CommentAgentSource controller={controller} comment={reply} />
                 </div>
                 <CommentBody body={reply.body} />
                 <CommentAttachments controller={controller} comment={reply} />
@@ -557,6 +580,13 @@ export function CommentPane({ controller, title, showCopy = true, className }: C
           {controller.commenting ? (
             <p className="nui-comment-hint">{controller.say(controller.zones ? 'zoneHint' : 'pinHint')}</p>
           ) : null}
+        </div>
+      ) : !anchors.length && controller.scope ? (
+        // Comments on the whole record (no anchors, nothing to pin on): the pane itself starts one.
+        <div className="nui-comment-start">
+          <Button variant="secondary" icon="chat-circle-text" onClick={() => controller.placePin(null, null, null)}>
+            {controller.say('newComment')}
+          </Button>
         </div>
       ) : null}
 

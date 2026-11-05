@@ -194,6 +194,23 @@ Options:
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces links remove <space-id> <binding-id> --revision 1 --request-id remove-link-1`
 
+### `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id>`
+
+Show the folder a Space works in on your Cloud Computer or this computer, or map it to a folder of your own.
+
+When to use: Find where a Space keeps its files and builds, or point it at an existing project folder. Each person maps their own folder; clearing a mapping goes back to the Space's own folder, which is never deleted by it.
+
+Options:
+- `--map <path>` — Use this folder instead: inside /vercel/sandbox on the Cloud Computer, absolute or ~/ on this computer.
+- `--unmap` — Go back to the Space's own folder.
+- `--target <where>` — cloud (default) for the Cloud Computer, desktop for this computer through Notis Desktop.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id>`
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id> --map /vercel/sandbox/my-app`
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id> --target desktop --map ~/code/my-app`
+- `npx --package @notis_ai/cli@latest -- notis spaces folder <space-id> --unmap`
+
 ### `npx --package @notis_ai/cli@latest -- notis spaces aliases list`
 
 List the old App page links you manage and the Space each one opens.

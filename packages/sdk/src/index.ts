@@ -27,10 +27,18 @@ export type { SpaceViewParam, SpaceViewParamType, SpaceViewFilter, SpaceShows, S
   SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
 export { SPACE_VIEWER_READ_OPERATIONS } from './space';
 export { SPACE_CLOUD_COMPUTER_OPERATIONS, spaceCloudComputerAllows } from './space';
+export { spaceCloudComputerAccess } from './space';
 export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudComputerStatus, SpaceCloudComputerRelease, SpaceCloudComputerRunInput,
-  SpaceCloudComputerRunResult, SpaceCloudComputerUploadInput, SpaceCloudComputerUploadResult, SpaceCloudComputerTransport } from './space';
+  SpaceCloudComputerRunResult, SpaceCloudComputerUploadInput, SpaceCloudComputerUploadResult, SpaceCloudComputerTransport,
+  SpaceCloudComputerDeclaration, SpaceCloudComputerService, SpaceCloudComputerJobOperation, SpaceCloudComputerJobInput,
+  SpaceCloudComputerJobStatus, SpaceCloudComputerJobLogs, SpaceCloudComputerJobResult, SpaceCloudComputerLeaseInput,
+  SpaceCloudComputerLeaseResult, SpaceCloudComputerFolder, JobState, SpaceCloudComputerAccessInput, SpaceCloudComputerAccessResult,
+  SpaceCloudComputerMediaLink, SpaceCloudComputerFrameCode, SpaceCloudComputerTransferOperation, SpaceCloudComputerFileUpload,
+  SpaceCloudComputerUploadProgress, SpaceCloudComputerFileUploadResult, SpaceCloudComputerImportInput,
+  SpaceCloudComputerImportResult } from './space';
 export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadInput, SpaceViewerReadResult, SpaceViewerLink,
   SpaceViewerDatabase, SpaceViewerDatabaseSchema, SpaceViewerSkill, SpaceViewerSkillPage } from './space';
+export type { SpaceAgentDeclaration, SpaceItemThread, SpaceAgentQueue, SpaceAgentsStatus, SpaceThreadsTransport } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
 export { spaceAudience, spaceMarksEditorsOnly, publicSpaceDescriptor, withoutEditorColumns } from './space';
 export type { SpaceAudience, SpaceEditorsOnly, SpaceResourceColumns, EditorOnlyColumns, AudienceRow } from './space';
@@ -65,8 +73,17 @@ export { useHandover } from './hooks/useHandover';
 export type { UseHandoverResult } from './hooks/useHandover';
 export { useCloudComputer } from './hooks/useCloudComputer';
 export type { UseCloudComputerResult } from './hooks/useCloudComputer';
+export { useItemThread } from './hooks/useItemThread';
+export type { UseItemThreadResult } from './hooks/useItemThread';
+export { useAgentQueue, AGENT_QUEUE_WORDS } from './hooks/useAgentQueue';
+export type { UseAgentQueueResult, AgentQueueStatus } from './hooks/useAgentQueue';
 export { useCloudComputerShell } from './hooks/useCloudComputerShell';
 export type { UseCloudComputerShellResult } from './hooks/useCloudComputerShell';
+export { useCloudComputerService, SERVICE_PULSE_MS } from './hooks/useCloudComputerService';
+export type { CloudComputerServiceStatus, UseCloudComputerServiceOptions, UseCloudComputerServiceResult } from './hooks/useCloudComputerService';
+export { useCloudComputerJob } from './hooks/useCloudComputerJob';
+export type { UseCloudComputerJobOptions, UseCloudComputerJobResult } from './hooks/useCloudComputerJob';
+export { CLOUD_COMPUTER_WORDS, cloudComputerPriceWords, formatHourlyPrice } from './cloudComputerWords';
 export { useNotisNavigation } from './hooks/useNotisNavigation';
 export { useTopBarSearch } from './hooks/useTopBarSearch';
 export { useTopBarTitleLeaf } from './hooks/useTopBarTitleLeaf';

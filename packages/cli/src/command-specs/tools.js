@@ -223,13 +223,32 @@ export function classifyToolMutation(toolName, args = {}) {
   return null;
 }
 
-const LONG_RUNNING_TOOL_TIMEOUT_MS = 600000;
+export const LONG_RUNNING_TOOL_TIMEOUT_MS = 600000;
 const LONG_RUNNING_TOOL_NAMES = new Set([
   'LOCAL_NOTIS_GENERATE_IMAGE_OPENAI',
   'LOCAL_NOTIS_EDIT_IMAGE_OPENAI',
   'LOCAL_NOTIS_GENERATE_IMAGE_GEMINI',
   'LOCAL_NOTIS_EDIT_IMAGE_GEMINI',
+  // Waking the Cloud Computer and installing dependencies takes minutes.
+  'LOCAL_NOTIS_RUN_SANDBOX_SHELL',
 ]);
+// A shell call answers once its command ends, so the call itself needs the
+// command's own timeout plus room for the round trip.
+const SHELL_TOOL_NAMES = new Set(['LOCAL_NOTIS_RUN_SANDBOX_SHELL', 'LOCAL_NOTIS_RUN_DESKTOP_SHELL']);
+export const SHELL_CALL_MARGIN_MS = 30000;
+
+/** The CLI time limit a call needs: raised for long tools and long shell commands, never lowered. */
+export function toolCallTimeoutMs(toolName, args, currentMs) {
+  const name = localNotisToolSlug(toolName);
+  let timeout = currentMs || 0;
+  if (LONG_RUNNING_TOOL_NAMES.has(name)) timeout = Math.max(timeout, LONG_RUNNING_TOOL_TIMEOUT_MS);
+  // A detached job or a job action answers at once: its timeout_ms bounds the job, not this call.
+  const waits = args && typeof args === 'object' && !args.detach && !args.job_id;
+  if (SHELL_TOOL_NAMES.has(name) && waits && Number.isFinite(args.timeout_ms) && args.timeout_ms > 0) {
+    timeout = Math.max(timeout, args.timeout_ms + SHELL_CALL_MARGIN_MS);
+  }
+  return timeout;
+}
 
 const EXTENSION_CONTENT_TYPES = new Map([
   ['.pdf', 'application/pdf'],
@@ -314,12 +333,10 @@ export async function parseFileBindings(rawFileOptions) {
   return Promise.all(values.map((value, index) => parseFileBindingSpec(value, index)));
 }
 
-function ensureLongRunningToolTimeout(ctx, toolNames) {
-  const names = Array.isArray(toolNames) ? toolNames : [toolNames];
-  if (!names.some((name) => LONG_RUNNING_TOOL_NAMES.has(localNotisToolSlug(name)))) {
-    return;
+function ensureLongRunningToolTimeout(ctx, calls) {
+  for (const { name, args } of calls) {
+    ctx.runtime.timeoutMs = Math.max(ctx.runtime.timeoutMs || 0, toolCallTimeoutMs(name, args, ctx.runtime.timeoutMs));
   }
-  ctx.runtime.timeoutMs = Math.max(ctx.runtime.timeoutMs || 0, LONG_RUNNING_TOOL_TIMEOUT_MS);
 }
 
 async function toolsToolkitsHandler(ctx) {
@@ -413,7 +430,7 @@ async function toolsDescribeHandler(ctx) {
 async function toolsExecHandler(ctx) {
   const requestedToolName = localNotisToolSlug(ctx.args.toolName);
   let targetMutating = classifyToolMutation(requestedToolName);
-  ensureLongRunningToolTimeout(ctx, requestedToolName);
+  ensureLongRunningToolTimeout(ctx, [{ name: requestedToolName }]);
   ctx.output.emitProgress({
     phase: 'prepare',
     message: `Resolving ${requestedToolName}`,
@@ -443,6 +460,7 @@ async function toolsExecHandler(ctx) {
     ? await resolveJsonInput(rawArguments, 'arguments') || {}
     : parseMaybeJson(rawArguments, 'arguments') || {};
   targetMutating = classifyToolMutation(requestedToolName, args);
+  ensureLongRunningToolTimeout(ctx, [{ name: requestedToolName, args }]);
 
   if (ctx.options.dryRun) {
     if (fileBindings.length) {
@@ -601,7 +619,7 @@ async function toolsExecParallelHandler(ctx) {
       throw usageError(`calls[${i}] missing required "tool_name" string`);
     }
   }
-  ensureLongRunningToolTimeout(ctx, calls.map((call) => localNotisToolSlug(call.tool_name)));
+  ensureLongRunningToolTimeout(ctx, calls.map((call) => ({ name: call.tool_name, args: call.arguments })));
 
   const data = await Promise.all(
     calls.map((call) =>
