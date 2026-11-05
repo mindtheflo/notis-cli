@@ -75,7 +75,6 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node18',
-  sourcemap: true,
 });
 process.stdout.write(`Built CLI skill sync engine in ${join(distDir, 'skill-sync')}\n`);
 
