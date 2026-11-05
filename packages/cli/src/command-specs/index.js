@@ -13,10 +13,12 @@ import { documentsCommandSpecs } from './documents.js';
 import { viewsCommandSpecs } from './views.js';
 import { filesCommandSpecs } from './files.js';
 import { ccCommandSpecs } from './cc.js';
+import { computerCommandSpecs } from './computer.js';
 
 export const GROUP_SUMMARIES = {
   cc: 'Run commands and background jobs on your Cloud Computer.',
   job: 'Check, read and stop background jobs.',
+  computer: 'Open SSH to your Cloud Computer from this device.',
   files: 'Upload local files for native records with verified byte receipts.',
   views: 'Discover and render the views you can open.',
   spaces: 'Build independent Spaces and their declared capabilities.',
@@ -41,6 +43,7 @@ export const COMMAND_SPECS = [
   ...viewsCommandSpecs,
   ...filesCommandSpecs,
   ...ccCommandSpecs,
+  ...computerCommandSpecs,
   ...handoverCommandSpecs,
   ...toolsCommandSpecs,
   ...diagnosticCommandSpecs,

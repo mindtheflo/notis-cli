@@ -916,6 +916,28 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis cc job cancel <job-id>`
 
 
+Open SSH from this device to your Cloud Computer. The first `notis computer ssh` creates this device's key, registers it and adds a `notis-computer` host to `~/.ssh/config`; after that `ssh notis-computer` and tools that read your SSH config (T3, editors) connect directly. A stopped computer starts on connect, and an open connection keeps it on. Agents list and remove keys with `LOCAL_NOTIS_GET_CLOUD_COMPUTER` and `LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER`; only the CLI on a device adds its key.
+
+### `npx --package @notis_ai/cli@latest -- notis computer ssh [ssh_args...]`
+
+Open SSH to your Cloud Computer from this device.
+
+When to use: Use a terminal, an editor or T3 on your Cloud Computer. The first run sets this device up; after that `ssh notis-computer` works anywhere. A stopped computer starts; it stays on while you are connected.
+
+Options:
+- `--setup` — Create and register this device's key and write the notis-computer SSH host, then stop.
+- `--list` — List the devices that can open SSH to your Cloud Computer.
+- `--revoke <key_id>` — Remove a device's key; it can no longer connect.
+- `--proxy` — Used by ssh as the notis-computer ProxyCommand.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis computer ssh`
+- `npx --package @notis_ai/cli@latest -- notis computer ssh --setup`
+- `npx --package @notis_ai/cli@latest -- notis computer ssh -- -L 3000:localhost:3000`
+- `npx --package @notis_ai/cli@latest -- notis computer ssh --list`
+- `npx --package @notis_ai/cli@latest -- notis computer ssh --revoke <key_id>`
+
+
 ## Generic Tools
 
 ### `npx --package @notis_ai/cli@latest -- notis tools toolkits`

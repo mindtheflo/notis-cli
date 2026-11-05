@@ -56,6 +56,7 @@ function renderReadme() {
   const viewSpecs = specsFor('views');
   const agentSpecs = specsFor('agents');
   const skillSpecs = specsFor('skills');
+  const computerSpecs = specsFor('computer');
   const handoverSpecs = specsFor('handover');
   const toolSpecs = specsFor('tools');
   const ccSpecs = specsFor('cc');
@@ -173,6 +174,10 @@ ${handoverSpecs.map(renderCommandBlock).join('\n')}
 Run commands on your Cloud Computer and follow long work as background jobs. A job started with \`--detach\` keeps running when the terminal closes; read its output with \`notis cc job logs <job-id> --follow\`.
 
 ${ccSpecs.map(renderCommandBlock).join('\n')}
+
+Open SSH from this device to your Cloud Computer. The first \`notis computer ssh\` creates this device's key, registers it and adds a \`notis-computer\` host to \`~/.ssh/config\`; after that \`ssh notis-computer\` and tools that read your SSH config (T3, editors) connect directly. A stopped computer starts on connect, and an open connection keeps it on. Agents list and remove keys with \`LOCAL_NOTIS_GET_CLOUD_COMPUTER\` and \`LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER\`; only the CLI on a device adds its key.
+
+${computerSpecs.map(renderCommandBlock).join('\n')}
 
 ## Generic Tools
 
