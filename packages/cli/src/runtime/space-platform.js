@@ -32,8 +32,6 @@ export function generateSpaceManifest(selection) {
     ...(definition.cloudComputer ? { cloud_computer: definition.cloudComputer } : {}),
     // Agents its database changes wake; absent when undeclared.
     ...(definition.agents?.length ? { agents: definition.agents } : {}),
-    // Live items agents attach to threads; absent when undeclared.
-    ...(definition.threadItems && Object.keys(definition.threadItems).length ? { thread_items: definition.threadItems } : {}),
     // Absent when nothing is editor-only (SPC-073: unmarked means public).
     ...(editorsOnly ? { editors_only: editorsOnly } : {}),
     readable_context: definition.readableContext || '', collection: definition.collection || null,

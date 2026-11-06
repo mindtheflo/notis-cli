@@ -543,37 +543,3 @@ test('editorsOnly marks leave the copied items and write one sorted editors_only
     await assert.rejects(loadSelectedSpace(root, 'a'), /container/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
-
-test('threadItems declares live item kinds read through a declared action, copied into the manifest as-is', async () => {
-  const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
-  const root = fixture();
-  const action = `actions:{read_pr:{tool:'GITHUB_RUN_GRAPH_QL_QUERY',inputs:{type:'object',additionalProperties:false,required:['owner'],properties:{owner:{type:'string'}}},arguments:{query:'query($owner:String!){repository(owner:$owner,name:"x"){name}}',variables:{owner:{$input:'owner'}}}}}`;
-  const write = value => writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'A',${VIEW_DECLARATION},entry:'./view.tsx',${action},threadItems:${value}};`);
-  try {
-    const declared = { pull_request: {
-      label: { en: 'Pull request', fr: 'Pull request' },
-      inputs: { type: 'object', additionalProperties: false, required: ['owner'], properties: { owner: { type: 'string' } } },
-      read: { action: 'read_pr' }, title: '{data.repository.name}',
-      states: [
-        { id: 'merged', when: { path: 'data.repository.merged', equals: true }, icon: 'phosphor:git-merge', label: 'Merged', final: true },
-        { id: 'open', icon: 'phosphor:git-pull-request', label: 'Open', needsYou: true },
-      ],
-      actions: { merge: { label: 'Merge', tool: 'GITHUB_MERGE_A_PULL_REQUEST', arguments: { owner: '{item.owner}' }, confirm: { title: 'Merge?' }, states: ['open'] } },
-    } };
-    write(JSON.stringify(declared));
-    assert.deepEqual(generateSpaceManifest(await loadSelectedSpace(root, 'a')).thread_items, declared);
-    writeFileSync(join(root, 'spaces/a/space.config.ts'), `export default {name:'A',${VIEW_DECLARATION},entry:'./view.tsx'};`);
-    assert.equal(Object.hasOwn(generateSpaceManifest(await loadSelectedSpace(root, 'a')), 'thread_items'), false);
-    for (const [change, message] of [
-      [{ read: { action: 'missing' } }, /reads through one of this Space's actions/],
-      [{ states: [{ id: 'open', icon: 'git', label: 'Open' }] }, /Phosphor icon/],
-      [{ states: [{ id: 'open', icon: 'phosphor:x', label: 'Open', when: { path: 'data.x', exists: true } }] }, /last state/],
-      [{ actions: { run: { label: 'Run', tool: 'LOCAL_NOTIS_SHELL' } } }, /connected app tool/],
-      [{ actions: { merge: { label: 'Merge', tool: 'GITHUB_MERGE_A_PULL_REQUEST', states: ['gone'] } } }, /lists states/],
-      [{ extra: true }, /takes label/],
-    ]) {
-      write(JSON.stringify({ pull_request: { ...declared.pull_request, ...change } }));
-      await assert.rejects(loadSelectedSpace(root, 'a'), message);
-    }
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});

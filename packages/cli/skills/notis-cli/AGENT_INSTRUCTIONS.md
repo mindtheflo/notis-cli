@@ -37,7 +37,7 @@ Call these with `notis tools exec <TOOL>` (add `--get-schema` first when you nee
  },
  {
   "name": "LOCAL_NOTIS_SEARCH_THREADS",
-  "description": "Find the current user's earlier conversations across channels, including voice calls. Search by title/latest inbound user-message preview and filter by channel, source, status, failure cause or date. A failed conversation has status 'failed' and names its saved cause in failure_cause. This is not full-transcript search: broaden a missed keyword query or list recent threads, then inspect likely matches with LOCAL_NOTIS_LOAD_CONVERSATION_HISTORY using the returned thread_id. Each summary's summary_line is where the conversation stands, the bold line Notis's last reply opens with, or null. Returns up to 50 summaries."
+  "description": "Find the current user's earlier conversations across channels, including voice calls. Search by title/latest inbound user-message preview and filter by channel, source, status, failure cause or date. A failed conversation has status 'failed' and names its saved cause in failure_cause. This is not full-transcript search: broaden a missed keyword query or list recent threads, then inspect likely matches with LOCAL_NOTIS_LOAD_CONVERSATION_HISTORY using the returned thread_id. Returns up to 50 summaries."
  },
  {
   "name": "LOCAL_NOTIS_SEARCH_MEMORIES",
