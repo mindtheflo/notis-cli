@@ -64,7 +64,8 @@ historical report, modifying data, enabling sharing or deploying source.
 If sign-in is needed, discover `LOCAL_NOTIS_GET_PORTAL_URL`, inspect its schema
 and pass the ordinary resolved resource link as `page`. Its returned `portal_url`
 is a short-lived sign-in credential: capture privately, open it and select
-**Continue to Notis** if shown. Reuse only an intended-account session and verify
+**Continue to Notis** if shown, then **Continue** once "Continue as <email>?"
+names the intended account. Reuse only an intended-account session and verify
 its final destination. Never switch the returned host or copy cookies/tokens to
 another environment. After expiry, check whether sign-in already succeeded before
 minting another link. Keep credentials out of screenshots, logs and the answer.
