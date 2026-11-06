@@ -30,6 +30,11 @@ export interface CloudComputerFrameProps {
 
 /** A gate that refuses a code is asked again this many times before the frame shows that it failed. */
 const CODE_ATTEMPTS = 3;
+/**
+ * The gate's sign-in page says it is ready while it loads. A frame that loaded without saying so never will (the
+ * browser refused to frame it, or the machine answered an error page): after this long it shows that it failed.
+ */
+export const FRAME_GREETING_MS = 8_000;
 const DEFAULT_ALLOW = 'autoplay; fullscreen; clipboard-read; clipboard-write';
 
 function originOf(url: string | null | undefined): string | null {
@@ -48,10 +53,12 @@ export function CloudComputerFrame({ service, path = '/', title, allow = DEFAULT
   const frameCode = result.frameCode;
   const codeRef = useRef(frameCode);
   codeRef.current = frameCode;
+  const greeted = useRef(false);
 
   useEffect(() => {
     if (!gate) return undefined;
     setState('opening');
+    greeted.current = false;
     let alive = true;
     let tries = 0;
     let sending = false;
@@ -74,6 +81,7 @@ export function CloudComputerFrame({ service, path = '/', title, allow = DEFAULT
       if (!alive || event.origin !== gate || event.source !== frameRef.current?.contentWindow) return;
       const type = (event.data as { type?: unknown } | null)?.type;
       if (type === 'notis-gate-ready') {
+        greeted.current = true;
         void send();
       } else if (type === 'notis-gate-failed') {
         if (tries >= CODE_ATTEMPTS) setState('failed');
@@ -86,9 +94,20 @@ export function CloudComputerFrame({ service, path = '/', title, allow = DEFAULT
 
   // The first load is the gate's sign-in page; once the code is accepted it leaves for the service: that load is open.
   const loads = useRef(0);
-  useEffect(() => { loads.current = 0; }, [gate, path, attempt]);
+  const silence = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    loads.current = 0;
+    return () => { if (silence.current) clearTimeout(silence.current); silence.current = null; };
+  }, [gate, path, attempt]);
   const countLoad = useCallback(() => {
     loads.current += 1;
+    if (loads.current === 1 && !greeted.current) {
+      if (silence.current) clearTimeout(silence.current);
+      silence.current = setTimeout(() => {
+        silence.current = null;
+        if (!greeted.current) setState((current) => (current === 'opening' ? 'failed' : current));
+      }, FRAME_GREETING_MS);
+    }
     if (loads.current >= 2) setState((current) => (current === 'failed' ? current : 'open'));
   }, []);
 

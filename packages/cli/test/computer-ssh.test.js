@@ -216,6 +216,22 @@ test('--proxy keeps backend refusals off the SSH stream', async () => {
   }
 });
 
+test('--proxy shows the busy message when boat is slow, not a raw error', async () => {
+  const { home, paths } = devicePaths();
+  mkdirSync(paths.dir, { recursive: true });
+  writeFileSync(paths.publicKey, 'ssh-ed25519 AAAAdevice me@here\n');
+  const api = await fakeApi(() => [503, { status: 'error', code: 'cloud_computer_busy', error: 'cloud_computer_busy',
+    message: 'Your Cloud Computer is busy. Connect again in a few seconds.', retry_after_seconds: 5 }]);
+  try {
+    const result = await cli(home, api.base, ['computer', 'ssh', '--proxy']);
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, 'notis computer ssh: Your Cloud Computer is busy. Connect again in a few seconds.\n');
+  } finally {
+    await new Promise((resolve) => api.server.close(resolve));
+  }
+});
+
 test('--list and --revoke call the account operations', async () => {
   const { home } = devicePaths();
   const api = await fakeApi((body) => (body.operation === 'list'

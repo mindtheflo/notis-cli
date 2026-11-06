@@ -10,7 +10,7 @@ import { guardSpaceRuntime, spaceCloudComputerAccess, spaceCloudComputerAllows, 
   type SpaceCloudComputerJobOperation, type SpaceCloudComputerLeaseInput, type SpaceCloudComputerLeaseResult,
   type SpaceCloudComputerTransport, type SpaceRuntimeDescriptor, type SpaceCloudComputerAccessInput } from '../space';
 import { CloudComputerWaking } from '../ui/cloud/CloudComputerWaking';
-import { CloudComputerFrame } from '../ui/cloud/CloudComputerFrame';
+import { CloudComputerFrame, FRAME_GREETING_MS } from '../ui/cloud/CloudComputerFrame';
 import { cloudComputerPriceWords, formatHourlyPrice } from '../cloudComputerWords';
 import { SERVICE_PULSE_MS, useCloudComputerService, type UseCloudComputerServiceResult } from './useCloudComputerService';
 import { useCloudComputerJob, type UseCloudComputerJobResult } from './useCloudComputerJob';
@@ -581,6 +581,34 @@ test('CloudComputerFrame signs its frame in with a one-time code posted only to 
   assert.equal(calls.length, 3);
   assert.match(document.body.textContent || '', /Ce service n’a pas pu s’ouvrir ici/);
   assert.ok([...document.querySelectorAll('button')].some((button) => button.textContent === 'Réessayer'));
+  await act(async () => { root.unmount(); await flush(); });
+});
+
+test('CloudComputerFrame that loads without the gate saying ready shows it failed instead of opening forever', async (t) => {
+  // A browser that refuses to frame the gate (its frame-ancestors) still fires load, on its own error page.
+  const calls: SpaceCloudComputerAccessInput[] = [];
+  const root = await mount(t, runtimeWith(accessTransport(calls)), () => <CloudComputerFrame service="preview" />);
+  const frame = document.querySelector('iframe')!;
+  await act(async () => { frame.dispatchEvent(new window.Event('load')); await flush(); });
+  await tick(t, FRAME_GREETING_MS - 1);
+  assert.match(document.body.textContent || '', /Opening it/);
+  await tick(t, 1);
+  assert.match(document.body.textContent || '', /This service could not open here/);
+  assert.equal(calls.length, 0);
+  // Try again opens a new frame, which the gate greets this time: it stays open past the bound.
+  const again = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Try again')!;
+  await act(async () => { again.click(); await flush(); });
+  const next = document.querySelector('iframe')!;
+  assert.notEqual(next, frame);
+  await act(async () => { next.dispatchEvent(new window.Event('load')); await flush(); });
+  await act(async () => {
+    window.dispatchEvent(new window.MessageEvent('message', { data: { type: 'notis-gate-ready' }, origin: 'https://gate.example',
+      source: next.contentWindow as Window }));
+    await flush();
+  });
+  await tick(t, FRAME_GREETING_MS * 2);
+  assert.doesNotMatch(document.body.textContent || '', /could not open/);
+  assert.equal(calls.length, 1);
   await act(async () => { root.unmount(); await flush(); });
 });
 
