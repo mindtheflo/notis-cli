@@ -11,7 +11,7 @@ import type { AgentContextContent, AgentContextItem, AgentContextSource } from '
 import type { ComponentType, ReactNode } from 'react';
 import type { NotisQueryClient } from './queryCache';
 import type { NotisSpaceSkeleton } from './skeleton';
-import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport, SpaceThreadsTransport } from './space';
+import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport, SpaceThreadsTransport, SpaceThreadItemTransport } from './space';
 
 // ---------------------------------------------------------------------------
 // Database types
@@ -613,6 +613,8 @@ export interface NotisRuntime {
    * older hosts.
    */
   spaceThreads?: SpaceThreadsTransport;
+  /** The thread item a page draws in a thread's panel, and its actions. Signed-in Portal viewers only. */
+  spaceThreadItem?: SpaceThreadItemTransport;
   /** Authenticated runtime identity; app below is presentation metadata only. */
   resource?: RuntimeResource;
   /** Optional host-scoped in-memory read cache. Older hosts remain supported. */
