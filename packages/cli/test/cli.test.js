@@ -2518,6 +2518,9 @@ test(`start --space gives ${onboarded ? 'a set-up account only the Space steps' 
       assert.ok(brief.includes(step), step);
     }
     assert.ok(brief.indexOf('store check') < brief.indexOf('store install'));
+    // A bare `notis` is not on PATH when the CLI runs through npx: the steps name the full command, and the copy's link.
+    assert.ok(brief.includes(`-- notis spaces store check ${SPACE_LISTING}`), 'the steps run the CLI through npx');
+    assert.ok(brief.includes('portal_url'));
     if (onboarded) {
       assert.equal(payload.data.brief_source, 'space');
       assert.equal(briefRequests, 0);

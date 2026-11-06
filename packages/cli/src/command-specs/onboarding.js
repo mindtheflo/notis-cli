@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CliError, EXIT_CODES } from '../runtime/errors.js';
-import { getAuthRecovery } from '../runtime/auth-recovery.js';
+import { cliCommandWithProfile, getAuthRecovery } from '../runtime/auth-recovery.js';
 import {
   credentialIsExpired,
   getProfile,
@@ -103,14 +103,16 @@ function spaceListing(options) {
  * checks it, asks, installs it with the check receipt, then follows its onboarding Skill. The server
  * refuses an agent install without the receipt and the person's yes (store_check_required).
  */
-function spaceSteps(listingId) {
+function spaceSteps(listingId, runtime = {}) {
+  // The steps name the exact command to run: a bare `notis` is not on PATH when the CLI runs through npx.
+  const notis = cliCommandWithProfile(runtime);
   return [
     '## Install the Space this person came for',
     '',
-    `1. Check it: \`notis spaces store check ${listingId}\` (add \`--locale fr\` for a French speaker).`,
+    `1. Check it: \`${notis} spaces store check ${listingId}\` (add \`--locale fr\` for a French speaker).`,
     '2. Tell the person, in plain words, what it brings, each item of `risks` and the `recommendation`. If the result has a `trust_line`, say it word for word.',
     '3. Wait for an explicit yes. A question or "maybe" is not a yes.',
-    `4. Install it: \`notis spaces store install ${listingId} --request-id space-${listingId} --receipt <receipt_id> --confirmed\`. Its automations arrive paused.`,
+    `4. Install it: \`${notis} spaces store install ${listingId} --request-id space-${listingId} --receipt <receipt_id> --confirmed\`. Its automations arrive paused. Give the person the \`portal_url\` it returns to open their copy.`,
     '5. If the result has `onboarding_skill`, follow its `instructions` now. Never ask again for what you already know, and never call LOCAL_NOTIS_COMPLETE_TUTORIAL from it.',
   ].join('\n');
 }
@@ -189,7 +191,7 @@ async function authenticatedResult(ctx) {
     base.agent_setup = [];
   }
 
-  if (listingId) base.space = { listing_id: listingId, steps: spaceSteps(listingId) };
+  if (listingId) base.space = { listing_id: listingId, steps: spaceSteps(listingId, ctx.runtime) };
 
   if (onboardingComplete && listingId) {
     // Already onboarded: only the Space's check, install and onboarding-Skill steps.
@@ -204,7 +206,7 @@ async function authenticatedResult(ctx) {
         base.space.steps,
       ].join('\n'),
       hints: [
-        { command: `notis spaces store check ${listingId}`, reason: 'Check the Space before installing it' },
+        { command: `${cliCommandWithProfile(ctx.runtime)} spaces store check ${listingId}`, reason: 'Check the Space before installing it' },
         ...agentSetupHints(base.agent_setup),
       ],
     });
@@ -253,9 +255,49 @@ async function authenticatedResult(ctx) {
   });
 }
 
+// How long a confirmation waits for the person to finish in the browser: under the two minutes a code agent's shell
+// command gets by default, so the agent sees the result instead of a timeout.
+const CONFIRM_WAIT_SECONDS = 90;
+const WAIT_POLL_MS = 2000;
+
+function waitSeconds(options) {
+  if (options.wait === undefined) return 0;
+  const seconds = Number(options.wait);
+  if (!Number.isInteger(seconds) || seconds < 0 || seconds > 600) {
+    throw new CliError({
+      code: 'invalid_arguments',
+      message: 'Pass --wait <seconds> with a whole number from 0 to 600.',
+      exitCode: EXIT_CODES.usage,
+    });
+  }
+  return seconds;
+}
+
+/** The command an agent runs once the person signed in: it keeps the Space they came for and waits for them. */
+export function startConfirmCommand(command, listingId = null) {
+  return [command, ...(listingId ? [`--space ${listingId}`] : []), `--wait ${CONFIRM_WAIT_SECONDS}`].join(' ');
+}
+
+/** Whether the background listener has stored this profile's sign-in yet. */
+function storedSignIn(runtime) {
+  const profile = getProfile(loadConfig(), runtime.profileName);
+  return Boolean(profile?.oauth_access_token) && !credentialIsExpired({ credentialKind: 'oauth' }, profile);
+}
+
+/** Waits up to `seconds` for the person to finish signing in in the browser; true once they have. */
+export async function waitForSignIn(runtime, seconds, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const deadline = Date.now() + seconds * 1000;
+  while (Date.now() < deadline) {
+    if (storedSignIn(runtime)) return true;
+    await sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
+  }
+  return storedSignIn(runtime);
+}
+
 async function startHandler(ctx) {
   const { runtime, options, output } = ctx;
-  spaceListing(options);
+  const listingId = spaceListing(options);
+  const wait = waitSeconds(options);
   if (runtime.credentialKind === 'oauth') {
     try {
       await ensureFreshOAuthCredential(runtime);
@@ -274,16 +316,33 @@ async function startHandler(ctx) {
     output,
   });
   const authorizationResult = (authorization) => {
-    const presentation = loginAgentAuthorizationPresentation(authorization.agentAuthorization);
+    const agentAuthorization = { ...authorization.agentAuthorization };
+    // Confirming keeps the Space the person came for, and waits for them instead of asking them to say they are done.
+    if (agentAuthorization.hand_off === 'browser_callback' && agentAuthorization.confirm_command) {
+      agentAuthorization.confirm_command = startConfirmCommand(agentAuthorization.confirm_command, listingId);
+    }
+    const presentation = loginAgentAuthorizationPresentation(agentAuthorization);
     return output.emitSuccess({
       command: 'start',
       data: {
         authenticated: false,
         profile: runtime.profileName,
-        ...authorization.agentAuthorization,
+        ...agentAuthorization,
       },
       ...presentation,
     });
+  };
+  // An agent's confirmation with --wait: return as soon as the background listener stores the sign-in.
+  const signInOrAuthorization = async (authorization) => {
+    if (!authorization?.agentAuthorization || authorization.agentAuthorization.hand_off !== 'browser_callback' || !wait) {
+      return authorization;
+    }
+    if (!(await waitForSignIn(runtime, wait))) return authorization;
+    return followChannel(await loginWithOAuth(
+      runtime,
+      { browser: true, mode: options.mode, reusePersistedCredential: true },
+      output,
+    ));
   };
 
   // Safe to re-run: an already-authorized profile skips straight to the brief.
@@ -305,11 +364,11 @@ async function startHandler(ctx) {
   // Browser authorization is the whole signup path: it creates the account when
   // the address is new and authorizes this machine either way. There is nothing
   // for the CLI to collect up front, and nothing to wait on afterwards.
-  const authorization = await followChannel(await loginWithOAuth(
+  const authorization = await signInOrAuthorization(await followChannel(await loginWithOAuth(
     runtime,
     { browser: true, mode: options.mode, reusePersistedCredential: true },
     output,
-  ));
+  )));
   if (authorization?.agentAuthorization) {
     return authorizationResult(authorization);
   }
@@ -341,6 +400,7 @@ export const onboardingCommandSpecs = [
         { flags: '--brief-only', description: 'Print the onboarding brief for an already-signed-in profile.' },
         { flags: '--space <listing-id>', description: 'The Store Space the person came for: adds its check, install and onboarding-Skill steps (the only steps for an account already set up).' },
         { flags: '--mode <mode>', description: 'auto (default) hands the browser callback to a background listener when this command cannot wait; browser waits in-process; code shows a one-time code to copy.' },
+        { flags: '--wait <seconds>', description: 'While a browser sign-in is pending, wait up to this many seconds (0 to 600) for the person to finish before answering.' },
       ],
     },
     examples: [

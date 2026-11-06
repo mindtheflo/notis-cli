@@ -56,9 +56,11 @@ export function loginAgentAuthorizationPresentation(authorization) {
     ? authorization?.confirm_command
     : authorization?.redeem_command;
   return {
-    humanSummary: browserHandOff
-      ? 'Give the user the authorization URL. Signing in there completes it — there is no code to ask them for.'
-      : 'Give the user the authorization URL, then ask them for the code it shows.',
+    humanSummary: browserHandOff && authorization?.browser_opened
+      ? 'A Notis sign-in page opened in the user\'s browser. Tell them to sign in there (there is no code to copy), then run confirm_command. Give them the authorization URL only if they do not see the page.'
+      : browserHandOff
+        ? 'Give the user the authorization URL. Signing in there completes it — there is no code to ask them for.'
+        : 'Give the user the authorization URL, then ask them for the code it shows.',
     hints: nextCommand
       ? [{
         command: nextCommand,

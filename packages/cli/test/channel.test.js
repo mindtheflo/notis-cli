@@ -43,6 +43,17 @@ test('the running build names its own channel from the published version', () =>
   assert.equal(cliCommandForChannel('nightly'), 'npx --package @notis_ai/cli@nightly -- notis');
 });
 
+test('the installer\'s launcher replaces the npx command, but only a launcher that exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'notis launcher-'));
+  const launcher = join(dir, 'notis');
+  writeFileSync(launcher, '#!/bin/sh\n');
+  // A path with a space is quoted so the printed command still runs.
+  assert.equal(cliCommandForChannel('nightly', { NOTIS_CLI_LAUNCHER: launcher }), `'${launcher}'`);
+  assert.equal(cliCommandForChannel('stable', { NOTIS_CLI_LAUNCHER: join(dir, 'missing') }),
+    'npx --package @notis_ai/cli@latest -- notis');
+  assert.equal(cliCommandForChannel('stable', { NOTIS_CLI_LAUNCHER: 'notis' }), 'npx --package @notis_ai/cli@latest -- notis');
+});
+
 test('a profile resolves its channel from the pin, then the endpoint', () => {
   assert.equal(channelFromProfile({ release_channel: 'nightly' }), 'nightly');
   assert.equal(channelFromProfile({ release_channel: 'stable', api_base: 'https://api-beta.notis.ai' }), 'stable');

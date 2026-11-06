@@ -913,6 +913,41 @@ function openBrowser(url) {
   }
 }
 
+/**
+ * Whether a CLI an agent runs may open the sign-in page for the person at this computer, rather than asking them to
+ * click a link. Never over SSH (the page would open on a screen nobody is looking at), in CI, on Linux without a
+ * display, inside node's test runner, or when BROWSER=none or NOTIS_NO_BROWSER is set.
+ */
+export function canOpenBrowser(env = process.env, platform = process.platform) {
+  if (env.NOTIS_NO_BROWSER || env.BROWSER === 'none' || env.NODE_TEST_CONTEXT) return false;
+  if (env.CI && !['0', 'false'].includes(String(env.CI).toLowerCase())) return false;
+  if (env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY) return false;
+  if (platform === 'linux') return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
+  return platform === 'darwin' || platform === 'win32';
+}
+
+/**
+ * Opens the sign-in page for an agent's run and says whether it did: the opener's exit code, or true when it is still
+ * running after `waitMs` (some xdg-open handlers stay up with the browser). A sandbox that refuses to launch apps
+ * reads as false, so the agent hands the person the link instead.
+ */
+export function openBrowserForAgent(url, { env = process.env, platform = process.platform, spawnImpl = spawn, waitMs = 3000 } = {}) {
+  if (!canOpenBrowser(env, platform)) return Promise.resolve(false);
+  const { command, args } = browserOpenCommand(url, platform);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawnImpl(command, args, { detached: true, stdio: 'ignore' });
+    } catch {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => { child.unref?.(); resolve(true); }, waitMs);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
+}
+
 function storedOAuthMetadata(runtime, profile) {
   const issuer = String(profile.oauth_issuer || '').replace(/\/+$/, '');
   const apiBase = getOAuthApiBase(profile)
@@ -2333,6 +2368,8 @@ export async function loginWithOAuth(
           authorize_url: live.authorize_url,
           expires_in: Math.max(0, Number(live.expires_at) - Math.floor(Date.now() / 1000)),
           hand_off: 'browser_callback',
+          // The page opened on the first run; opening it again on every confirmation would stack tabs.
+          browser_opened: false,
           confirm_command: confirmCommand(
             runtime.profileName,
             authorizationChannel(metadata, runtime),
@@ -2532,6 +2569,10 @@ export async function loginWithOAuth(
         expires_at: Math.floor(Date.now() / 1000) + listenerTtlSeconds,
       });
       detachedListenerPublished = true;
+      // The person is at this computer even when an agent runs the CLI: open the page for them.
+      const browserOpened = options.browser === false
+        ? false
+        : await (options.openAgentBrowser || openBrowserForAgent)(authorizeUrl);
       return {
         agentAuthorization: {
           authorize_url: authorizeUrl,
@@ -2540,6 +2581,7 @@ export async function loginWithOAuth(
           // child is holding, and the credential is written before the user is
           // told they are connected.
           hand_off: 'browser_callback',
+          browser_opened: browserOpened,
           confirm_command: confirmCommand(
             runtime.profileName,
             authorizationChannel(metadata, runtime),

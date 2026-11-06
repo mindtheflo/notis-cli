@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { channel as diagnosticsChannel } from 'node:diagnostics_channel';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { createServer, request } from 'node:http';
 import { createConnection, createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -38,6 +38,8 @@ import {
   DEFAULT_CLI_OAUTH_SCOPES,
   browserOpenCommand,
   buildAuthorizeUrl,
+  canOpenBrowser,
+  openBrowserForAgent,
   createLoopbackReceiver,
   discoverCliOAuth,
   acquireListenerGlobalLock,
@@ -2396,6 +2398,72 @@ test('an agent login hands the browser callback to a detached listener, with no 
   );
 });
 
+test('an agent login opens the sign-in page for the person and says so', async () => {
+  const opened = [];
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-opens-')), 'config.json');
+  const result = await withConfigFileAsync(configFile, () => loginWithOAuth(
+    loginRuntime({ agentMode: true, config_file: configFile }),
+    { openAgentBrowser: async (url) => { opened.push(url); return true; } },
+    null,
+    cliMetadataFetch(),
+    async () => { throw new Error('an agent login must not hold the listener in-process'); },
+    async () => ({ pid: 4243, port: 51790, redirectUri: 'http://127.0.0.1:51790/callback' }),
+  ));
+  const authorization = result.agentAuthorization;
+  assert.deepEqual(opened, [authorization.authorize_url]);
+  assert.equal(authorization.browser_opened, true);
+  assert.match(loginAgentAuthorizationPresentation(authorization).humanSummary, /opened in the user's browser/);
+  // --no-browser keeps it a link to hand over.
+  const quiet = await withConfigFileAsync(configFile, () => loginWithOAuth(
+    loginRuntime({ agentMode: true, config_file: configFile }),
+    { browser: false, scope: ['notis:read'], openAgentBrowser: async () => { throw new Error('must not open'); } },
+    null,
+    cliMetadataFetch(),
+    async () => { throw new Error('an agent login must not hold the listener in-process'); },
+    async () => ({ pid: 4244, port: 51791, redirectUri: 'http://127.0.0.1:51791/callback' }),
+  ));
+  assert.equal(quiet.agentAuthorization.browser_opened, false);
+  assert.match(loginAgentAuthorizationPresentation(quiet.agentAuthorization).humanSummary, /^Give the user the authorization URL/);
+});
+
+test('the sign-in page opens only where the person can see it', () => {
+  assert.equal(canOpenBrowser({}, 'darwin'), true);
+  assert.equal(canOpenBrowser({}, 'win32'), true);
+  assert.equal(canOpenBrowser({}, 'linux'), false);
+  assert.equal(canOpenBrowser({ DISPLAY: ':0' }, 'linux'), true);
+  assert.equal(canOpenBrowser({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux'), true);
+  assert.equal(canOpenBrowser({ SSH_CONNECTION: '1 2 3 4' }, 'darwin'), false);
+  assert.equal(canOpenBrowser({ CI: 'true' }, 'darwin'), false);
+  assert.equal(canOpenBrowser({ CI: 'false' }, 'darwin'), true);
+  assert.equal(canOpenBrowser({ BROWSER: 'none' }, 'darwin'), false);
+  assert.equal(canOpenBrowser({ NOTIS_NO_BROWSER: '1' }, 'darwin'), false);
+  assert.equal(canOpenBrowser({ NODE_TEST_CONTEXT: 'child' }, 'darwin'), false);
+  assert.equal(canOpenBrowser({}, 'freebsd'), false);
+});
+
+test('opening the page reads the opener: a refused launch hands the person the link instead', async () => {
+  const fakeSpawn = (behave) => (command, args) => {
+    const child = new EventEmitter();
+    child.unref = () => {};
+    setImmediate(() => behave(child, command, args));
+    return child;
+  };
+  const url = 'https://app.notis.ai/oauth/authorize?x=1';
+  const seen = [];
+  assert.equal(await openBrowserForAgent(url, { env: {}, platform: 'darwin',
+    spawnImpl: fakeSpawn((child, command, args) => { seen.push([command, ...args]); child.emit('exit', 0); }) }), true);
+  assert.deepEqual(seen, [['open', url]]);
+  assert.equal(await openBrowserForAgent(url, { env: {}, platform: 'darwin',
+    spawnImpl: fakeSpawn((child) => child.emit('exit', 1)) }), false);
+  assert.equal(await openBrowserForAgent(url, { env: {}, platform: 'darwin',
+    spawnImpl: fakeSpawn((child) => child.emit('error', new Error('ENOENT'))) }), false);
+  // An opener that stays up with the browser counts as opened.
+  assert.equal(await openBrowserForAgent(url, { env: {}, platform: 'darwin', waitMs: 20,
+    spawnImpl: fakeSpawn(() => {}) }), true);
+  assert.equal(await openBrowserForAgent(url, { env: { SSH_TTY: '/dev/ttys001' }, platform: 'darwin',
+    spawnImpl: () => { throw new Error('must not spawn'); } }), false);
+});
+
 test('an agent login keeps the local callback when inherited CI flags are disabled', async () => {
   const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-disabled-ci-')), 'config.json');
   let listenerStarted = false;
@@ -2688,6 +2756,7 @@ test('re-running an agent login reuses the listener already waiting on the brows
   const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-reuse-')), 'config.json');
   const fake = spawnFakeListener();
   let spawns = 0;
+  let opened = 0;
   const spawnListener = async () => {
     spawns += 1;
     return {
@@ -2700,7 +2769,7 @@ test('re-running an agent login reuses the listener already waiting on the brows
   };
   const login = () => loginWithOAuth(
     loginRuntime({ agentMode: true, config_file: configFile }),
-    {},
+    { openAgentBrowser: async () => { opened += 1; return true; } },
     null,
     cliMetadataFetch(),
     undefined,
@@ -2716,6 +2785,10 @@ test('re-running an agent login reuses the listener already waiting on the brows
   assert.equal(spawns, 1, 'a second run must not strand another detached listener');
   assert.equal(second.agentAuthorization.authorize_url, first.agentAuthorization.authorize_url);
   assert.equal(second.agentAuthorization.hand_off, 'browser_callback');
+  // The page the first run opened is still there: a repeat run opens no second tab.
+  assert.equal(opened, 1);
+  assert.equal(first.agentAuthorization.browser_opened, true);
+  assert.equal(second.agentAuthorization.browser_opened, false);
   try { process.kill(fake.pid); } catch { /* already stopped */ }
 });
 

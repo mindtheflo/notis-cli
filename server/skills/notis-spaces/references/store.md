@@ -39,7 +39,10 @@ status, listing text, locales, sample rows and counts, screenshots, findings,
    word-for-word translation. No personal names, account details, customer or
    company data from the source.
 3. **Write sample rows** with `store_submission_update {submission_id,
-   sample_rows}` (see below), then read the screenshots. Pass
+   sample_rows}` (see below) whenever the Space has databases, even when the
+   user did not mention them: without them the screenshots and every installed
+   copy start empty, and the scan says so in an amber finding. Then read the
+   screenshots. Pass
    `retake_screenshots: true` after sample rows or listing text change what the
    views show.
 4. **Handle the findings** (see below): ask about privacy, fix the rest in the
@@ -54,7 +57,9 @@ status, listing text, locales, sample rows and counts, screenshots, findings,
 ## Sample rows
 
 - Up to 8 rows per database, keyed by database key: `{database_key:
-  [{key, properties, body}]}`. Use only properties in that database's schema; a
+  [{key, properties, body}]}`. The submission's `sample_databases` lists each
+  database's `key`, `name` and `properties` (a choice property's `options`, a
+  relation's target `database`). Use only those properties, by name; a
   relation lists the `key` of another row in the same sample set. `body` is
   optional plain text (one paragraph per line); `key` is optional short text.
 - Realistic and wholly synthetic: plausible titles, dates, amounts and states

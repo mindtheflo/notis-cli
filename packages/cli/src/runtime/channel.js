@@ -10,6 +10,9 @@
  * one command worth documenting, including for nightly accounts.
  */
 
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
+
 export const RELEASE_CHANNELS = ['stable', 'nightly'];
 // Keep equal to the dist-tags in scripts/release-channels.cjs (a test checks).
 const CHANNEL_TAGS = { stable: 'latest', nightly: 'nightly' };
@@ -57,8 +60,19 @@ export function packageTagForChannel(channel) {
   return CHANNEL_TAGS[channel] || CHANNEL_TAGS.stable;
 }
 
-export function cliCommandForChannel(channel) {
-  return `npx --package ${CLI_PACKAGE_NAME}@${packageTagForChannel(channel)} -- notis`;
+// Set by the `notis` command the installer writes (server/config/cli/install.sh) on a computer without Node.js:
+// npx is not on that shell's PATH, so every command this CLI prints has to name the installed command instead.
+export const CLI_LAUNCHER_ENV = 'NOTIS_CLI_LAUNCHER';
+
+/** The installed `notis` command this process runs through, or null. Only an absolute path that exists counts. */
+export function installedLauncher(env = process.env) {
+  const value = env[CLI_LAUNCHER_ENV];
+  if (typeof value !== 'string' || !isAbsolute(value) || !existsSync(value)) return null;
+  return /^[A-Za-z0-9_./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+export function cliCommandForChannel(channel, env = process.env) {
+  return installedLauncher(env) || `npx --package ${CLI_PACKAGE_NAME}@${packageTagForChannel(channel)} -- notis`;
 }
 
 /**

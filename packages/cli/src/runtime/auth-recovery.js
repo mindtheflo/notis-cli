@@ -14,6 +14,11 @@ export function quoteShellArgument(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
+/** The CLI as this profile runs it, ready to take a subcommand: `npx --package @notis_ai/cli@<tag> -- notis [--profile x]`. */
+export function cliCommandWithProfile(runtime = {}) {
+  return `${cliNpx(runtime)}${profileSuffix(runtime.profileName)}`;
+}
+
 function profileSuffix(profileName) {
   return profileName && profileName !== 'default'
     ? ` --profile ${quoteShellArgument(profileName)}`
