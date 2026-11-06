@@ -61,7 +61,7 @@ Call these with `notis tools exec <TOOL>` (add `--get-schema` first when you nee
  },
  {
   "name": "LOCAL_NOTIS_BEGIN_CHANNEL_CONNECTION",
-  "description": "Start a provider-verification or authorization flow for one messaging channel. To add an email address or alias, pass channel=email with identifier: Notis emails a one-time confirmation link and also returns a prepared verification email. already_connected means the address is already on this account; code email_in_use means another account owns it. Never report the channel as connected until LOCAL_NOTIS_GET_CHANNEL_CONNECTION_STATUS reads back an owned account."
+  "description": "Start a provider-verification or authorization flow for one messaging channel. To add an email address or alias, pass channel=email with identifier: Notis emails a one-time confirmation link to that address; only that link adds it, an email sent to Notis never does. already_connected means the address is already on this account; code email_in_use means another account owns it. Never report the channel as connected until LOCAL_NOTIS_GET_CHANNEL_CONNECTION_STATUS reads back an owned account."
  },
  {
   "name": "LOCAL_NOTIS_DISCONNECT_CHANNEL_CONNECTION",
