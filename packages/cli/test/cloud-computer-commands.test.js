@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ccCommandSpecs } from '../src/command-specs/cc.js';
+import { computerCommandSpecs } from '../src/command-specs/computer.js';
 import { spacesCommandSpecs } from '../src/command-specs/spaces.js';
 import { COMMAND_SPECS, GROUP_SUMMARIES } from '../src/command-specs/index.js';
 import { toolCallTimeoutMs, toolsCommandSpecs } from '../src/command-specs/tools.js';
@@ -218,4 +219,65 @@ test('spaces folder refuses unclear mappings before any request', async t => {
     await assert.rejects(ctx.spec.handler(ctx), message);
   }
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+// notis computer status | restart | recover (CC-150, CC-151) ---------------------------
+
+const GET_COMPUTER = 'LOCAL_NOTIS_GET_CLOUD_COMPUTER';
+const MANAGE_COMPUTER = 'LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER';
+const RESTART_PREVIEW = {
+  status: 'preview', action: 'restart', requires_confirmation: true, revision: 'restart:2026-11-05T16:46:00Z',
+  summary: ['Restart your Cloud Computer. It keeps its disk and everything on it; whatever was running on it stops.'],
+  confirm_arguments: { action: 'restart', confirmed: true, expected_revision: 'restart:2026-11-05T16:46:00Z',
+    idempotency_key: '0b8f7a52-5d1e-4c4b-9a43-000000000001' },
+};
+
+test('computer status says a machine is not responding, why, its last save and how to restart it', async t => {
+  const calls = mockTools(t, [{ status: 'success', cloud_computer: { status: 'not_responding',
+    status_reason: 'machine unreachable', last_saved_at: '2026-11-05T16:46:00Z' } }]);
+  const ctx = context(computerCommandSpecs, 'computer status');
+  const result = await ctx.spec.handler(ctx);
+  assert.equal(calls[0].body.tool_name, GET_COMPUTER);
+  assert.deepEqual(calls[0].body.arguments, {});
+  assert.match(result.humanSummary, /not responding\. Reason: machine unreachable\. Last saved 2026-11-05T16:46:00Z\./);
+  assert.deepEqual(result.hints.map(hint => hint.command), ['notis computer restart']);
+});
+
+test('computer restart previews and changes nothing without --yes in machine mode', async t => {
+  const calls = mockTools(t, [RESTART_PREVIEW]);
+  const ctx = context(computerCommandSpecs, 'computer restart');
+  const result = await ctx.spec.handler(ctx);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.tool_name, MANAGE_COMPUTER);
+  assert.deepEqual(calls[0].body.arguments, { action: 'restart' });
+  assert.equal(result.meta.applied, false);
+  assert.deepEqual(result.hints.map(hint => hint.command), ['notis computer restart --yes']);
+});
+
+test('computer restart --yes previews under the caller key and confirms under that key plus .confirm, so a retry replays both', async t => {
+  const applied = { status: 'success', action: 'restart', restarting: true,
+    message: 'Restarting. It answers again in 1 to 2 minutes, with everything on it kept.' };
+  // The server answers a reused key with its first answer, so the retry gets the same preview back.
+  const calls = mockTools(t, [RESTART_PREVIEW, applied, RESTART_PREVIEW, applied]);
+  const run = () => {
+    const ctx = context(computerCommandSpecs, 'computer restart', { options: { yes: true }, globalOptions: { idempotencyKey: 'restart-key' } });
+    return ctx.spec.handler(ctx);
+  };
+  const result = await run();
+  assert.equal(calls[0].body.idempotency_key, 'restart-key');
+  assert.deepEqual(calls[1].body.arguments, RESTART_PREVIEW.confirm_arguments);
+  assert.equal(calls[1].body.idempotency_key, 'restart-key.confirm');
+  assert.equal(result.meta.applied, true);
+  assert.match(result.humanSummary, /^Restarting\./);
+  await run();
+  const sent = call => ({ tool: call.body.tool_name, arguments: call.body.arguments, key: call.body.idempotency_key });
+  assert.deepEqual(calls.slice(2).map(sent), calls.slice(0, 2).map(sent));
+});
+
+test('a refused restart or recover is an error with its code, and nothing is applied', async t => {
+  const calls = mockTools(t, [{ status: 'error', code: 'nothing_to_recover',
+    message: 'Your Cloud Computer is answering, so there is nothing to bring back.' }]);
+  const ctx = context(computerCommandSpecs, 'computer recover', { options: { yes: true } });
+  await assert.rejects(ctx.spec.handler(ctx), error => error.code === 'nothing_to_recover' && /answering/.test(error.message));
+  assert.equal(calls.length, 1);
 });

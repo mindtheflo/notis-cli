@@ -18,7 +18,7 @@ import { computerCommandSpecs } from './computer.js';
 export const GROUP_SUMMARIES = {
   cc: 'Run commands and background jobs on your Cloud Computer.',
   job: 'Check, read and stop background jobs.',
-  computer: 'Open SSH to your Cloud Computer from this device.',
+  computer: 'Check, restart or open SSH to your Cloud Computer.',
   files: 'Upload local files for native records with verified byte receipts.',
   views: 'Discover and render the views you can open.',
   spaces: 'Build independent Spaces and their declared capabilities.',

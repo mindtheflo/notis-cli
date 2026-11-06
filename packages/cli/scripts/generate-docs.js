@@ -177,6 +177,8 @@ ${ccSpecs.map(renderCommandBlock).join('\n')}
 
 Open SSH from this device to your Cloud Computer. The first \`notis computer ssh\` creates this device's key, registers it and adds a \`notis-computer\` host to \`~/.ssh/config\`; after that \`ssh notis-computer\` and tools that read your SSH config (T3, editors) connect directly. A stopped computer starts on connect, and an open connection keeps it on. Agents list and remove keys with \`LOCAL_NOTIS_GET_CLOUD_COMPUTER\` and \`LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER\`; only the CLI on a device adds its key.
 
+\`notis computer status\` says when your Cloud Computer stopped answering. \`notis computer restart\` restarts it with its files kept; \`notis computer recover\`, only after a restart failed, brings it back from its last save and loses what came after. Both show what they will do and ask first.
+
 ${computerSpecs.map(renderCommandBlock).join('\n')}
 
 ## Generic Tools

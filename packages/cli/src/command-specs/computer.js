@@ -7,11 +7,20 @@
 // caller's retry connects), saves the current host key and relays the bytes.
 // With neither, the command sets up when needed, waits for the computer and
 // runs ssh.
+//
+// `notis computer status | restart | recover` (CC-150, CC-151) go through
+// LOCAL_NOTIS_GET_CLOUD_COMPUTER and LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER, so the
+// server keeps every check. Restart and recover preview first and ask.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
 import { CliError, EXIT_CODES, asCliError, usageError } from '../runtime/errors.js';
+import {
+  canPrompt, createStderrPrompter, extractToolResult, findConfirmationPreview, renderPreview, resolveConfirmation,
+} from '../runtime/tool-confirmation.js';
+import { runToolCommand } from './helpers.js';
 import { httpRequest } from '../runtime/transport.js';
 import { readComputerIdentity } from '../runtime/computer-identity.js';
 import { resolveConfigFile } from '../runtime/profiles.js';
@@ -20,6 +29,8 @@ import {
 } from '../runtime/computer-ssh.js';
 
 const PATH = '/cloud_computer_ssh';
+const GET_TOOL = 'LOCAL_NOTIS_GET_CLOUD_COMPUTER';
+const MANAGE_TOOL = 'LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER';
 const WAIT_TIMEOUT_MS = 240_000;
 const PROXY_TIMEOUT_MS = 90_000;
 
@@ -141,7 +152,112 @@ function keyLine(key) {
   return `${key.key_id}  ${key.device_name || 'unnamed device'}  ${key.fingerprint}  ${used}`;
 }
 
+/** One Cloud Computer tool call; a refusal (status error) becomes a CliError. */
+async function callComputer(ctx, toolName, args, idempotencyKey) {
+  const result = await runToolCommand({ runtime: ctx.runtime, toolName, arguments_: args,
+    mutating: toolName === MANAGE_TOOL, idempotencyKey, sendIdempotencyKeyWhenReading: true });
+  const payload = extractToolResult(result.payload) || {};
+  if (payload.status === 'error') {
+    throw new CliError({
+      code: payload.code || 'cloud_computer_error', exitCode: EXIT_CODES.backend, details: payload,
+      message: payload.message || 'The Cloud Computer could not do this.',
+    });
+  }
+  return { result, payload };
+}
+
+const STATUS_LINES = {
+  running: 'Your Cloud Computer is working.',
+  stopped: 'Your Cloud Computer is asleep. It wakes up when Notis has work to do.',
+  moving: 'Your Cloud Computer is moving to a bigger disk.',
+  none: 'You have no Cloud Computer yet. It starts the first time Notis needs it.',
+};
+
+function statusText(computer) {
+  if (computer.status !== 'not_responding') return STATUS_LINES[computer.status] || STATUS_LINES.none;
+  const reason = computer.status_reason ? ` Reason: ${computer.status_reason}.` : '';
+  const saved = computer.last_saved_at ? ` Last saved ${computer.last_saved_at}.` : '';
+  return `Your Cloud Computer is not responding.${reason}${saved} Restart it with: notis computer restart`;
+}
+
+async function machineAction(ctx, action) {
+  const command = `computer ${action}`;
+  // As in notis tools exec: a key the caller chose takes the preview, and the confirming call
+  // takes that key plus ".confirm", so a retry with the same key replays both answers.
+  const callerKey = ctx.globalOptions.idempotencyKey;
+  const first = await callComputer(ctx, MANAGE_TOOL, { action }, callerKey || randomUUID());
+  const preview = findConfirmationPreview(first.payload);
+  if (!preview) {
+    throw new CliError({ code: 'cloud_computer_preview_missing', exitCode: EXIT_CODES.backend, details: first.payload,
+      message: 'Notis did not say what this would do. Nothing changed.' });
+  }
+  const yes = Boolean(ctx.options.yes);
+  const interactive = canPrompt({ runtime: ctx.runtime, output: ctx.output });
+  const previewText = renderPreview(preview);
+  if (interactive && !yes) process.stderr.write(`${previewText}\n`);
+  const prompter = interactive && !yes ? createStderrPrompter() : null;
+  let decision;
+  try {
+    decision = await resolveConfirmation({ preview, yes, interactive, ask: (question) => prompter.ask(question) });
+  } finally {
+    prompter?.close();
+  }
+  if (decision.decision !== 'apply') {
+    const reason = decision.decision === 'not_interactive'
+      ? `Nothing has changed. Run notis computer ${action} --yes to apply it.` : decision.reason;
+    return ctx.output.emitSuccess({
+      command, data: first.payload, requestId: first.result.requestId, humanSummary: reason,
+      hints: decision.decision === 'not_interactive' ? [{ command: `notis computer ${action} --yes`, reason: 'Apply it' }] : [],
+      meta: { mutating: false, confirmation: decision.decision, applied: false },
+      renderHuman: () => (interactive && !yes ? reason : `${previewText}\n\n${reason}`),
+    });
+  }
+  const applied = await callComputer(ctx, MANAGE_TOOL, decision.arguments,
+    callerKey ? `${callerKey}.confirm` : randomUUID());
+  return ctx.output.emitSuccess({
+    command, data: applied.payload, requestId: applied.result.requestId,
+    humanSummary: applied.payload.message || 'Done.', meta: { mutating: true, confirmation: 'confirmed', applied: true },
+  });
+}
+
+const YES_OPTION = { flags: '--yes', description: 'Apply without the Continue? [y/N] question.' };
+
 export const computerCommandSpecs = [{
+  command_path: ['computer', 'status'],
+  summary: 'Show whether your Cloud Computer is working, asleep or not responding.',
+  when_to_use: 'Check your Cloud Computer, for example when a command on it fails or an agent says it stopped answering.',
+  args_schema: { arguments: [], options: [] },
+  examples: ['notis computer status'],
+  mutates: false, idempotent: true, require_auth: true,
+  backend_call: { type: 'tool', name: GET_TOOL },
+  async handler(ctx) {
+    const { result, payload } = await callComputer(ctx, GET_TOOL, {}, randomUUID());
+    const computer = payload.cloud_computer || {};
+    return ctx.output.emitSuccess({
+      command: 'computer status', data: computer, requestId: result.requestId, humanSummary: statusText(computer),
+      hints: computer.status === 'not_responding' ? [{ command: 'notis computer restart', reason: 'Restart it; its files are kept' }] : [],
+      meta: { mutating: false },
+    });
+  },
+}, {
+  command_path: ['computer', 'restart'],
+  summary: 'Restart a Cloud Computer that stopped answering. Its files are kept.',
+  when_to_use: 'Only while notis computer status says it is not responding. Whatever was running on it stops; it answers again in 1 to 2 minutes.',
+  args_schema: { arguments: [], options: [YES_OPTION] },
+  examples: ['notis computer restart', 'notis computer restart --yes'],
+  mutates: true, idempotent: false, require_auth: true,
+  backend_call: { type: 'tool', name: MANAGE_TOOL },
+  handler: (ctx) => machineAction(ctx, 'restart'),
+}, {
+  command_path: ['computer', 'recover'],
+  summary: 'Bring back a Cloud Computer that cannot restart, from its last save.',
+  when_to_use: 'Only after notis computer restart failed. Anything written after the last save is lost, and this cannot be undone; the preview says when that save was made.',
+  args_schema: { arguments: [], options: [YES_OPTION] },
+  examples: ['notis computer recover'],
+  mutates: true, idempotent: false, require_auth: true,
+  backend_call: { type: 'tool', name: MANAGE_TOOL },
+  handler: (ctx) => machineAction(ctx, 'recover'),
+}, {
   command_path: ['computer', 'ssh'],
   summary: 'Open SSH to your Cloud Computer from this device.',
   when_to_use: 'Use a terminal, an editor or T3 on your Cloud Computer. The first run sets this device up; after that `ssh notis-computer` works anywhere. A stopped computer starts; it stays on while you are connected.',

@@ -918,6 +918,42 @@ Examples:
 
 Open SSH from this device to your Cloud Computer. The first `notis computer ssh` creates this device's key, registers it and adds a `notis-computer` host to `~/.ssh/config`; after that `ssh notis-computer` and tools that read your SSH config (T3, editors) connect directly. A stopped computer starts on connect, and an open connection keeps it on. Agents list and remove keys with `LOCAL_NOTIS_GET_CLOUD_COMPUTER` and `LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER`; only the CLI on a device adds its key.
 
+`notis computer status` says when your Cloud Computer stopped answering. `notis computer restart` restarts it with its files kept; `notis computer recover`, only after a restart failed, brings it back from its last save and loses what came after. Both show what they will do and ask first.
+
+### `npx --package @notis_ai/cli@latest -- notis computer status`
+
+Show whether your Cloud Computer is working, asleep or not responding.
+
+When to use: Check your Cloud Computer, for example when a command on it fails or an agent says it stopped answering.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis computer status`
+
+### `npx --package @notis_ai/cli@latest -- notis computer restart`
+
+Restart a Cloud Computer that stopped answering. Its files are kept.
+
+When to use: Only while notis computer status says it is not responding. Whatever was running on it stops; it answers again in 1 to 2 minutes.
+
+Options:
+- `--yes` — Apply without the Continue? [y/N] question.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis computer restart`
+- `npx --package @notis_ai/cli@latest -- notis computer restart --yes`
+
+### `npx --package @notis_ai/cli@latest -- notis computer recover`
+
+Bring back a Cloud Computer that cannot restart, from its last save.
+
+When to use: Only after notis computer restart failed. Anything written after the last save is lost, and this cannot be undone; the preview says when that save was made.
+
+Options:
+- `--yes` — Apply without the Continue? [y/N] question.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis computer recover`
+
 ### `npx --package @notis_ai/cli@latest -- notis computer ssh [ssh_args...]`
 
 Open SSH to your Cloud Computer from this device.
