@@ -361,7 +361,8 @@ export function loadDesignRules({ rulesPath = resolveDesignRulesPath(), profile 
         id: rule.id,
         severity: typeof rule.toolkit_piece === 'string'
           ? (livePieces.has(rule.toolkit_piece) ? 'error' : 'warn')
-          : rule.severity === 'warn' ? 'warn' : 'error',
+          // profile_severity.<profile> overrides severity for that profile only.
+          : (rule.profile_severity?.[profile] ?? rule.severity) === 'warn' ? 'warn' : 'error',
         toolkitPiece: typeof rule.toolkit_piece === 'string' ? rule.toolkit_piece : null,
         scope: rule.scope === 'file' ? 'file' : 'line',
         regex: new RegExp(rule.pattern, rule.scope === 'file' ? '' : 'gm'),

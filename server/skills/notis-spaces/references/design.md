@@ -1,9 +1,11 @@
 # Design
 
-The look, keys and words of a Space come from the toolkit pieces in
-`@notis/sdk/ui`. Pick the piece that matches the view, fill its slots with the
-Space's data, and change only what the Space needs (the four rungs in
-[SKILL.md](../SKILL.md#three-layers)).
+Decide what the view is for before choosing how to build it: what the person
+does there, what they look at first, how dense or calm it should be. Then take
+what fits from `@notis/sdk/ui`: a stock piece when the view is a stock shape, or
+your own layout on the hooks and blocks when it is not (the choice in
+[SKILL.md](../SKILL.md#three-layers)). Either way the host frame, theme tokens,
+keyboard engine and EN/FR words stay Notis's.
 
 ## Pick the piece
 
@@ -11,7 +13,7 @@ Space's data, and change only what the Space needs (the four rungs in
 | --- | --- |
 | A list beside an open item (tickets, notes, inbox) | `ListReader` ([sample](views.md#write-the-view)) |
 | The same records as a table | `ListReader` with `layout: 'table'` |
-| A gallery where each item has a picture or a mark (competitors, integrations, skills to discover) | `ListReader` with `layout: 'tiles'` and `renderTile`; every other list stays rows |
+| A gallery where each item has a picture or a mark (competitors, integrations, skills to discover) | `ListReader` with `layout: 'tiles'` and `renderTile` |
 | Items on dates | `CalendarView` (month, week, agenda) |
 | Items over time, by lane | `TimelineView` |
 | Items by stage, moved from one stage to the next (a sales funnel, a production pipeline) | `BoardView`: one column per stage, `onMove` to move tiles |
@@ -20,6 +22,10 @@ Space's data, and change only what the Space needs (the four rungs in
 | A form or settings page | `Section kind="form"`, `Button`, `NativeSelect`, `SegmentedControl`, `Notice`, `EmptyState` |
 | A list on your own layout | `useListKeys`, `useSelection`, `Row`, `SelectionBar`, `Panels` |
 | Files or pictures attached to an item, or a picture to open full screen | `AttachmentGallery` (opens `ImageViewer` on its images); `ImageViewer` alone for one picture ([SDK](sdk.md#toolkit-pieces)) |
+| Anything none of these fit: one record at a time, a focus or practice screen, a canvas, a planner, a page laid out like a magazine, a mix of blocks | Your own layout on `useShortcut`, `Section`, `Button`, `EmptyState`, `Notice` and the hooks above ([sample](views.md#a-view-of-your-own)) |
+
+The table is a starting point, not a menu to fit the request into. If a stock
+piece would make the view worse for what the person does there, write your own.
 
 Floating UI comes from `Menu`, `Popover` and `Tooltip`; they open inside the
 Space and pick up its theme. Open as Side, Center or Full belongs to the list
@@ -30,10 +36,13 @@ Space and pick up its theme. Open as Side, Center or Full belongs to the list
 The host top bar shows the title: Space / view with the view icon, and the
 description as a tooltip. A Space never renders an h1, a description, a heading
 block or its own search field; set `search` on `ListReader`. The Space fills the
-frame: no `mx-auto`, no `max-w-*`, no outer padding wrapper. Only the reader
-article keeps a reading measure, and the toolkit sets it. List toolbars are one
-44px tab row with a "+" at the right end; there are no labelled primary buttons
-and no second toolbar row. Sections have no boxes.
+frame with no outer padding wrapper; a centred column (`mx-auto` with `max-w-*`)
+is for a reading, writing or focus layout, and the reader article gets its
+measure from the toolkit. The default look is flat: list toolbars are one 44px
+tab row with a "+" at the right end, sections have no boxes. A view of your own
+may depart from that look (cards, a border, a shadow, a different type scale)
+when its design calls for it; the design check warns so you decide, and never
+blocks it.
 
 - **Crumb.** An open item adds its name to the top bar crumb ("Product /
   Tickets / PRO-002") in every open mode; `crumbLabel` on `ListReader` names it,
@@ -64,9 +73,8 @@ and no second toolbar row. Sections have no boxes.
   they are: a `TabRow` folds what does not fit into More and other controls
   scroll in the one row, so add no wrapper or overflow CSS of your own.
 
-Keep a Space small: its data, its fields, its own actions. Do not rebuild the
-sidebar, top bar, title, search field, folder tree, chat, help sheet or selection
-bar; the host and the pieces already show them. Let the phone layout come from
+Do not rebuild what the host already shows: the sidebar, top bar, title, search
+field, folder tree, chat, help sheet or selection bar. Let the phone layout come from
 the pieces too: `Panels` shows one pane when the list and the open item no
 longer both fit.
 
@@ -119,11 +127,14 @@ multi-field edit or a destructive confirmation.
 ## Look at the result
 
 `notis spaces build` runs the design check and reports each rule broken by file
-and line; the server runs it again on publish. Passing it does not prove the
-design is good. Then run `notis spaces verify`, which draws every view at 390
+and line; the server runs it again on publish. Errors block; warnings are the
+default look and the toolkit pieces you could use, and they never block. Passing
+it does not prove the design is good. Then run `notis spaces verify`, which draws every view at 390
 and 1440 px in EN and FR, once with data and once while the reads are still
 pending, and actually look at both images:
 
+- Does the layout fit what the person does here, or did the request get bent
+  into the nearest stock piece?
 - Does the view fill the host frame, also while loading?
 - Does the pending image keep the final layout: same tab row and panes, a
   skeleton where content will be, no Loading text and no empty state? Fix every

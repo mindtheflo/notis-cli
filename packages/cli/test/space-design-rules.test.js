@@ -110,3 +110,35 @@ test('comments never trigger a rule, and line numbers stay put', () => {
   assert.deepEqual(collectDesignViolationsForFile('app/page.tsx', tsx, app).map((v) => v.ruleId), []);
   assert.deepEqual(collectDesignViolationsForFile('app/page.tsx', tsx, space).map((v) => v.ruleId), []);
 });
+
+test('Space style defaults warn and never block; the app profile still refuses them', () => {
+  const styleDefaults = ['no-border-box', 'no-dashed-box', 'no-divide', 'no-ring-box', 'no-shadow',
+    'no-floating-shadow-without-popover', 'no-gradient', 'no-backdrop-blur', 'no-eyebrow',
+    'no-font-serif', 'no-badge-outline', 'no-centered-column'].sort();
+  assert.deepEqual(rules.rules.filter((rule) => rule.profile_severity?.space === 'warn').map((rule) => rule.id).sort(), styleDefaults);
+  const rule = (config, id) => config.rules.find((item) => item.id === id);
+  for (const id of styleDefaults) {
+    assert.equal(rule(space, id).severity, 'warn', id);
+    if (rule(app, id)) assert.equal(rule(app, id).severity, 'error', id);
+  }
+  for (const id of ['space-no-viewport-height', 'space-no-global-key-listener', 'no-hex-color', 'no-side-bar', 'no-space-h1']) {
+    assert.equal(rule(space, id).severity, 'error', id);
+  }
+  const styled = Buffer.from('export default () => <div className="mx-auto max-w-2xl border shadow-md bg-gradient-to-b font-serif">{t.x}</div>;\n').toString('base64');
+  assert.doesNotThrow(() => validateSourceDesign({ 'app/page.tsx': styled }, { encoding: 'base64', profile: 'space' }));
+  assert.throws(() => validateSourceDesign({ 'app/page.tsx': styled }, { encoding: 'base64', profile: 'app' }));
+});
+
+test('a styled Space project builds with printed style warnings, while an App project with the same source is refused', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'space-style-'));
+  try {
+    mkdirSync(join(dir, 'app'), { recursive: true });
+    writeFileSync(join(dir, 'app/page.tsx'), 'export default () => <div className="mx-auto max-w-xl border shadow-md">{t.card}</div>;\n');
+    const lines = [];
+    assert.doesNotThrow(() => validateProjectDesign(dir, { profile: 'space', log: (line) => lines.push(line) }));
+    for (const id of ['no-border-box', 'no-shadow', 'no-centered-column']) {
+      assert.ok(lines.some((line) => line.includes(`[${id}] warn`) && line.includes('app/page.tsx')), id);
+    }
+    assert.throws(() => validateProjectDesign(dir), /no-shadow/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

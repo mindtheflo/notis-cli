@@ -168,6 +168,70 @@ words and a key the clash check accepts. Add `tabs` for real saved filters and
 `create` for a "+" that makes a record. Other kinds of view start from their own
 piece; see [Design](design.md#pick-the-piece).
 
+## A view of your own
+
+When no piece fits what the person does on the page, write the layout yourself
+on the hooks and blocks. This practice view shows one card at a time, centred,
+large, with its own keys:
+
+```tsx
+import { useAction, useShown, ViewSkeleton } from '@notis/sdk';
+import { Button, EmptyState, Notice, Section, useShortcut } from '@notis/sdk/ui';
+import { useState } from 'react';
+
+type Flashcard = { record_key: string; front: string; back: string };
+const words = {
+  flip: { en: 'Show answer', fr: 'Voir la réponse' },
+  known: { en: 'I knew it', fr: 'Je savais' },
+  next: { en: 'Next card', fr: 'Carte suivante' },
+  previous: { en: 'Previous card', fr: 'Carte précédente' },
+  done: { en: 'Every card is reviewed', fr: 'Toutes les cartes sont revues' },
+  loading: { en: 'Loading cards', fr: 'Chargement des cartes' },
+};
+
+export default function Practice() {
+  const cards = useShown<Flashcard>('due', { allPages: true });
+  const markKnown = useAction('mark_known'); // a declared write action
+  const [index, setIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const rows = cards.data?.rows ?? [];
+  const card = rows[index];
+  const go = (step: number) => { setFlipped(false); setIndex((i) => Math.max(0, Math.min(i + step, rows.length - 1))); };
+  // Move on only once the write is saved; a failure stays on this card and shows below.
+  const known = (key: string) => markKnown.call({ record_keys: [key] }).then(() => go(1), () => undefined);
+
+  useShortcut({ id: 'practice.flip', keys: 'f', scope: 'route', label: words.flip, run: () => setFlipped(true) });
+  const idle = () => !markKnown.loading; // no card change while a save is pending
+  useShortcut({ id: 'practice.next', keys: 'arrowright', scope: 'route', label: words.next, when: idle, run: () => go(1) });
+  useShortcut({ id: 'practice.previous', keys: 'arrowleft', scope: 'route', label: words.previous, when: idle, run: () => go(-1) });
+
+  if (cards.error && !cards.hasData) return <Notice tone="danger" onRetry={() => void cards.refetch()}>{cards.error.message}</Notice>;
+  if (!cards.hasData) return <ViewSkeleton variant="detail" label={words.loading} />;
+  if (!card) return <EmptyState title={words.done} />;
+  return (
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-8 p-6">
+      <Section kind="data" meta={`${index + 1} / ${rows.length}`} className="w-full max-w-xl">
+        <p className="text-3xl font-medium text-foreground">{card.front}</p>
+        {flipped && <p className="mt-6 text-xl text-muted-foreground">{card.back}</p>}
+      </Section>
+      <div className="flex gap-2">
+        {flipped
+          ? <Button variant="primary" disabled={markKnown.loading} onClick={() => void known(card.record_key)}>{words.known}</Button>
+          : <Button variant="primary" onClick={() => setFlipped(true)}>{words.flip}</Button>}
+      </div>
+      {markKnown.error && <Notice tone="danger">{markKnown.error.message}</Notice>}
+    </div>
+  );
+}
+```
+
+The host still gives it the top bar, the `?` sheet (the three keys are listed
+there with their EN and FR words), light and dark, and the phone frame; the
+view owns its layout. Keep `useShortcut` for every key (never a listener on
+`window`), words in EN and FR, theme tokens for colour, and `h-full`/`min-h-0`
+for height. Mix in pieces where they help: a `TabRow` for decks, a `Menu` for
+card options, `DocumentPage` to edit the open card.
+
 Keep hooks unconditional; conditional record/list branches can be separate
 components. The [SDK reference](sdk.md) covers data hooks, record components,
 navigation and the toolkit pieces.

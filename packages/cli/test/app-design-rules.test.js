@@ -186,6 +186,7 @@ test('validateProjectDesign throws with file:line in enforce mode and only logs 
 test('a Space hears that the top bar crumb names the page; an app still hears to use a plain noun page title', () => {
   const space = loadDesignRules({ rulesPath, profile: 'space' }).rules.find((rule) => rule.id === 'no-eyebrow');
   const app = loadDesignRules({ rulesPath }).rules.find((rule) => rule.id === 'no-eyebrow');
-  assert.equal(space.message, 'Uppercase tracking eyebrows are banned. Use text-xs text-muted-foreground labels; the top bar crumb names the page.');
+  assert.equal(space.message, "Default look: no uppercase tracking eyebrows; labels are text-xs text-muted-foreground and the top bar crumb names the page. It warns and never blocks: depart from it when the view's own design calls for it.");
+  assert.doesNotMatch(space.message, /plain noun page title/);
   assert.match(app.message, /plain noun page title/);
 });
