@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { settledNavigation } from './useNotisNavigation';
 import { useNotisRuntime } from '../provider';
 import type { NotisRuntime } from '../runtime';
 import { queryKey } from '../queryCache';
@@ -105,12 +106,11 @@ export function writeViewParams(runtime: NotisRuntime | null | undefined, change
     if (pendingWrites.get(runtime)?.params === next) pendingWrites.delete(runtime);
     throw error;
   };
-  try {
-    return Promise.resolve(runtime.navigate({ kind: 'view-params', params: next, ...(options.replace ? { replace: true } : {}) }))
-      .then(() => undefined, forget);
-  } catch (error) {
-    return Promise.reject(error).catch(forget);
-  }
+  // A refused write (the view is retained, covered or pending) is warned and settled like any navigation.
+  const written = settledNavigation(() => runtime.navigate!({ kind: 'view-params', params: next, ...(options.replace ? { replace: true } : {}) }))
+    .then(() => undefined, forget);
+  written.catch(() => undefined);
+  return written;
 }
 
 /**

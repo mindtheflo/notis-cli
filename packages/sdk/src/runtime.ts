@@ -179,6 +179,18 @@ export interface QueryFilter {
   page_size?: number;
 }
 
+/**
+ * The host's answer to `navigate`: nothing when it took the navigation, or a typed refusal when it did not
+ * (`context_inactive`: the view the call came from is retained, covered or pending, so its navigation is dropped).
+ * The hooks turn a refusal into a warned, settled rejection; it is never an uncaught error.
+ */
+export interface NotisNavigationRefusal { refused: 'context_inactive'; message: string }
+export type NotisNavigationAnswer = void | NotisNavigationRefusal;
+export function isNotisNavigationRefusal(value: unknown): value is NotisNavigationRefusal {
+  return typeof value === 'object' && value !== null && typeof (value as { refused?: unknown }).refused === 'string'
+    && typeof (value as { message?: unknown }).message === 'string';
+}
+
 export interface NotisRuntimeContext {
   /** Host UI language. */
   locale?: 'en' | 'fr';
@@ -679,7 +691,7 @@ export interface NotisRuntime {
    * `useViewParams().setParams` sends `view-params` (`{ params, replace? }`): the open Space's own URL params, with the
    * Space and record kept and no destination lookup.
    */
-  navigate?: (payload: { kind: string; [key: string]: unknown }) => void | Promise<void>;
+  navigate?: (payload: { kind: string; [key: string]: unknown }) => NotisNavigationAnswer | Promise<NotisNavigationAnswer>;
 
   registerTopBarSearch?: (
     config:
