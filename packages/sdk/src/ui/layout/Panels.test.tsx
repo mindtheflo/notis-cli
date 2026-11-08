@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 
 import { KeyboardEngine, KeyboardEngineCore } from '../engine';
+import { PANELS_HOVER_DELAY_MS } from './panelMath';
 import { Panels, usePanels, type PanelsProps } from './Panels';
 
 /**
@@ -12,8 +13,8 @@ import { Panels, usePanels, type PanelsProps } from './Panels';
  * comes from a fake ResizeObserver and `data-mode` (the JS mirror of the CSS rule) is what
  * the tests read.
  */
-async function harness(props: Partial<PanelsProps> & { width?: number; storedWidth?: string; locale?: 'en' | 'fr' } = {}) {
-  const { width: initialWidth = 1000, storedWidth, locale = 'en', ...panelProps } = props;
+async function harness(props: Partial<PanelsProps> & { width?: number; storedWidth?: string; locale?: 'en' | 'fr'; focusVisible?: boolean } = {}) {
+  const { width: initialWidth = 1000, storedWidth, locale = 'en', focusVisible = true, ...panelProps } = props;
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/space' });
   let width = initialWidth;
   const observers: Array<() => void> = [];
@@ -34,6 +35,15 @@ async function harness(props: Partial<PanelsProps> & { width?: number; storedWid
     const w = this.classList.contains('nui-panels') ? width : 0;
     return { width: w, height: 600, top: 0, left: 0, right: w, bottom: 600, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
   };
+  // jsdom does not track the input modality: the focused element matches :focus-visible (keyboard) or not (a click).
+  const matches = dom.window.Element.prototype.matches;
+  Object.defineProperty(dom.window.Element.prototype, 'matches', {
+    configurable: true,
+    value(this: Element, selector: string): boolean {
+      if (selector === ':focus-visible') return focusVisible && dom.window.document.activeElement === this;
+      return matches.call(this, selector);
+    },
+  });
 
   const seen: Array<ReturnType<typeof usePanels>> = [];
   function Reader() {
@@ -80,6 +90,15 @@ async function harness(props: Partial<PanelsProps> & { width?: number; storedWid
       await act(async () => { node.dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true, cancelable: true })); });
     },
     click: async (node: HTMLElement) => { await act(async () => { node.click(); }); },
+    attr: (name: string) => q('.nui-panels')!.hasAttribute(name),
+    handleNow: () => q('.nui-panels-handle')!.getAttribute('aria-valuenow'),
+    pointer: async (node: Element, type: string, init: { clientX?: number; bubbles?: boolean } = {}) => {
+      await act(async () => {
+        node.dispatchEvent(new dom.window.PointerEvent(type, { pointerType: 'mouse', pointerId: 1, button: 0, bubbles: true, ...init }));
+      });
+    },
+    rest: () => act(async () => { await new Promise((resolve) => setTimeout(resolve, PANELS_HOVER_DELAY_MS + 80)); }),
+    focus: async (node: HTMLElement) => { await act(async () => { node.focus(); }); },
     cleanup: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -194,14 +213,150 @@ test('Back is drawn only when Panels owns it, and goes back', async () => {
   } finally { await h.cleanup(); }
 });
 
-test('a stored width applies; the reader never squeezes the list under 320px', async () => {
+test('the default width only pushes: the reader never squeezes the list under 320px nor covers it', async () => {
+  const h = await harness({ width: 1000, resizable: true, defaultReaderWidth: 900 });
+  try {
+    // 1000 - 320: the clamp holds what is on screen; the CSS clamp() does the same.
+    assert.equal(h.q('#reader')!.getAttribute('data-seen-width'), '680');
+    assert.equal(h.handleNow(), '680');
+    assert.equal(h.attr('data-overlay'), false);
+    assert.equal(h.attr('data-reader-chosen'), false);
+  } finally { await h.cleanup(); }
+});
+
+test('a chosen width pushes the list to 320px, then slides over it and leaves an 80px strip', async () => {
   const h = await harness({ width: 1000, storageKey: 'notes', storedWidth: '900', resizable: true });
   try {
     assert.equal(h.readerVar(), '900px');
-    // 1000 - 320: the clamp holds what is on screen; the CSS clamp() does the same.
+    // Past 1000 - 320 the reader covers the list; at most to 1000 - 80.
+    assert.equal(h.q('#reader')!.getAttribute('data-seen-width'), '900');
+    assert.equal(h.handleNow(), '900');
+    assert.equal(h.q('.nui-panels-handle')!.getAttribute('aria-valuemax'), '920');
+    assert.equal(h.attr('data-reader-chosen'), true);
+    assert.equal(h.attr('data-overlay'), true);
+    // The covered list stays usable: its strip shows and it is never inert beside the reader.
+    assert.equal(h.q('.nui-panels-list')!.hasAttribute('inert'), false);
+  } finally { await h.cleanup(); }
+
+  const widest = await harness({ width: 1000, storageKey: 'notes', storedWidth: '2000', resizable: true });
+  try {
+    assert.equal(widest.handleNow(), '920');
+  } finally { await widest.cleanup(); }
+
+  // One pane below 680: nothing overlaps, the reader covers the list with Back as before.
+  const narrow = await harness({ width: 600, storageKey: 'notes', storedWidth: '900', resizable: true });
+  try {
+    assert.equal(narrow.mode(), 'stacked');
+    assert.equal(narrow.attr('data-overlay'), false);
+  } finally { await narrow.cleanup(); }
+});
+
+test('dragging the edge past the list minimum slides the reader over the list, live, and keeps the width', async () => {
+  const h = await harness({ width: 1000, storageKey: 'notes', resizable: true });
+  try {
+    const handle = h.q('.nui-panels-handle')!;
+    assert.equal(h.handleNow(), '420');
+    await h.pointer(handle, 'pointerdown', { clientX: 580 });
+    assert.equal(h.attr('data-resizing'), true);
+    // 260px left: still pushing (680 is the push limit).
+    await h.pointer(handle, 'pointermove', { clientX: 320 });
+    assert.equal(h.readerVar(), '680px');
+    assert.equal(h.attr('data-overlay'), false);
+    // Further left: the reader covers the list, live, without a commit.
+    await h.pointer(handle, 'pointermove', { clientX: 100 });
+    assert.equal(h.readerVar(), '900px');
+    assert.equal(h.attr('data-overlay'), true);
+    assert.equal(h.stored(), null);
+    // Never past the 80px strip.
+    await h.pointer(handle, 'pointermove', { clientX: -400 });
+    assert.equal(h.readerVar(), '920px');
+    await h.pointer(handle, 'pointermove', { clientX: 100 });
+    await h.pointer(handle, 'pointerup', { clientX: 100 });
+    assert.equal(h.attr('data-resizing'), false);
+    assert.equal(h.stored(), '900');
+    assert.equal(h.handleNow(), '900');
+    assert.equal(h.readerVar(), '900px');
+    assert.equal(h.attr('data-overlay'), true);
+  } finally { await h.cleanup(); }
+});
+
+test('a 200ms rest on the covered list gives it 320px back until the pointer is on the reader again', async () => {
+  const h = await harness({ width: 1000, storageKey: 'notes', storedWidth: '900', resizable: true });
+  try {
+    const list = h.q('.nui-panels-list')!;
+    await h.pointer(list, 'pointerenter', { bubbles: false });
+    await h.pointer(h.q('#list li')!, 'pointermove');
+    // A pass is not a rest.
+    assert.equal(h.attr('data-list-revealed'), false);
+    await h.rest();
+    assert.equal(h.attr('data-list-revealed'), true);
     assert.equal(h.q('#reader')!.getAttribute('data-seen-width'), '680');
-    assert.equal(h.q('.nui-panels-handle')!.getAttribute('aria-valuenow'), '680');
-    assert.equal(h.q('.nui-panels-handle')!.getAttribute('aria-valuemax'), '680');
+    assert.equal(h.handleNow(), '680');
+    // Standing aside, the reader no longer floats over the list (no shadow).
+    assert.equal(h.attr('data-overlay'), false);
+    // The choice is kept: only what shows steps aside.
+    assert.equal(h.stored(), '900');
+    assert.equal(h.readerVar(), '900px');
+
+    // Leaving the list and touching the edge keep it revealed.
+    await h.pointer(list, 'pointerleave', { bubbles: false });
+    await h.pointer(h.q('.nui-panels-handle')!, 'pointerover');
+    assert.equal(h.attr('data-list-revealed'), true);
+
+    // Back on the reader: it covers the list again.
+    await h.pointer(h.q('#reader')!, 'pointerover');
+    assert.equal(h.attr('data-list-revealed'), false);
+    assert.equal(h.handleNow(), '900');
+    assert.equal(h.attr('data-overlay'), true);
+  } finally { await h.cleanup(); }
+});
+
+test('crossing the covered list only cancels the pending rest; an uncovered list never moves', async () => {
+  const h = await harness({ width: 1000, storageKey: 'notes', storedWidth: '900', resizable: true });
+  try {
+    const list = h.q('.nui-panels-list')!;
+    await h.pointer(list, 'pointerenter', { bubbles: false });
+    await h.pointer(list, 'pointerleave', { bubbles: false });
+    await h.rest();
+    assert.equal(h.attr('data-list-revealed'), false);
+  } finally { await h.cleanup(); }
+
+  const pushed = await harness({ width: 1000, storageKey: 'notes', storedWidth: '500', resizable: true });
+  try {
+    await pushed.pointer(pushed.q('.nui-panels-list')!, 'pointerenter', { bubbles: false });
+    await pushed.rest();
+    assert.equal(pushed.attr('data-list-revealed'), false);
+    assert.equal(pushed.handleNow(), '500');
+  } finally { await pushed.cleanup(); }
+});
+
+test('keyboard focus moving into the covered list reveals it; a click focus does not', async () => {
+  const list = <ul id="list"><li><button id="row" type="button">Row</button></li></ul>;
+  const h = await harness({ width: 1000, storageKey: 'notes', storedWidth: '900', resizable: true, list });
+  try {
+    await h.focus(h.q('#row')!);
+    assert.equal(h.attr('data-list-revealed'), true);
+    assert.equal(h.handleNow(), '680');
+  } finally { await h.cleanup(); }
+
+  const clicked = await harness({ width: 1000, storageKey: 'notes', storedWidth: '900', resizable: true, list, focusVisible: false });
+  try {
+    await clicked.focus(clicked.q('#row')!);
+    assert.equal(clicked.attr('data-list-revealed'), false);
+  } finally { await clicked.cleanup(); }
+});
+
+test('arrow keys step from the revealed width, and choosing a width covers the list again', async () => {
+  const h = await harness({ width: 1000, storageKey: 'notes', storedWidth: '900', resizable: true });
+  try {
+    await h.pointer(h.q('.nui-panels-list')!, 'pointerenter', { bubbles: false });
+    await h.rest();
+    assert.equal(h.handleNow(), '680');
+    await h.key(h.q('.nui-panels-handle')!, 'ArrowRight');
+    assert.equal(h.stored(), '656');
+    assert.equal(h.handleNow(), '656');
+    assert.equal(h.attr('data-list-revealed'), false);
+    assert.equal(h.attr('data-overlay'), false);
   } finally { await h.cleanup(); }
 });
 

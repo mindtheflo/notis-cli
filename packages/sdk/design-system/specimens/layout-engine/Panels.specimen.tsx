@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { FIXED_NOW, defineSpecimen, nextFrame, type SpecimenRenderContext } from '../../specimen';
 import {
-  Button, IDLE_ROW_STATE, Panels, Row, STATUS_WORDS, formatRowTime, statusGroup, usePanels,
+  Button, IDLE_ROW_STATE, PANELS_HOVER_DELAY_MS, Panels, Row, STATUS_WORDS, formatRowTime, statusGroup, usePanels,
 } from '../../../src/ui';
 import { SHELL_WORDS } from '../../../src/words';
 import { ALL_TICKETS, LONG_TICKET, TICKETS, TICKETS_TITLE, type Ticket } from '../../fixtures/layout-engine/tickets';
@@ -120,6 +120,20 @@ function TicketsPanels({
 const FIRST = TICKETS[0]!.id;
 const THIRD = TICKETS[2]!.id;
 
+/** Widens the reader with its edge's arrow keys until it stops at the list's 80 px strip, then leaves the edge. */
+async function widenReader(root: HTMLElement): Promise<void> {
+  const handle = root.querySelector<HTMLElement>('.nui-panels-handle');
+  if (!handle) return;
+  const view = root.ownerDocument.defaultView!;
+  handle.focus();
+  for (let press = 0; press < 30; press += 1) {
+    handle.dispatchEvent(new view.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true, composed: true }));
+    await nextFrame();
+  }
+  handle.blur();
+  await nextFrame();
+}
+
 export const specimen = defineSpecimen({
   id: 'panels',
   name: 'Panels',
@@ -147,6 +161,30 @@ export const specimen = defineSpecimen({
       render: (ctx) => <TicketsPanels ctx={ctx} open={FIRST} resizable defaultReaderWidth={520} />,
       interact: async (root) => {
         root.querySelector<HTMLElement>('.nui-panels-handle')?.focus();
+        await nextFrame();
+      },
+    },
+    {
+      id: 'covering',
+      label: 'Widened past the list minimum: the reader slides over the list and leaves an 80 px strip (fixed 1024 px wide)',
+      width: 1024,
+      render: (ctx) => <TicketsPanels ctx={ctx} open={FIRST} resizable />,
+      interact: async (root) => {
+        await widenReader(root);
+      },
+    },
+    {
+      id: 'covering-revealed',
+      label: 'A rest on the list strip gives the list its 320 px back until the pointer returns to the reader (fixed 1024 px wide)',
+      width: 1024,
+      render: (ctx) => <TicketsPanels ctx={ctx} open={FIRST} resizable />,
+      interact: async (root) => {
+        await widenReader(root);
+        const list = root.querySelector<HTMLElement>('.nui-panels-list');
+        const view = root.ownerDocument.defaultView!;
+        list?.dispatchEvent(new view.PointerEvent('pointerenter', { pointerType: 'mouse' }));
+        // The 200 ms rest, then the 200 ms ease.
+        await new Promise((resolve) => setTimeout(resolve, PANELS_HOVER_DELAY_MS + 300));
         await nextFrame();
       },
     },

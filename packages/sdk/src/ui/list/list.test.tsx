@@ -1856,6 +1856,19 @@ test('rows: the labels shrink before the meta start, so a narrow row keeps who a
   assert.ok(shrink('.nui-row-labels') >= 100, 'the labels give way about a hundred times faster than the meta start');
 });
 
+test('rows: an urgent label keeps its width and the meta start gives way to it', async () => {
+  await mount(
+    <>
+      <Row title="Reel" meta="Went out everywhere Sat, Nov 7, 06:00 PM" labels={[{ label: 'Needs you', tone: 'danger' }, '3 hooks']} />
+      <Row title="Post" meta="Sat, Nov 7" labels={['Scheduled']} />
+    </>,
+  );
+  const [urgent, calm] = [...doc.querySelectorAll('.nui-row-labels')];
+  assert.ok(urgent!.hasAttribute('data-urgent'));
+  assert.ok(!calm!.hasAttribute('data-urgent'));
+  assert.match(cssRule('.nui-row-labels[data-urgent]') ?? '', /flex: 0 0 auto/);
+});
+
 test('row tags: a tag still being saved shows a spinner where the x goes, a busy one keeps a disabled x', async () => {
   await mount(<Row title="Digest" tags={[
     { id: 'a', label: 'Work', onRemove: () => undefined, busy: true },

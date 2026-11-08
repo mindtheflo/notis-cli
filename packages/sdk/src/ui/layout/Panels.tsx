@@ -6,6 +6,13 @@
  * the open item, as navigation decides. The open item then slides over the list and comes
  * back with Back (and Esc when `onBack` is given).
  *
+ * Side by side, the reader's edge works like the chat edge. Dragging it wider pushes the list
+ * down to its minimum, then the reader slides over the list, leaving an 80px strip of it
+ * (`clampChosenWidth`). A 200ms rest of the pointer on that strip, or keyboard focus moving
+ * into the list, gives the list its minimum back until the pointer returns to the reader
+ * (`coverReveal`, the chat's own rule). The default width only pushes: without a chosen width
+ * the reader never covers the list.
+ *
  * The switch is a container query on the Panels element (`nui-panels`, 680px for the
  * defaults), not a viewport query and not the host's `data-chat-narrowed` flag: a Space
  * renders in a shadow root, where ancestor attribute variants never reach, and its width is
@@ -27,14 +34,19 @@ import {
 } from 'react';
 import { pick, SHELL_WORDS, type Words } from '../../words';
 import { ESCAPE_PRIORITY, useEscapeLayer, useToolkitLocale } from '../engine';
+import { followCoverReveal } from './coverReveal';
 import { PaneHandle, measureWidth as measure } from './PaneHandle';
 import {
   PANELS_LIST_MIN_PX,
   PANELS_READER_MIN_PX,
+  PANELS_READER_PEEK_PX,
+  clampChosenWidth,
   clampReaderWidth,
+  overlap,
   parseStoredWidth,
   readerMaxWidth,
   readerWantWidth,
+  revealedWidth,
   splitBreakpoint,
   splitFits,
 } from './panelMath';
@@ -44,9 +56,9 @@ export type PanelsMode = 'split' | 'stacked';
 export interface PanelsState {
   /** `split`: list and reader side by side. `stacked`: one pane, the reader over the list. */
   mode: PanelsMode;
-  /** The reader width on screen in split mode, inside the container. */
+  /** The reader width on screen in split mode, inside the container (narrower while the covered list is revealed). */
   readerWidth: number;
-  /** Choose a reader width (clamped to the container, stored under `storageKey`). */
+  /** Choose a reader width (clamped to the container, stored under `storageKey`). Past the list minimum it slides over the list. */
   setReaderWidth(px: number): void;
   /** A reader is open. */
   readerOpen: boolean;
@@ -142,12 +154,24 @@ function afterFrame(fn: () => void): () => void {
   return () => clearTimeout(timer);
 }
 
-/** Split-mode rules for a non-default threshold, scoped to one Panels by its own container name. */
+/**
+ * Split-mode rules for a non-default threshold, scoped to one Panels by its own container name.
+ * The same rules as the default container query in toolkit.css (layout section).
+ */
 function splitRules(name: string, id: string, breakpoint: number): string {
   const self = `.nui-panels[data-panels-id="${id}"]`;
+  const push = 'clamp(var(--nui-panels-reader-min), var(--nui-panels-reader-w), calc(100cqw - var(--nui-panels-list-min)))';
   return `@container ${name} (min-width: ${breakpoint}px) {`
-    + `${self} > .nui-panels-reader { position: relative; inset: auto; z-index: auto; flex: 0 0 auto; transform: none; transition: none;`
-    + ` width: clamp(var(--nui-panels-reader-min), var(--nui-panels-reader-w), calc(100cqw - var(--nui-panels-list-min))); }`
+    + `${self} > .nui-panels-reader { position: relative; inset: auto; z-index: auto; flex: 0 0 auto; transform: none; transition: none; width: ${push}; }`
+    + `${self}[data-reader-chosen] > .nui-panels-reader, ${self}[data-resizing] > .nui-panels-reader {`
+    + ' --nui-panels-reader-shown: clamp(var(--nui-panels-reader-min), var(--nui-panels-reader-w), calc(100cqw - var(--nui-panels-peek)));'
+    + ' width: var(--nui-panels-reader-shown);'
+    + ' margin-inline-start: min(0px, calc(100cqw - var(--nui-panels-list-min) - var(--nui-panels-reader-shown))); }'
+    + `${self}[data-list-revealed]:not([data-resizing]) > .nui-panels-reader { width: ${push}; margin-inline-start: 0; }`
+    + '@media (prefers-reduced-motion: no-preference) {'
+    + `${self}[data-reader-chosen]:not([data-resizing]) > .nui-panels-reader { transition: width .2s ease-out, margin-inline-start .2s ease-out; }`
+    + '}'
+    + `${self}[data-overlay] > .nui-panels-reader { z-index: 4; box-shadow: 0 0 0 1px hsl(var(--border) / .7), var(--nui-elev-lg, 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12)); }`
     + `${self} > .nui-panels-reader > .nui-panels-handle { display: block; }`
     + `${self} > .nui-panels-reader > .nui-panels-backbar { display: none; }`
     + '}';
@@ -165,6 +189,8 @@ export function Panels({
   className,
 }: PanelsProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
   const locale = useToolkitLocale();
   const reactId = useId();
   const id = useMemo(() => reactId.replace(/[^a-zA-Z0-9_-]/g, ''), [reactId]);
@@ -174,6 +200,15 @@ export function Panels({
   const [settled, setSettled] = useState(false);
   /** The chosen width; null keeps `defaultReaderWidth`. */
   const [preferred, setPreferred] = useState<number | null>(null);
+  /** The covered list shows at its minimum instead of under the reader (a rest on its strip, or keyboard focus). */
+  const [revealed, setRevealedState] = useState(false);
+  const revealedRef = useRef(false);
+  const setRevealed = useCallback((next: boolean) => {
+    if (revealedRef.current === next) return false;
+    revealedRef.current = next;
+    setRevealedState(next);
+    return true;
+  }, []);
   const readerOpen = reader !== null && reader !== undefined;
 
   // Before paint: the stored width and the real mode are there on the first frame.
@@ -206,18 +241,85 @@ export function Panels({
   const mode: PanelsMode = splitFits(container, listMin, readerMin) ? 'split' : 'stacked';
   const want = readerWantWidth(useWindowWidth());
   const chosen = preferred ?? defaultReaderWidth ?? want;
-  const readerWidth = clampReaderWidth(chosen, container, listMin, readerMin);
+  // A chosen width may slide over the list down to its 80px strip; the default only pushes.
+  const shownWidth = preferred !== null
+    ? clampChosenWidth(chosen, container, readerMin, PANELS_READER_PEEK_PX)
+    : clampReaderWidth(chosen, container, listMin, readerMin);
+  const overlays = mode === 'split' && readerOpen && overlap(shownWidth, container, listMin) > 0;
+  const listRevealed = overlays && revealed;
+  /** The reader floats over the list now (not while it stands aside for it). */
+  const floating = overlays && !listRevealed;
+  const readerWidth = listRevealed ? revealedWidth(shownWidth, container, listMin, readerMin) : shownWidth;
 
   const setReaderWidth = useCallback((px: number) => {
-    const width = clampReaderWidth(px, measure(rootRef.current) ?? container, listMin, readerMin);
+    const width = clampChosenWidth(px, measure(rootRef.current) ?? container, readerMin, PANELS_READER_PEEK_PX);
+    setRevealed(false);
     setPreferred(width);
     writeStored(storageKey, width);
-  }, [container, listMin, readerMin, storageKey]);
+  }, [container, readerMin, setRevealed, storageKey]);
 
   const resetReaderWidth = useCallback(() => {
+    setRevealed(false);
     setPreferred(null);
     writeStored(storageKey, null);
-  }, [storageKey]);
+  }, [setRevealed, storageKey]);
+
+  // A closed reader or one pane: the next reader comes back at its chosen width, not stepped aside.
+  useEffect(() => {
+    if (!readerOpen || mode !== 'split') setRevealed(false);
+  }, [mode, readerOpen, setRevealed]);
+
+  // data-overlay follows the committed width here and the live one during a drag (onLive), so
+  // React never owns it: neither writer can leave the other's value stale.
+  useLayoutEffect(() => {
+    rootRef.current?.toggleAttribute('data-overlay', floating);
+  }, [floating]);
+
+  // During a drag the live width writes straight onto the root (no render per move).
+  const live = useRef({ chosen, readerWidth, floating, container: null as number | null });
+  useLayoutEffect(() => {
+    Object.assign(live.current, { chosen, readerWidth, floating });
+  });
+  const onDragChange = useCallback((dragging: boolean) => {
+    const root = rootRef.current;
+    if (!root) return;
+    const current = live.current;
+    if (dragging) {
+      current.container = measure(root);
+      root.setAttribute('data-resizing', '');
+      // From what is on screen, including a reader stepped aside for the list.
+      root.style.setProperty('--nui-panels-reader-w', `${current.readerWidth}px`);
+      return;
+    }
+    root.removeAttribute('data-resizing');
+    // Back to the committed width; a moved drag commits its own right after.
+    root.style.setProperty('--nui-panels-reader-w', `${current.chosen}px`);
+    root.toggleAttribute('data-overlay', current.floating);
+  }, []);
+  const onLive = useCallback((px: number) => {
+    const root = rootRef.current;
+    if (!root) return;
+    root.style.setProperty('--nui-panels-reader-w', `${px}px`);
+    root.toggleAttribute('data-overlay', overlap(px, live.current.container, listMin) > 0);
+  }, [listMin]);
+
+  // The list strip under the reader: a rest or keyboard focus reveals it, the pointer back on the reader covers it.
+  useEffect(() => {
+    const root = rootRef.current;
+    const main = listRef.current;
+    const side = readerRef.current;
+    if (!resizable || !readerOpen || !root || !main || !side) return undefined;
+    const follow = followCoverReveal({
+      main,
+      side,
+      edge: () => side.querySelector<HTMLElement>(':scope > .nui-panels-handle'),
+      covering: () => root.hasAttribute('data-overlay') && !root.hasAttribute('data-resizing'),
+      revealed: () => revealedRef.current,
+      dragging: () => root.hasAttribute('data-resizing'),
+      setRevealed: (next) => setRevealed(next),
+    });
+    return () => follow.detach();
+  }, [readerOpen, resizable, setRevealed]);
 
   const state = useMemo<PanelsState>(
     () => ({ mode, readerWidth, setReaderWidth, readerOpen, settled }),
@@ -230,6 +332,7 @@ export function Panels({
     '--nui-panels-reader-w': `${chosen}px`,
     '--nui-panels-reader-min': `${readerMin}px`,
     '--nui-panels-list-min': `${listMin}px`,
+    '--nui-panels-peek': `${PANELS_READER_PEEK_PX}px`,
   } as CSSProperties;
 
   return (
@@ -242,13 +345,15 @@ export function Panels({
         data-custom-split={customBreakpoint ? '' : undefined}
         data-mode={mode}
         data-reader-open={readerOpen ? '' : undefined}
+        data-reader-chosen={preferred !== null ? '' : undefined}
+        data-list-revealed={listRevealed ? '' : undefined}
       >
         {customBreakpoint ? <style>{splitRules(`nui-panels-${id}`, id, splitBreakpoint(listMin, readerMin))}</style> : null}
-        <div className="nui-panels-list" inert={covered || undefined} aria-hidden={covered || undefined}>
+        <div ref={listRef} className="nui-panels-list" inert={covered || undefined} aria-hidden={covered || undefined}>
           {list}
         </div>
         {readerOpen ? (
-          <div className="nui-panels-reader">
+          <div ref={readerRef} className="nui-panels-reader">
             {resizable ? (
               <PaneHandle
                 className="nui-panels-handle"
@@ -256,12 +361,13 @@ export function Panels({
                 hint={pick(PANELS_WORDS.resizeReaderHint, locale)}
                 width={readerWidth}
                 min={readerMin}
-                max={container === null ? undefined : readerMaxWidth(container, listMin, readerMin)}
-                clamp={(px, measured) => clampReaderWidth(px, measured, listMin, readerMin)}
+                max={container === null ? undefined : readerMaxWidth(container, PANELS_READER_PEEK_PX, readerMin)}
+                clamp={(px, measured) => clampChosenWidth(px, measured, readerMin, PANELS_READER_PEEK_PX)}
                 rootRef={rootRef}
-                onLive={(px) => rootRef.current?.style.setProperty('--nui-panels-reader-w', `${px}px`)}
+                onLive={onLive}
                 onWidth={setReaderWidth}
                 onReset={resetReaderWidth}
+                onDragChange={onDragChange}
               />
             ) : null}
             {onBack ? <PanelsBackBar onBack={onBack} /> : null}

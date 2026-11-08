@@ -11,12 +11,15 @@ import {
   chatPanelPushLimit,
   clampChatPanelWidth,
   CHAT_PANEL_DEFAULT_WIDTH_PX,
+  PANELS_READER_PEEK_PX,
+  clampChosenWidth,
   clampReaderWidth,
   overlap,
   parseStoredChatPanelWidth,
   pushLimit,
   readerMaxWidth,
   readerWantWidth,
+  revealedWidth,
   splitBreakpoint,
   splitFits,
 } from './panelMath';
@@ -81,7 +84,7 @@ test('Panels split only while list and reader minimums both fit', () => {
   assert.equal(splitBreakpoint(240, 300), 540);
 });
 
-test('a Panels reader never squeezes the list below its minimum and never overlaps it', () => {
+test('a Panels default reader width never squeezes the list below its minimum and never overlaps it', () => {
   assert.equal(readerMaxWidth(1000), 680);
   assert.equal(pushLimit(1000), 680);
   assert.equal(clampReaderWidth(900, 1000), 680);
@@ -93,6 +96,28 @@ test('a Panels reader never squeezes the list below its minimum and never overla
   // Under list min + peek the reader still leaves the 80px peek.
   assert.equal(clampReaderWidth(500, 400), 320);
   assert.equal(overlap(680, 1000), 0);
+});
+
+test('a chosen Panels reader width pushes the list to 320, then slides over it down to the 80px strip', () => {
+  assert.equal(PANELS_READER_PEEK_PX, 80);
+  // Within the push limit nothing overlaps; past it the reader covers the list, at most to the strip.
+  assert.equal(clampChosenWidth(600, 1000), 600);
+  assert.equal(overlap(680, 1000), 0);
+  assert.equal(clampChosenWidth(900, 1000), 900);
+  assert.equal(overlap(900, 1000), 220);
+  assert.equal(clampChosenWidth(2000, 1000), 920);
+  assert.equal(overlap(920, 1000), 240);
+  assert.equal(clampChosenWidth(200, 1000), 360);
+  assert.equal(clampChosenWidth(500.4, null), 500);
+  // A revealed list takes its 320 back; the reader never goes under its own 360.
+  assert.equal(revealedWidth(900, 1000), 680);
+  assert.equal(revealedWidth(500, 1000), 500);
+  assert.equal(revealedWidth(900, 690), 370);
+  assert.equal(revealedWidth(900, 600), 360);
+  // The chat clamps a chosen width with the same function.
+  for (const width of [200, 600, 1300, 2000]) {
+    assert.equal(clampChatPanelWidth(width, 1440), clampChosenWidth(width, 1440, CHAT_PANEL_MIN_WIDTH_PX, CHAT_PANEL_PAGE_PEEK_PX));
+  }
 });
 
 test('the chat is 420 at every width; a Space reader wants 420 under a 1280 window and 480 from 1280', () => {

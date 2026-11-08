@@ -661,7 +661,10 @@ export interface SpaceActionFailureDetails {
   receiptId?: string;
   status?: string;
   pendingRequestIds?: string[];
-  /** Why a settled action failed, when the host knows a stable reason: `read_timeout` (a read its time limit stopped). */
+  /**
+   * Why a settled action failed, when the host knows a stable reason: `read_timeout` (a read its time limit stopped)
+   * or `rate_limited` (the provider refused the call for sending too fast; it did not run, so retry after a few seconds).
+   */
   code?: string;
 }
 

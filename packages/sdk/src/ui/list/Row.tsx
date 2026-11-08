@@ -345,7 +345,7 @@ export function Row({
             {hasMeta && <span className="nui-row-meta-start">{meta}</span>}
             {hasMeta && ordered.length > 0 && <span className="nui-row-dot" aria-hidden="true">·</span>}
             {ordered.length > 0 && (
-              <span className="nui-row-labels">
+              <span className="nui-row-labels" data-urgent={isUrgentLabel(ordered[0]!) ? '' : undefined}>
                 {ordered.map((entry, index) => {
                   const label = typeof entry === 'string' ? entry : entry.label;
                   const tone = typeof entry === 'string' ? undefined : entry.tone;

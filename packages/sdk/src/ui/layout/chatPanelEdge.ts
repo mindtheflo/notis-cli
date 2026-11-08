@@ -34,6 +34,7 @@ import {
   clampChatPanelWidth,
   parseStoredChatPanelWidth,
 } from './panelMath';
+import { focusedElement, followCoverReveal, isFocusVisible, type CoverReveal } from './coverReveal';
 
 /** The page column (the Manager, a Space, any page) is marked with this attribute. */
 export const PAGE_VIEWPORT_ATTRIBUTE = 'data-notis-view-viewport';
@@ -171,31 +172,6 @@ function storeWidth(width: number | null) {
   }
 }
 
-/** Hover belongs to mouse and pen; a tap on the strip just uses the page. */
-function isHoverPointer(event: PointerEvent): boolean {
-  return event.pointerType === 'mouse' || event.pointerType === 'pen';
-}
-
-/**
- * The element that actually took focus. Focus inside a Space's shadow root reaches the
- * page as an event retargeted to the shadow host, which does not match `:focus-visible`
- * itself; the composed path still starts at the focused element.
- */
-function focusedElement(event: FocusEvent): EventTarget | null {
-  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-  return path[0] ?? event.target;
-}
-
-function isFocusVisible(target: EventTarget | null): boolean {
-  const element = target as Element | null;
-  if (!element || typeof element.matches !== 'function') return false;
-  try {
-    return element.matches(':focus-visible');
-  } catch {
-    return false;
-  }
-}
-
 export function createChatPanelEdge<Page extends string = string>(
   adapters: ChatPanelEdgeAdapters<Page>,
   initial: { hidden: boolean; desktop: boolean },
@@ -205,7 +181,8 @@ export function createChatPanelEdge<Page extends string = string>(
   let drag: Drag | null = null;
   /** The page shows at its minimum width instead of under the panel. */
   let pageExtended = false;
-  let pageHoverTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The pointer-rest and focus reveal while attached (`coverReveal`, shared with Space `Panels`). */
+  let reveal: CoverReveal | null = null;
   let hidden = initial.hidden;
   let desktop = initial.desktop;
   /** The last input was a key press, not a pointer: focus moved by keyboard. */
@@ -299,8 +276,7 @@ export function createChatPanelEdge<Page extends string = string>(
   }
 
   function cancelPageHover() {
-    if (pageHoverTimer !== null) clearTimeout(pageHoverTimer);
-    pageHoverTimer = null;
+    reveal?.cancel();
   }
 
   /** True when the page changed state. */
@@ -410,48 +386,27 @@ export function createChatPanelEdge<Page extends string = string>(
         if (!drag) syncPageNarrowed(preferred);
       }) : null;
       insetObserver?.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
-      const covering = () => !hidden && desktop && panel.hasAttribute('data-overlay');
-
-      // Only a page the panel covers extends, and only after a rest: crossing the strip on
-      // the way to the sidebar must not move anything.
-      const onPagePointer = (event: PointerEvent) => {
-        if (!isHoverPointer(event) || drag || !covering()) return;
-        if (pageExtended || pageHoverTimer !== null) return;
-        pageHoverTimer = setTimeout(() => {
-          if (setPageExtended(true)) adapters.analytics().pageExtended('hover', adapters.page());
-        }, CHAT_PANEL_PAGE_HOVER_DELAY_MS);
-      };
-      // Leaving the page only cancels a pending rest. An extended page stays until the
-      // pointer is back on the panel, so menus and dialogs opened from the page keep it.
-      const onPageLeave = (event: PointerEvent) => {
-        if (isHoverPointer(event)) cancelPageHover();
-      };
-      // The edge is exempt, so the handle stays where it is and can still be grabbed.
-      const onPanelPointer = (event: PointerEvent) => {
-        if (!isHoverPointer(event) || adapters.handle()?.contains(event.target as Node)) return;
-        setPageExtended(false);
-      };
-      // Keyboard focus on a covered page element extends the page so the element shows. A
-      // click or tap that focuses a text field matches :focus-visible too, so the input counts.
-      const onPageFocus = (event: FocusEvent) => {
-        if (!covering() || !keyboardInput || !isFocusVisible(focusedElement(event))) return;
-        if (setPageExtended(true)) adapters.analytics().pageExtended('keyboard', adapters.page());
-      };
-      viewport.addEventListener('pointerenter', onPagePointer);
-      viewport.addEventListener('pointermove', onPagePointer);
-      viewport.addEventListener('pointerleave', onPageLeave);
-      viewport.addEventListener('focusin', onPageFocus);
-      panel.addEventListener('pointerover', onPanelPointer);
+      // The page reveal is the rule Space Panels shares: a rest on the covered page or keyboard
+      // focus in it extends the page until the pointer is back on the panel (the edge exempt).
+      const follow = followCoverReveal({
+        main: viewport,
+        side: panel,
+        edge: () => adapters.handle(),
+        covering: () => !hidden && desktop && panel.hasAttribute('data-overlay'),
+        revealed: () => pageExtended,
+        dragging: () => drag !== null,
+        keyboardFocus: (event) => keyboardInput && isFocusVisible(focusedElement(event)),
+        setRevealed: (extended) => setPageExtended(extended),
+        onRevealed: (trigger) => adapters.analytics().pageExtended(trigger, adapters.page()),
+        delayMs: CHAT_PANEL_PAGE_HOVER_DELAY_MS,
+      });
+      reveal = follow;
       return () => {
         observer?.disconnect();
         insetObserver?.disconnect();
-        cancelPageHover();
+        follow.detach();
+        if (reveal === follow) reveal = null;
         viewport.removeAttribute(CHAT_NARROWED_ATTRIBUTE);
-        viewport.removeEventListener('pointerenter', onPagePointer);
-        viewport.removeEventListener('pointermove', onPagePointer);
-        viewport.removeEventListener('pointerleave', onPageLeave);
-        viewport.removeEventListener('focusin', onPageFocus);
-        panel.removeEventListener('pointerover', onPanelPointer);
       };
     },
 

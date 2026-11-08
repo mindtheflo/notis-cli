@@ -35,9 +35,11 @@ export interface PaneHandleProps {
   onLive: (px: number) => void;
   onWidth: (px: number) => void;
   onReset: () => void;
+  /** A drag started (true) or ended (false, before `onWidth` commits a moved width). */
+  onDragChange?: (dragging: boolean) => void;
 }
 
-export function PaneHandle({ className, label, hint, width, min, max, clamp, rootRef, onLive, onWidth, onReset }: PaneHandleProps) {
+export function PaneHandle({ className, label, hint, width, min, max, clamp, rootRef, onLive, onWidth, onReset, onDragChange }: PaneHandleProps) {
   const dragRef = useRef<Drag | null>(null);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
 
@@ -46,9 +48,10 @@ export function PaneHandle({ className, label, hint, width, min, max, clamp, roo
     if (!drag) return;
     dragRef.current = null;
     setDragWidth(null);
+    onDragChange?.(false);
     // A click without movement keeps the width as it was.
     if (drag.width !== null) onWidth(drag.width);
-  }, [onWidth]);
+  }, [onDragChange, onWidth]);
 
   useEffect(() => end, [end]);
 
@@ -58,6 +61,7 @@ export function PaneHandle({ className, label, hint, width, min, max, clamp, roo
     event.currentTarget.setPointerCapture?.(event.pointerId);
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width, container: measureWidth(rootRef.current), width: null };
     setDragWidth(width);
+    onDragChange?.(true);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {

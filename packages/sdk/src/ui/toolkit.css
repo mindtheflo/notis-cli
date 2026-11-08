@@ -154,6 +154,8 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row-trail { display: flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
 /* Labels give way first: the meta start (who, where, when) truncates only once the labels are down to their ellipsis. */
 .nui-row-labels { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Except a warning or danger label (Overdue, Failed): the meta start gives way to it, so a narrow row still says what is wrong. */
+.nui-row-labels[data-urgent] { flex: 0 0 auto; max-width: 75%; }
 .nui-star { display: inline-flex; flex-shrink: 0; font-size: 14px; color: hsl(32 95% 40%); }
 .dark .nui-star { color: hsl(38 92% 60%); }
 .nui-row-label[data-tone="warning"] { color: hsl(32 95% 40%); }
@@ -543,10 +545,29 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-panels-back:hover { background: hsl(var(--foreground) / .06); }
 .nui-panels-back:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-panels-back .nui-icon { font-size: 16px; }
-/* Split (two panes): the reader sits beside the list, as wide as chosen, never squeezing the list under its minimum. */
+/*
+ * Split (two panes): the reader sits beside the list, never squeezing the list under its minimum. The default width only
+ * pushes. A chosen width (and a drag) goes further by sliding over the list, leaving the 80px peek; the negative margin
+ * keeps the list at its minimum under it. While the list is revealed (a rest on its strip, keyboard focus) the reader
+ * steps back to the push limit. Panels with other minimums write the same rules inline (splitRules in Panels.tsx).
+ */
 @container nui-panels (min-width: 680px) {
   .nui-panels:not([data-custom-split]) > .nui-panels-reader { position: relative; inset: auto; z-index: auto; flex: 0 0 auto; transform: none; transition: none;
     width: clamp(var(--nui-panels-reader-min, 360px), var(--nui-panels-reader-w, 420px), calc(100cqw - var(--nui-panels-list-min, 320px))); }
+  .nui-panels:not([data-custom-split])[data-reader-chosen] > .nui-panels-reader,
+  .nui-panels:not([data-custom-split])[data-resizing] > .nui-panels-reader {
+    --nui-panels-reader-shown: clamp(var(--nui-panels-reader-min, 360px), var(--nui-panels-reader-w, 420px), calc(100cqw - var(--nui-panels-peek, 80px)));
+    width: var(--nui-panels-reader-shown);
+    margin-inline-start: min(0px, calc(100cqw - var(--nui-panels-list-min, 320px) - var(--nui-panels-reader-shown))); }
+  .nui-panels:not([data-custom-split])[data-list-revealed]:not([data-resizing]) > .nui-panels-reader { margin-inline-start: 0;
+    width: clamp(var(--nui-panels-reader-min, 360px), var(--nui-panels-reader-w, 420px), calc(100cqw - var(--nui-panels-list-min, 320px))); }
+  /* Revealing and covering the list again ease; a drag follows the pointer. */
+  @media (prefers-reduced-motion: no-preference) {
+    .nui-panels:not([data-custom-split])[data-reader-chosen]:not([data-resizing]) > .nui-panels-reader { transition: width .2s ease-out, margin-inline-start .2s ease-out; }
+  }
+  /* Floating over the list: above the list's own layers, with the pane line as a ring and the elevation token. */
+  .nui-panels:not([data-custom-split])[data-overlay] > .nui-panels-reader { z-index: 4;
+    box-shadow: 0 0 0 1px hsl(var(--border) / .7), var(--nui-elev-lg, 0 2px 6px rgb(0 0 0 / .06), 0 12px 32px rgb(0 0 0 / .12)); }
   .nui-panels:not([data-custom-split]) > .nui-panels-reader > .nui-panels-handle { display: block; }
   .nui-panels:not([data-custom-split]) > .nui-panels-reader > .nui-panels-backbar { display: none; }
 }

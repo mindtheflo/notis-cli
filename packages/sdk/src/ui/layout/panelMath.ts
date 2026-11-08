@@ -6,8 +6,9 @@
  * chat slides over the page, as it does on mobile, but stops short of covering it: mobile
  * brings the page back with a swipe, the desktop has no swipe. Resting the pointer on the
  * uncovered strip extends the page back to its minimum width and shrinks the chat, until the
- * pointer returns to the chat. A Space's `Panels` never overlaps: when its two minimums no
- * longer fit, it shows one pane.
+ * pointer returns to the chat (`coverReveal`). A Space's `Panels` follows the same rule for a
+ * reader width the user chose (dragged, stepped or stored); its default width only pushes. When
+ * its two minimums no longer fit, it shows one pane instead.
  *
  * One chat width serves every page: the protected shell mounts a single panel, so the
  * Manager, Spaces and the floating chat open at the same width. Without a stored preference
@@ -133,6 +134,30 @@ export function clampReaderWidth(
   return Math.round(Math.max(0, Math.min(Math.max(pushed, readerMin), container - peek)));
 }
 
+/**
+ * A width the user chose for a side pane, in a row `container` px wide (null when unknown): at
+ * least `min`, at most the row minus the `peek` of the main pane it slides over. The chat panel
+ * and a `Panels` reader both clamp a chosen width with it.
+ */
+export function clampChosenWidth(
+  width: number,
+  container: number | null,
+  min: number = PANELS_READER_MIN_PX,
+  peek: number = PANELS_READER_PEEK_PX,
+): number {
+  return Math.round(Math.min(readerMaxWidth(container, peek, min), Math.max(min, width)));
+}
+
+/** What a side pane this wide shows while the main pane is revealed: no wider than the push limit. */
+export function revealedWidth(
+  width: number,
+  container: number | null,
+  listMin: number = PANELS_LIST_MIN_PX,
+  readerMin: number = PANELS_READER_MIN_PX,
+): number {
+  return Math.min(width, pushLimit(container, listMin, readerMin));
+}
+
 /** A stored width is a preference only when it is a positive finite number. */
 export function parseStoredWidth(raw: string | null): number | null {
   if (!raw) return null;
@@ -156,7 +181,7 @@ export function chatPanelPushLimit(sharedWidth: number | null): number {
 }
 
 export function clampChatPanelWidth(width: number, sharedWidth: number | null): number {
-  return Math.round(Math.min(chatPanelMaxWidth(sharedWidth), Math.max(CHAT_PANEL_MIN_WIDTH_PX, width)));
+  return clampChosenWidth(width, sharedWidth, CHAT_PANEL_MIN_WIDTH_PX, CHAT_PANEL_PAGE_PEEK_PX);
 }
 
 /** The page width a chosen panel width leaves in a row of `sharedWidth`. */
