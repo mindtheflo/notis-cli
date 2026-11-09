@@ -80,3 +80,14 @@ test('ChartTable: an about beside the metric label is above the pick area and ne
   assert.equal(rows[1].querySelector('.nui-ctable-about'), null);
   assert.match(cssRule('.nui-ctable-about') ?? '', /position: relative; z-index: 1;/, 'above the pick button that covers the row');
 });
+
+test('chart axis labels and red deltas use readable theme colours, not the Recharts #666 or the fill red', () => {
+  // Recharts 3 draws tick labels as .recharts-cartesian-axis-tick-value with fill="#666" (2.9:1 on Dark); Chart's
+  // category tick uses the same class and no fill at all.
+  assert.match(toolkitCss, /\.nui-chart-container \.recharts-cartesian-axis-tick-value[^{]*\{ fill: hsl\(var\(--muted-foreground\)\); \}/);
+  for (const rule of ['.nui-notice[data-tone="danger"]', '.nui-stat-delta[data-tone="destructive"], .nui-ctable-change[data-tone="destructive"]']) {
+    const at = toolkitCss.indexOf(`\n${rule} {`);
+    assert.ok(at >= 0, rule);
+    assert.match(toolkitCss.slice(at, toolkitCss.indexOf('}', at)), /color: hsl\(var\(--nui-tone-danger, var\(--destructive\)\)\)/, rule);
+  }
+});

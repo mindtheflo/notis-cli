@@ -565,7 +565,7 @@ test('a row hint describes the control in it; an invalid row marks its text cont
   const own = inputNamed('Own')!;
   assert.equal(own.getAttribute('aria-describedby'), 'own-help', 'the field\'s own props win over its row');
   assert.equal(own.hasAttribute('aria-invalid'), false);
-  assert.match(cssRule('.nui-field-row[data-invalid] > .nui-field-value > .nui-field-hint') ?? '', /color: hsl\(var\(--destructive\)\)/);
+  assert.match(cssRule('.nui-field-row[data-invalid] > .nui-field-value > .nui-field-hint') ?? '', /color: hsl\(var\(--nui-tone-danger, var\(--destructive\)\)\)/, 'the readable danger tone: the fill red reads under 4.5:1 on Dark');
   assert.match(cssRule('.nui-field-input[aria-invalid="true"], .nui-field-textarea[aria-invalid="true"]') ?? '',
     /background: hsl\(var\(--destructive\) \/ \.06\)/);
 });
