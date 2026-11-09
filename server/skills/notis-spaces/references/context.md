@@ -72,6 +72,9 @@ optional `quote`, `pending`, `error`, `className`) for image markers or custom l
 Use `NotisSelectionBoundary` without the comment UI when only copy/paste provenance is
 needed. It preserves ordinary clipboard text and source metadata so normal paste into
 chat creates a selected-text pill. No special Paste as context action is required.
+A `MarkdownEditor` inside the boundary is quoted the same way; inputs and textareas
+keep plain copy. Without any boundary, copied view text still pastes as a quote
+named after the Space; add a boundary to name the resource the text belongs to.
 
 ## Verify
 

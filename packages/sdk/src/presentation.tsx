@@ -3,6 +3,7 @@
 import React, { useCallback, useId, useLayoutEffect, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { NotisProvider } from './provider';
+import { copySpaceSelection } from './components/NotisSelectionBoundary';
 import type { NotisRuntime } from './runtime';
 import { ShortcutScope } from './ui/engine/KeyboardEngine';
 
@@ -73,12 +74,14 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
     }
     return true;
   }, [active, mount]);
+  // Every Space quotes copied text by default; a Site's runtime has no chat to quote into.
+  const onCopy = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => copySpaceSelection(event, runtime), [runtime]);
   return <PresentationErrorBoundary resetKey={resetKey} fallback={fallback} onError={onError}>
     {mount && runtime && Component ? createPortal(<CommittedPresentation mount={mount} onCommit={onCommit}>
       {boundsCss ? <style data-notis-runtime-bounds>{boundsCss}</style> : null}
       <ShortcutScope owner={shortcutOwner} kind="space" available={shortcutsAvailable()}>
       <NotisProvider runtime={runtime} onProtocolError={onProtocolError} shortcutsAvailable={shortcutsAvailable}>
-        <div data-notis-app-root data-notis-theme={theme.mode} style={theme.style}>
+        <div data-notis-app-root data-notis-theme={theme.mode} style={theme.style} onCopy={onCopy}>
           {Shell ? <Shell><Component /></Shell> : <Component />}
         </div>
       </NotisProvider>
