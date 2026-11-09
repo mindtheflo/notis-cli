@@ -40,7 +40,7 @@ import {
 } from "./symlink-manager";
 import { getPushCandidates, selectCloudSkillsToApply } from "./sync-plan";
 import { writeCloudSkillWithBundleFallback } from "./write-cloud-skill";
-export { fetchSyncSettings } from './cloud-client';
+export { fetchSyncSettings, pushChangedSkills } from './cloud-client';
 
 export interface RunSkillSyncResult {
   syncEnabled: boolean;
@@ -401,6 +401,25 @@ function buildSyncState(
     lastSyncedAt,
     skills,
   });
+}
+
+/**
+ * A local edit whose upload failed keeps the previously synced folder hash, so the
+ * next sync still sees it as changed and pushes it again instead of recording the
+ * unsent edit as synced.
+ */
+function keepFailedPushesPending(
+  state: NotisSyncState,
+  previousState: NotisSyncState,
+  failedPushes: readonly SkillSyncFailure[],
+): NotisSyncState {
+  for (const { name } of failedPushes) {
+    const row = state.skills[name];
+    const previous = previousState.skills[name];
+    if (!row || !previous || row.nativeReference || previous.nativeReference) continue;
+    state.skills[name] = { ...row, folderHash: previous.folderHash };
+  }
+  return state;
 }
 
 function buildLocalSymlinkCandidates(
@@ -968,7 +987,7 @@ export async function runSkillSync(
   const lastSyncedAt = pullResponse.last_synced_at || new Date().toISOString();
 
   await deps.writeSyncState(
-    buildSyncState(
+    keepFailedPushesPending(buildSyncState(
       pullResponse,
       finalLocalSkills,
       lastSyncedAt,
@@ -977,7 +996,7 @@ export async function runSkillSync(
       collectAppliedCloudRevisions(pullResponse, previousState, writtenSkillNames),
       collectAppliedFiles(pullResponse, previousState, appliedFilesByName),
       previousState,
-    ),
+    ), previousState, failedPushes),
     syncPaths,
   );
 

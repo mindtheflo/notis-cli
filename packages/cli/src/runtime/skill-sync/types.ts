@@ -135,6 +135,10 @@ export interface SyncPullResponse {
 export interface SkillSyncFailure {
   name: string;
   error: string;
+  /** HTTP status of a refused upload, when the push itself was answered non-2xx. */
+  status?: number;
+  /** Classified cause (e.g. `edge_blocked`, `http_413`); never a response body. */
+  code?: string;
 }
 
 export interface SyncPushResponse {

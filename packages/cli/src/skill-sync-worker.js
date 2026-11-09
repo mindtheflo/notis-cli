@@ -106,7 +106,11 @@ export async function main(args = process.argv.slice(2), {
   } catch (error) {
     // Persist only a classified error, never a bearer, signed URL or response body.
     const code = error.code || 'sync_failed';
-    record({ status: 'error', code, ...(REJECTED_SIGN_IN_CODES.has(code) && signIn ? { sign_in: signIn } : {}) });
+    // An HTTP refusal keeps its status, e.g. `edge_blocked` with 403 when the
+    // edge in front of the API refused the request before it reached Notis.
+    const httpStatus = Number.isInteger(error.status) ? { http_status: error.status } : {};
+    record({ status: 'error', code, ...httpStatus,
+      ...(REJECTED_SIGN_IN_CODES.has(code) && signIn ? { sign_in: signIn } : {}) });
     process.exitCode = 1;
   } finally {
     clearTimeout(deadline);

@@ -1,7 +1,7 @@
 import { captureNativeSkillFiles, createSkillBundleBase64 } from './local-scanner';
 import { createHash } from 'node:crypto';
 import { checkedNativeReference } from './native-identity';
-import type { AgentTargets, LocalSkill, NativeSkillReference, SyncPullResponse, SyncPushResponse, SyncSettings } from './types';
+import type { AgentTargets, LocalSkill, NativeSkillReference, SkillSyncFailure, SyncPullResponse, SyncPushResponse, SyncSettings } from './types';
 
 type JsonBody = Record<string, unknown> | undefined;
 
@@ -22,10 +22,31 @@ async function requestJson<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`${options.method || 'POST'} ${url} → ${response.status}: ${text}`);
+    throw new SkillSyncHttpError(
+      `${options.method || 'POST'} ${url} → ${response.status}: ${text}`,
+      response.status,
+      response.headers.get('content-type'),
+    );
   }
 
   return response.json() as Promise<T>;
+}
+
+/**
+ * A non-2xx answer, classified so a status can be recorded without its body:
+ * `edge_blocked` for an HTML 403 (the edge in front of the API refused the
+ * request before it reached Notis), `http_<status>` otherwise.
+ */
+export class SkillSyncHttpError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(message: string, status: number, contentType: string | null) {
+    super(message);
+    this.name = 'SkillSyncHttpError';
+    this.status = status;
+    this.code = status === 403 && /text\/html/i.test(contentType || '') ? 'edge_blocked' : `http_${status}`;
+  }
 }
 
 export async function fetchSyncSettings(serverUrl: string, jwt: string): Promise<SyncSettings> {
@@ -40,12 +61,11 @@ export async function pullSkills(serverUrl: string, jwt: string): Promise<SyncPu
   });
 }
 
-export async function pushChangedSkills(
-  serverUrl: string,
-  jwt: string,
-  changedSkills: LocalSkill[],
-): Promise<SyncPushResponse> {
-  const payloadSkills = await Promise.all(changedSkills.map(async (skill) => ({
+/** Largest sync-push body sent at once; a single larger skill goes alone. */
+export const MAX_SYNC_PUSH_BODY_BYTES = 2 * 1024 * 1024;
+
+async function skillPushPayload(skill: LocalSkill): Promise<Record<string, unknown>> {
+  return {
     name: skill.name,
     description: skill.description,
     skill_md: skill.skillMd,
@@ -56,14 +76,77 @@ export async function pushChangedSkills(
     ...(skill.cloudId ? { cloud_id: skill.cloudId } : {}),
     ...(skill.nativeReference ? { native_reference: skill.nativeReference, display_name: skill.displayName,
       native_scope: skill.nativeScope } : {}),
-  })));
+  };
+}
 
-  return requestJson<SyncPushResponse>(`${serverUrl}/portal_skills/sync-push`, jwt, {
-    body: {
-      skill_sync_protocol: 2,
-      skills: payloadSkills,
-    },
-  });
+/** The request body around the skills array, counted in every batch's size. */
+const SYNC_PUSH_ENVELOPE_BYTES = Buffer.byteLength(JSON.stringify({ skill_sync_protocol: 2, skills: [] }));
+
+function pushBatches(payloads: Record<string, unknown>[], maxBodyBytes: number): Record<string, unknown>[][] {
+  const batches: Record<string, unknown>[][] = [];
+  let batch: Record<string, unknown>[] = [];
+  let batchBytes = SYNC_PUSH_ENVELOPE_BYTES;
+  for (const payload of payloads) {
+    // +1 for the comma between array items.
+    const bytes = Buffer.byteLength(JSON.stringify(payload)) + 1;
+    if (batch.length > 0 && batchBytes + bytes > maxBodyBytes) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = SYNC_PUSH_ENVELOPE_BYTES;
+    }
+    batch.push(payload);
+    batchBytes += bytes;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+function pushFailure(name: string, error: unknown): SkillSyncFailure {
+  if (error instanceof SkillSyncHttpError) {
+    return {
+      name,
+      error: error.code === 'edge_blocked'
+        ? `Upload blocked before reaching Notis (HTTP ${error.status}); sync will retry`
+        : `Upload failed (HTTP ${error.status}); sync will retry`,
+      status: error.status,
+      code: error.code,
+    };
+  }
+  const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'push_failed';
+  return { name, error: 'Upload failed; sync will retry', code };
+}
+
+/**
+ * Push changed skills in bodies of at most `maxBodyBytes` (one skill when it is
+ * larger alone). A batch the server or the edge refuses fails only its own skills,
+ * recorded with the HTTP status, and the other batches still push.
+ */
+export async function pushChangedSkills(
+  serverUrl: string,
+  jwt: string,
+  changedSkills: LocalSkill[],
+  options: { maxBodyBytes?: number } = {},
+): Promise<SyncPushResponse> {
+  const payloadSkills = await Promise.all(changedSkills.map(skillPushPayload));
+  const saved: unknown[] = [];
+  const failed: SkillSyncFailure[] = [];
+  for (const batch of pushBatches(payloadSkills, options.maxBodyBytes ?? MAX_SYNC_PUSH_BODY_BYTES)) {
+    try {
+      const result = await requestJson<SyncPushResponse>(`${serverUrl}/portal_skills/sync-push`, jwt, {
+        body: {
+          skill_sync_protocol: 2,
+          skills: batch,
+        },
+      });
+      saved.push(...(result.skills || []));
+      if (Array.isArray(result.failed)) failed.push(...result.failed);
+    } catch (error) {
+      // A rejected sign-in fails every batch alike: stop and let the sync report it.
+      if (error instanceof SkillSyncHttpError && error.status === 401) throw error;
+      for (const payload of batch) failed.push(pushFailure(String(payload.name), error));
+    }
+  }
+  return { skills: saved, ...(failed.length ? { failed } : {}) };
 }
 
 export async function downloadSkillBundle(bundleUrl: string): Promise<Buffer> {
