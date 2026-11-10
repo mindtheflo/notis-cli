@@ -361,7 +361,7 @@ export interface NoticeProps {
   children?: ReactNode | Words;
   /** Shows a Try again button. */
   onRetry?: () => void;
-  /** Other buttons on the right. */
+  /** Other buttons, on the right; on a narrow notice they wrap onto their own line under the text, with Try again. */
   action?: ReactNode;
   /**
    * The message cannot wait: a screen reader breaks off what it is saying to read it (role="alert"). Keep it for a
@@ -379,8 +379,12 @@ export function Notice({ tone = 'default', children, onRetry, action, urgent = f
     <div className={cx('nui-notice', className)} data-tone={tone === 'default' ? undefined : tone}
       role={urgent ? 'alert' : 'status'}>
       <div className="nui-notice-text">{isWords(children) ? t(children) : children}</div>
-      {action}
-      {onRetry && <Button size="sm" onClick={onRetry}>{t(SHELL_WORDS.tryAgain)}</Button>}
+      {(action || onRetry) && (
+        <div className="nui-notice-actions">
+          {action}
+          {onRetry && <Button size="sm" onClick={onRetry}>{t(SHELL_WORDS.tryAgain)}</Button>}
+        </div>
+      )}
     </div>
   );
 }

@@ -90,12 +90,16 @@ export const specimen = defineSpecimen({
     },
     {
       id: 'narrow',
-      label: 'Narrow (390px): long French text wraps beside the buttons',
+      label: 'Narrow (390px): the buttons wrap onto their own line under the text',
       width: 390,
       render: () => (
         <div className="flex flex-col gap-3">
           <Notice tone="danger" onRetry={() => undefined}>{LOAD_FAILED}</Notice>
           <PausedCallout />
+          <Notice tone="danger" onRetry={() => undefined}
+            action={<Button size="sm" variant="ghost">{w('Reconnect Slack', 'Reconnecter Slack')}</Button>}>
+            {SLACK_EXPIRED}
+          </Notice>
         </div>
       ),
     },

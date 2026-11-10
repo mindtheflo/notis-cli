@@ -493,12 +493,15 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-empty-title { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; }
 .nui-empty-body { margin: 0; max-width: 20rem; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
 .nui-empty-action { margin-top: 12px; }
-.nui-notice { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 18px; background: hsl(var(--foreground) / .05); }
+/* Notice: the text keeps 320px beside its buttons; on a narrower notice the buttons wrap onto their own line under
+   the text. flex-wrap measures the notice itself, never the viewport, so it holds in any Space pane. */
+.nui-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 18px; background: hsl(var(--foreground) / .05); }
 .nui-notice[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .08); }
 .nui-notice[data-tone="warning"] { background: hsl(38 92% 50% / .12); }
 .nui-notice[data-tone="danger"] { background: hsl(var(--destructive) / .08); color: hsl(var(--nui-tone-danger, var(--destructive))); }
 .nui-notice[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .1); }
-.nui-notice-text { flex: 1; min-width: 0; padding-block: 3px; }
+.nui-notice-text { flex: 1 1 320px; min-width: 0; padding-block: 3px; }
+.nui-notice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 
 /* CloudComputerWaking: a quiet centred column while a Cloud Computer service starts, fails or is not offered. */
 .nui-ccw { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 160px; padding: 40px 24px; text-align: center; }
