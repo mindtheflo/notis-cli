@@ -221,7 +221,7 @@ test('spaces folder refuses unclear mappings before any request', async t => {
   assert.equal(fetch.mock.callCount(), 0);
 });
 
-// notis computer status | restart | recover (CC-150, CC-151) ---------------------------
+// notis computer status | restart | recover (CC-150, CC-245) ---------------------------
 
 const GET_COMPUTER = 'LOCAL_NOTIS_GET_CLOUD_COMPUTER';
 const MANAGE_COMPUTER = 'LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER';

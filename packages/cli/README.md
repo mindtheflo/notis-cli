@@ -931,9 +931,9 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis computer restart`
 
-Restart a Cloud Computer that stopped answering. Its files are kept.
+Restart your Cloud Computer, awake or not responding. Its files are kept.
 
-When to use: Only while notis computer status says it is not responding. Whatever was running on it stops; it answers again in 1 to 2 minutes.
+When to use: When it is stuck, slow or not responding. Whatever was running on it stops; it answers again in 1 to 2 minutes. An asleep one has nothing to restart.
 
 Options:
 - `--yes` — Apply without the Continue? [y/N] question.

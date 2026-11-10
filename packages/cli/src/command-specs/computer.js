@@ -8,7 +8,7 @@
 // With neither, the command sets up when needed, waits for the computer and
 // runs ssh.
 //
-// `notis computer status | restart | recover` (CC-150, CC-151) go through
+// `notis computer status | restart | recover` (CC-150, CC-245) go through
 // LOCAL_NOTIS_GET_CLOUD_COMPUTER and LOCAL_NOTIS_MANAGE_CLOUD_COMPUTER, so the
 // server keeps every check. Restart and recover preview first and ask.
 
@@ -241,8 +241,8 @@ export const computerCommandSpecs = [{
   },
 }, {
   command_path: ['computer', 'restart'],
-  summary: 'Restart a Cloud Computer that stopped answering. Its files are kept.',
-  when_to_use: 'Only while notis computer status says it is not responding. Whatever was running on it stops; it answers again in 1 to 2 minutes.',
+  summary: 'Restart your Cloud Computer, awake or not responding. Its files are kept.',
+  when_to_use: 'When it is stuck, slow or not responding. Whatever was running on it stops; it answers again in 1 to 2 minutes. An asleep one has nothing to restart.',
   args_schema: { arguments: [], options: [YES_OPTION] },
   examples: ['notis computer restart', 'notis computer restart --yes'],
   mutates: true, idempotent: false, require_auth: true,
