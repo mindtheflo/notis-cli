@@ -427,6 +427,63 @@ test('accepted dispatch readback failure retains only numeric ID/status for reco
   assert.equal(posts(calls).length, 1);
 });
 
+test('an uncertain 5xx readback of the accepted run is re-read for the same ID without redispatch', async () => {
+  // Seen on stable 11 Nov 2026 (Temporal release 43057599659): POST 200 with a
+  // run ID, then one GitHub 500 on GET /actions/runs/{id} failed the release.
+  let reads = 0;
+  const { store, state, calls } = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+    && request.method === 'GET' && ++reads === 1 ? response(500, { message: token }) : undefined });
+  const result = await store.dispatchFinalizer({ tag, inputs });
+  assert.equal(result.status, 'accepted');
+  assert.equal(result.acceptedRunId, 81);
+  assert.equal(result.runs[0].id, 81);
+  assert.equal(reads, 2);
+  assert.deepEqual(state.sleeps, [2_000]);
+  assert.equal(posts(calls).length, 1);
+
+  const down = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+    && request.method === 'GET' ? response(503, {}) : undefined });
+  await assert.rejects(down.store.dispatchFinalizer({ tag, inputs }), error => {
+    assert.equal(error.code, 'HANDOFF_DISPATCH_UNCONFIRMED');
+    assert.equal(error.acceptedRunId, 81);
+    assert.deepEqual(error.readbackOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: 503 });
+    return true;
+  });
+  // Bounded: the same exact ID is re-read about 2 minutes, then held.
+  assert.equal(down.calls.filter(call => call.url.pathname.endsWith('/actions/runs/81')).length, 7);
+  assert.equal(down.state.sleeps.reduce((total, ms) => total + ms, 0), 119_000);
+  assert.equal(posts(down.calls).length, 1);
+
+  // A definite 4xx readback is read once and held at once, never re-read.
+  const missing = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+    && request.method === 'GET' ? response(404, {}) : undefined });
+  await assert.rejects(missing.store.dispatchFinalizer({ tag, inputs }), error => {
+    assert.equal(error.code, 'HANDOFF_DISPATCH_UNCONFIRMED');
+    assert.deepEqual(error.readbackOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: 404 });
+    return true;
+  });
+  assert.equal(missing.calls.filter(call => call.url.pathname.endsWith('/actions/runs/81')).length, 1);
+  assert.deepEqual(missing.state.sleeps, []);
+  assert.equal(posts(missing.calls).length, 1);
+});
+
+test('a lost, a 429 and a provisional-title readback each use their own wait on the same run', async () => {
+  let reads = 0;
+  const { store, state, calls } = api({ intercept: (url, request, current) => {
+    if (!url.pathname.endsWith('/actions/runs/81') || request.method !== 'GET') return undefined;
+    reads += 1;
+    if (reads === 1) throw new Error(`lost readback ${token}`);
+    if (reads === 2) return response(429, {});
+    const identity = { repository, tag, sourceSha, inputs: current.dispatchBody.inputs };
+    return response(200, run(reads === 3 ? { display_title: 'CLI finalizer' } : {}, identity));
+  } });
+  const result = await store.dispatchFinalizer({ tag, inputs });
+  assert.equal(result.status, 'accepted');
+  assert.equal(reads, 4);
+  assert.deepEqual(state.sleeps, [2_000, 4_000, 1_000]);
+  assert.equal(posts(calls).length, 1);
+});
+
 test('lost dispatch response reconciles an indexed matching run with no second POST', async () => {
   const { store, calls } = api({ loseDispatch: true, indexDispatchedRun: true });
   const result = await store.dispatchFinalizer({ tag, inputs });

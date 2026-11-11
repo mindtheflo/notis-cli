@@ -461,17 +461,22 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
   }
 
   // Re-read only the exact accepted run, and only while every identity field
-  // except the provisional title already matches. Never redispatch or accept
-  // any title other than the exact handoff run name.
+  // except the provisional title already matches, or while the read itself has
+  // an unknown outcome (5xx/429/lost). Never redispatch or accept any title
+  // other than the exact handoff run name; a definite 4xx holds at once.
   async function readAcceptedRun(identity, tag, runId) {
-    for (let attempt = 0; ; attempt += 1) {
+    // Each wait has its own budget, so a 5xx streak never shortens the title wait.
+    const tries = { title: 0, read: 0 };
+    for (;;) {
       try { return await readRun(identity, tag, runId); }
       catch (error) {
         const checks = error?.code === 'HANDOFF_RUN_MISMATCH' ? error.identityChecks : null;
         const titlePending = checks?.title === false
           && Object.entries(checks).every(([key, value]) => key === 'title' || value === true);
-        if (!titlePending || attempt >= TITLE_SETTLE_DELAYS_MS.length) throw error;
-        await sleep(TITLE_SETTLE_DELAYS_MS[attempt]);
+        const kind = titlePending ? 'title' : uncertain(error) ? 'read' : null;
+        const delays = kind === 'title' ? TITLE_SETTLE_DELAYS_MS : RECONCILE_DELAYS_MS;
+        if (!kind || tries[kind] >= delays.length) throw error;
+        await sleep(delays[tries[kind]++]);
       }
     }
   }
