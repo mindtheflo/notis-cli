@@ -84,6 +84,17 @@ The saved `read` action is deliberately constrained to one native record for
 body and record-Site reads; `shows.notes` owns the Editor's collection list. Keep
 both tied to the same declared resource.
 
+## Records in the sidebar
+
+`collection` lists the database's records as rows under the Space in the
+sidebar. Declare it only when the list stays short and people navigate it like
+pages: folders of a notes Space, the chapters of a guide, a handful of decks.
+Leave it out when records keep coming (candidates, leads, tickets, meetings,
+logs, anything a skill or automation adds every week): show them in the view
+with `shows` and a `ListReader` or table, which has search, filters and tabs.
+The sidebar lists a row's first 10 records and a Show more row adds 10 at a
+time, so a long collection still works, but it buries every Space below it.
+
 A Site of the whole Space (or of one of its pages) runs each `shows` list
 through such an action too, and that one-record action refuses the list's
 request. Publishing is then refused with `site_list_action_required`. For a

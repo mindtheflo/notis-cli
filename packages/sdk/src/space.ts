@@ -537,6 +537,10 @@ export interface SpaceDefinition {
    * moment, once that person allowed this Space's agents. Agents' own writes never wake anything.
    */
   agents?: SpaceAgentDeclaration[];
+  /**
+   * Lists the database's records as sidebar rows under this Space. Only for a short list people navigate
+   * like pages (folders, chapters); a database that keeps growing belongs in the view's `shows` instead.
+   */
   collection?: { database: string; titleProperty: string; parentProperty?: string; allowCreate?: boolean };
   /** Reproducible source dependencies not discovered by the module graph. */
   sourceIncludes?: string[];

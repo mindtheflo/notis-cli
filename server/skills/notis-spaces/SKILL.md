@@ -140,6 +140,10 @@ default.
 
 ## Rules the pieces cannot hold for you
 
+- Sidebar children are for short lists people navigate: a few sub-Spaces, or a
+  `collection` whose records stay few (folders of notes). A database that grows
+  every week is listed in the view, never as sidebar rows
+  ([Records in the sidebar](references/views.md#records-in-the-sidebar)).
 - Standard actions (`archive`, `complete`, `star`, `delete`...) take Notis's
   words, key and toast: give only `id` and `run`. A Space's own action, label or
   text brings an `{ en, fr }` pair; no English literal in JSX.
