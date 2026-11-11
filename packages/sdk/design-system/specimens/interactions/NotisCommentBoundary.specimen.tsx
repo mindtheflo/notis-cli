@@ -82,7 +82,8 @@ async function showAction(root: HTMLElement): Promise<HTMLElement> {
 async function openEditor(root: HTMLElement): Promise<HTMLElement> {
   const source = await showAction(root);
   const scope = layerScope(root);
-  const action = await waitFor<HTMLButtonElement>(scope, '[data-notis-comment-ui] > button');
+  // The selection bar's Comment action (Cite sits beside it only where the host has a chat; the book has none).
+  const action = await waitFor<HTMLButtonElement>(scope, 'button[data-selection-action="comment"]');
   action.click();
   await waitFor(scope, '[data-notis-comment-ui] textarea');
   await settle();
@@ -137,7 +138,7 @@ export const specimen = defineSpecimen({
     },
     {
       id: 'action',
-      label: 'Words selected: the Comment action',
+      label: 'Words selected: the selection bar',
       height: 320,
       render: (ctx) => <Page ctx={ctx} />,
       interact: async (root) => { await showAction(root); },

@@ -1,5 +1,7 @@
 'use client';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
+import { useToolkitLocale } from '../ui/engine/hooks';
 import type { Words } from '../words/types';
 
 /**
@@ -70,10 +72,46 @@ function isCoarsePointer(view: Window | null): boolean {
   return Boolean(view?.matchMedia?.('(pointer: coarse)').matches);
 }
 
+// Where a selection may not start or end: fields, editable text and the bar itself.
 const EDITABLE = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[data-notis-selection-ui]';
+
+/** The live selection's ends, to tell when it moved away from what the bar shows. */
+type Ends = { startContainer: Node; startOffset: number; endContainer: Node; endOffset: number };
+function endsOf(range: Range): Ends {
+  return { startContainer: range.startContainer, startOffset: range.startOffset, endContainer: range.endContainer, endOffset: range.endOffset };
+}
+function sameEnds(a: Ends, b: Ends): boolean {
+  return a.startContainer === b.startContainer && a.startOffset === b.startOffset
+    && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+}
 
 function elementOf(node: Node): Element | null {
   return node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+}
+
+function selectionIn(node: Node): Selection | null {
+  const scope = node.getRootNode() as ShadowRoot & { getSelection?: () => Selection | null };
+  return scope.getSelection?.() || node.ownerDocument?.defaultView?.getSelection() || null;
+}
+
+/**
+ * The surface's box. A `display: contents` element draws none: its content's own box stands in when it draws one
+ * (a boundary given a className), else the nearest ancestor that does.
+ */
+function boundsOf(node: HTMLElement): DOMRect {
+  let element: Element = node;
+  let box = element.getBoundingClientRect();
+  for (let depth = 0; !box.width && element.firstElementChild && depth < 8; depth += 1) {
+    const child = element.firstElementChild.getBoundingClientRect();
+    if (child.width) return child;
+    element = element.firstElementChild;
+  }
+  element = node;
+  while (!box.width && element.parentElement) {
+    element = element.parentElement;
+    box = element.getBoundingClientRect();
+  }
+  return box;
 }
 
 export interface UseSelectionAnchorOptions {
@@ -85,6 +123,8 @@ export interface UseSelectionAnchorOptions {
   clip?(range: Range, root: HTMLElement): Range | null;
   /** The bar's size, measured once it shows; used to keep it inside the viewport. */
   barSize?: { width: number; height: number };
+  /** More places a selection may not start or end in, on top of inputs and editable text (a CSS selector). */
+  exclude?: string;
 }
 
 /**
@@ -94,26 +134,35 @@ export interface UseSelectionAnchorOptions {
 export function useSelectionAnchor(root: RefObject<HTMLElement | null>, options: UseSelectionAnchorOptions = {}) {
   const { enabled = true } = options;
   const [anchor, setAnchor] = useState<SelectionAnchor | null>(null);
+  const anchorRef = useRef<SelectionAnchor | null>(null);
+  anchorRef.current = anchor;
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const settle = useRef<number | undefined>(undefined);
+  const pending = useRef<number | undefined>(undefined);
+  // The live selection the shown bar was read from: a different one hides the bar until it is read again.
+  const shownEnds = useRef<Ends | null>(null);
 
   const read = useCallback((): SelectionAnchor | null => {
     const node = root.current;
     if (!node) return null;
-    const scope = node.getRootNode() as ShadowRoot & { getSelection?: () => Selection | null };
     const view = node.ownerDocument.defaultView;
-    const selection = scope.getSelection?.() || view?.getSelection();
+    const selection = selectionIn(node);
     if (!selection?.rangeCount || selection.isCollapsed || !selection.toString().trim()) return null;
-    let range: Range | null = selection.getRangeAt(0).cloneRange();
-    if (!node.contains(range.startContainer) || !node.contains(range.endContainer)) {
-      range = optionsRef.current.clip?.(range, node) ?? null;
+    const live = selection.getRangeAt(0);
+    let range: Range | null = live.cloneRange();
+    const clipped = !node.contains(range.startContainer) || !node.contains(range.endContainer);
+    if (clipped) {
+      // A selection in another tree (the page around a Space's shadow root) cannot be compared with this one.
+      try { range = optionsRef.current.clip?.(range, node) ?? null; } catch { range = null; }
       if (!range) return null;
     }
     const start = elementOf(range.startContainer);
     const end = elementOf(range.endContainer);
-    if (start?.closest(EDITABLE) || end?.closest(EDITABLE)) return null;
+    const excluded = optionsRef.current.exclude ? `${EDITABLE},${optionsRef.current.exclude}` : EDITABLE;
+    if (start?.closest(excluded) || end?.closest(excluded)) return null;
     if (optionsRef.current.accept && !optionsRef.current.accept(range, node)) return null;
+    // The range's own text: it is what the chat finds again when a quote link highlights the words.
     const text = range.toString().trim();
     if (!text) return null;
     const lines = Array.from(range.getClientRects?.() || []).filter(line => line.width > 0 && line.height > 0);
@@ -126,11 +175,12 @@ export function useSelectionAnchor(root: RefObject<HTMLElement | null>, options:
       remainder.setStart(range.endContainer, range.endOffset);
       if (remainder.toString().trim()) trailing.push(...Array.from(remainder.getClientRects?.() || []).filter(line => line.width > 0 && line.height > 0));
     }
-    const bounds = node.getBoundingClientRect();
+    const bounds = boundsOf(node);
     const position = getSelectionBarPosition(lines.length ? lines : [rect],
       { width: view?.innerWidth ?? 1024, height: view?.innerHeight ?? 768 },
       optionsRef.current.barSize ?? { width: 80, height: 32 },
       { rightBoundary: bounds.width ? bounds.right : undefined, trailing, coarse: isCoarsePointer(view) });
+    shownEnds.current = endsOf(live);
     return { ...position, text, range };
   }, [root]);
 
@@ -139,7 +189,12 @@ export function useSelectionAnchor(root: RefObject<HTMLElement | null>, options:
   // The bar measured itself: place it again with its real width, so its edge lines up with the selection.
   const barWidth = options.barSize?.width;
   const barHeight = options.barSize?.height;
-  useEffect(() => { setAnchor(current => current ? read() : current); }, [barWidth, barHeight, read]);
+  useEffect(() => {
+    // Read here, not inside the state updater: React may run an updater lazily or twice.
+    if (!anchorRef.current) return;
+    const next = read();
+    setAnchor(current => current ? next : current);
+  }, [barWidth, barHeight, read]);
 
   useEffect(() => {
     const node = root.current;
@@ -147,37 +202,61 @@ export function useSelectionAnchor(root: RefObject<HTMLElement | null>, options:
     const document = node.ownerDocument;
     const view = document.defaultView;
     const scope = node.getRootNode() as ShadowRoot | Document;
+    // Cheap checks only while the selection moves: no layout until it is read again.
+    const liveSelection = () => {
+      const selection = selectionIn(node);
+      const inside = (point: Node | null | undefined) => Boolean(point && node.contains(point));
+      if (!selection?.rangeCount || selection.isCollapsed || !(inside(selection.anchorNode) || inside(selection.focusNode))) return null;
+      return selection;
+    };
     const capture = (event: Event) => {
       if (event.target instanceof Element && event.target.closest('[data-notis-selection-ui]')) return;
       // Let the browser finish the selection (a double click selects the word after mouseup).
-      view?.setTimeout(() => setAnchor(read()), 0);
+      view?.clearTimeout(pending.current);
+      pending.current = view?.setTimeout(() => setAnchor(read()), 0);
     };
+    // Keys go to the focused element (often the page body), so a keyboard selection is followed on the document.
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.shiftKey || event.key === 'Shift' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a')) capture(event);
+      if (!(event.shiftKey || event.key === 'Shift' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a'))) return;
+      // Only a selection touching this surface (or a bar it shows) is worth reading: typing capitals elsewhere is not.
+      if (!liveSelection() && !anchorRef.current) return;
+      capture(event);
     };
     const onSelectionChange = () => {
-      const next = read();
-      if (!next) { setAnchor(null); return; }
-      // A touch selection has no mouse up: show the bar once its handles stop moving.
-      if (isCoarsePointer(view)) {
-        view?.clearTimeout(settle.current);
-        setAnchor(null);
-        settle.current = view?.setTimeout(() => setAnchor(read()), 450);
+      if (!isCoarsePointer(view)) {
+        // A mouse or keyboard selection shows the bar when it ends (mouse up, key up). While it moves, the bar hides
+        // as soon as the selection is gone or is no longer the one the bar was read from (a clipped one included).
+        const current = selectionIn(node);
+        const moved = !current?.rangeCount || current.isCollapsed || !shownEnds.current
+          || !sameEnds(endsOf(current.getRangeAt(0)), shownEnds.current);
+        if (moved) setAnchor(shown => shown ? null : shown);
+        return;
       }
+      const selection = liveSelection();
+      // A touch selection has no mouse up: show the bar once its handles stop moving.
+      view?.clearTimeout(settle.current);
+      setAnchor(current => current ? null : current);
+      if (!selection) return;
+      settle.current = view?.setTimeout(() => setAnchor(read()), 450);
     };
-    const onScroll = () => setAnchor(current => current ? read() : current);
+    const onScroll = () => {
+      if (!anchorRef.current) return;
+      const next = read();
+      setAnchor(current => current ? next : current);
+    };
     node.addEventListener('mouseup', capture);
     node.addEventListener('dblclick', capture);
-    node.addEventListener('keyup', onKeyUp);
+    document.addEventListener('keyup', onKeyUp);
     document.addEventListener('selectionchange', onSelectionChange);
     if (scope !== document) scope.addEventListener('selectionchange', onSelectionChange);
     view?.addEventListener('scroll', onScroll, true);
     view?.addEventListener('resize', onScroll);
     return () => {
       view?.clearTimeout(settle.current);
+      view?.clearTimeout(pending.current);
       node.removeEventListener('mouseup', capture);
       node.removeEventListener('dblclick', capture);
-      node.removeEventListener('keyup', onKeyUp);
+      document.removeEventListener('keyup', onKeyUp);
       document.removeEventListener('selectionchange', onSelectionChange);
       if (scope !== document) scope.removeEventListener('selectionchange', onSelectionChange);
       view?.removeEventListener('scroll', onScroll, true);
@@ -190,9 +269,48 @@ export function useSelectionAnchor(root: RefObject<HTMLElement | null>, options:
 
 /** Clears the page's selection once its text was cited, so the bar does not linger over it. */
 export function clearSelectionIn(node: Node | null | undefined): void {
-  if (!node) return;
-  const scope = node.getRootNode() as ShadowRoot & { getSelection?: () => Selection | null };
-  (scope.getSelection?.() || node.ownerDocument?.defaultView?.getSelection())?.removeAllRanges();
+  if (node) selectionIn(node)?.removeAllRanges();
+}
+
+/**
+ * The Cite action of a selection bar: the same words and glyph everywhere; it clears the selection and hides the bar
+ * before handing over the cited text.
+ */
+export function citeSelectionAction(locale: keyof typeof SELECTION_BAR_WORDS.cite, anchor: SelectionAnchor,
+  root: RefObject<HTMLElement | null>, dismiss: () => void, onCite: (range: Range, text: string) => void): SelectionBarAction {
+  return {
+    key: 'cite', label: SELECTION_BAR_WORDS.cite[locale], title: SELECTION_BAR_WORDS.citeHint[locale], icon: QUOTE_GLYPH,
+    onSelect: () => {
+      const { range, text } = anchor;
+      clearSelectionIn(root.current);
+      dismiss();
+      onCite(range, text);
+    },
+  };
+}
+
+export interface CiteSelectionBarProps {
+  /** The surface whose selected text Cite quotes. */
+  root: RefObject<HTMLElement | null>;
+  /** Receives the cited text once the bar has cleared the selection. */
+  onCite(range: Range, text: string): void;
+  enabled?: boolean;
+  accept?: UseSelectionAnchorOptions['accept'];
+  /** Render the bar in document.body, out of a container that clips or transforms it. */
+  portal?: boolean;
+}
+
+/**
+ * The Cite-only bar every quoting surface shows (chat, Space views, Skills and automations; truth PRT-087): it follows
+ * the selection in `root`, measures itself, and hands the cited text to `onCite`.
+ */
+export function CiteSelectionBar({ root, onCite, enabled = true, accept, portal }: CiteSelectionBarProps) {
+  const locale = useToolkitLocale();
+  const [barSize, setBarSize] = useState({ width: 72, height: 32 });
+  const { anchor, dismiss } = useSelectionAnchor(root, { enabled, accept, barSize });
+  if (!anchor) return null;
+  const bar = <SelectionActionBar anchor={anchor} onSize={setBarSize} actions={[citeSelectionAction(locale, anchor, root, dismiss, onCite)]} />;
+  return portal && typeof document !== 'undefined' ? createPortal(bar, document.body) : bar;
 }
 
 export const QUOTE_GLYPH = <svg aria-hidden="true" width="14" height="14" viewBox="0 0 256 256" fill="currentColor"><path d="M100,56H40A16,16,0,0,0,24,72v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,100,56Zm0,80H40V72h60ZM216,56H156a16,16,0,0,0-16,16v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,216,56Zm0,80H156V72h60Z" /></svg>;

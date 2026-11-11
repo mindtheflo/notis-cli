@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useCallback, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
+import React, { useCallback, useId, useLayoutEffect, useRef, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { NotisProvider } from './provider';
 import { citeSpaceSelection, copySpaceSelection } from './components/NotisSelectionBoundary';
-import { QUOTE_GLYPH, SELECTION_BAR_WORDS, SelectionActionBar, clearSelectionIn, useSelectionAnchor } from './components/SelectionActionBar';
-import { useToolkitLocale } from './ui/engine/hooks';
+import { CiteSelectionBar } from './components/SelectionActionBar';
 import type { NotisRuntime } from './runtime';
 import { ShortcutScope } from './ui/engine/KeyboardEngine';
 
@@ -99,25 +98,11 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
  * boundary draws its own bar (Cite and Comment), and a Site's runtime has no chat, so neither shows this one.
  */
 function SpaceSelectionCite({ root, runtime }: { root: React.RefObject<HTMLDivElement | null>; runtime: NotisRuntime }) {
-  const locale = useToolkitLocale();
-  const [barSize, setBarSize] = useState({ width: 72, height: 32 });
-  const { anchor, dismiss } = useSelectionAnchor(root, {
-    enabled: Boolean(runtime.addContext),
-    barSize,
-    accept: range => {
+  return <CiteSelectionBar root={root} enabled={Boolean(runtime.addContext)}
+    accept={range => {
       const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
         ? range.commonAncestorContainer as Element : range.commonAncestorContainer.parentElement;
       return !element?.closest('[data-notis-comment-boundary]');
-    },
-  });
-  if (!anchor) return null;
-  return <SelectionActionBar anchor={anchor} onSize={setBarSize} actions={[{
-    key: 'cite', label: SELECTION_BAR_WORDS.cite[locale], title: SELECTION_BAR_WORDS.citeHint[locale], icon: QUOTE_GLYPH,
-    onSelect: () => {
-      const { range, text } = anchor;
-      clearSelectionIn(root.current);
-      dismiss();
-      void citeSpaceSelection(runtime, range, text).catch(() => false);
-    },
-  }]} />;
+    }}
+    onCite={(range, text) => { void citeSpaceSelection(runtime, range, text).catch(() => false); }} />;
 }

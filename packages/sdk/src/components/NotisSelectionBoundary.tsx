@@ -2,6 +2,7 @@ import type { CSSProperties, ClipboardEvent, ReactNode } from 'react';
 import React, { useCallback } from 'react';
 import { useNotisRuntime } from '../provider';
 import type { ContextResource, ContextSelection, NotisRuntime } from '../runtime';
+import { newSelectionId } from './selectionId';
 
 export const NOTIS_CONTEXT_CLIPBOARD_TYPE = 'application/x-notis-context+json';
 
@@ -10,12 +11,6 @@ export interface NotisSelectionBoundaryProps {
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
-}
-
-function selectionId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `selection-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 /** The selection's markup for other paste targets: hidden parts dropped, links made absolute. */
@@ -61,7 +56,7 @@ export function addCopiedSelectionToClipboard(
   const text = wrotePlain || selection.toString();
   if (!text.trim()) return null;
 
-  const payload: ContextSelection = { ...context, id: selectionId(), text };
+  const payload: ContextSelection = { ...context, id: newSelectionId(), text };
   if (!editorWrote) {
     // Keep the copied formatting (links, bold, tables) for every other paste target.
     const html = selectionHtml(selection);
@@ -132,7 +127,7 @@ export function citeSpaceSelection(runtime: Pick<NotisRuntime, 'contextSource' |
   const resource = quoteResourceFor(range);
   const source = runtime.contextSource;
   return runtime.addContext({
-    id: selectionId(), text,
+    id: newSelectionId(), text,
     ...(resource ? { resource } : source ? { title: source.appName } : {}),
   });
 }
