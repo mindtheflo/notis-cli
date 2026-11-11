@@ -1552,6 +1552,20 @@ function ListReaderInner<T>({
     wasCenter.current = centerOpen;
   }, [centerOpen]);
 
+  // ---- side and full: a close that dropped focus (it was in the reader) gives it to the cursor row ----
+  // Escape from inside the reader keeps the person's place in the list, like the center dialog above. Focus they
+  // moved somewhere else on purpose stays there.
+  const wasReaderOpen = useRef(readerOpen);
+  useIsoLayoutEffect(() => {
+    const closed = wasReaderOpen.current && !readerOpen;
+    wasReaderOpen.current = readerOpen;
+    if (!closed) return;
+    const { active, body } = focusOf(rootRef.current);
+    if (!active || active !== body) return;
+    const id = latest.current.cursor;
+    if (id !== null) findRow(scrollRef.current, id)?.focus({ preventScroll: true });
+  }, [readerOpen]);
+
   // ---- rows ----
   /**
    * An item's actions in a More menu: on its row (`more`), and in the reader bar (`ReaderCtx.actionsMenu`). A row's

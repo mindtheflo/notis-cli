@@ -604,7 +604,7 @@ test('useToast: a page toast with words, a reason, Undo and Dismiss, in French t
 
 // ---- reader ----
 
-test('reader: Enter opens in side peek, J/K open the next item, Esc closes, then clears', async () => {
+test('reader: Enter opens in side peek, J/K open the next item, Esc closes and keeps its row the focused cursor row, then clears', async () => {
   const opened: Array<string | null> = [];
   await mount(list({ actions: ['complete'], handlers: { complete: () => {} }, onOpen: (t) => opened.push(t?.id ?? null) }));
   await press('j');
@@ -617,9 +617,25 @@ test('reader: Enter opens in side peek, J/K open the next item, Esc closes, then
   await press('Escape');
   assert.equal(q('#reader'), null, 'Esc closes the reader first');
   assert.deepEqual(selectedIds(), ['a'], 'and keeps the selection');
+  // The row it closed stays the cursor row, highlighted and focused, so J/K and Enter go on from it.
+  assert.equal(cursorId(), 'b');
+  assert.equal(doc.activeElement?.getAttribute('data-nui-item'), 'b');
   await press('Escape');
   assert.deepEqual(selectedIds(), []);
   assert.deepEqual(opened, ['a', 'b', null]);
+});
+
+test('reader: Escape with focus inside the side reader puts focus back on the item\'s cursor row', async () => {
+  await mount(list());
+  await click(q('[data-nui-item="c"]')!);
+  assert.equal(q('#reader')!.textContent, 'Ticket C');
+  const pane = q('.nui-lr-reader')!;
+  await act(async () => { pane.focus(); });
+  assert.equal(doc.activeElement, pane, 'focus is inside the reader');
+  await press('Escape');
+  assert.equal(q('#reader'), null, 'Escape closes the reader');
+  assert.equal(cursorId(), 'c', 'its row stays the cursor row');
+  assert.equal(doc.activeElement?.getAttribute('data-nui-item'), 'c', 'and takes the focus the reader dropped');
 });
 
 test('reader: an open item that leaves the list hands over to the next one', async () => {
