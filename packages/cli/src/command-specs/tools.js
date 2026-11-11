@@ -201,7 +201,7 @@ export function classifyToolMutation(toolName, args = {}) {
   const normalized = localNotisToolSlug(toolName).toUpperCase();
   if (normalized === 'LOCAL_NOTIS_SANDBOX_PREVIEW') {
     if (args.action === 'status') return false;
-    if (['register', 'open', 'heartbeat', 'stop'].includes(args.action)) return true;
+    if (['register', 'open', 'heartbeat', 'stop', 'delete'].includes(args.action)) return true;
     return null;
   }
   if (normalized.includes('EXECUTE_SQL') && typeof args.query === 'string') {

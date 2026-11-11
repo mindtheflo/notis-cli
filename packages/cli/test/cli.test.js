@@ -1254,7 +1254,7 @@ test('debug and smoke first-class commands are registered', () => {
 
 test('tool mutation metadata distinguishes reads, writes, and unknown tools', () => {
   assert.equal(classifyToolMutation('LOCAL_NOTIS_SANDBOX_PREVIEW', { action: 'status' }), false);
-  for (const action of ['register', 'open', 'heartbeat', 'stop']) {
+  for (const action of ['register', 'open', 'heartbeat', 'stop', 'delete']) {
     assert.equal(classifyToolMutation('LOCAL_NOTIS_SANDBOX_PREVIEW', { action }), true);
   }
   assert.equal(classifyToolMutation('LOCAL_NOTIS_SANDBOX_PREVIEW'), null);
