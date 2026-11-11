@@ -2701,3 +2701,13 @@ test('row menu: a press on its panel (its line, an item with Mod) neither opens 
   assert.equal(q('#reader')?.textContent ?? null, null, 'the reader stays closed');
   assert.deepEqual(opened, []);
 });
+
+test('a list in a scrolling page lets the wheel reach the page: its scroll area never contains overscroll', () => {
+  // A ListReader in a page that scrolls (a dashboard Section) grows to its rows, so its scroll area never overflows.
+  // Chromium applies overscroll-behavior to a scroll container even when it cannot scroll, so `contain` there kept
+  // every wheel and touch scroll over the rows from reaching the page. The host contains overscroll at the Space root.
+  assert.match(cssRule('.nui-lr-scroll') ?? '', /overflow-y: auto;/, 'a bounded list still scrolls on its own');
+  const rules = [...toolkitCss.matchAll(/\n([^\n{}]*\.nui-lr-scroll[^\n{}]*) \{([^}]*)\}/g)];
+  assert.ok(rules.length >= 3, 'the list scroll rules are found');
+  for (const [, selector, body] of rules) assert.doesNotMatch(body, /overscroll-behavior(-y)?: contain/, selector);
+});

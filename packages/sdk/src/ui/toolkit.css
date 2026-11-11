@@ -280,7 +280,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-sub-label { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
 .nui-lr-sub-label > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nui-lr-view-note { margin: 4px 0 0; padding: 8px 10px 6px; max-width: 240px; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
-.nui-lr-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; outline: none; padding-bottom: var(--nui-fab-safe-bottom); scroll-padding-bottom: var(--nui-fab-safe-bottom); }
+.nui-lr-scroll { flex: 1; min-height: 0; overflow-y: auto; outline: none; padding-bottom: var(--nui-fab-safe-bottom); scroll-padding-bottom: var(--nui-fab-safe-bottom); }
 .nui-lr[data-bar] .nui-lr-scroll { padding-bottom: max(64px, var(--nui-fab-safe-bottom)); scroll-padding-bottom: max(64px, var(--nui-fab-safe-bottom)); }
 /* A footer already lifts the end of the list by its 48px: the floating Notis button only reaches the rest into it. */
 .nui-lr-list[data-footer] .nui-lr-scroll { padding-bottom: max(0px, calc(var(--nui-fab-safe-bottom) - 48px)); scroll-padding-bottom: max(0px, calc(var(--nui-fab-safe-bottom) - 48px)); }
