@@ -4,11 +4,11 @@
  * looks of its `state` prop.
  */
 
-import { useContext, type ReactNode } from 'react';
+import { Fragment, useContext, type ReactNode } from 'react';
 import { SHELL_WORDS, fillWords, pick, type Locale, type Words } from '../../words';
 import { useToolkitLocale } from '../engine/hooks';
 import { Icon, renderIcon } from '../icons';
-import { cx, flag, useT } from '../util';
+import { cx, flag, useStableId, useT } from '../util';
 import { IDLE_ROW_STATE, RowIdContext, RowStateContext, useRowState, type RowState } from './rowState';
 
 export type Tone = 'default' | 'info' | 'success' | 'warning' | 'danger';
@@ -46,8 +46,8 @@ export interface RowProps {
   /** One clamped line (13/18). */
   snippet?: ReactNode;
   /**
-   * Words on the meta line, as text joined by ", " (never chips). A warning or danger label comes first and keeps
-   * its tone.
+   * Words on the meta line, as text joined by ", ". A warning or danger label (Overdue, Failed) comes first as a small
+   * tinted pill: state is never shown by text colour alone.
    */
   labels?: readonly RowLabel[];
   /** Links as chips between the title and the trail; they shrink, then clip, before the title does. */
@@ -77,6 +77,13 @@ export interface RowProps {
   wrap?: 1 | 2;
   /** Only on a Row drawn on its own; inside a list the list's row element carries the classes. */
   className?: string;
+  /**
+   * Only on a Row drawn on its own (a short "Needs action" list): the whole row opens something. Inside a list the
+   * list owns the press.
+   */
+  onPress?: () => void;
+  /** The pressable row's accessible name. Default the title when it is text. */
+  pressLabel?: string;
 }
 
 // ---- status ----
@@ -299,6 +306,11 @@ function isUrgentLabel(entry: RowLabel): boolean {
   return typeof entry !== 'string' && (entry.tone === 'warning' || entry.tone === 'danger');
 }
 
+function rowLabelTone(entry: RowLabel): string | undefined {
+  const tone = typeof entry === 'string' ? undefined : entry.tone;
+  return tone && tone !== 'default' ? tone : undefined;
+}
+
 function isStatusIcon(icon: unknown): icon is { status: string } {
   return !!icon && typeof icon === 'object' && !Array.isArray(icon)
     && typeof (icon as { status?: unknown }).status === 'string' && !('$$typeof' in (icon as object));
@@ -306,13 +318,15 @@ function isStatusIcon(icon: unknown): icon is { status: string } {
 
 /** One list row: lead icon, a title over a meta line, then the trail (trailing, time, avatar, More). */
 export function Row({
-  icon, title, meta, snippet, labels, tags, owner, time, dateOnly, now, trailing, more, state, wrap, className,
+  icon, title, meta, snippet, labels, tags, owner, time, dateOnly, now, trailing, more, state, wrap, className, onPress,
+  pressLabel,
 }: RowProps) {
   const locale = useToolkitLocale();
   const source = useContext(RowStateContext);
   const contextId = useContext(RowIdContext);
   const contextState = useRowState();
   const inList = !!source && contextId !== null;
+  const titleId = useStableId('nui-row-title');
   const rowState = state ?? (inList ? contextState : IDLE_ROW_STATE);
 
   const lead = icon === undefined || icon === null || icon === false ? null
@@ -339,7 +353,8 @@ export function Row({
         </span>
       )}
       <span className="nui-row-main" data-wrap={wrap === 2 ? 2 : undefined}>
-        <span className="nui-row-title" data-lines={wrap === 2 ? 2 : undefined}>{title}</span>
+        <span className="nui-row-title" id={onPress && !inList ? titleId : undefined}
+          data-lines={wrap === 2 ? 2 : undefined}>{title}</span>
         {(hasMeta || ordered.length > 0) && (
           <span className="nui-row-meta">
             {hasMeta && <span className="nui-row-meta-start">{meta}</span>}
@@ -348,11 +363,17 @@ export function Row({
               <span className="nui-row-labels" data-urgent={isUrgentLabel(ordered[0]!) ? '' : undefined}>
                 {ordered.map((entry, index) => {
                   const label = typeof entry === 'string' ? entry : entry.label;
-                  const tone = typeof entry === 'string' ? undefined : entry.tone;
+                  const toned = rowLabelTone(entry);
+                  // A toned label is a pill, so no comma shows into it or out of it; a hidden one still separates
+                  // the words for a screen reader and the view's text.
+                  const pill = !!toned || (index > 0 && !!rowLabelTone(ordered[index - 1]!));
                   return (
-                    <span key={index} className="nui-row-label" data-tone={tone && tone !== 'default' ? tone : undefined}>
-                      {index > 0 ? ', ' : ''}{pick(label, locale)}
-                    </span>
+                    <Fragment key={index}>
+                      {index > 0 && pill && <span className="nui-sr-only">, </span>}
+                      <span className="nui-row-label" data-tone={toned}>
+                        {index > 0 && !pill ? ', ' : ''}{pick(label, locale)}
+                      </span>
+                    </Fragment>
                   );
                 })}
               </span>
@@ -403,9 +424,17 @@ export function Row({
 
   // Inside a list the list's row element carries the states and `className`.
   if (inList) return content;
+  const pressable = !!onPress;
   return (
     <div className={cx('nui-row', className)} data-cursor={flag(rowState.cursor)} data-open={flag(rowState.open)}
-      data-selected={flag(rowState.selected)} data-wrap={wrap === 2 ? 2 : undefined}>
+      data-selected={flag(rowState.selected)} data-wrap={wrap === 2 ? 2 : undefined}
+      data-pressable={pressable ? '' : undefined}>
+      {pressable && (
+        // One button over the whole row, so the row never nests its content in a button.
+        <button type="button" className="nui-row-press" onClick={onPress}
+          aria-label={pressLabel ?? (typeof title === 'string' ? title : undefined)}
+          aria-labelledby={pressLabel === undefined && typeof title !== 'string' ? titleId : undefined} />
+      )}
       {content}
     </div>
   );

@@ -74,10 +74,19 @@ export function hasIcon(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(SHAPES, name);
 }
 
-/** A built-in icon by name; an unknown name renders nothing. Decorative: the control carries the label. */
+const warned = new Set<string>();
+
+/** Names the set lacks, warned once each: an unknown name renders nothing, so a typo would otherwise go unseen. */
+function warnUnknown(name: string): void {
+  if (warned.has(name) || typeof console === 'undefined') return;
+  warned.add(name);
+  console.warn(`[notis/ui] Unknown icon "${name}": it renders nothing. Use a name from the toolkit set (${Object.keys(SHAPES).length} icons, listed in the design system) or pass a Phosphor component.`);
+}
+
+/** A built-in icon by name; an unknown name renders nothing and warns once. Decorative: the control carries the label. */
 export function Icon({ name, className }: { name: string; className?: string }) {
   const shape = SHAPES[name];
-  if (!shape) return null;
+  if (!shape) { warnUnknown(name); return null; }
   return (
     <svg className={className ? `nui-icon ${className}` : 'nui-icon'} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
       {shape}

@@ -198,6 +198,21 @@ export function chartMax(values: ReadonlyArray<number | null | undefined>): numb
   return max * 1.1;
 }
 
+/**
+ * The top of a value axis drawn in quarters, raised from `max` so every quarter is a round number (110 gives 120:
+ * 30, 60, 90, 120), never 27.5. With `integers` (counts) each quarter is a whole number too: 1.1 gives 4, never 1.2.
+ * Exported for tests.
+ */
+export function niceQuarterMax(max: number, integers = false): number {
+  if (!Number.isFinite(max) || max <= 0) return integers ? 4 : 1;
+  const raw = max / 4;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const steps = [1, 2, 2.5, 3, 4, 5, 6, 8, 10].map((m) => Number((m * power).toPrecision(12)))
+    .filter((step) => !integers || (step >= 1 && Number.isInteger(step)));
+  const step = steps.find((s) => s >= raw - 1e-9 * power) ?? (integers ? Math.max(1, Math.ceil(raw)) : 10 * power);
+  return Number((step * 4).toPrecision(12));
+}
+
 /** True when the period ends today, so its last bin is still filling (drawn full colour). */
 export function endsToday(range: DateRange, now: Date = new Date()): boolean {
   return differenceInCalendarDays(range.to, now) === 0;

@@ -190,3 +190,42 @@ test('a Space hears that the top bar crumb names the page; an app still hears to
   assert.doesNotMatch(space.message, /plain noun page title/);
   assert.match(app.message, /plain noun page title/);
 });
+
+test('status page rules warn in a Space only: a tinted box per item and state by text colour', () => {
+  const space = loadDesignRules({ rulesPath, profile: 'space' });
+  const app = loadDesignRules({ rulesPath });
+  const found = (content, config = space) => collectDesignViolationsForFile('app/fleet.tsx', `${content}\n`, config);
+  const ids = (content, config) => found(content, config).map((violation) => violation.ruleId);
+  const bad = {
+    'no-tinted-item-box': [
+      '<div className="rounded-lg bg-muted/40 p-4">{m.name}</div>',
+      '<li className="p-3 bg-secondary rounded-md">{s.name}</li>',
+      '<div className={`rounded-xl bg-muted ${x.wide} p-6`}>{x.name}</div>',
+    ],
+    'no-state-text-colour': [
+      "<span className={`tabular-nums ${blocked ? 'text-destructive' : ''}`}>{n}</span>",
+      "const tone = ok ? 'text-foreground' : 'text-destructive';",
+      "const cls = cx('text-sm', tone === 'danger' && 'text-destructive');",
+    ],
+  };
+  for (const [ruleId, snippets] of Object.entries(bad)) {
+    for (const snippet of snippets) {
+      const hit = found(snippet).find((violation) => violation.ruleId === ruleId);
+      assert.equal(hit?.severity, 'warn', `${ruleId} should warn on ${snippet}`);
+      assert.ok(!ids(snippet, app).includes(ruleId), `${ruleId} stays out of the app profile`);
+    }
+  }
+  const clean = [
+    '<section className="bg-muted/40 px-6 py-4">{rows}</section>',
+    '<span className="rounded-full bg-muted p-3">{icon}</span>',
+    '<button className="rounded-md hover:bg-muted p-3">{copy.open}</button>',
+    '<div className="rounded-lg bg-muted/40 px-2 py-1">{copy.chip}</div>',
+    '<p className="text-destructive">{copy.failed}</p>',
+    '{error ? <p className="text-destructive">{copy.failed}</p> : null}',
+    "const cls = danger ? 'hover:text-destructive' : '';",
+  ];
+  for (const snippet of clean) {
+    const hits = ids(snippet).filter((id) => id === 'no-tinted-item-box' || id === 'no-state-text-colour');
+    assert.deepEqual(hits, [], snippet);
+  }
+});

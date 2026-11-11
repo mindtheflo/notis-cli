@@ -1,6 +1,7 @@
 /**
- * StatRow (toolkit spec 2.11, deck chart page alt b, PG2): the key figures above a chart, as a full-width strip of
- * four equal cells (two when the strip is 640px or narrower). Each cell, 24px in and 16px tall padding, shows its
+ * StatRow (toolkit spec 2.11, deck chart page alt b, PG2): the key figures above a chart, as a full-width strip whose
+ * cells share the row equally: one to six on one line when there is room (no cell under 160px), two per line when the
+ * strip is 640px or narrower, an odd last one spanning the row (the toolkit.css stat row rules). Each cell, 24px in and 16px tall padding, shows its
  * label, the value with its change, and the previous value with what it is compared to. No card, gap or rule between
  * cells; a strip right after a bar Section takes a hairline above and below (the toolkit's blocks rules).
  */
@@ -79,7 +80,7 @@ export function hasSlot(node: React.ReactNode): boolean {
   return node !== undefined && node !== null && node !== false && node !== '';
 }
 
-/** The key figures strip: four equal cells per line (two at 640px or narrower), full width, no frame. */
+/** The key figures strip: equal cells, one to six on a line (two at 640px or narrower), full width, no frame. */
 export function StatRow({ metrics, compare = 'prev', locale: localeProp, className }: StatRowProps) {
   const locale = useDateLocale(localeProp);
   return (

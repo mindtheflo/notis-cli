@@ -159,3 +159,59 @@ export function formatDelta(
     percent,
   };
 }
+
+export interface FormatDurationOptions {
+  /** How many units at most, biggest first: 1, 2 (default) or 3. */
+  units?: 1 | 2 | 3;
+  /** The smallest unit shown. Default 'second'; 'minute' rounds to the minute (see formatDuration). */
+  smallest?: 'second' | 'minute';
+}
+
+const NBSP = ' ';
+const DURATION_UNITS = [
+  { ms: 86_400_000, en: 'd', fr: 'j' },
+  { ms: 3_600_000, en: 'h', fr: 'h' },
+  { ms: 60_000, en: 'min', fr: 'min' },
+  { ms: 1_000, en: 's', fr: 's' },
+] as const;
+
+/** The toolkit locale of a locale tag: 'fr', 'fr-FR' or 'fr-CA' read French, anything else English. */
+function durationLocale(locale: Locale | string): Locale {
+  return typeof locale === 'string' && locale.toLowerCase().startsWith('fr') ? 'fr' : 'en';
+}
+
+/**
+ * A length of time in its biggest units: "4 d 5 h", "1 h 31 min", "7 min", "45 s" / "4 j 5 h", "1 h 31 min". A
+ * no-break space joins each number to its unit; numbers use the locale's grouping ("1,234 d"). The last unit shown
+ * is rounded to the nearest, and a unit that rounds to zero is left out ("2 h", not "2 h 0 min"). A negative,
+ * NaN or infinite value reads "-". With `smallest: 'minute'`, zero reads "0 min" and anything above zero that rounds
+ * to under a minute reads "< 1 min" (never "0 min" for time that did pass); with seconds, zero reads "0 s".
+ */
+export function formatDuration(ms: number, locale: Locale | string, opts: FormatDurationOptions = {}): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '-';
+  const lang = durationLocale(locale);
+  const count = opts.units === 1 || opts.units === 3 ? opts.units : 2;
+  const smallest = opts.smallest === 'minute' ? 2 : 3;
+  const part = (value: number, unit: number) => `${formatNumber(value, lang)}${NBSP}${DURATION_UNITS[unit]![lang]}`;
+  const lead = (total: number) => DURATION_UNITS.findIndex((unit) => total >= unit.ms);
+  // Round to the smallest unit first, find the biggest unit, then round to the last unit shown. Rounding can carry
+  // into a bigger unit (59 min 50 s in one unit reads "1 h"), so the lead is found again after it.
+  let rounded = Math.round(ms / DURATION_UNITS[smallest]!.ms) * DURATION_UNITS[smallest]!.ms;
+  if (rounded === 0) return ms > 0 && smallest === 2 ? `<${NBSP}${part(1, 2)}` : part(0, smallest);
+  let first = lead(rounded);
+  let last = Math.min(smallest, first + count - 1);
+  rounded = Math.round(ms / DURATION_UNITS[last]!.ms) * DURATION_UNITS[last]!.ms;
+  if (lead(rounded) !== first) {
+    first = lead(rounded);
+    last = Math.min(smallest, first + count - 1);
+  }
+  const parts: string[] = [];
+  let rest = rounded;
+  for (let unit = first; unit <= last; unit += 1) {
+    const size = DURATION_UNITS[unit]!.ms;
+    const value = Math.floor(rest / size);
+    rest -= value * size;
+    if (value > 0) parts.push(part(value, unit));
+  }
+  return parts.join(' ');
+}

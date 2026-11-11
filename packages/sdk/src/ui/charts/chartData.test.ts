@@ -10,6 +10,7 @@ import {
   chartMax,
   edgeAnchor,
   endsToday,
+  niceQuarterMax,
   periodSeries,
   showAxisLabel,
   sparkPaths,
@@ -83,6 +84,18 @@ test('axis labels count back from the newest bin; the value axis tops at 110%', 
   assert.equal(chartMax([]), 1.1);
   assert.equal(endsToday(presetRange('last7', NOW), NOW), true);
   assert.equal(endsToday(presetRange('lastMonth', NOW), NOW), false);
+});
+
+test('a drawn value axis rises to a round quarter, a whole one for counts', () => {
+  assert.equal(niceQuarterMax(110), 120);
+  assert.equal(niceQuarterMax(22), 24);
+  assert.equal(niceQuarterMax(1.1), 1.2);
+  assert.equal(niceQuarterMax(100), 100);
+  assert.equal(niceQuarterMax(9.5), 10);
+  assert.equal(niceQuarterMax(0), 1);
+  assert.equal(niceQuarterMax(1.1, true), 4, 'counts: 1, 2, 3, 4, never 0.3');
+  assert.equal(niceQuarterMax(11, true), 12, 'counts skip 2.5');
+  assert.equal(niceQuarterMax(110, true), 120);
 });
 
 test('a narrow line chart labels fewer points, and its edge labels stay inside the plot', () => {

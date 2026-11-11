@@ -40,7 +40,7 @@ import type { CompareId } from '../period/periods';
 import { useDateLocale } from '../period/useDateLocale';
 import { useElementWidth } from '../period/viewHelpers';
 import { axisWidth, textWidth, TICK_INSET, valueMargin, wrapLabel } from './axisLabels';
-import { chartMax, edgeAnchor, endsToday, showAxisLabel } from './chartData';
+import { chartMax, edgeAnchor, endsToday, niceQuarterMax, showAxisLabel } from './chartData';
 import { RenderChartData } from './RenderChartData';
 
 export {
@@ -438,8 +438,21 @@ export interface ChartProps {
   horizontal?: boolean;
   /** Value text in tooltips and the data table. Default whole numbers (one decimal under 10). */
   format?: (value: number, locale: Locale) => string;
-  /** The short value after each horizontal bar (or stack), such as "1.2k" beside an exact tooltip. Default `format`. */
+  /**
+   * The short value after each horizontal bar (or stack), such as "1.2k" beside an exact tooltip, and on the value
+   * axis. Default `format`.
+   */
   labelFormat?: (value: number, locale: Locale) => string;
+  /**
+   * A fixed value scale `[min, max]`, such as `[0, 100]` for percentages, instead of one that fits the data. Values
+   * outside it are clipped. Vertical charts only.
+   */
+  domain?: readonly [number, number];
+  /**
+   * Draws the value axis on the left (its labels through `labelFormat`), for a chart whose scale matters, such as a
+   * percentage with `domain={[0, 100]}`. Default hidden: the tooltip and the data table carry exact values.
+   */
+  valueAxis?: boolean;
   /**
    * The last point is still filling (the range ends today): its bar is drawn full colour, the others lighter until
    * hovered (deck period-r6). Default: true when the last row's `to` is today.
@@ -454,6 +467,9 @@ const SERIES_COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--
 const COMPARE_COLOR = 'hsl(var(--muted-foreground) / .7)';
 /** The plot margin. The value axis is hidden, so a line's first and last points sit `left` and `right` in. */
 const PLOT_MARGIN = { top: 8, right: 4, bottom: 0, left: 4 };
+/** The value axis, when drawn: its narrowest width, and the room between its longest label and the plot. */
+const VALUE_AXIS_MIN = 24;
+const VALUE_AXIS_GAP = 8;
 /** Horizontal bars: the height of a row, and per series side by side. */
 const ROW_HEIGHT = 32;
 const SERIES_ROW = 14;
@@ -548,6 +564,8 @@ export function Chart({
   horizontal: horizontalProp = false,
   format: formatProp,
   labelFormat: labelFormatProp,
+  domain: domainProp,
+  valueAxis: valueAxisProp = false,
   live: liveProp,
   locale: localeProp,
   className,
@@ -578,7 +596,7 @@ export function Chart({
   const lastTo = last ? field(last, 'to') : undefined;
   const live = liveProp ?? (lastTo instanceof Date ? endsToday({ from: lastTo, to: lastTo }) : false);
 
-  const max = React.useMemo(() => {
+  const [max, integers] = React.useMemo((): [number, boolean] => {
     const values: Array<number | null> = [];
     for (const row of data) {
       if (stack) values.push(rowTotal(row, series));
@@ -586,13 +604,25 @@ export function Chart({
       if (compare) values.push(numberOf(field(row, compare.key)));
     }
     // Horizontal bars keep their value labels in the right margin, so the longest bar takes the whole width.
-    return horizontal ? values.reduce<number>((top, v) => (v != null && v > top ? v : top), 1) : chartMax(values);
+    const top = horizontal ? values.reduce<number>((most, v) => (v != null && v > most ? v : most), 1) : chartMax(values);
+    return [top, values.every((v) => v == null || Number.isInteger(v))];
   }, [data, series, compare, stack, horizontal]);
+  const fixed = !horizontal && domainProp && Number.isFinite(domainProp[0]) && Number.isFinite(domainProp[1])
+    && domainProp[1] > domainProp[0] ? domainProp : null;
+  const valueAxis = valueAxisProp && !horizontal;
+  const low = fixed ? fixed[0] : 0;
+  // A drawn value axis labels its quarters, so its top is raised to keep each label a round number (whole for counts).
+  const high = fixed ? fixed[1] : valueAxis ? niceQuarterMax(max, integers) : max;
+  const scale: [number, number] = [low, high];
+  const isFixed = fixed !== null;
+  const scaleTicks = React.useMemo(() => (isFixed
+    ? [0, 0.25, 0.5, 0.75, 1].map((f) => low + f * (high - low))
+    : [0.25, 0.5, 0.75, 1].map((f) => f * high)), [isFixed, low, high]);
   const shortValue = React.useCallback(
     (v: number) => (labelFormatProp ? labelFormatProp(v, locale) : format(v)), [labelFormatProp, locale, format]);
-  // Horizontal bars measure their labels in the plot's font: the categories before the bars on two lines, and the
+  // Horizontal bars and the value axis measure their labels in the plot's font: the categories before the bars on two lines, and the
   // longest value label after a full-width bar.
-  const { family, fonts } = useFontFamily(plotRef, horizontal);
+  const { family, fonts } = useFontFamily(plotRef, horizontal || valueAxis);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `fonts` steps when web fonts arrive: measure again.
   const measure = React.useCallback((line: string) => textWidth(line, family), [family, fonts]);
   const axis = React.useMemo(
@@ -624,24 +654,30 @@ export function Chart({
   const row = sideBySide ? Math.max(ROW_HEIGHT, series.length * SERIES_ROW + 12) : ROW_HEIGHT;
   const height = heightProp ?? (horizontal ? data.length * row + 8 : kind === 'bar' ? BAR_HEIGHT : PLOT_HEIGHT);
 
-  // A line or an area runs edge to edge: its labels thin out with the room between points, and the edge ones anchor
-  // inward. Bars keep one centred label per labelled bar.
-  const spacing = kind !== 'bar' && data.length > 1
-    ? (plotWidth - PLOT_MARGIN.left - PLOT_MARGIN.right) / (data.length - 1)
-    : undefined;
+  // Labels thin out with the room between points, and the ones near an edge anchor inward so none runs out of the
+  // chart. A line or an area runs edge to edge; a bar sits centred in its own slot.
+  // The value axis is as wide as its longest label ("100 %" in French), never a fixed guess that cuts it.
+  const axisRoom = React.useMemo(() => (valueAxis
+    ? Math.max(VALUE_AXIS_MIN, Math.ceil(Math.max(0, ...scaleTicks.map((v) => measure(shortValue(v))))) + VALUE_AXIS_GAP)
+    : 0), [valueAxis, scaleTicks, measure, shortValue]);
+  const plotRoom = plotWidth - PLOT_MARGIN.left - PLOT_MARGIN.right - axisRoom;
+  const spacing = plotWidth <= 0 ? undefined
+    : kind === 'bar' ? (data.length > 0 ? plotRoom / data.length : undefined)
+      : data.length > 1 ? plotRoom / (data.length - 1) : undefined;
   const ticks = React.useMemo(
     () => data.map((row, i) => (showAxisLabel(i, data.length, spacing) ? field(row, xKey) : undefined)).filter((v) => v !== undefined),
     [data, xKey, spacing],
   );
   const edgeTick = React.useCallback((props: XAxisTickContentProps) => {
     const value = props.payload?.value;
-    const right = typeof props.width === 'number' ? PLOT_MARGIN.left + props.width : plotWidth - PLOT_MARGIN.right;
+    const left = PLOT_MARGIN.left + axisRoom;
+    const right = typeof props.width === 'number' ? left + props.width : plotWidth - PLOT_MARGIN.right;
     return (
-      <Text {...props} textAnchor={edgeAnchor(Number(props.x), PLOT_MARGIN.left, right)}>
+      <Text {...props} textAnchor={edgeAnchor(Number(props.x), left, right)}>
         {props.tickFormatter ? props.tickFormatter(value, props.index) : String(value ?? '')}
       </Text>
     );
-  }, [plotWidth]);
+  }, [plotWidth, axisRoom]);
 
   const config = React.useMemo<ChartConfig>(() => {
     const out: ChartConfig = {};
@@ -698,7 +734,11 @@ export function Chart({
               <YAxis type="category" dataKey={xKey} width={axis} interval={0} tickLine={false} axisLine={false}
                 tickMargin={8} tick={categoryTick} />
             )}
-            {!horizontal && <YAxis hide domain={[0, max]} ticks={[0.25, 0.5, 0.75, 1].map((f) => f * max)} />}
+            {!horizontal && (
+              <YAxis hide={!valueAxis} domain={scale} ticks={scaleTicks} allowDataOverflow={!!fixed}
+                {...(valueAxis ? { width: axisRoom, interval: 0, tickLine: false, axisLine: false, tickMargin: 4,
+                  tickFormatter: (v: number) => shortValue(v) } : {})} />
+            )}
             {!horizontal && (
               <XAxis
                 dataKey={xKey}
@@ -709,7 +749,7 @@ export function Chart({
                 tickMargin={8}
                 minTickGap={0}
                 tickFormatter={axisLabel}
-                {...(kind === 'bar' ? {} : { tick: edgeTick })}
+                tick={edgeTick}
               />
             )}
             <Tooltip

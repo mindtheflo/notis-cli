@@ -9,6 +9,9 @@ import { KeyboardEngine, KeyboardEngineCore } from '../engine';
 import { StatusIcon, statusGroup } from '../list/Row';
 import * as uiExports from '../index';
 import { Badge, Button, Section, SegmentedControl, ToggleGroup } from './blocks';
+import { DataTable, autoFit, dataTableHideCss, type DataTableColumn } from './DataTable';
+import { InfoTip } from './InfoTip';
+import { Meter } from './Meter';
 import * as blockExports from './index';
 
 const doc = dom.window.document;
@@ -268,4 +271,219 @@ test('StatusIcon: ready for review is its own group, a fuller circle in the acti
   assert.equal(doc.querySelector('.nui-st')?.getAttribute('aria-label'), 'Ready for review');
   assert.match(cssRule('.nui-st[data-st="review"]') ?? '', /--nui-st-review, var\(--muted-foreground\)/);
   assert.match(toolkitCss, /--nui-st-review: var\(--status-live, var\(--nui-st-live, 142 71% 33%\)\);/, 'the active colour, from the one palette');
+});
+
+test('DataTable: the last columns that do not fit hide first, never the primary, until the overflow fits', () => {
+  // Thread (primary) 140, Machine 128, Turn 176, Stack 128, Workspace 0 (already hidden by hideBelow).
+  const widths = [140, 128, 176, 128, 0];
+  assert.deepEqual(autoFit(0, widths, 0).hidden, [], 'nothing overflows, nothing hides');
+  assert.deepEqual(autoFit(100, widths, 0).hidden, [3], 'the last shown column goes first');
+  assert.deepEqual(autoFit(200, widths, 0).hidden, [2, 3], 'then the one before it');
+  assert.deepEqual(autoFit(9999, widths, 0).hidden, [1, 2, 3], 'the primary always stays');
+  assert.deepEqual(autoFit(50, [128, 300], 1).hidden, [0], 'a primary last column stays; the one before it goes');
+  // The new last column takes the 24px inset in place of its 12px padding: 125 freed is short of 120 + 12.
+  assert.deepEqual(autoFit(120, [200, 300, 125], 1), { hidden: [0, 2], first: 1, last: 1 },
+    'the inset the new edge column gains counts against the room freed');
+  assert.deepEqual(autoFit(110, [200, 300, 125], 1), { hidden: [2], first: 0, last: 1 }, '125 covers 110 + 12');
+  assert.deepEqual(autoFit(10, [200, 300, 120, 20], 1, [false, false, true, false]), { hidden: [3], first: 0, last: 2 },
+    'a fixed-width column keeps its padding inside its width, so becoming the edge costs nothing');
+  // A column a hideBelow rule hides measures 0: the edge insets go to the columns really shown.
+  assert.deepEqual(autoFit(100, [200, 300, 0, 120], 1), { hidden: [3], first: 0, last: 1 },
+    'the hidden region column (2) never takes the right inset');
+  assert.deepEqual(autoFit(150, [160, 300, 90, 0], 1), { hidden: [0, 2], first: 1, last: 1 },
+    'when the first column hides, the next one shown takes the left inset');
+  assert.deepEqual(autoFit(0, [200, 300], 1), { hidden: [], first: -1, last: -1 }, 'nothing to hide');
+});
+
+test('InfoTip: an info button named after what it explains opens its text on press, in English and French', async () => {
+  await mount(<InfoTip label={{ en: 'Dev stacks', fr: 'Stacks de dev' }}>Counted on machines that are on.</InfoTip>);
+  const button = doc.querySelector<HTMLButtonElement>('button.nui-infotip')!;
+  assert.equal(button.getAttribute('aria-label'), 'About Dev stacks');
+  assert.ok(button.querySelector('svg.nui-icon'), 'the built-in info icon');
+  assert.equal(doc.querySelector('.nui-infotip-body'), null, 'closed until pressed: a tap works where a tooltip never shows');
+  await click(button);
+  assert.equal(doc.querySelector('.nui-infotip-body')?.textContent, 'Counted on machines that are on.');
+  assert.equal(doc.querySelector('[role="dialog"]')?.getAttribute('aria-label'), 'About Dev stacks');
+  await mount(<InfoTip label="Cost $& fees">Text.</InfoTip>);
+  assert.equal(doc.querySelector('button.nui-infotip')!.getAttribute('aria-label'), 'About Cost $& fees', 'a $ pattern stays as written');
+  await mount(<InfoTip>Plain.</InfoTip>, 'fr');
+  assert.equal(doc.querySelector('button.nui-infotip')!.getAttribute('aria-label'), 'Plus d’informations');
+  assert.ok(uiExports.InfoTip, 'exported from @notis/sdk/ui');
+});
+
+test('Meter: role meter named by its label, value text read aloud, a neutral fill until the limit, then destructive', async () => {
+  await mount(
+    <>
+      <Meter label={{ en: 'Memory', fr: 'Mémoire' }} value={8.2} max={36} limit={30} limitLabel="Alert at 30" hint="3 threads" />
+      <Meter label="Disk" value={455} max={500} valueText="455 / 500 GiB" limit={400} />
+      <Meter label="CPU" value={140} max={100} valueText={<b>busy</b>} limit={150} />
+    </>,
+    'fr',
+  );
+  const [memory, disk, cpu] = [...doc.querySelectorAll('[role="meter"]')] as HTMLElement[];
+  assert.equal(memory.getAttribute('aria-label'), 'Mémoire');
+  assert.equal(memory.getAttribute('aria-valuemin'), '0');
+  assert.equal(memory.getAttribute('aria-valuemax'), '36');
+  assert.equal(memory.getAttribute('aria-valuenow'), '8.2');
+  assert.equal(memory.getAttribute('aria-valuetext'), '8,2 / 36', 'the default figure in the toolkit locale');
+  assert.equal(memory.querySelector('.nui-meter-value')?.textContent, '8,2 / 36');
+  assert.equal(memory.hasAttribute('data-over'), false);
+  assert.equal((memory.querySelector('.nui-meter-fill') as HTMLElement).style.width, `${(8.2 / 36) * 100}%`);
+  assert.equal((memory.querySelector('.nui-meter-limit') as HTMLElement).style.left, `${(30 / 36) * 100}%`);
+  assert.equal(memory.querySelector('.nui-meter-hint')?.textContent, '3 threads');
+  assert.equal(memory.querySelector('.nui-meter-limit-label')?.textContent, 'Alert at 30');
+
+  assert.equal(disk.hasAttribute('data-over'), true, 'at or over the limit');
+  assert.equal(disk.getAttribute('aria-valuetext'), '455 / 500 GiB');
+  assert.equal(disk.querySelector('.nui-meter-foot'), null, 'no hint and no limit label, no foot line');
+
+  assert.equal(cpu.getAttribute('aria-valuenow'), '100', 'held at max for assistive tech');
+  assert.equal(cpu.hasAttribute('aria-valuetext'), false, 'content that is not text is not read as the value');
+  assert.equal((cpu.querySelector('.nui-meter-fill') as HTMLElement).style.width, '100%');
+  assert.equal(cpu.querySelector('.nui-meter-limit'), null, 'a limit past max draws no tick');
+  assert.equal(cpu.hasAttribute('data-over'), false, 'under its limit, even past max');
+
+  // Flat: a 6px rounded track, a neutral fill, destructive only as a fill, never coloured text or a border.
+  assert.match(cssRule('.nui-meter-track') ?? '', /height: 6px; border-radius: 9999px; background: hsl\(var\(--foreground\) \/ \.08\);/);
+  assert.match(cssRule('.nui-meter-fill') ?? '', /background: hsl\(var\(--foreground\) \/ \.55\);/);
+  assert.match(cssRule('.nui-meter[data-over] .nui-meter-fill') ?? '', /background: hsl\(var\(--nui-tone-danger, var\(--destructive\)\)\);/);
+  assert.doesNotMatch(toolkitCss, /\.nui-meter[^{]*\{[^}]*(border:|border-left|color: hsl\(var\(--(nui-tone-danger|destructive))/, 'no border, no coloured text');
+});
+
+test('Meter: the default figure is rounded like StatRow, and a limit at or under 0 is no limit', async () => {
+  await mount(
+    <>
+      <Meter label="Memory" value={8.23456} max={36} />
+      <Meter label="Quota" value={0} max={10} limit={0} />
+    </>,
+  );
+  const [memory, quota] = [...doc.querySelectorAll('[role="meter"]')] as HTMLElement[];
+  assert.equal(memory.querySelector('.nui-meter-value')?.textContent, '8.2 / 36');
+  assert.equal(quota.hasAttribute('data-over'), false, 'nothing is over a limit of 0');
+  assert.equal(quota.querySelector('.nui-meter-limit'), null, 'and no tick is drawn');
+});
+
+interface Box { id: string; name: string; region: string; ram: string; state: 'up' | 'down' }
+
+const BOXES: Box[] = [
+  { id: 'b1', name: 'build-1', region: 'fra-1', ram: '8.2 / 36', state: 'up' },
+  { id: 'b2', name: 'build-2', region: 'fra-1', ram: '31.4 / 36', state: 'up' },
+  { id: 'm1', name: 'mac-mini', region: 'local', ram: '0 / 24', state: 'down' },
+];
+
+const BOX_COLUMNS: DataTableColumn<Box>[] = [
+  { id: 'region', label: 'Region', mono: true, hideBelow: 560, cell: (box) => box.region },
+  { id: 'name', label: { en: 'Name', fr: 'Nom' }, primary: true, cell: (box) => box.name },
+  { id: 'ram', label: 'Memory', align: 'end', width: 120, hideBelow: 420, cell: (box) => box.ram },
+];
+
+test('DataTable: groups with counts, a press target covering each row, columns that hide under their width', async () => {
+  const pressed: string[] = [];
+  await mount(
+    <DataTable columns={BOX_COLUMNS} rowKey={(box) => box.id} label="Machines"
+      groups={[
+        { key: 'up', label: { en: 'Online', fr: 'En ligne' }, rows: BOXES.filter((box) => box.state === 'up') },
+        { key: 'gone', label: 'Retired', rows: [] },
+        { key: 'down', label: 'Asleep', rows: BOXES.filter((box) => box.state === 'down') },
+      ]}
+      onRowPress={(box) => pressed.push(box.id)} rowLabel={(box) => `Open ${box.name}`} />,
+    'fr',
+  );
+  const table = doc.querySelector('table.nui-dtable')!;
+  assert.equal(table.getAttribute('aria-label'), 'Machines');
+  assert.deepEqual([...table.querySelectorAll('thead th')].map((th) => th.textContent), ['Region', 'Nom', 'Memory']);
+  const bodies = [...table.querySelectorAll('tbody')];
+  assert.equal(bodies.length, 2, 'a group with no rows is left out');
+  const heading = bodies[0].querySelector('tr.nui-dtable-group > th')!;
+  assert.equal(heading.getAttribute('scope'), 'colgroup');
+  assert.equal(heading.getAttribute('colspan'), '3');
+  assert.equal(heading.querySelector('.nui-dtable-group-label')?.textContent, 'En ligne');
+  assert.equal(heading.querySelector('.nui-dtable-group-count')?.textContent, '2');
+
+  const rows = [...table.querySelectorAll('tbody tr[data-pressable]')];
+  assert.equal(rows.length, 3);
+  // The primary cell is the row header and holds the one press target, whatever its column position.
+  const primary = rows[0].querySelector('th[scope="row"]')!;
+  assert.equal(primary.getAttribute('data-ci'), '1');
+  assert.equal(primary.hasAttribute('data-primary'), true);
+  const pick = primary.querySelector('button.nui-dtable-pick')!;
+  assert.equal(pick.getAttribute('aria-label'), 'Open build-1');
+  assert.equal(pick.textContent, 'build-1');
+  await click(pick);
+  await click(rows[2].querySelector('td')!);
+  assert.deepEqual(pressed, ['b1', 'm1'], 'the button and the rest of the row both press, once each');
+
+  const region = rows[0].querySelector('td[data-ci="0"]') as HTMLElement;
+  assert.equal(region.getAttribute('data-hide-below'), '560');
+  assert.equal(region.hasAttribute('data-mono'), true);
+  const ram = rows[0].querySelector('td[data-ci="2"]') as HTMLElement;
+  assert.equal(ram.getAttribute('data-align'), 'end');
+  assert.equal(ram.style.width, '120px');
+  assert.equal(ram.style.maxWidth, '120px');
+
+  // Its own container rules: under 560 the region goes and the name takes the left inset; under 420 the memory goes
+  // too and the name takes the right inset as well.
+  const css = doc.querySelector('.nui-dtable-wrap > style')?.textContent ?? '';
+  const id = table.getAttribute('data-dtable');
+  assert.ok(id);
+  assert.equal(css, dataTableHideCss(id!, [560, undefined, 420], 1));
+  assert.match(css, /max-width: 559\.98px\) \{[^\n]*\[data-ci="1"\] \{ min-width: calc\(var\(--nui-dtable-primary-min, 120px\) \+ 36px\); \}/,
+    'the name, now the first column shown, keeps its minWidth inside the wider inset');
+  assert.match(css, new RegExp(`@container nui-dtable \\(max-width: 559\\.98px\\) \\{ \\.nui-dtable\\[data-dtable="${id}"\\] \\[data-hide-below="560"\\] \\{ display: none; \\} [^}]*\\[data-ci="1"\\] \\{ padding-left: 24px; \\} [^}]*\\[data-ci="2"\\] \\{ padding-right: 24px; \\} [^\\n]*\\}$`, 'm'));
+  assert.match(css, /max-width: 419\.98px\) \{ [^\n]*\[data-hide-below="420"\] \{ display: none; \}[^\n]*\[data-ci="1"\] \{ padding-left: 24px; \}[^\n]*\[data-ci="1"\] \{ padding-right: 24px; \}/);
+  assert.equal(css.indexOf('559.98') < css.indexOf('419.98'), true, 'narrower bands come later, so their rules win');
+});
+
+test('DataTable: a control in a cell of a pressable row opens itself, not the row', async () => {
+  const pressed: string[] = [];
+  const opened: string[] = [];
+  const columns: DataTableColumn<Box>[] = [
+    { id: 'name', label: 'Name', primary: true, cell: (box) => box.name },
+    { id: 'logs', label: 'Logs', cell: (box) => <button type="button" className="logs" onClick={() => opened.push(box.id)}>Logs</button> },
+  ];
+  await mount(<DataTable columns={columns} rows={BOXES.slice(0, 1)} rowKey={(box) => box.id} onRowPress={(box) => pressed.push(box.id)} />);
+  await act(async () => { (doc.querySelector('button.logs') as HTMLElement).click(); });
+  assert.deepEqual(opened, ['b1']);
+  assert.deepEqual(pressed, [], 'the row press does not fire');
+  await act(async () => { (doc.querySelector('tbody td') as HTMLElement).click(); });
+  assert.deepEqual(pressed, ['b1'], 'the rest of the row still opens it');
+  assert.match(cssRule('.nui-dtable tr[data-pressable] :is(a, button, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-dtable-pick)') ?? '',
+    /position: relative; z-index: 1;/, 'cell controls sit over the row press layer');
+});
+
+test('DataTable: plain rows are not pressable, the primary never hides, no rows shows the empty content', async () => {
+  await mount(
+    <DataTable columns={[{ ...BOX_COLUMNS[1]!, hideBelow: 900 }, BOX_COLUMNS[2]!]} rows={BOXES} rowKey={(box) => box.id} />,
+  );
+  assert.equal(doc.querySelector('tr[data-pressable]'), null);
+  assert.equal(doc.querySelector('.nui-dtable-pick'), null);
+  assert.equal(doc.querySelector('tbody th[scope="row"]')?.textContent, 'build-1');
+  assert.equal(doc.querySelector('tbody th[scope="row"]')?.hasAttribute('data-hide-below'), false, 'the primary column never hides');
+  assert.equal(doc.querySelector('tr.nui-dtable-group'), null, 'no groups, no heading rows');
+
+  await mount(<DataTable columns={BOX_COLUMNS} rows={[]} rowKey={(box) => box.id} empty={<p className="none">No machines</p>} />);
+  const cell = doc.querySelector('tr.nui-dtable-empty > td')!;
+  assert.equal(cell.getAttribute('colspan'), '3');
+  assert.equal(cell.querySelector('.none')?.textContent, 'No machines');
+  await mount(<DataTable columns={BOX_COLUMNS} rows={[]} rowKey={(box) => box.id} />, 'fr');
+  assert.equal(doc.querySelector('.nui-dtable-empty .nui-empty-title')?.textContent, 'Rien ici pour l’instant');
+
+  // The ChartTable look: 40px rows, a sticky 36px muted header, 24px edge cells, cells that truncate.
+  const cells = cssRule('.nui-dtable th, .nui-dtable td') ?? '';
+  assert.match(cells, /height: 40px;/);
+  assert.match(cells, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
+  assert.match(cssRule('.nui-dtable thead th') ?? '', /position: sticky; top: 0; z-index: 2; height: 36px;/, 'above the cell controls of pressable rows (z-index 1)');
+  assert.match(cssRule('.nui-dtable :is(th, td):first-child') ?? '', /padding-left: 24px;/);
+  assert.match(cssRule('.nui-dtable [data-primary]') ?? '',
+    /width: 100%; max-width: 0; min-width: calc\(var\(--nui-dtable-primary-min, 120px\) \+ 24px\);/,
+    'the primary column keeps 120px by default, on the cell since max-width: 0 ignores its content');
+  assert.match(cssRule('.nui-dtable-wrap') ?? '', /overflow-x: clip; container: nui-dtable \/ inline-size;/);
+  assert.match(cssRule('.nui-dtable [data-primary]:is(:first-child, :last-child)') ?? '',
+    /min-width: calc\(var\(--nui-dtable-primary-min, 120px\) \+ 36px\);/, 'at an edge the 24px inset is added back');
+  await mount(<DataTable columns={[{ ...BOX_COLUMNS[0]!, primary: true, minWidth: 160 }, ...BOX_COLUMNS.slice(1)]} rows={[]}
+    rowKey={(box) => box.id} />);
+  assert.equal(doc.querySelector<HTMLElement>('.nui-dtable')!.style.getPropertyValue('--nui-dtable-primary-min'), '160px');
+  assert.equal(typeof uiExports.DataTable, 'function');
+  assert.equal(typeof uiExports.Meter, 'function');
+  assert.equal(typeof uiExports.formatDuration, 'function');
 });

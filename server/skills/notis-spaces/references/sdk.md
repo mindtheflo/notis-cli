@@ -109,7 +109,10 @@ rather than from a copy.
   `auto` for a move the list makes itself, or `url`), `renderTile` (tiles), `look` (`two-tone` keeps
   the list tinted) and `autoOpen` (opens the first item). It has no toolbar or
   header slot. `Row` takes `wrap` (title lines) and `now` (a fixed clock for
-  relative times). Drag to select is automatic on a list that selects several
+  relative times); a `Row` drawn on its own (a short "Needs action" list)
+  takes `onPress` and `pressLabel` and opens something on press, so never wrap
+  a row in a button of your own. A `labels` entry with a tone draws as a small
+  tinted pill. Drag to select is automatic on a list that selects several
   (`selectable` or a bulk action): a drag from empty space selects the rows
   under it, as in the Manager; `dragSelect={false}` turns it off. Reorder is
   off until the view passes `reorder={{ onReorder, canReorder }}`: a row then
@@ -136,17 +139,34 @@ rather than from a copy.
   only reads. Use it rather than columns of your own.
 - **Time and numbers**: `PeriodPicker` with `usePeriod`, `DayPicker`,
   `CalendarView`, `TimelineView`, `Chart`, `StatRow`, `ChartTable`,
-  `RenderChartData`. `Chart` stacks bars or areas (`stacked`) and runs bars
-  left to right (`horizontal`): each label on up to two lines before its bar
-  in a measured axis, and its value after it; `labelFormat` gives that short
+  `RenderChartData`, `Meter`, `DataTable`, `formatDuration`. `Chart` stacks
+  bars or areas (`stacked`) and runs bars left to right (`horizontal`): each
+  label on up to two lines before its bar in a measured axis, and its value after it; `labelFormat` gives that short
   value ("1.2k") while `format` stays the exact tooltip and table text. Draw
   category bars this way rather than with your own recharts. For a chart of
   your own, `ChartContainer` takes `aspect` or `height`; `ChartTooltipContent`
   and `ChartLegend` also work outside it; `<Bar shape={barShape}
   label={{ content: barLabel }} />` keeps zero bars and their value labels. A
-  sparkline `null` is a gap. `PeriodPicker` without the `custom` preset offers
-  presets only.
-- **Floating**: `Menu`, `Popover`, `Tooltip`.
+  sparkline `null` is a gap. `domain={[min, max]}` fixes the value scale (a
+  percentage on 0 to 100) and `valueAxis` draws it on the left through
+  `labelFormat` (without a `domain` its top rises to a round quarter); x labels thin out with the room and never run off the edge. `PeriodPicker` without the `custom` preset offers
+  presets only. `Meter` is a labelled capacity bar (`label`, `value`, `max`,
+  `valueText`, `hint`); at or past `limit` (a tick named by `limitLabel`) it
+  turns destructive. Set `limit` only to a threshold the data has (a memory
+  reserve, a quota), never to `max`: a full meter is not red by itself. `DataTable` is a read-only table with the `ChartTable`
+  look for rows that are not figures: `columns` (`id`, `label`, `cell`, `align`, `width`,
+  `mono`, `primary`, `hideBelow`), `rows` or `groups` (`key`, `label`, `rows`),
+  `rowKey`, and `onRowPress` with `rowLabel` to open a row (the primary cell
+  then sits inside the row's button: text and icons only, no link). The primary
+  column never gets under its `minWidth` (120 px by default): the last
+  columns that do not fit hide on their own.
+  `formatDuration(ms, locale, { units, smallest })` writes "1 h 31 min" (FR
+  "4 j 6 h").
+- **Floating**: `Menu`, `Popover`, `Tooltip`, `InfoTip`. `InfoTip` is the
+  info button beside a label (a figure's `about`, a section heading, a meter):
+  `label` names what it explains and the children are one or two sentences
+  that open on press or tap. A `Tooltip` never shows on touch, so explanations
+  go in an `InfoTip`.
 - **Files and pictures**: `AttachmentGallery` and `ImageViewer`, the ones
   Notis conversations use. `AttachmentGallery` draws a row of file cards
   (`items`: `url`, `name`, `type` or `kind`, `size`, `thumbnailUrl`); an

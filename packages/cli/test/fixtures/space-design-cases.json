@@ -253,6 +253,42 @@
       "file": "app/page.tsx",
       "bad": "export default () => <ListReader items={items} layout=\"tiles\" renderTile={tile} />;",
       "good": "export default () => <ListReader items={items} layout=\"list\" row={row} />;"
+    },
+    {
+      "rule": "no-tinted-item-box",
+      "file": "app/fleet.tsx",
+      "bad": "export const Machine = ({ m }) => <div className=\"rounded-lg bg-muted/40 p-4\">{m.name}</div>;",
+      "good": "export const Machine = ({ m }) => <div className=\"bg-muted/40 px-6 py-4\">{m.name}</div>;"
+    },
+    {
+      "rule": "no-tinted-item-box",
+      "file": "components/stack.tsx",
+      "bad": "export const Stack = ({ s }) => <li className=\"p-3 bg-secondary rounded-md\">{s.name}</li>;",
+      "good": "export const Stack = ({ s }) => <li className=\"rounded-md hover:bg-muted p-3\">{s.name}</li>;"
+    },
+    {
+      "rule": "no-tinted-item-box",
+      "file": "components/avatar.tsx",
+      "bad": "export const Box = ({ x }) => <div className={`rounded-xl bg-muted ${x.wide} p-6`}>{x.name}</div>;",
+      "good": "export const Mark = ({ x }) => <span className=\"rounded-full bg-muted p-3\">{x.icon}</span>;"
+    },
+    {
+      "rule": "no-state-text-colour",
+      "file": "app/fleet.tsx",
+      "bad": "export const Count = ({ n, blocked }) => <span className={`tabular-nums ${blocked ? 'text-destructive' : ''}`}>{n}</span>;",
+      "good": "export const Failed = ({ error }) => (error ? <p className=\"text-destructive\">{copy.failed}</p> : null);"
+    },
+    {
+      "rule": "no-state-text-colour",
+      "file": "components/figure.tsx",
+      "bad": "const tone = (ok) => (ok ? 'text-foreground' : 'text-destructive');",
+      "good": "const tone = (ok) => (ok ? 'text-foreground' : 'text-muted-foreground');"
+    },
+    {
+      "rule": "no-state-text-colour",
+      "file": "components/menu-item.tsx",
+      "bad": "const className = cx('text-sm', tone === 'danger' && 'text-destructive');",
+      "good": "const className = cx('text-sm', tone === 'danger' && 'hover:text-destructive');"
     }
   ]
 }

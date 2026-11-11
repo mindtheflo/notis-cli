@@ -63,8 +63,31 @@ export const specimen = defineSpecimen({
       ),
     },
     {
+      id: 'five',
+      label: 'Five figures share one line: no cell is left alone on a second line',
+      render: ({ lang }) => (
+        <Pad><StatRow metrics={periodStats(lang, LAST_30).slice(0, 5)} compare="prev" locale={lang} /></Pad>
+      ),
+    },
+    {
+      id: 'five-tablet',
+      label: 'Five figures at 768: three, then two filling the row',
+      width: 768,
+      render: ({ lang }) => (
+        <Pad><StatRow metrics={periodStats(lang, LAST_30).slice(0, 5)} compare="prev" locale={lang} /></Pad>
+      ),
+    },
+    {
+      id: 'five-narrow',
+      label: 'Five figures at 390: two per line, the fifth spans the row',
+      width: 390,
+      render: ({ lang }) => (
+        <Pad><StatRow metrics={periodStats(lang, LAST_30).slice(0, 5)} compare="prev" locale={lang} /></Pad>
+      ),
+    },
+    {
       id: 'six-weekly',
-      label: 'Six figures of the week against the week before: the row wraps',
+      label: 'Six figures of the week against the week before: one line on a wide page, three per line under 960',
       render: ({ lang }) => (
         <Pad><StatRow metrics={WEEKLY_METRICS.map((metric) => weeklyStat(metric))} locale={lang} /></Pad>
       ),

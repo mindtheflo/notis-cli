@@ -15,3 +15,16 @@ test('the built-in set has the refresh icons and plus (follow-ups B12, B13)', ()
   assert.equal(hasIcon('arrow-clockwise-bold'), false);
   assert.equal(renderToStaticMarkup(<Icon name="arrow-clockwise-bold" />), '', 'an unknown name renders nothing');
 });
+
+test('an unknown icon name warns once, naming it', () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (message: string) => { warnings.push(message); };
+  try {
+    renderToStaticMarkup(<><Icon name="hard-drives-typo" /><Icon name="hard-drives-typo" /><Icon name="info" /></>);
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(warnings.length, 1, 'once per name, and never for a known one');
+  assert.match(warnings[0]!, /Unknown icon "hard-drives-typo"/);
+});

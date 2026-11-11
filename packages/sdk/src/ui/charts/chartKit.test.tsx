@@ -191,3 +191,44 @@ test('Chart horizontal: category labels wrap to two lines in a measured axis, si
   assert.equal(plot.style.height, `${2 * (3 * 14 + 12) + 8}px`, 'three series side by side: 54px rows');
   assert.match(doc.querySelector('.nui-chart-plot table')?.textContent ?? '', /1240 people/, 'the table keeps the exact format');
 });
+
+test('Chart valueAxis with a fixed domain: a percent scale from 0 to 100 drawn through labelFormat', async () => {
+  const data = Array.from({ length: 6 }, (_, i) => ({ label: `${i} h`, cpu: 20 + i * 8 }));
+  await mount(
+    <Chart kind="line" data={data} locale="en" series={[{ key: 'cpu', label: 'CPU' }]} domain={[0, 100]} valueAxis
+      labelFormat={(v) => `${v}%`} />,
+  );
+  const values = [...doc.querySelectorAll('.recharts-yAxis-tick-labels text')].map((el) => el.textContent);
+  assert.deepEqual(values, ['0%', '25%', '50%', '75%', '100%'], 'the scale is the domain, not the data');
+  await mount(<Chart kind="line" data={data} locale="en" series={[{ key: 'cpu', label: 'CPU' }]} />);
+  assert.equal(doc.querySelectorAll('.recharts-yAxis-tick-labels text').length, 0, 'hidden by default');
+});
+
+test('Chart valueAxis is as wide as its longest label, so "100 %" or a unit never loses its first digit', async () => {
+  const data = Array.from({ length: 6 }, (_, i) => ({ label: `${i} h`, rate: 20 + i * 8 }));
+  await mount(
+    <Chart kind="line" data={data} locale="fr" series={[{ key: 'rate', label: 'Débit' }]} domain={[0, 100]} valueAxis
+      labelFormat={(v) => `${v} req/s`} />,
+  );
+  // jsdom cannot measure text, so recharts splits the label on its space there; the top tick is the last one.
+  const labels = [...doc.querySelectorAll('.recharts-yAxis-tick-labels text')];
+  const top = labels[labels.length - 1];
+  assert.equal(top?.textContent?.startsWith('100'), true, 'the top label is drawn');
+  // The label ends at its x (text-anchor end); jsdom measures 7px a character, so 9 characters need 63px before it.
+  assert.ok(Number(top!.getAttribute('x')) >= 63, `the axis leaves room for the label (x=${top!.getAttribute('x')})`);
+});
+
+test('Chart bars on a narrow plot: hour labels thin out and the last one ends inside the chart', async () => {
+  const data = Array.from({ length: 24 }, (_, i) => ({ key: i, label: `${(i % 12) + 1} PM`, value: i % 5 }));
+  // A phone-wide plot: the chart reads its width from clientWidth (0 in jsdom).
+  const proto = dom.window.HTMLElement.prototype;
+  Object.defineProperty(proto, 'clientWidth', { configurable: true, get: () => 400 });
+  try {
+    await mount(<Chart kind="bar" data={data} locale="en" />);
+  } finally {
+    delete (proto as { clientWidth?: number }).clientWidth;
+  }
+  const ticks = [...doc.querySelectorAll('.recharts-xAxis-tick-labels text')];
+  assert.ok(ticks.length > 0 && ticks.length <= 5, `a 400px plot keeps labels apart (got ${ticks.length})`);
+  assert.equal(ticks[ticks.length - 1]!.getAttribute('text-anchor'), 'end', 'the last label anchors inward, never clipped');
+});

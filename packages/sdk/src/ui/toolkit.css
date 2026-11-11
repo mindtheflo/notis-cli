@@ -40,6 +40,9 @@
   --nui-st-live: 142 71% 33%;
   --nui-tone-danger: var(--destructive);
   --nui-count-fg: 0 0% 40%;
+  /* A toned pill (Badge, Row label) draws its text over its own tint, so each tone has a shade that keeps 4.5:1 on
+     that tint over the list and the open row. */
+  --nui-pill-info: 221 83% 40%; --nui-pill-success: 142 76% 24%; --nui-pill-warning: 30 95% 28%; --nui-pill-danger: 0 80% 38%;
 }
 .dark, [data-notis-theme="dark"] {
   --nui-a-open: .20;
@@ -52,6 +55,7 @@
   --nui-st-live: 142 71% 45%;
   --nui-tone-danger: 0 90% 76%;
   --nui-count-fg: var(--muted-foreground);
+  --nui-pill-info: 213 94% 72%; --nui-pill-success: 142 69% 58%; --nui-pill-warning: 38 92% 60%; --nui-pill-danger: 0 90% 76%;
 }
 /* The status groups, one palette (the Manager's signal colours). A Space maps its statuses, never picks a colour.
    Declared on every theme scope so var(--muted-foreground) resolves against the scope's own value. */
@@ -98,6 +102,12 @@
 }
 .nui-row:hover:not([data-open]):not([data-selected]):not([data-cursor]) { background: var(--nui-row-hover); }
 .nui-row[data-selected] { background: var(--nui-row-sel); }
+/* A Row drawn on its own with onPress: one button covers the row; its own controls stay above it. */
+.nui-row-press { position: absolute; inset: 0; z-index: 0; padding: 0; margin: 0; border: 0; background: none; cursor: default; border-radius: inherit; }
+.nui-row-press:focus-visible { outline: 2px solid var(--nui-row-focus); outline-offset: -2px; }
+.nui-row[data-pressable] > :not(.nui-row-press) { position: relative; z-index: 1; pointer-events: none; }
+/* Controls stay pressable over the row: native ones, and custom ones that take focus or open a popup. */
+.nui-row[data-pressable] :is(button, a, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-row-press) { pointer-events: auto; }
 .nui-row:is([data-open], [data-cursor]) { background: var(--nui-row-open); }
 .nui-row:is([data-open], [data-cursor])[data-selected] { background: var(--nui-row-selopen); }
 .nui-row:focus-visible:not([data-cursor]) { outline: 2px solid var(--nui-row-focus); outline-offset: -2px; }
@@ -158,9 +168,8 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row-labels[data-urgent] { flex: 0 0 auto; max-width: 75%; }
 .nui-star { display: inline-flex; flex-shrink: 0; font-size: 14px; color: hsl(32 95% 40%); }
 .dark .nui-star { color: hsl(38 92% 60%); }
-.nui-row-label[data-tone="warning"] { color: hsl(32 95% 40%); }
-.dark .nui-row-label[data-tone="warning"] { color: hsl(38 92% 60%); }
-.nui-row-label[data-tone="danger"] { color: hsl(var(--nui-tone-danger, var(--destructive))); }
+/* A toned label is a small pill, the Badge tints: state is never carried by text colour alone. */
+.nui-row-label[data-tone] { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; margin-right: 4px; border-radius: 5px; font-weight: 500; vertical-align: middle; }
 .nui-row-tags { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; }
 .nui-row-tag { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: 22px; padding: 0 8px; border-radius: 6px; background: hsl(var(--foreground) / .06); font-size: 12px; line-height: 16px; color: hsl(var(--foreground) / .75); white-space: nowrap; }
 .nui-row-tag[data-removable] { padding-right: 2px; }
@@ -456,11 +465,11 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow) { flex-shrink: 0; }
 .nui-section[data-kind="bar"] .nui-section-tabs .nui-toggles { flex-wrap: nowrap; }
 .nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 6px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }
-.nui-badge[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-blue, 217 91% 60%)); }
-.nui-badge[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-st-active, 142 71% 45%)); }
-.nui-badge[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(32 95% 40%); }
-.dark .nui-badge[data-tone="warning"] { color: hsl(38 92% 60%); }
-.nui-badge[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-tone-danger, var(--destructive))); }
+/* The tone tints of a Badge and a toned Row label, one set: the text shade keeps 4.5:1 on its own tint. */
+.nui-badge[data-tone="info"], .nui-row-label[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-pill-info, 221 83% 40%)); }
+.nui-badge[data-tone="success"], .nui-row-label[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-pill-success, 142 76% 24%)); }
+.nui-badge[data-tone="warning"], .nui-row-label[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(var(--nui-pill-warning, 30 95% 28%)); }
+.nui-badge[data-tone="danger"], .nui-row-label[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-pill-danger, 0 80% 38%)); }
 .nui-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 7px; font-size: 13px; font-weight: 500; white-space: nowrap; color: hsl(var(--foreground)); background: hsl(var(--foreground) / .06); }
 .nui-btn:hover:not(:disabled) { background: hsl(var(--foreground) / .1); }
 .nui-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 1px; }
@@ -522,6 +531,21 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-metric-delta[data-trend="up"] { color: hsl(var(--nui-st-active, 142 71% 45%)); }
 .nui-metric-delta[data-trend="down"] { color: hsl(var(--nui-tone-danger, var(--destructive))); }
 .nui-metric-hint { font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); }
+/*
+ * Meter: a label (12px muted) and its figure on one line over a 6px rounded track, the fill neutral. A limit is a
+ * 2px tick standing out of the track on both sides, so it shows over the fill too; at or over it the whole fill turns
+ * destructive (data-over). No border, no coloured text.
+ */
+.nui-meter { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nui-meter-head, .nui-meter-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; font-size: 12px; line-height: 16px; }
+.nui-meter-label, .nui-meter-hint { min-width: 0; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nui-meter-value { flex-shrink: 0; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; color: hsl(var(--foreground)); }
+.nui-meter-limit-label { flex-shrink: 0; font-variant-numeric: tabular-nums; white-space: nowrap; color: hsl(var(--muted-foreground)); }
+.nui-meter-track { position: relative; height: 6px; border-radius: 9999px; background: hsl(var(--foreground) / .08); }
+.nui-meter-fill { position: absolute; top: 0; bottom: 0; left: 0; max-width: 100%; border-radius: inherit; background: hsl(var(--foreground) / .55); transition: width .2s ease; }
+.nui-meter[data-over] .nui-meter-fill { background: hsl(var(--nui-tone-danger, var(--destructive))); }
+.nui-meter-limit { position: absolute; top: -3px; width: 2px; height: 12px; margin-left: -1px; border-radius: 1px; background: hsl(var(--foreground) / .7); }
+@media (prefers-reduced-motion: reduce) { .nui-meter-fill { transition: none; } }
 
 /* == section: layout (S5) == */
 /*
@@ -894,16 +918,27 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-chart-tip-value[data-empty] { font-weight: 400; color: hsl(var(--muted-foreground)); }
 .nui-chart-bar-label { fill: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
 /*
- * Stat row (deck PG2): a full-width strip of four equal cells, two when the strip is 640px or narrower (its own
- * container, so it holds in any Space). Cells 24px in and 16px tall padding; no card, gap or rule between them. Labels
- * wrap [B7].
+ * Stat row (deck PG2): a full-width strip whose cells share the row equally, so one to six figures sit on one line
+ * (four read 25% each, as in the deck). Its own container, so it holds in any Space. A cell never gets narrower than
+ * 160px over 640px: five figures take three per line at 800px or narrower, six at 960px or narrower (3 + 2, 3 + 3),
+ * and seven or more take four per line. At 640px or narrower two per line, an odd last cell spanning the row. Every
+ * wrapped line fills the row, so no cell is left alone at a quarter width. Cells 24px in and 16px tall padding; no
+ * card, gap or rule between them. Labels wrap [B7].
  */
 .nui-stats { display: flex; flex-wrap: wrap; min-width: 0; container: nui-stats / inline-size; }
-.nui-stat { display: flex; flex: 0 0 25%; flex-direction: column; box-sizing: border-box; min-width: 0; padding: 16px 24px; }
-@container nui-stats (max-width: 640px) { .nui-stat { flex-basis: 50%; } }
+.nui-stat { display: flex; flex: 1 1 0; flex-direction: column; box-sizing: border-box; min-width: 0; padding: 16px 24px; }
+@container nui-stats (min-width: 640.02px) { .nui-stat:first-child:nth-last-child(n+7), .nui-stat:first-child:nth-last-child(n+7) ~ .nui-stat { flex: 1 0 25%; } }
+@container nui-stats (min-width: 640.02px) and (max-width: 800px) { .nui-stat:first-child:nth-last-child(5), .nui-stat:first-child:nth-last-child(5) ~ .nui-stat { flex: 1 0 33.333%; } }
+@container nui-stats (min-width: 640.02px) and (max-width: 960px) { .nui-stat:first-child:nth-last-child(6), .nui-stat:first-child:nth-last-child(6) ~ .nui-stat { flex: 1 0 33.333%; } }
+@container nui-stats (max-width: 640px) { .nui-stat { flex: 1 0 50%; } }
 .nui-stat-head { display: flex; align-items: center; gap: 2px; min-width: 0; min-height: 16px; }
 .nui-stat-label { min-width: 0; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
 .nui-stat-about { display: inline-flex; flex-shrink: 0; align-items: center; margin-block: -6px; }
+/* InfoTip: a 24px info button in muted ink; its panel holds a short explanation. */
+.nui-infotip { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin: 0; border: 0; border-radius: 6px; background: none; font-size: 14px; color: hsl(var(--muted-foreground)); cursor: default; vertical-align: middle; }
+.nui-infotip:hover, .nui-infotip[aria-expanded="true"] { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-infotip:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-infotip-body { max-width: 280px; font-size: 13px; line-height: 18px; color: hsl(var(--foreground)); white-space: normal; }
 .nui-stat-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; }
 .nui-stat-value { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .nui-stat-delta { font-size: 12px; line-height: 16px; font-weight: 500; font-variant-numeric: tabular-nums; color: hsl(var(--muted-foreground)); }
@@ -933,6 +968,35 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 /* A metric's about sits above the row's pick area (the pick button's ::after covers the row). */
 .nui-ctable-about { position: relative; z-index: 1; display: inline-flex; align-items: center; margin-left: 2px; vertical-align: middle; }
 @container nui-ctable (max-width: 760px) { .nui-ctable :is(.nui-ctable-trend, .nui-ctable-prev) { display: none; } }
+/*
+ * Data table (DataTable): the metric table's look for rows that are not figures. 40px rows with a hairline above
+ * each, a sticky 36px muted header, the edge cells 24px in (DataTable moves the inset when an edge column hides).
+ * Cells never wrap: they truncate. The primary column takes the room left; a fixed width holds its own; mono is muted
+ * 12px monospace. Group headings are muted 12px rows with their count. Columns hide by the rules DataTable writes for
+ * its own container (hideBelow). The wrap clips instead of scrolling so the header sticks to the page scroll.
+ */
+.nui-dtable-wrap { min-width: 0; overflow-x: clip; container: nui-dtable / inline-size; }
+.nui-dtable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
+.nui-dtable th, .nui-dtable td { height: 40px; padding: 0 12px; box-sizing: border-box; text-align: left; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid hsl(var(--border) / .5); }
+.nui-dtable :is(th, td):first-child { padding-left: 24px; }
+.nui-dtable :is(th, td):last-child { padding-right: 24px; }
+.nui-dtable thead th { position: sticky; top: 0; z-index: 2; height: 36px; border-top: 0; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); box-shadow: inset 0 -1px 0 hsl(var(--border) / .8); }
+.nui-dtable [data-primary] { width: 100%; max-width: 0; min-width: calc(var(--nui-dtable-primary-min, 120px) + 24px); }
+/* The primary column never gets narrower than its minimum: a zero-height block sets its min-content width. */
+/* The primary min-width sits on the cell: a spacer inside it is ignored under max-width: 0. Padding is added back (12 + 12, or 24 + 12 at an edge). */
+.nui-dtable [data-primary]:is(:first-child, :last-child) { min-width: calc(var(--nui-dtable-primary-min, 120px) + 36px); }
+.nui-dtable [data-align="end"] { text-align: right; }
+.nui-dtable tbody [data-mono] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.nui-dtable-group > th { height: 32px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nui-dtable-group-count { margin-left: 8px; font-weight: 400; }
+.nui-dtable .nui-dtable-empty > td { height: auto; padding: 0; white-space: normal; }
+.nui-dtable tr[data-pressable] { position: relative; }
+.nui-dtable tr[data-pressable]:hover > * { background: hsl(var(--foreground) / .03); }
+.nui-dtable-pick { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; text-align: left; font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: default; }
+.nui-dtable-pick::after { content: ""; position: absolute; inset: 0; }
+/* A control in another cell of a pressable row sits over the row's press layer, so it opens itself and not the row. */
+.nui-dtable tr[data-pressable] :is(a, button, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-dtable-pick) { position: relative; z-index: 1; }
+.nui-dtable-pick:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; border-radius: 4px; }
 .nui-spark { display: block; overflow: visible; }
 .nui-spark-fill { fill: hsl(var(--chart-1, 210 100% 49%) / .12); }
 .nui-spark-line { fill: none; stroke: hsl(var(--chart-1, 210 100% 49%)); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }

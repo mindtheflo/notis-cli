@@ -1840,11 +1840,41 @@ test('rows: a warning or danger label leads the labels, so a narrow row keeps it
   );
   const groups = [...doc.querySelectorAll('.nui-row-labels')];
   const words = (group: Element) => [...group.querySelectorAll('.nui-row-label')].map((label) => label.textContent);
-  assert.deepEqual(words(groups[0]!), ['Overdue', ', Billing']);
+  assert.deepEqual(words(groups[0]!), ['Overdue', 'Billing'], 'a toned label is a pill: no comma runs out of it');
   assert.equal(groups[0]!.querySelector('.nui-row-label')!.getAttribute('data-tone'), 'danger');
-  assert.deepEqual(words(groups[1]!), ['Billing', ', Ready']);
+  assert.deepEqual(words(groups[1]!), ['Billing', 'Ready'], 'nor into it');
+  assert.equal(groups[0]!.textContent, 'Overdue, Billing', 'a hidden comma still separates the words when read');
+  assert.equal(groups[1]!.querySelector('.nui-sr-only')?.textContent, ', ');
+  assert.match(cssRule('.nui-row-label[data-tone]') ?? '', /border-radius: 5px/, 'a toned label is a tinted pill');
+  assert.match(cssRule('.nui-badge[data-tone="danger"], .nui-row-label[data-tone="danger"]') ?? '',
+    /background: hsl\(var\(--destructive\) \/ \.12\); color: hsl\(var\(--nui-pill-danger, 0 80% 38%\)\)/,
+    'state never rides on text colour alone: the Badge tint, with a shade that reads on it');
   assert.match(cssRule('.nui-row-labels') ?? '', /text-overflow: ellipsis/);
   assert.match(cssRule('.nui-row-meta') ?? '', /text-overflow: ellipsis/, 'the meta line ends in an ellipsis (C14)');
+});
+
+test('rows: a Row on its own with onPress is one button over the row, named by its title', async () => {
+  let pressed = 0;
+  await mount(<Row title="boat-wt" meta="Idle on mac and still holds a dev stack" trailing={<button type="button" className="own">x</button>}
+    onPress={() => { pressed += 1; }} />);
+  const row = q('.nui-row')!;
+  assert.ok(row.hasAttribute('data-pressable'));
+  const button = row.querySelector<HTMLButtonElement>('button.nui-row-press')!;
+  assert.equal(button.getAttribute('aria-label'), 'boat-wt');
+  assert.equal(button.querySelector('div, span'), null, 'the row content is never nested in the button');
+  await click(button);
+  assert.equal(pressed, 1);
+  assert.match(cssRule('.nui-row[data-pressable] :is(button, a, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-row-press)') ?? '',
+    /pointer-events: auto/, 'the row\'s own controls, native or custom ones that take focus or open a popup, stay pressable');
+  await mount(<Row title={<b>Bold</b>} onPress={() => undefined} pressLabel="Open Bold" />);
+  assert.equal(q('button.nui-row-press')!.getAttribute('aria-label'), 'Open Bold');
+  await mount(<Row title={<b>fleet-2 blocked</b>} onPress={() => undefined} />);
+  const press = q('button.nui-row-press')!;
+  const named = press.getAttribute('aria-labelledby');
+  assert.ok(named, 'a title that is not plain text names the button through the title element');
+  assert.equal(doc.getElementById(named!)?.textContent, 'fleet-2 blocked');
+  await mount(<Row title="Plain" />);
+  assert.equal(q('button.nui-row-press'), null, 'no onPress, no button');
 });
 
 test('rows: the labels shrink before the meta start, so a narrow row keeps who and when longest', async () => {

@@ -27,10 +27,10 @@ export {
 } from './period/periods';
 export type { CompareId, DateRange as PeriodRange, Period, PresetId } from './period/periods';
 export {
-  dayNumberLabel, formatDateRange, formatDayHeading, formatDelta, formatLongDay, formatMonthYear, formatNumber, formatShortDay,
-  formatValue, intlLocale, weekdayNames,
+  dayNumberLabel, formatDateRange, formatDayHeading, formatDelta, formatDuration, formatLongDay, formatMonthYear, formatNumber,
+  formatShortDay, formatValue, intlLocale, weekdayNames,
 } from './period/dateFormat';
-export type { Delta, DeltaTone } from './period/dateFormat';
+export type { Delta, DeltaTone, FormatDurationOptions } from './period/dateFormat';
 export {
   CALENDAR_WORDS, CHART_WORDS, COMPARE_WORDS, PERIOD_WORDS, PRESET_WORDS, TIMELINE_WORDS, VS_WORDS,
 } from './period/dateWords';

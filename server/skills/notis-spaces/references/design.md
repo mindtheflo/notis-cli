@@ -17,7 +17,8 @@ keyboard engine and EN/FR words stay Notis's.
 | Items on dates | `CalendarView` (month, week, agenda) |
 | Items over time, by lane | `TimelineView` |
 | Items by stage, moved from one stage to the next (a sales funnel, a production pipeline) | `BoardView`: one column per stage, `onMove` to move tiles |
-| Numbers over a period | `Section kind="bar"` with `PeriodPicker`, `StatRow`, `Section kind="chart"` with `Chart`, `Section kind="data"` with `ChartTable`, top to bottom, full width |
+| Numbers over a period | `Section kind="bar"` with `PeriodPicker`, `StatRow`, `Section kind="chart"` with `Chart`, `Section kind="data"` with `ChartTable` (figures per row) or `DataTable` (items, grouped by state), top to bottom, full width. When the period's numbers also hold things to act on now (a monitor down, an incident nobody handled), the [Needs action](#status-now) section goes between the bar and the figures |
+| What runs now, what is stuck, how full it is (machines, queues, jobs) | The [Status now](#status-now) stack |
 | One record as the page | `DocumentPage` (see [SDK](sdk.md#first-party-record-components)). Pick its `width` for the page: `standard` (the default) is a centred 900 px reading column for a page read as text, `wide` (1200 px) or `full` for a record that is a working surface such as a wide table or board |
 | A form or settings page | `Section kind="form"`, `Button`, `NativeSelect`, `SegmentedControl`, `Notice`, `EmptyState` |
 | A list on your own layout | `useListKeys`, `useSelection`, `Row`, `SelectionBar`, `Panels` |
@@ -30,6 +31,47 @@ piece would make the view worse for what the person does there, write your own.
 Floating UI comes from `Menu`, `Popover` and `Tooltip`; they open inside the
 Space and pick up its theme. Open as Side, Center or Full belongs to the list
 (`openAs`, `OpenAsMenu`); a Space does not build its own reader frame.
+
+## Status now
+
+A live status page answers one question: does anything need me, and what is
+running. Stack it top to bottom, full width:
+
+1. **Needs action.** A short `Section` of plain `Row`s, one per item a person
+   must act on: the item, why, and the next step (`onPress` opens it; an
+   action only when the Space declares one). Leave the section out when
+   nothing needs action. The Space decides what counts (a start waiting, a
+   stack held a day by an idle thread) and says so in the section's
+   `InfoTip`, so the rule is visible rather than guessed.
+2. **Figures.** One `StatRow` of 4 or 5 figures that answer the page's
+   question. A figure's `hint` adds information or stays empty: never its
+   label again, never another figure.
+3. **One `Section` per kind of thing** (machines, stacks), its items laid out
+   flat, with no tinted box around each. Capacity is a `Meter` showing what is
+   used, with `limit` only at a threshold the data has (a memory reserve, a
+   quota). A full meter is not red by itself: when full means someone waits,
+   that wait is a "Needs action" row.
+4. **The items.** A `DataTable` in `Section kind="data"`, grouped by state,
+   running before idle. Durations go through `formatDuration` ("4 d 6 h", not
+   "6,098 min").
+5. **History.** Charts last. A percentage or any scale that matters gets
+   `valueAxis` with a fixed `domain` (`[0, 100]`), rather than peaks written
+   beside the title.
+
+A page can be both: a health page reads over a period and still has things
+to act on today. Keep the period recipe and put the Needs action section
+first, under the period bar.
+
+`DataTable` keeps its primary column readable on a phone on its own: the last
+columns that do not fit hide. Still give secondary columns a `hideBelow` so
+the right ones go first.
+
+Colour marks what someone must act on, and nothing else. Badges and pills keep
+the `default` tone for normal states (on, open, running); only the state a
+person must act on takes a tone. Text and figures keep their usual colours
+whatever the state; a toned `Row` label draws as a pill for that reason. How
+the system works goes in an `InfoTip` (a figure's `about`, beside a heading),
+not as prose on the page.
 
 ## Layout
 
@@ -135,6 +177,11 @@ pending, and actually look at both images:
 
 - Does the layout fit what the person does here, or did the request get bent
   into the nearest stock piece?
+- Does the first screen answer the one question the person opens the page for,
+  and does what needs action stand out?
+- Does any figure repeat another figure or a label?
+- Is every colour on the page a state someone must act on?
+- Do counts agree across sections?
 - Does the view fill the host frame, also while loading?
 - Does the pending image keep the final layout: same tab row and panes, a
   skeleton where content will be, no Loading text and no empty state? Fix every

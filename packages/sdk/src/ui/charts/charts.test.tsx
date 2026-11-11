@@ -55,16 +55,32 @@ test('StatRow: bare figures with wrapping labels; an about sits beside its label
   assert.equal(cells[1].querySelector('.nui-stat-value')?.textContent, '12');
 
   const stats = cssRule('.nui-stats') ?? '';
-  // PG2: the deck strip. Four columns (two under 640), cells px 24 py 16, no card, gap or ring.
+  // PG2: the deck strip. Equal cells (two per line under 640), cells px 24 py 16, no card, gap or ring.
   assert.doesNotMatch(stats, /(^|; )(border[a-z-]*|gap|box-shadow|background):/, 'no frame: the strip has no card, gap or ring');
   const cell = cssRule('.nui-stat') ?? '';
-  assert.match(cell, /flex: 0 0 25%;/);
+  assert.match(cell, /flex: 1 1 0;/, 'cells share the row equally: four read 25% each');
   assert.match(cell, /padding: 16px 24px;/, 'each cell carries the 24px page inset');
   assert.doesNotMatch(cell, /(^|; )(border[a-z-]*|box-shadow|background):/);
   const label = cssRule('.nui-stat-label') ?? '';
   assert.doesNotMatch(label, /nowrap|ellipsis/, 'a long label wraps instead of being cut');
   assert.match(label, /overflow-wrap: anywhere;/);
   assert.match(cssRule('.nui-stat-about') ?? '', /margin-block: -6px;/, 'an icon button does not make the label line taller');
+});
+
+test('StatRow: five figures share one line; narrower strips wrap without leaving a cell alone', async () => {
+  const five: StatMetric[] = ['Runs', 'Threads', 'Machines', 'Memory', 'Uptime'].map((label, i) => ({ id: label, label, value: i + 1 }));
+  await mount(<StatRow metrics={five} locale="en" />);
+  const cells = [...doc.querySelectorAll('.nui-stats > .nui-stat')];
+  assert.equal(cells.length, 5);
+  assert.deepEqual(cells.map((cell) => cell.querySelector('.nui-stat-label')?.textContent), ['Runs', 'Threads', 'Machines', 'Memory', 'Uptime']);
+  // Over 640 every cell grows from zero, so up to six sit on one line; five and six take three per line under 800
+  // and 960 (a cell never under 160px); seven or more four per line. At 640 or less two per line, the odd last one
+  // spanning the row because a wrapped cell grows.
+  assert.match(toolkitCss, /@container nui-stats \(min-width: 640\.02px\) and \(max-width: 800px\) \{ \.nui-stat:first-child:nth-last-child\(5\), \.nui-stat:first-child:nth-last-child\(5\) ~ \.nui-stat \{ flex: 1 0 33\.333%; \} \}/);
+  assert.match(toolkitCss, /@container nui-stats \(min-width: 640\.02px\) and \(max-width: 960px\) \{ \.nui-stat:first-child:nth-last-child\(6\), \.nui-stat:first-child:nth-last-child\(6\) ~ \.nui-stat \{ flex: 1 0 33\.333%; \} \}/);
+  assert.match(toolkitCss, /@container nui-stats \(min-width: 640\.02px\) \{ \.nui-stat:first-child:nth-last-child\(n\+7\), \.nui-stat:first-child:nth-last-child\(n\+7\) ~ \.nui-stat \{ flex: 1 0 25%; \} \}/);
+  assert.match(toolkitCss, /@container nui-stats \(max-width: 640px\) \{ \.nui-stat \{ flex: 1 0 50%; \} \}/);
+  assert.doesNotMatch(toolkitCss, /\.nui-stat \{[^}]*flex: 0 0 25%/, 'no fixed quarter cells left to orphan a fifth figure');
 });
 
 test('ChartTable: an about beside the metric label is above the pick area and never picks the row', async () => {

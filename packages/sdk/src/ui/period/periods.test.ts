@@ -14,7 +14,7 @@ import {
   type PresetId,
 } from './periods';
 import {
-  dayNumberLabel, formatDateRange, formatDayHeading, formatDelta, formatLongDay, formatMonthYear, weekdayNames,
+  dayNumberLabel, formatDateRange, formatDayHeading, formatDelta, formatDuration, formatLongDay, formatMonthYear, weekdayNames,
 } from './dateFormat';
 
 // Thursday 15 October 2026, mid-afternoon.
@@ -114,4 +114,43 @@ test('deltas carry a sign, a tone and the French narrow space', () => {
   assert.equal(formatDelta(90, 100, 'en', false)?.tone, 'good');
   assert.equal(formatDelta(105, 100, 'fr')?.text, '+5 %');
   assert.equal(formatDelta(5, 0, 'en'), null);
+});
+
+test('formatDuration: the biggest two units, a no-break space before each unit, French days in j', () => {
+  const S = 1_000;
+  const MIN = 60 * S;
+  const H = 60 * MIN;
+  const D = 24 * H;
+  const nb = (text: string) => text.replace(/ /g, '\u00a0').replace(/\u00a0\|\u00a0/g, ' ');
+  // "|" marks the plain space between two parts in the expected texts below.
+  assert.equal(formatDuration(4 * D + 5 * H + 12 * MIN, 'en'), nb('4 d | 5 h'));
+  assert.equal(formatDuration(4 * D + 5 * H + 12 * MIN, 'fr'), nb('4 j | 5 h'));
+  assert.equal(formatDuration(H + 31 * MIN, 'en'), nb('1 h | 31 min'));
+  assert.equal(formatDuration(H + 31 * MIN, 'fr-FR'), nb('1 h | 31 min'));
+  assert.equal(formatDuration(7 * MIN, 'en'), nb('7 min'));
+  assert.equal(formatDuration(45 * S, 'fr'), nb('45 s'));
+  assert.equal(formatDuration(0, 'en'), nb('0 s'));
+  // The last unit shown is rounded; a zero part is left out; rounding carries into the next unit.
+  assert.equal(formatDuration(H + 30 * MIN + 45 * S, 'en'), nb('1 h | 31 min'));
+  assert.equal(formatDuration(2 * H + 10 * S, 'en'), nb('2 h'));
+  assert.equal(formatDuration(23 * H + 59 * MIN + 45 * S, 'en'), nb('1 d'));
+  assert.equal(formatDuration(59 * MIN + 59.6 * S, 'en'), nb('1 h'));
+  // units: one, two or three.
+  assert.equal(formatDuration(4 * D + 5 * H + 12 * MIN, 'en', { units: 1 }), nb('4 d'));
+  assert.equal(formatDuration(4 * D + 5 * H + 12 * MIN + 9 * S, 'en', { units: 3 }), nb('4 d | 5 h | 12 min'));
+  assert.equal(formatDuration(H + 2 * MIN + 3 * S, 'fr', { units: 3 }), nb('1 h | 2 min | 3 s'));
+  // 6,098 minutes are 4 days 5 h 38 min, rounded to the hour; 1,234 days keep the locale's grouping.
+  assert.equal(formatDuration(6_098 * MIN, 'en'), nb('4 d | 6 h'));
+  assert.equal(formatDuration(1_234 * D, 'en', { units: 1 }), nb('1,234 d'));
+  assert.equal(formatDuration(1_234 * D, 'fr', { units: 1 }), `1\u202f234\u00a0j`);
+});
+
+test('formatDuration: smallest minute rounds to the minute, zero reads 0 min and a sliver < 1 min; bad input reads -', () => {
+  const nb = (text: string) => text.replace(/ /g, '\u00a0').replace(/\u00a0\|\u00a0/g, ' ');
+  assert.equal(formatDuration(45_000, 'en', { smallest: 'minute' }), nb('1 min'));
+  assert.equal(formatDuration(20_000, 'en', { smallest: 'minute' }), nb('< 1 min'));
+  assert.equal(formatDuration(20_000, 'fr', { smallest: 'minute' }), nb('< 1 min'));
+  assert.equal(formatDuration(0, 'fr', { smallest: 'minute' }), nb('0 min'));
+  assert.equal(formatDuration(3_600_000 + 50_000, 'en', { smallest: 'minute', units: 3 }), nb('1 h | 1 min'));
+  for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(formatDuration(bad, 'en'), '-');
 });
