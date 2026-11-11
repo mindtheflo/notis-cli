@@ -285,6 +285,9 @@ export function useCollectionInteractions<T>(
   );
   const selectableIdsRef = useRef(selectableIds);
   selectableIdsRef.current = selectableIds;
+  const selectableIdSet = useMemo(() => new Set(selectableIds), [selectableIds]);
+  const selectableIdSetRef = useRef(selectableIdSet);
+  selectableIdSetRef.current = selectableIdSet;
   // The list as it was when it last held the active item: J/K from an item that left the list go on from its place.
   const activePlaceRef = useRef<{ id: string; ids: string[] } | null>(null);
   const droppedActiveIdRef = useRef<string | null>(null);
@@ -647,7 +650,7 @@ export function useCollectionInteractions<T>(
     [LEGACY_ROW_ATTRIBUTE]: id,
     tabIndex: activeIdRef.current === id || (!activeIdRef.current && selectableIdsRef.current[0] === id) ? 0 : -1,
     'aria-selected': selectedIdsRef.current.has(id),
-    'aria-disabled': !selectableIdsRef.current.includes(id),
+    'aria-disabled': !selectableIdSetRef.current.has(id),
     'data-notis-active': (activeIdRef.current === id ? 'true' : 'false') as 'true' | 'false',
     onFocus: () => {
       activateCollectionShortcuts();
@@ -680,7 +683,7 @@ export function useCollectionInteractions<T>(
 
   const getCheckboxProps = useCallback((id: string) => ({
     isSelected: selectedIdsRef.current.has(id),
-    disabled: !enabled || !selectableIdsRef.current.includes(id),
+    disabled: !enabled || !selectableIdSetRef.current.has(id),
     onClick: onCheckboxClick(id),
   }), [enabled, onCheckboxClick]);
 
