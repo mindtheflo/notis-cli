@@ -37,60 +37,6 @@ Text a person writes and reviews:
   are gone reads Text changed. Do not build your own highlights. Pins on a page
   use `useComments` with `CommentPane` (see Comments under Toolkit pieces).
 
-## Records and declared reads
-
-| API | Use |
-| --- | --- |
-| `useViewParams<typeof definition>()` | `{params, invalid, missing, declared, ready, setParams}` for declared typed URL params. Unknown names are dropped; invalid values use their declared default. `setParams(changes, {replace?})` changes this view's own params (`null` removes one) and keeps the same Space and record open. |
-| `useShown<Row>(name, options?)` | Execute the native list in `shows[name]` with current params. Options: `sorts`, `pageSize`, `offset`, `includeContent`, `allPages` (every page, for a whole count or a local search); rows are in `data?.rows` and the schema revision a write needs in `data?.schema_revision`, with `loading`, `hasData`, `isFetching`, `error`, `refetch` (resolves to the read's error, or null when it succeeded; it never rejects). |
-| `useShownAvailable(name)` | Check whether this host exposes the declared native list. A record Site can expose only its exact server-pinned row scope. |
-| `useAction<Inputs, Result>(name)` / `useActionQuery<Result>(name, inputs, options?)` | Call a declared action (`call(inputs, options)`); read the result of a declared read action. Never call account-wide tools from a Space. When a read action answers with native rows, pass `rows: { binding, at, query? }` (`at`: the answer field holding them, `''` for a bare list; `query`: the native query it runs) so native writes to that database show in it at once too; without it the read only refreshes after the write. A failed call throws a `SpaceActionError`; its `code` is `rate_limited` when the provider refused it for sending too fast (it did not run, and Notis already waited and retried safe calls), so offer a retry after a few seconds instead of adding your own limiter, and `read_timeout` when a read took too long. |
-| `useNativeMutation(binding, operation)` | Insert, update or delete one row of a linked database through the action that declares `LOCAL_NOTIS_DATABASE_INSERT`, `_UPDATE` or `_DELETE` on that binding with `request: { $input: 'request' }`. `mutate(input, {schemaRevision, requestId, showIn?})` returns the receipt (`record_key`, `revision`). The write shows in every list of that database at once, before the server answers: an edited row changes where it is (and moves to its sorted place, or leaves a `useNativeDocuments` read whose filter no longer keeps it), a new row joins the reads whose filter it passes and the `shows` lists named by `showIn` (by default the view's only list over that database), and a delete moves the record to the bin and leaves every list. A failed write puts the server's rows back. Do not keep your own copy of the change on top. One new request ID per effect. An insert action takes no `content_markdown`: insert, then save the body with `useNativeDocumentBody` and the record's revision. |
-| `useNativeDelete(binding)` | Trash many rows of one linked database (a deck and its slides, a multi-select). `deleteMany(inputs, {schemaRevision, requestId})` hides every row from the lists at once, runs the writes a few at a time, each with the request ID `${requestId}:${record_key}` (a retry with the same `requestId` replays instead of trashing twice), refreshes the lists once at the end and brings back the rows whose write failed. It never throws for a failed row: it resolves to `{done, failed}`; say how many failed. Use it rather than a loop of `mutate`. |
-| `useNativeDocumentBody(binding, recordKey, {readAction, writeAction?, enabled?})` | Markdown body adapter. Keep drafts in the view; save with the original content, record/schema revisions and stable request ID. Rich editing normally uses `DocumentEditor`. |
-| `useNotis()` | Host resource, Space labels, route and ready state. Use `resource.id` for the current Space identity. |
-
-Keep hooks unconditional. `loading` means no first successful read;
-`isFetching` includes a silent refresh. Do not copy rows into mount-only state
-or clear them on error ([loading rules](design.md#loading-empty-and-error)).
-`Skeleton` and `ViewSkeleton` come from `@notis/sdk`; `ViewSkeleton`'s `label`
-names what loads (`{ en: 'Loading meetings', fr: 'Chargement des réunions' }`),
-said in the Space's language, default Loading content. Its shapes are
-measured from the view at verify time and drawn from the release; `skeletonKey`
-(default `main`) names the region when a view has several separately loading
-parts, and `variant` only draws the fallback before the first measured release.
-
-For another explicitly idempotent read use `useActionQuery`, or
-`useQuery(keyArray, readCallback, { readOnly: true })` with every input in the
-key. Call declared read actions inside a custom read with
-`{ readOnly: true, dedupe: true }`; never mark a whole tool family read-only.
-`useQueryClient().prefetch(...)` with the exact foreground key prepares a small
-known read after render or on hover; never prefetch a write, a polling action or
-a fan-out aggregate. The host keeps one in-memory cache per account, Space,
-version and permission; do not add module-global or `localStorage` caches of
-user data.
-
-## First-party record components
-
-| Component | Contract |
-| --- | --- |
-| `<DocumentPage recordKey>` | A record as the view's main content: save state, menu, cover, icon, title, meta, properties that save automatically, collaborative body. Slots `breadcrumb`, `actions`, `menuItems`, `aboveBody`, `belowBody`; toggles `share` (off by default, never for a report record), `header`, `meta`, `properties`, `width` (`standard` 900 px centred column by default, `wide` 1200 px, `full`); `viewer: 'html'` shows a record whose one stored `.html` file is the page; `onSaved`; `layout`. Pair with `DocumentPageSkeleton` and `usePrefetchRecord()`. It is the usual `reader` slot of `ListReader`; there it takes no `breadcrumb`, because the top bar crumb already names the open record. A page with a `breadcrumb` (a record opened from the view) names the top bar crumb leaf with its title itself; `topBarTitle` overrides that, and `onTitle` hears the title. |
-| `<DocumentEditor recordKey>` | Native collaborative body, properties, images and attachments. With separate properties use `showProperties={false}`. |
-| `<RecordProperties recordKey>` | Native revision-checked property editing. |
-| `<HtmlFrame recordKey>` | Attached HTML under viewer CSP and an opaque-origin sandbox. Source cannot relax that boundary. `onReady` is called once per page after it has loaded and painted, or when the record cannot load: keep a slide hidden until then instead of showing a half-drawn page. `presentation={{ onAction }}` turns the pointer into a laser dot inside the page, keeps its buttons and links clickable, and hands the presenter's keys and plain clicks back as `next`, `previous`, `first`, `last` or `stop`; the page can send the same actions, so treat them as navigation only. |
-| `<ReportFrame recordKey>` | A report row's saved independent implementation in its database's current view. |
-| `<ShareControl recordKey>` | Private/shared record Site, copy link and revoke. |
-| `<SpacePageFrame href>` | Another Notis Space page, live in this view: `href` is a Notis link (a path or a full link of this origin, such as a Page property). The Portal shows only that page's view (no sidebar, top bar or chat) with the viewer's own session and permissions. `interactive` (default `false`) lets it take clicks and keys; off, the view around it (a deck's arrows and swipes) keeps them. `title`, `className` (sizes the box it fills). Any other link, and every verify or build preview, shows a card with the title, the path and Open page. |
-
-In its own Space's view, a record's Site is a row of the top bar Share panel, not
-a toolbar button. The published Space declares the database binding; the server
-rechecks record scope and binding revision. A Site exposes read-only body and
-property snapshots and HTML for its pinned record, including a declared
-non-collection record param. A report row cannot be shared as a Site; a report
-saved as an HTML file can. A Site has no upload, collaboration credential,
-authoring controls or sharing mutation. No credentials or filesystem URLs belong
-in component props.
-
 ## Toolkit pieces
 
 From `@notis/sdk/ui`. Their props live in the piece types; read them there
@@ -201,11 +147,10 @@ rather than from a copy.
   previews, a timer). The browser asks once to place windows on screens; the
   desktop app never asks. Leaving the view closes the audience window.
 - **Blocks**: `Section`, `Badge`, `Button`, `ToggleGroup`, `SegmentedControl`,
-  `NativeSelect`, `EmptyState`, `Notice`, `Metric`. A page is a stack of
-  `Section`s, full width and without boxes: `kind` is `bar` (period and
-  filters), `stats`, `chart`, `data` (a table) or `form`, and its head takes
-  `title`, `count`, `meta`, `tabs` and `actions`. There is no page heading and
-  no card: the host top bar shows the title. One toggle is a `Button` with
+  `NativeSelect`, `EmptyState`, `Notice`, `Metric`. A `Section`'s `kind`
+  is `bar` (period and filters), `stats`, `chart`, `data` (a table) or `form`,
+  and its head takes `title`, `count`, `meta`, `tabs` and `actions`. There is no
+  page heading: the host top bar shows the title. One toggle is a `Button` with
   `pressed`; several with any number on (filters, chart series) are a
   `ToggleGroup`; tabs and filters over a whole list or section are pills
   (`TabRow`); a `SegmentedControl` is only a mode switch inside a section.
@@ -236,7 +181,61 @@ Move to triage, and a Space whose first stop has a name passes
 A status maps to one of ten groups (`backlog`, `todo`, `active`, `review`,
 `waiting`, `done`, `cancelled`, `failed`, and `up`/`down` for a service), each
 with its icon, words and the one status palette: pass the Space's own status to
-`Row` or `StatusIcon` (with `label` for its own name), never a colour.
+`Row` or `StatusIcon` (with `label` for its own name).
+
+## Records and declared reads
+
+| API | Use |
+| --- | --- |
+| `useViewParams<typeof definition>()` | `{params, invalid, missing, declared, ready, setParams}` for declared typed URL params. Unknown names are dropped; invalid values use their declared default. `setParams(changes, {replace?})` changes this view's own params (`null` removes one) and keeps the same Space and record open. |
+| `useShown<Row>(name, options?)` | Execute the native list in `shows[name]` with current params. Options: `sorts`, `pageSize`, `offset`, `includeContent`, `allPages` (every page, for a whole count or a local search); rows are in `data?.rows` and the schema revision a write needs in `data?.schema_revision`, with `loading`, `hasData`, `isFetching`, `error`, `refetch` (resolves to the read's error, or null when it succeeded; it never rejects). |
+| `useShownAvailable(name)` | Check whether this host exposes the declared native list. A record Site can expose only its exact server-pinned row scope. |
+| `useAction<Inputs, Result>(name)` / `useActionQuery<Result>(name, inputs, options?)` | Call a declared action (`call(inputs, options)`); read the result of a declared read action. Never call account-wide tools from a Space. When a read action answers with native rows, pass `rows: { binding, at, query? }` (`at`: the answer field holding them, `''` for a bare list; `query`: the native query it runs) so native writes to that database show in it at once too; without it the read only refreshes after the write. A failed call throws a `SpaceActionError`; its `code` is `rate_limited` when the provider refused it for sending too fast (it did not run, and Notis already waited and retried safe calls), so offer a retry after a few seconds instead of adding your own limiter, and `read_timeout` when a read took too long. |
+| `useNativeMutation(binding, operation)` | Insert, update or delete one row of a linked database through the action that declares `LOCAL_NOTIS_DATABASE_INSERT`, `_UPDATE` or `_DELETE` on that binding with `request: { $input: 'request' }`. `mutate(input, {schemaRevision, requestId, showIn?})` returns the receipt (`record_key`, `revision`). The write shows in every list of that database at once, before the server answers: an edited row changes where it is (and moves to its sorted place, or leaves a `useNativeDocuments` read whose filter no longer keeps it), a new row joins the reads whose filter it passes and the `shows` lists named by `showIn` (by default the view's only list over that database), and a delete moves the record to the bin and leaves every list. A failed write puts the server's rows back. Do not keep your own copy of the change on top. One new request ID per effect. An insert action takes no `content_markdown`: insert, then save the body with `useNativeDocumentBody` and the record's revision. |
+| `useNativeDelete(binding)` | Trash many rows of one linked database (a deck and its slides, a multi-select). `deleteMany(inputs, {schemaRevision, requestId})` hides every row from the lists at once, runs the writes a few at a time, each with the request ID `${requestId}:${record_key}` (a retry with the same `requestId` replays instead of trashing twice), refreshes the lists once at the end and brings back the rows whose write failed. It never throws for a failed row: it resolves to `{done, failed}`; say how many failed. Use it rather than a loop of `mutate`. |
+| `useNativeDocumentBody(binding, recordKey, {readAction, writeAction?, enabled?})` | Markdown body adapter. Keep drafts in the view; save with the original content, record/schema revisions and stable request ID. Rich editing normally uses `DocumentEditor`. |
+| `useNotis()` | Host resource, Space labels, route and ready state. Use `resource.id` for the current Space identity. |
+
+Keep hooks unconditional. `loading` means no first successful read;
+`isFetching` includes a silent refresh. Do not copy rows into mount-only state
+or clear them on error ([loading rules](design.md#loading-empty-and-error)).
+`Skeleton` and `ViewSkeleton` come from `@notis/sdk`; `ViewSkeleton`'s `label`
+names what loads (`{ en: 'Loading meetings', fr: 'Chargement des réunions' }`),
+said in the Space's language, default Loading content. Its shapes are
+measured from the view at verify time and drawn from the release; `skeletonKey`
+(default `main`) names the region when a view has several separately loading
+parts, and `variant` only draws the fallback before the first measured release.
+
+For another explicitly idempotent read use `useActionQuery`, or
+`useQuery(keyArray, readCallback, { readOnly: true })` with every input in the
+key. Call declared read actions inside a custom read with
+`{ readOnly: true, dedupe: true }`; never mark a whole tool family read-only.
+`useQueryClient().prefetch(...)` with the exact foreground key prepares a small
+known read after render or on hover; never prefetch a write, a polling action or
+a fan-out aggregate. The host keeps one in-memory cache per account, Space,
+version and permission; do not add module-global or `localStorage` caches of
+user data.
+
+## First-party record components
+
+| Component | Contract |
+| --- | --- |
+| `<DocumentPage recordKey>` | A record as the view's main content: save state, menu, cover, icon, title, meta, properties that save automatically, collaborative body. Slots `breadcrumb`, `actions`, `menuItems`, `aboveBody`, `belowBody`; toggles `share` (off by default, never for a report record), `header`, `meta`, `properties`, `width` (`standard` 900 px centred column by default, `wide` 1200 px, `full`); `viewer: 'html'` shows a record whose one stored `.html` file is the page; `onSaved`; `layout`. Pair with `DocumentPageSkeleton` and `usePrefetchRecord()`. It is the usual `reader` slot of `ListReader`; there it takes no `breadcrumb`, because the top bar crumb already names the open record. A page with a `breadcrumb` (a record opened from the view) names the top bar crumb leaf with its title itself; `topBarTitle` overrides that, and `onTitle` hears the title. |
+| `<DocumentEditor recordKey>` | Native collaborative body, properties, images and attachments. With separate properties use `showProperties={false}`. |
+| `<RecordProperties recordKey>` | Native revision-checked property editing. |
+| `<HtmlFrame recordKey>` | Attached HTML under viewer CSP and an opaque-origin sandbox. Source cannot relax that boundary. `onReady` is called once per page after it has loaded and painted, or when the record cannot load: keep a slide hidden until then instead of showing a half-drawn page. `presentation={{ onAction }}` turns the pointer into a laser dot inside the page, keeps its buttons and links clickable, and hands the presenter's keys and plain clicks back as `next`, `previous`, `first`, `last` or `stop`; the page can send the same actions, so treat them as navigation only. |
+| `<ReportFrame recordKey>` | A report row's saved independent implementation in its database's current view. |
+| `<ShareControl recordKey>` | Private/shared record Site, copy link and revoke. |
+| `<SpacePageFrame href>` | Another Notis Space page, live in this view: `href` is a Notis link (a path or a full link of this origin, such as a Page property). The Portal shows only that page's view (no sidebar, top bar or chat) with the viewer's own session and permissions. `interactive` (default `false`) lets it take clicks and keys; off, the view around it (a deck's arrows and swipes) keeps them. `title`, `className` (sizes the box it fills). Any other link, and every verify or build preview, shows a card with the title, the path and Open page. |
+
+In its own Space's view, a record's Site is a row of the top bar Share panel, not
+a toolbar button. The published Space declares the database binding; the server
+rechecks record scope and binding revision. A Site exposes read-only body and
+property snapshots and HTML for its pinned record, including a declared
+non-collection record param. A report row cannot be shared as a Site; a report
+saved as an HTML file can. A Site has no upload, collaboration credential,
+authoring controls or sharing mutation. No credentials or filesystem URLs belong
+in component props.
 
 ## Navigation
 

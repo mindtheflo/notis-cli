@@ -269,7 +269,6 @@
     "source": "const result=eval(\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\");",
     "boundary": true,
     "design_ids": [
-      "no-border-box",
       "no-side-bar",
       "no-palette-hue",
       "no-hex-color",
@@ -283,7 +282,6 @@
     "source": "const result=new Function(\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\");",
     "boundary": true,
     "design_ids": [
-      "no-border-box",
       "no-side-bar",
       "no-palette-hue",
       "no-hex-color",
@@ -302,10 +300,10 @@
   {
     "name": "ordinary style constant stays checked",
     "path": "app/page.tsx",
-    "source": "const style=\"border #ff0000\";",
+    "source": "const style=\"bg-red-400 #ff0000\";",
     "boundary": false,
     "design_ids": [
-      "no-border-box",
+      "no-palette-hue",
       "no-hex-color"
     ],
     "any_allowed": false
@@ -313,10 +311,10 @@
   {
     "name": "JSX class string",
     "path": "app/page.tsx",
-    "source": "export default function Page(){return <div className=\"border\"/>;}",
+    "source": "export default function Page(){return <div className=\"bg-red-400\"/>;}",
     "boundary": false,
     "design_ids": [
-      "no-border-box"
+      "no-palette-hue"
     ],
     "any_allowed": false
   },
@@ -343,10 +341,10 @@
   {
     "name": "JSX class template",
     "path": "app/page.tsx",
-    "source": "const Page=()=> <div className={`border ${active?\"bg-muted\":\"bg-background\"}`}/>;",
+    "source": "const Page=()=> <div className={`bg-red-400 ${active?\"bg-muted\":\"bg-background\"}`}/>;",
     "boundary": false,
     "design_ids": [
-      "no-border-box"
+      "no-palette-hue"
     ],
     "any_allowed": false
   },
@@ -356,7 +354,6 @@
     "source": "const Page=()=> <div className={\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\"}/>;",
     "boundary": true,
     "design_ids": [
-      "no-border-box",
       "no-side-bar",
       "no-palette-hue",
       "no-hex-color",
@@ -370,7 +367,6 @@
     "source": "const Page=()=> <div className={()=>{return \"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";}}/>;",
     "boundary": true,
     "design_ids": [
-      "no-border-box",
       "no-side-bar",
       "no-palette-hue",
       "no-hex-color",
@@ -408,7 +404,6 @@
     "source": "const data=\"{\\\"files\\\":[{\\\"path\\\":\\\"example.md\\\",\\\"after\\\":\\\"document.body window.__NOTIS_RUNTIME__ createPortal( @radix-ui/react-portal PortalPrimitive #ff0000 border border-red-400 border-l-4 <aside className=\\\\\\\"notis-app-shell\\\\\\\">\\\"}]}\";\nconst = ;",
     "boundary": true,
     "design_ids": [
-      "no-border-box",
       "no-side-bar",
       "no-palette-hue",
       "no-hex-color",
@@ -469,20 +464,20 @@
   {
     "name": "data cannot supply allow directive",
     "path": "app/page.tsx",
-    "source": "const data=\"{\\\"note\\\": \\\"notis-design-allow: no-border-box old historical directive with reason\\\"}\";\nconst Page=()=> <div className=\"border\"/>;",
+    "source": "const data=\"{\\\"note\\\": \\\"notis-design-allow: no-palette-hue old historical directive with reason\\\"}\";\nconst Page=()=> <div className=\"bg-red-400\"/>;",
     "boundary": false,
     "design_ids": [
-      "no-border-box"
+      "no-palette-hue"
     ],
     "any_allowed": false
   },
   {
     "name": "actual allow directive preserved",
     "path": "app/page.tsx",
-    "source": "// notis-design-allow: no-border-box priority checkbox needs a visible unchecked ring\nconst Page=()=> <div className=\"border\"/>;",
+    "source": "// notis-design-allow: no-palette-hue priority dot keeps the brand red\nconst Page=()=> <div className=\"bg-red-400\"/>;",
     "boundary": false,
     "design_ids": [
-      "no-border-box"
+      "no-palette-hue"
     ],
     "any_allowed": true
   },

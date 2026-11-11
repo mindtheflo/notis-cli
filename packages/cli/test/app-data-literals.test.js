@@ -17,6 +17,6 @@ for(const fixture of cases)test(`serialized data boundary: ${fixture.name}`,()=>
 
 test('masked Unicode data does not move a real design violation line',()=>{
  const data=JSON.stringify(JSON.stringify({history:'é😀 document.body #ff0000'}));
- const source=`const title='😀';\nconst data=${data};\nconst Page=()=> <div className="border"/>;\n`;
- assert.deepEqual(collectDesignViolationsForFile('app/page.tsx',source).map(row=>[row.ruleId,row.line]),[['no-border-box',3]]);
+ const source=`const title='😀';\nconst data=${data};\nconst Page=()=> <div className="bg-red-400"/>;\n`;
+ assert.deepEqual(collectDesignViolationsForFile('app/page.tsx',source).map(row=>[row.ruleId,row.line]),[['no-palette-hue',3]]);
 });

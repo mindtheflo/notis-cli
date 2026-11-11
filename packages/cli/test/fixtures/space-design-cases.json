@@ -1,5 +1,5 @@
 {
-  "description": "Shared cases for the Space design profile. The CLI test (space-design-rules.test.js) and the server test (test_space_design_check.py) both run them, so the JS validator and its Python port stay in step.",
+  "description": "Shared cases for the Space design profile. The CLI test (space-design-rules.test.js) and the server test (test_space_design_check.py) both run them, so the JS validator and its Python port stay in step. Each case proves one rule fires on its bad source and not on its good one; each clean source must pass the whole Space profile with no finding at all.",
   "cases": [
     {
       "rule": "space-no-global-key-listener",
@@ -86,6 +86,18 @@
       "good": "export const Empty = () => (\n  <p\n    className=\"text-sm\"\n  >{copy.empty}</p>\n);"
     },
     {
+      "rule": "space-no-english-literal",
+      "file": "app/page.tsx",
+      "bad": "export default () => <IconButton label=\"Close panel\" icon={x} />;",
+      "good": "export default () => <IconButton label=\"loadingHealth\" icon={x} />;"
+    },
+    {
+      "rule": "space-no-english-literal",
+      "file": "components/tabs.tsx",
+      "bad": "export const Tab = () => <TabItem title=\"Save\" />;",
+      "good": "export const Tab = () => <TabItem title=\"needs_you\" />;"
+    },
+    {
       "rule": "space-no-private-path",
       "file": "lib/paths.ts",
       "bad": "export const root = '/Users/flo/notes';",
@@ -167,38 +179,14 @@
     {
       "rule": "no-page-heading",
       "file": "components/summary.tsx",
-      "bad": "import {\n  Card,\n  Section,\n} from '@notis/sdk/ui';",
-      "good": "import {\n  CardGrid,\n  Section,\n} from '@notis/sdk/ui';"
+      "bad": "import {\n  Card,\n  PageHeading,\n} from '@notis/sdk/ui';",
+      "good": "import {\n  Card,\n  Section,\n} from '@notis/sdk/ui';\nimport { CardContent } from '@/components/ui/card';\nexport const Summary = () => <Card><CardContent>{body}</CardContent></Card>;"
     },
     {
       "rule": "no-page-heading",
       "file": "app/globals.css",
       "bad": ".intro { composes: nui-heading-title; }",
       "good": ".intro { composes: nui-section-title; }"
-    },
-    {
-      "rule": "no-space-h1",
-      "file": "app/page.tsx",
-      "bad": "export default () => <h1 className=\"text-lg\">{copy.title}</h1>;",
-      "good": "export default () => <Section title={copy.title}>{body}</Section>;"
-    },
-    {
-      "rule": "no-centered-column",
-      "file": "app/page.tsx",
-      "bad": "export default () => <div className=\"mx-auto max-w-3xl px-6\">{body}</div>;",
-      "good": "export default () => <div className=\"flex h-full min-h-0 flex-col\">{body}</div>;"
-    },
-    {
-      "rule": "no-centered-column",
-      "file": "components/form.tsx",
-      "bad": "export const Form = () => <form className=\"container mx-auto\">{fields}</form>;",
-      "good": "export const Form = () => <form className=\"form-container w-full\">{fields}</form>;"
-    },
-    {
-      "rule": "no-centered-column",
-      "file": "app/globals.css",
-      "bad": ".page {\n  max-width: 40rem;\n  margin: 0 auto;\n}",
-      "good": ".page {\n  max-width: 40rem;\n}\n.note { margin: 0 auto; }"
     },
     {
       "rule": "no-app-shell",
@@ -247,48 +235,43 @@
       "file": "views/notes.tsx",
       "bad": "export const Notes = () => <ListReader items={notes} row={row} divided />;",
       "good": "export const Notes = () => <ListReader items={notes} row={row} readerLabel={label} />;"
-    },
+    }
+  ],
+  "clean": [
     {
-      "rule": "tiles-galleries-only",
+      "name": "an h1 page title",
       "file": "app/page.tsx",
-      "bad": "export default () => <ListReader items={items} layout=\"tiles\" renderTile={tile} />;",
-      "good": "export default () => <ListReader items={items} layout=\"list\" row={row} />;"
+      "source": "export default () => <h1 className=\"text-lg font-semibold\">{copy.title}</h1>;"
     },
     {
-      "rule": "no-tinted-item-box",
+      "name": "a Card from the ui kit",
+      "file": "components/summary.tsx",
+      "source": "import { Card, CardContent } from '@/components/ui/card';\nexport const Summary = () => <Card><CardContent>{body}</CardContent></Card>;"
+    },
+    {
+      "name": "words table keys as labels",
+      "file": "app/page.tsx",
+      "source": "export default () => <Tabs><Tab label=\"loadingHealth\" /><Tab title=\"needs_you\" /><Tab aria-label=\"openMenu2\" /></Tabs>;"
+    },
+    {
+      "name": "borders, shadows, dividers, rings and gradients",
+      "file": "components/panel.tsx",
+      "source": "export const Panel = () => <div className=\"rounded-xl border border-dashed shadow-md ring-1 divide-y bg-gradient-to-b backdrop-blur\">{body}<hr /></div>;"
+    },
+    {
+      "name": "eyebrow, serif, outline badge and a centred column",
+      "file": "app/page.tsx",
+      "source": "export default () => <main className=\"mx-auto max-w-2xl font-serif\"><p className=\"text-xs uppercase tracking-widest\">{copy.kicker}</p><Badge variant=\"outline\">{copy.draft}</Badge></main>;"
+    },
+    {
+      "name": "tiles, a tinted item box and state by text colour",
       "file": "app/fleet.tsx",
-      "bad": "export const Machine = ({ m }) => <div className=\"rounded-lg bg-muted/40 p-4\">{m.name}</div>;",
-      "good": "export const Machine = ({ m }) => <div className=\"bg-muted/40 px-6 py-4\">{m.name}</div>;"
+      "source": "export const Fleet = () => <ListReader items={items} layout=\"tiles\" renderTile={(m) => <div className=\"rounded-lg bg-muted/40 p-4\"><span className={m.blocked ? 'text-destructive' : 'text-foreground'}>{m.count}</span></div>} />;"
     },
     {
-      "rule": "no-tinted-item-box",
-      "file": "components/stack.tsx",
-      "bad": "export const Stack = ({ s }) => <li className=\"p-3 bg-secondary rounded-md\">{s.name}</li>;",
-      "good": "export const Stack = ({ s }) => <li className=\"rounded-md hover:bg-muted p-3\">{s.name}</li>;"
-    },
-    {
-      "rule": "no-tinted-item-box",
-      "file": "components/avatar.tsx",
-      "bad": "export const Box = ({ x }) => <div className={`rounded-xl bg-muted ${x.wide} p-6`}>{x.name}</div>;",
-      "good": "export const Mark = ({ x }) => <span className=\"rounded-full bg-muted p-3\">{x.icon}</span>;"
-    },
-    {
-      "rule": "no-state-text-colour",
-      "file": "app/fleet.tsx",
-      "bad": "export const Count = ({ n, blocked }) => <span className={`tabular-nums ${blocked ? 'text-destructive' : ''}`}>{n}</span>;",
-      "good": "export const Failed = ({ error }) => (error ? <p className=\"text-destructive\">{copy.failed}</p> : null);"
-    },
-    {
-      "rule": "no-state-text-colour",
-      "file": "components/figure.tsx",
-      "bad": "const tone = (ok) => (ok ? 'text-foreground' : 'text-destructive');",
-      "good": "const tone = (ok) => (ok ? 'text-foreground' : 'text-muted-foreground');"
-    },
-    {
-      "rule": "no-state-text-colour",
-      "file": "components/menu-item.tsx",
-      "bad": "const className = cx('text-sm', tone === 'danger' && 'text-destructive');",
-      "good": "const className = cx('text-sm', tone === 'danger' && 'hover:text-destructive');"
+      "name": "a centred column in CSS",
+      "file": "app/globals.css",
+      "source": ".page {\n  max-width: 40rem;\n  margin: 0 auto;\n  border: 1px solid hsl(var(--border));\n  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.1);\n  background: linear-gradient(hsl(var(--muted)), hsl(var(--background)));\n}"
     }
   ]
 }

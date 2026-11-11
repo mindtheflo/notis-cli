@@ -177,7 +177,7 @@ no title, heading or search field of its own. `archive` is a standard action: it
 brings its own words and key. `pin` is the Space's own: it brings its EN and FR
 words and a key the clash check accepts. Add `tabs` for real saved filters and
 `create` for a "+" that makes a record. Other kinds of view start from their own
-piece; see [Design](design.md#pick-the-piece).
+piece; see [the toolkit pieces](sdk.md#toolkit-pieces).
 
 ## A view of your own
 

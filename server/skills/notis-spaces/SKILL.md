@@ -128,15 +128,8 @@ with them. When it is not, write your own layout on the hooks and blocks
 `EmptyState`, `Notice`): your markup, the host's keys and words
 ([the sample](references/views.md#a-view-of-your-own)). Both are normal
 choices; do not bend a request into `ListReader` because it is the closest
-piece, and do not hand-roll what a piece already does well.
-
-When you start from a piece, change it as shallowly as the design allows:
-options (`density`, `openAs`, `layout`, `look`, `autoOpen`, `search`,
-`actions`, an action's `key`), then slots (`row`, `reader`, `tabs`, `create`,
-`viewMenu`, `infoLine`, `readerLabel`, `readerActions`, `crumbLabel`,
-`renderTile`, `empty`), then your own layout on the hooks. A rewrite of a piece
-stops receiving that piece's fixes, so do it when the design needs it, not by
-default.
+piece, and do not hand-roll what a piece already does well. A piece you rewrite
+stops receiving that piece's fixes.
 
 ## Rules the pieces cannot hold for you
 
@@ -150,21 +143,18 @@ default.
 - Never add `keydown` listeners on `window` or `document`; use `useShortcut` or
   the hooks above. Never portal to `document.body`; use `Menu`, `Popover`,
   `Tooltip`, or `useLayerRoot()` as the container.
-- No in-page title: the host top bar shows Space / view and the open item. Never
-  render an `h1`, a page description, a heading block or a second search field;
-  `ListReader` `search` uses the top bar. The Space fills the frame; a centred
-  column is for a reading, writing or focus layout.
-- Colours from theme tokens (`hsl(var(--primary))`, `text-foreground`,
-  `bg-muted`), never hex, palette hues or raw rgb. A highlight is a ring on all
+- The host top bar shows Space / view and the open item, and `ListReader`
+  `search` uses it, so a Space draws no second search field. The Space fills
+  the frame.
+- Colours from the theme tokens of the host and `toolkit.css`, never hex,
+  palette hues or raw rgb. A highlight is a ring on all
   four sides, never a coloured or thicker edge on one side. No fixed viewport
   heights (`h-screen`, `vh`): use `h-full`, `flex-1`, `min-h-0`.
 - The design check (run by every `notis spaces build`, and by the server on
   publish) and `notis spaces verify` (390 and 1440 px, EN and FR) must pass
   before any deploy. Its errors protect the host: frame, theme, keys, layers and
-  words. Its warnings are the default look (borders, shadows, gradients,
-  dividers, serif, a centred column, tiles outside galleries) and the toolkit
-  pieces a hand-made pattern could use; they never block. Keep a warning when
-  the view's design calls for it, and fix it when it was an accident.
+  words. Its warnings name the toolkit pieces a hand-made pattern could
+  use; they never block.
 - A Space updates in place: pull it, change it, deploy it to the same Space ID.
   Never ship a change as a new Space or a Store copy.
 
