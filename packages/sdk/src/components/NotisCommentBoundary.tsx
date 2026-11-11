@@ -22,7 +22,7 @@ export function NotisCommentBox({ quote, value, onChange, onSubmit, onCancel, pe
     className={`flex min-w-0 flex-col gap-2 rounded-xl border p-2.5 text-sm shadow-lg ${className}`}>
     <div className="flex min-w-0 items-center gap-2">
       {quote && <blockquote title={quote} className="min-w-0 flex-1 truncate border-l-2 border-current/40 pl-2 opacity-70">{quote}</blockquote>}
-      <button type="button" aria-label="Cancel comment" onClick={onCancel} disabled={pending} className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-lg opacity-70 hover:bg-white/10 hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current disabled:opacity-40 [@media(pointer:coarse)]:size-9">
+      <button type="button" aria-label="Cancel comment" onClick={onCancel} disabled={pending} className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-lg opacity-70 hover:bg-white/10 hover:opacity-100 disabled:opacity-40 [@media(pointer:coarse)]:size-9">
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
       </button>
     </div>
@@ -34,7 +34,7 @@ export function NotisCommentBox({ quote, value, onChange, onSubmit, onCancel, pe
       <span className="text-xs opacity-60">⌘ / Ctrl ↵ to add</span>
       <button type="button" disabled={pending || !value.trim()} onClick={onSubmit}
         style={{ background: 'hsl(var(--sidebar-foreground, 240 4.8% 95.9%))', color: 'hsl(var(--sidebar-background, 0 0% 7.5%))' }}
-        className="min-h-8 shrink-0 rounded-lg px-2.5 text-sm font-medium hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current disabled:opacity-40 [@media(pointer:coarse)]:min-h-9">{pending ? 'Adding…' : 'Add to chat'}</button>
+        className="min-h-8 shrink-0 rounded-lg px-2.5 text-sm font-medium hover:opacity-90 disabled:opacity-40 [@media(pointer:coarse)]:min-h-9">{pending ? 'Adding…' : 'Add to chat'}</button>
     </div>
   </div>;
 }
@@ -163,7 +163,7 @@ export function NotisCommentBoundary({ resource, children, className, commentCla
     {selection && <div data-notis-comment-ui className="fixed z-50 max-h-[calc(100dvh-1rem)]" style={{ overflow: editing ? 'auto' : 'visible', top: editing ? Math.min(selection.top, Math.max(8, window.innerHeight - 320)) : selection.top, left: `clamp(8px, ${selection.left}px, calc(100vw - ${editing ? 'min(20rem, calc(100vw - 1rem))' : '2rem'} - 8px))`, width: editing ? 'min(20rem, calc(100vw - 1rem))' : undefined } as CSSProperties}>
       {editing ? (renderComment ? renderComment(editorProps) : <NotisCommentBox {...editorProps} />) : <button type="button" aria-label="Comment" title="Comment" onMouseDown={event => event.preventDefault()} onClick={open}
         style={{ background: 'hsl(var(--sidebar-background, 0 0% 7.5%))', color: 'hsl(var(--sidebar-foreground, 240 4.8% 95.9%))' }}
-        className="relative flex size-8 items-center justify-center rounded-lg ring-1 ring-white/15 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current">
+        className="relative flex size-8 items-center justify-center rounded-lg ring-1 ring-white/15 hover:opacity-90">
         <svg aria-hidden="true" width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M216,48H40A16,16,0,0,0,24,64V224a15.85,15.85,0,0,0,9.24,14.5A16.13,16.13,0,0,0,40,240a15.89,15.89,0,0,0,10.25-3.78l.09-.07L83,208H216a16,16,0,0,0,16-16V64A16,16,0,0,0,216,48ZM40,224h0ZM216,192H80a8,8,0,0,0-5.23,1.95L40,224V64H216ZM88,112a8,8,0,0,1,8-8h64a8,8,0,0,1,0,16H96A8,8,0,0,1,88,112Zm0,32a8,8,0,0,1,8-8h64a8,8,0,1,1,0,16H96A8,8,0,0,1,88,144Z" /></svg>
         <span aria-hidden="true" className="absolute left-1/2 top-1/2 hidden size-12 -translate-x-1/2 -translate-y-1/2 [@media(pointer:coarse)]:block" />
       </button>}

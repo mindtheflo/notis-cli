@@ -24,6 +24,12 @@
 
 /* == section: tokens (A2) == */
 /* Deck tokens (design-options/styles.css). Light first, dark re-scopes. */
+/* No focus rings (Flo, 10 Nov 2026): focus draws no outline or ring in a Space either. Forced-colors mode keeps
+   the system outline. */
+@media (forced-colors: none) {
+  :where([data-notis-app-root]) :where(:focus, :focus-visible) { outline: none; }
+}
+
 :root, :host, [data-notis-theme="light"] {
   --nui-blue: 217 91% 60%;
   --nui-a-open: .10;
@@ -73,7 +79,6 @@
 .nui-icon { display: inline-block; flex-shrink: 0; width: 1em; height: 1em; vertical-align: -0.125em; }
 .nui-icon-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; font-size: 16px; color: hsl(var(--muted-foreground)); }
 .nui-icon-btn:hover, .nui-icon-btn[aria-expanded="true"] { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
-.nui-icon-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-icon-btn:disabled { opacity: .45; }
 .nui-st { display: inline-block; flex-shrink: 0; width: 16px; height: 16px; color: hsl(var(--nui-st-todo, var(--muted-foreground))); }
 .nui-st[data-st="backlog"] { color: hsl(var(--nui-st-backlog, var(--muted-foreground))); }
@@ -94,23 +99,20 @@
   background: var(--nui-row-rest, transparent);
   --nui-row-hover: hsl(var(--muted) / .4);
   /* Fills only, like the Manager's rows (Flo, 21 Oct): the cursor (active) row takes the open row's light blue, a
-     selected row a lighter one; never a ring, an edge or a stripe. Keyboard focus alone keeps an outline. */
+     selected row a lighter one; never a ring, an edge or a stripe. Focus draws nothing either. */
   --nui-row-open: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .10));
   --nui-row-sel: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05));
   --nui-row-selopen: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-selopen, .15));
-  --nui-row-focus: hsl(var(--nui-blue, 217 91% 60%) / .8);
 }
 .nui-row:hover:not([data-open]):not([data-selected]):not([data-cursor]) { background: var(--nui-row-hover); }
 .nui-row[data-selected] { background: var(--nui-row-sel); }
 /* A Row drawn on its own with onPress: one button covers the row; its own controls stay above it. */
 .nui-row-press { position: absolute; inset: 0; z-index: 0; padding: 0; margin: 0; border: 0; background: none; cursor: default; border-radius: inherit; }
-.nui-row-press:focus-visible { outline: 2px solid var(--nui-row-focus); outline-offset: -2px; }
 .nui-row[data-pressable] > :not(.nui-row-press) { position: relative; z-index: 1; pointer-events: none; }
 /* Controls stay pressable over the row: native ones, and custom ones that take focus or open a popup. */
 .nui-row[data-pressable] :is(button, a, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-row-press) { pointer-events: auto; }
 .nui-row:is([data-open], [data-cursor]) { background: var(--nui-row-open); }
 .nui-row:is([data-open], [data-cursor])[data-selected] { background: var(--nui-row-selopen); }
-.nui-row:focus-visible:not([data-cursor]) { outline: 2px solid var(--nui-row-focus); outline-offset: -2px; }
 
 /* Row anatomy. */
 div.nui-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px 6px 16px; box-sizing: border-box; }
@@ -183,7 +185,7 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .nui-row-more { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; opacity: 0; font-size: 16px; color: hsl(var(--muted-foreground)); }
 .nui-row-more:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
-.nui-row-more:focus-visible { opacity: 1; outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
+.nui-row-more:focus-visible { opacity: 1; }
 .nui-row:hover .nui-row-more, .nui-row[data-cursor] .nui-row-more, .nui-row-more[aria-expanded="true"] { opacity: 1; }
 /* A pending or disabled row keeps the slot so its trail lines up with the rows around it. */
 .nui-row-more[data-slot] { visibility: hidden; pointer-events: none; }
@@ -210,7 +212,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-tile[data-selected] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-sel, .05)); box-shadow: 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .35); }
 .nui-tile[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .10)); box-shadow: 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .5); }
 .nui-tile[data-cursor] { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .65); }
-.nui-tile:focus-visible:not([data-cursor]) { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; }
 .nui-tile .nui-row-more { position: absolute; top: 8px; right: 8px; }
 .nui-tile:hover .nui-row-more, .nui-tile[data-cursor] .nui-row-more { opacity: 1; }
 .nui-tile-mark { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; overflow: hidden; font-size: 18px; }
@@ -268,7 +269,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-check svg { width: 12px; height: 12px; }
 .nui-lr-check[data-state="none"] { opacity: 0; }
 @media (hover: hover) { .nui-lr-check[data-state="none"]:hover:not(:disabled) { opacity: 1; box-shadow: inset 0 0 0 1.5px hsl(var(--foreground) / .7); } }
-.nui-lr-check:focus-visible { opacity: 1; outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; }
+.nui-lr-check:focus-visible { opacity: 1; }
 .nui-lr-check:not([data-state="none"]) { background: hsl(var(--nui-blue, 217 91% 60%)); box-shadow: none; color: #fff; }
 .nui-lr-check:disabled { cursor: default; }
 .nui-lr-check[data-reserved] { visibility: hidden; }
@@ -301,7 +302,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-lr-act { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border-radius: 6px; font-size: 13px; white-space: nowrap; color: hsl(var(--foreground) / .85); }
 .nui-lr-act > .nui-icon { font-size: 16px; color: hsl(var(--muted-foreground)); }
 .nui-lr-act:hover { background: hsl(var(--foreground) / .06); }
-.nui-lr-act:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-lr-act[aria-disabled="true"] { opacity: .4; cursor: default; }
 .nui-lr-act[aria-disabled="true"]:hover { background: none; }
 @container nui-lr-reader (max-width: 560px) { .nui-lr-act-label { display: none; } }
@@ -311,7 +311,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 @container nui-lr-reader (max-width: 430px) { .nui-lr-act > .nui-kbd-group { display: none; } }
 .nui-lr-back { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border-radius: 6px; font-size: 14px; color: hsl(var(--foreground) / .8); }
 .nui-lr-back:hover { background: hsl(var(--foreground) / .06); }
-.nui-lr-back:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-lr-back .nui-icon { font-size: 16px; }
 .nui-lr-back[data-compact] { justify-content: center; width: 32px; padding: 0; }
 .nui-lr-back[data-compact] .nui-lr-back-label { display: none; }
@@ -353,7 +352,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-sb-count { flex-shrink: 0; padding: 0 8px 0 0; font-weight: 500; font-variant-numeric: tabular-nums; }
 .nui-sb-btn { display: inline-flex; flex-shrink: 0; align-items: center; gap: 7px; height: 28px; padding: 0 9px; border-radius: 9999px; color: hsl(var(--background) / .9); }
 .nui-sb-btn:hover, .nui-sb-btn[aria-expanded="true"] { background: hsl(var(--background) / .12); }
-.nui-sb-btn:focus-visible { outline: 2px solid hsl(var(--background) / .8); outline-offset: -2px; }
 .nui-sb-btn:disabled { opacity: .5; }
 .nui-sb-btn > .nui-sb-icon { display: none; font-size: 15px; }
 .nui-sb-btn > .nui-sb-x { display: inline-block; font-size: 15px; }
@@ -385,7 +383,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-toast-btn[aria-disabled="true"] { cursor: default; color: hsl(var(--muted-foreground)); }
 .nui-toast-x { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: -6px; border-radius: 6px; font-size: 14px; color: hsl(var(--muted-foreground)); }
 .nui-toast-x:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
-.nui-toast-btn:focus-visible, .nui-toast-x:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 
 /* == section: overlays (A2) == */
 .nui-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 66; }
@@ -406,7 +403,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-tip { position: fixed; z-index: 70; pointer-events: none; display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 10px; border-radius: 6px; background: #000; color: #fff; font-size: 13px; line-height: 18px; white-space: nowrap; --kc-ink: 0 0% 100%; }
 .nui-om-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 2px; height: 32px; min-width: 32px; padding: 0 6px; border-radius: 6px; font-size: 16px; color: hsl(var(--muted-foreground)); }
 .nui-om-btn:hover, .nui-om-btn[aria-expanded="true"] { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
-.nui-om-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-om-btn > .nui-om-caret { font-size: 12px; opacity: .7; }
 .nui-om-btn[aria-disabled="true"] { opacity: .4; cursor: default; }
 .nui-om-btn[aria-disabled="true"]:hover { background: none; color: hsl(var(--muted-foreground)); }
@@ -472,7 +468,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-badge[data-tone="danger"], .nui-row-label[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-pill-danger, 0 80% 38%)); }
 .nui-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 7px; font-size: 13px; font-weight: 500; white-space: nowrap; color: hsl(var(--foreground)); background: hsl(var(--foreground) / .06); }
 .nui-btn:hover:not(:disabled) { background: hsl(var(--foreground) / .1); }
-.nui-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 1px; }
 .nui-btn:disabled { opacity: .5; }
 .nui-btn[data-variant="primary"] { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .nui-btn[data-variant="primary"]:hover:not(:disabled) { background: hsl(var(--primary) / .9); }
@@ -497,7 +492,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 /* SegmentedControl: a mode switch inside a section (a chart's Bars, Line, Area). No track: its buttons are pills (tabs, below). */
 .nui-seg { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .nui-select { height: 30px; padding: 0 26px 0 8px; border: 0; border-radius: 7px; font: inherit; font-size: 13px; color: hsl(var(--foreground)); background-color: hsl(var(--foreground) / .05); -webkit-appearance: none; appearance: none; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 12px center, right 8px center; background-size: 4px 4px; background-repeat: no-repeat; }
-.nui-select:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 1px; }
 .nui-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 40px 24px; text-align: center; }
 .nui-empty-title { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; }
 .nui-empty-body { margin: 0; max-width: 20rem; font-size: 14px; line-height: 20px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }
@@ -570,7 +564,6 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-panels-backbar { display: flex; flex-shrink: 0; align-items: center; height: 48px; padding: 0 8px; }
 .nui-panels-back { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border-radius: 6px; font-size: 14px; color: hsl(var(--foreground) / .8); }
 .nui-panels-back:hover { background: hsl(var(--foreground) / .06); }
-.nui-panels-back:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-panels-back .nui-icon { font-size: 16px; }
 /*
  * Split (two panes): the reader sits beside the list, never squeezing the list under its minimum. The default width only
@@ -682,7 +675,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-dp-nav-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: hsl(var(--muted-foreground)); pointer-events: auto; }
 .nui-dp-nav-btn:hover:not(:disabled) { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
 .nui-dp-nav-btn:disabled { opacity: .35; }
-.nui-dp-nav-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-dp-chevron { width: 16px; height: 16px; }
 .nui-dp-dropdowns { display: inline-flex; align-items: center; gap: 4px; }
 .nui-dp-dropdown-root { position: relative; display: inline-flex; align-items: center; height: 28px; padding: 0 6px; border-radius: 6px; }
@@ -694,7 +686,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-dp-day { position: relative; width: var(--nui-dp-cell); height: var(--nui-dp-cell); padding: 0; text-align: center; }
 .nui-dp-day-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: var(--nui-dp-cell); height: var(--nui-dp-cell); border-radius: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .nui-dp-day-btn:hover:not(:disabled) { background: hsl(var(--accent)); }
-.nui-dp-day-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-dp-today .nui-dp-day-btn::after { content: ""; position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: hsl(var(--chart-1, 210 100% 49%)); }
 .nui-dp-outside .nui-dp-day-btn { color: hsl(var(--muted-foreground) / .7); }
 .nui-dp-disabled .nui-dp-day-btn, .nui-dp-day-btn:disabled { color: hsl(var(--muted-foreground) / .45); background: none; }
@@ -712,7 +703,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-pp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .nui-pp-trigger { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; line-height: 18px; white-space: nowrap; background: hsl(var(--foreground) / .045); color: hsl(var(--foreground)); }
 .nui-pp-trigger:hover, .nui-pp-trigger[aria-expanded="true"] { background: hsl(var(--foreground) / .08); }
-.nui-pp-trigger:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 1px; }
 .nui-pp-glyph { width: 15px; height: 15px; color: hsl(var(--muted-foreground)); }
 .nui-pp-name { font-weight: 500; }
 .nui-pp-dates, .nui-pp-muted { color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
@@ -736,7 +726,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-pp-grow { flex: 1; }
 .nui-pp-btn { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
 .nui-pp-btn:hover:not(:disabled) { background: hsl(var(--foreground) / .06); }
-.nui-pp-btn:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 1px; }
 .nui-pp-btn.nui-pp-primary { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .nui-pp-btn.nui-pp-primary:hover:not(:disabled) { background: hsl(var(--primary) / .9); }
 .nui-pp-btn:disabled { opacity: .5; }
@@ -764,7 +753,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-cal-views .nui-cal-btn:hover { background: hsl(var(--foreground) / .04); color: hsl(var(--foreground)); }
 .nui-cal-views .nui-cal-btn[aria-pressed="true"] { background: hsl(var(--foreground) / .07); color: hsl(var(--foreground)); font-weight: 500; }
 .nui-cal-btn[aria-expanded="true"] { background: hsl(var(--foreground) / .06); }
-.nui-cal-btn:focus-visible, .nui-cal-nav:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-cal-nav { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; font-size: 16px; color: hsl(var(--muted-foreground)); }
 .nui-cal-nav:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
 .nui-cal-nav svg, .nui-cal-btn svg { width: 16px; height: 16px; }
@@ -785,7 +773,7 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-cal-chip { display: flex; align-items: center; gap: 6px; min-width: 0; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 6px; font-size: 12px; line-height: 16px; background: hsl(var(--background)); box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .1); outline: none; cursor: default; }
 .nui-cal-chip:hover { background: hsl(var(--foreground) / .04); }
 .nui-cal-chip[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .1)); }
-.nui-cal-chip[data-cursor], .nui-cal-chip:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .65); }
+.nui-cal-chip[data-cursor] { box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .65); }
 .nui-cal-chip[data-variant="dot"] { justify-content: center; width: 24px; padding: 0; }
 .nui-cal-chip[data-variant="card"] { flex-direction: column; align-items: stretch; gap: 4px; height: auto; padding: 8px; border-radius: 8px; }
 .nui-cal-chip[data-variant="row"] { height: auto; min-height: 36px; padding: 6px 10px; font-size: 13px; line-height: 18px; }
@@ -794,7 +782,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-cal-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-cal-more { align-self: flex-start; height: 22px; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); }
 .nui-cal-more:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
-.nui-cal-more:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 /* Week */
 .nui-cal-grid[data-view="week"] { grid-template-rows: auto; align-content: stretch; }
 .nui-cal-wday { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 0 6px 16px; border-right: 1px solid hsl(var(--border) / .6); }
@@ -854,7 +841,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-tl-nav { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: hsl(var(--muted-foreground)); }
 .nui-tl-nav:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
 .nui-tl-nav svg { width: 16px; height: 16px; }
-.nui-tl-btn:focus-visible, .nui-tl-nav:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-tl-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; }
 .nui-tl { position: relative; padding-bottom: 16px; }
 .nui-tl-row { display: grid; grid-template-columns: 9rem minmax(0, 1fr); }
@@ -877,7 +863,7 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-tl-bar[data-group="done"] { background: hsl(var(--nui-blue, 217 91% 60%) / .08); box-shadow: inset 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .22); color: hsl(var(--foreground) / .7); }
 .nui-tl-bar:hover { filter: brightness(.98); }
 .nui-tl-bar[data-open] { background: hsl(var(--nui-blue, 217 91% 60%) / var(--nui-a-open, .1)); }
-.nui-tl-bar[data-cursor], .nui-tl-bar:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .7); }
+.nui-tl-bar[data-cursor] { box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .7); }
 .nui-tl-bar.nui-tl-cut-l { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .nui-tl-bar.nui-tl-cut-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .nui-tl-bar-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -937,7 +923,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 /* InfoTip: a 24px info button in muted ink; its panel holds a short explanation. */
 .nui-infotip { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin: 0; border: 0; border-radius: 6px; background: none; font-size: 14px; color: hsl(var(--muted-foreground)); cursor: default; vertical-align: middle; }
 .nui-infotip:hover, .nui-infotip[aria-expanded="true"] { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
-.nui-infotip:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-infotip-body { max-width: 280px; font-size: 13px; line-height: 18px; color: hsl(var(--foreground)); white-space: normal; }
 .nui-stat-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; }
 .nui-stat-value { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
@@ -964,7 +949,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-ctable-pick { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; text-align: left; font-weight: inherit; }
 .nui-ctable-pick::after { content: ""; position: absolute; inset: 0; }
 .nui-ctable tr[data-pressable] { position: relative; }
-.nui-ctable-pick:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; border-radius: 4px; }
 /* A metric's about sits above the row's pick area (the pick button's ::after covers the row). */
 .nui-ctable-about { position: relative; z-index: 1; display: inline-flex; align-items: center; margin-left: 2px; vertical-align: middle; }
 @container nui-ctable (max-width: 760px) { .nui-ctable :is(.nui-ctable-trend, .nui-ctable-prev) { display: none; } }
@@ -996,7 +980,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-dtable-pick::after { content: ""; position: absolute; inset: 0; }
 /* A control in another cell of a pressable row sits over the row's press layer, so it opens itself and not the row. */
 .nui-dtable tr[data-pressable] :is(a, button, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-dtable-pick) { position: relative; z-index: 1; }
-.nui-dtable-pick:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 2px; border-radius: 4px; }
 .nui-spark { display: block; overflow: visible; }
 .nui-spark-fill { fill: hsl(var(--chart-1, 210 100% 49%) / .12); }
 .nui-spark-line { fill: none; stroke: hsl(var(--chart-1, 210 100% 49%)); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
@@ -1016,7 +999,6 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-group-count { font-variant-numeric: tabular-nums; color: hsl(var(--nui-count-fg, var(--muted-foreground))); font-weight: 400; }
 .nui-group-toggle { display: flex; align-items: center; gap: 6px; width: 100%; height: 100%; min-width: 0; padding: 0; margin: 0 -2px; border-radius: 5px; font: inherit; color: inherit; text-align: left; }
 .nui-group-toggle:hover { color: hsl(var(--foreground)); }
-.nui-group-toggle:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: 0; }
 .nui-group-caret { flex-shrink: 0; font-size: 12px; }
 
 /* Pending rows show busy; disabled rows are dimmed and inert to the pointer's open. */
@@ -1071,8 +1053,6 @@ div.nui-row:not(.nui-lr-list div.nui-row) { container: nui-row / inline-size; }
 .nui-switch[data-size="md"] .nui-switch-track { width: 36px; height: 20px; }
 .nui-switch[data-size="md"] .nui-switch-thumb { width: 16px; height: 16px; }
 .nui-switch[data-size="md"][aria-checked="true"] .nui-switch-thumb { transform: translateX(16px); }
-.nui-switch:focus-visible { outline: none; }
-.nui-switch:focus-visible .nui-switch-track { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .nui-switch-track, .nui-switch-thumb { transition: none; } }
 
 /* Pagination. */
@@ -1084,7 +1064,6 @@ div.nui-row:not(.nui-lr-list div.nui-row) { container: nui-row / inline-size; }
 .nui-pill, .nui-tab, .nui-seg > button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; line-height: 20px; white-space: nowrap; color: hsl(var(--foreground) / .6); }
 :is(.nui-pill:not([data-on]), .nui-tab:not([aria-selected="true"]), .nui-seg > button:not([aria-pressed="true"])):not(:disabled):hover { background: hsl(var(--foreground) / .04); color: hsl(var(--foreground)); }
 .nui-pill[data-on], .nui-tab[aria-selected="true"], .nui-seg > button[aria-pressed="true"] { background: hsl(var(--foreground) / .07); color: hsl(var(--foreground)); font-weight: 500; }
-:is(.nui-pill, .nui-tab, .nui-seg > button):focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 :is(.nui-pill, .nui-tab, .nui-seg > button):disabled { opacity: .45; }
 :is(.nui-pill, .nui-tab, .nui-seg > button) > .nui-icon { font-size: 14px; }
 .nui-pill-count, .nui-tab-count, .nui-seg-count { font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; color: hsl(var(--foreground) / .6); }
@@ -1188,16 +1167,14 @@ div.nui-row:not(.nui-lr-list div.nui-row) { container: nui-row / inline-size; }
 .nui-field-trigger[data-wrap] { align-items: flex-start; }
 .nui-field-trigger[data-wrap] > .nui-field-text { white-space: normal; overflow-wrap: anywhere; }
 .nui-field-input:hover, .nui-field-textarea:hover, .nui-field-trigger:hover { background: hsl(var(--foreground) / .05); }
-.nui-field-input:focus, .nui-field-textarea:focus { background: hsl(var(--foreground) / .05);
-  box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
-.nui-field-trigger:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
+.nui-field-input:focus, .nui-field-textarea:focus { background: hsl(var(--foreground) / .05); }
 /* aria-invalid (the row's `invalid`, or the field's own): a light destructive fill over the whole field. */
 .nui-field-input[aria-invalid="true"], .nui-field-textarea[aria-invalid="true"] { background: hsl(var(--destructive) / .06); }
 .nui-field-input[aria-invalid="true"]:hover, .nui-field-input[aria-invalid="true"]:focus,
 .nui-field-textarea[aria-invalid="true"]:hover, .nui-field-textarea[aria-invalid="true"]:focus { background: hsl(var(--destructive) / .09); }
 .nui-field-input[readonly], .nui-field-textarea[readonly] { cursor: default; }
 .nui-field-input[readonly]:hover, .nui-field-input[readonly]:focus, .nui-field-textarea[readonly]:hover,
-.nui-field-textarea[readonly]:focus { background: transparent; box-shadow: none; }
+.nui-field-textarea[readonly]:focus { background: transparent; }
 .nui-field-input::placeholder, .nui-field-textarea::placeholder, .nui-field-placeholder { color: hsl(var(--muted-foreground)); }
 /* A filled list (a visitor's form): labels above, every field shows its box at rest, and the list keeps a
  * reading width on a wide page. */
@@ -1276,7 +1253,6 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
   background: hsl(var(--foreground) / .04); cursor: pointer; outline: none; scroll-margin: 12px; }
 .nui-comment-card:hover { background: hsl(var(--foreground) / .06); }
 .nui-comment-card[data-selected] { background: hsl(var(--foreground) / .08); }
-.nui-comment-card:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
 .nui-comment-card[data-resolved] > :not(.nui-comment-compose-box):not(.nui-comment-head) { opacity: .7; }
 .nui-comment-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .nui-comment-who { display: flex; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 0 6px; min-width: 0; }
@@ -1288,7 +1264,6 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 .nui-comment-agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.nui-comment-agent { cursor: pointer; }
 button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
-button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
 .nui-comment-new { align-self: center; width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-comment-actions { display: flex; gap: 2px; margin-inline-start: auto; opacity: 0; transition: opacity .12s; }
 .nui-comment-card:hover .nui-comment-actions, .nui-comment-card:focus-within .nui-comment-actions,
@@ -1307,7 +1282,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-comment-thumb { display: block; padding: 0; border: 0; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 10;
   background: hsl(var(--foreground) / .05); cursor: zoom-in; }
 .nui-comment-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.nui-comment-thumb:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
 .nui-comment-figure[data-chosen] .nui-comment-thumb { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-comment-caption { display: flex; align-items: center; gap: 4px; min-width: 0; color: hsl(var(--muted-foreground));
   font-size: 12px; }
@@ -1331,7 +1305,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-comment-input { flex: 1; min-width: 0; min-height: 32px; max-height: 240px; padding: 6px 10px; border: 0; border-radius: 8px;
   background: hsl(var(--foreground) / .05); color: inherit; font: inherit; resize: none; field-sizing: content; outline: none; }
 .nui-comment-input:hover { background: hsl(var(--foreground) / .08); }
-.nui-comment-input:focus-visible { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
 .nui-comment-input::placeholder { color: hsl(var(--muted-foreground)); }
 
 .nui-comment-new-box { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
@@ -1356,7 +1329,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-comment-file-btn { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 28px;
   height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .nui-comment-file-btn:hover { background: hsl(var(--foreground) / .08); }
-.nui-comment-file-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%) / .55); }
 .nui-comment-file-progress { position: absolute; inset: auto 0 0 0; height: 2px; background: hsl(var(--foreground) / .08); }
 .nui-comment-file-progress > span { display: block; height: 100%; background: hsl(var(--nui-blue, 217 91% 60%));
   transition: width .15s; }
@@ -1374,7 +1346,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-comment-pin[data-selected] { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 2px; }
 .nui-comment-pin[data-resolved] { opacity: .35; }
 .nui-comment-pin[data-draft] { pointer-events: none; }
-.nui-comment-pin:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%)); outline-offset: 2px; }
 /* A zone: the Manager's selection blue, a tinted fill inside a ring on all four sides. */
 .nui-comment-zone { position: absolute; z-index: 1; border-radius: 4px; pointer-events: none;
   background: hsl(var(--nui-blue, 217 91% 60%) / .12); box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%)); }
@@ -1403,7 +1374,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-passage-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; padding: 2px 4px;
   border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; }
 .nui-passage-anchor:hover { background: hsl(var(--foreground) / .06); }
-.nui-passage-anchor:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .55); outline-offset: 1px; }
 .nui-passage-field-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 12px;
   color: hsl(var(--muted-foreground)); }
 .nui-passage-quote { display: -webkit-box; margin: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
@@ -1426,7 +1396,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-gallery-item { position: relative; flex-shrink: 0; width: 140px; scroll-snap-align: start; }
 .nui-gallery-card { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 140px; height: 100%; padding: 12px; border: 1px solid hsl(var(--border) / .3); border-radius: 12px; background: hsl(var(--muted) / .4); font-size: 12px; line-height: 16px; color: hsl(var(--foreground)); text-align: center; cursor: pointer; }
 .nui-gallery-card:hover { background: hsl(var(--muted) / .6); }
-.nui-gallery-card:focus-visible { outline: 2px solid hsl(var(--nui-blue, 217 91% 60%) / .7); outline-offset: -2px; }
 .nui-gallery-card:disabled { cursor: default; opacity: .6; }
 .nui-gallery-thumb { display: block; width: 100%; height: 64px; overflow: hidden; border-radius: 8px; background: hsl(var(--muted) / .3); }
 .nui-gallery-thumb > img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -1452,7 +1421,6 @@ button.nui-comment-agent:focus-visible { outline: 2px solid hsl(var(--ring)); ou
 .nui-viewer-btn > .nui-icon { font-size: 20px; }
 .nui-viewer-btn:hover:not(:disabled) { background: rgb(255 255 255 / .1); color: #fff; }
 .nui-viewer-btn:disabled { opacity: .3; cursor: default; }
-.nui-viewer-btn:focus-visible, .nui-viewer-nav:focus-visible { outline: 2px solid rgb(255 255 255 / .7); outline-offset: -2px; }
 .nui-viewer-zoom { min-width: 60px; font-variant-numeric: tabular-nums; }
 .nui-viewer-count { min-width: 52px; text-align: center; font-size: 13px; color: rgb(255 255 255 / .8); font-variant-numeric: tabular-nums; }
 .nui-viewer-sep { width: 1px; height: 24px; margin: 0 8px; background: rgb(255 255 255 / .2); }
