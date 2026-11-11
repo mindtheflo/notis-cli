@@ -278,6 +278,19 @@ test('ActionError carries the reason a toast shows; actionErrorReason reads the 
   assert.equal(actionErrorReason(null), null);
 });
 
+test('a known refused document dependency has bilingual safe words; other Space failures stay generic', () => {
+  const refused = Object.assign(new Error('private server diagnostic'), {
+    name: 'SpaceActionError', code: 'document_has_spaces', status: 'refused', requestId: 'owned-request',
+  });
+  assert.deepEqual(actionErrorReason(refused), {
+    en: 'This document is used by a Space. Move or trash its linked Spaces first.',
+    fr: 'Ce document est utilisé par un Space. Déplace ou mets à la corbeille ses Spaces liés d’abord.',
+  });
+  for (const change of [{ status: 'unknown' }, { status: 'failed' }, { code: 'unknown_server_code' }, { name: 'Error' }]) {
+    assert.equal(actionErrorReason(Object.assign(new Error('private server diagnostic'), refused, change)), null);
+  }
+});
+
 test('unarchive reads Move to triage, never a Space\u2019s name; a Space names its own first stop', async () => {
   const { resolveActionRef } = await import('./actions');
   assert.deepEqual(STANDARD_ACTIONS.unarchive.label, { en: 'Move to triage', fr: 'D\u00e9placer vers le tri' });

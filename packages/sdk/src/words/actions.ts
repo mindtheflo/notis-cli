@@ -67,7 +67,15 @@ export class ActionError extends Error {
 /** The reason an ActionError carries, else null. A Space bundles its own copy of the words, so this reads the shape. */
 export function actionErrorReason(error: unknown): Words | string | null {
   if (!error || typeof error !== 'object') return null;
-  const { name, code, reason } = error as { name?: unknown; code?: unknown; reason?: unknown };
+  const { name, code, reason, status } = error as { name?: unknown; code?: unknown; reason?: unknown; status?: unknown };
+  // A confirmed host refusal can explain how to unblock the action. These words are
+  // ours: never display an arbitrary Space/server error's message as a toast reason.
+  if (name === 'SpaceActionError' && code === 'document_has_spaces' && status === 'refused') {
+    return {
+      en: 'This document is used by a Space. Move or trash its linked Spaces first.',
+      fr: 'Ce document est utilisé par un Space. Déplace ou mets à la corbeille ses Spaces liés d’abord.',
+    };
+  }
   if (name !== 'ActionError' || code !== 'notis_action_error') return null;
   return typeof reason === 'string' || isWords(reason) ? reason : null;
 }

@@ -365,14 +365,14 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-selbar[data-fit="nonote"] .nui-sb-note { display: none; }
 
 /* == section: toast (A2) == */
-.nui-toast-wrap { position: absolute; left: 0; right: 0; bottom: 18px; z-index: 8; display: flex; justify-content: center; padding-inline: 12px; pointer-events: none; }
+.nui-toast-wrap { position: absolute; left: 0; right: 0; bottom: max(18px, calc(var(--nui-fab-safe-bottom, var(--notis-fab-safe-bottom, 0px)) + 12px)); z-index: 8; display: flex; justify-content: center; padding-inline: 12px; pointer-events: none; }
 /* The toast sits under the list while it shows. Where the open item covers the list (full page, center, one pane) it
    sits on the ListReader itself, above the reader; in center the selection bar still shows below the scrim. */
-.nui-lr[data-bar] .nui-lr-list > .nui-toast-wrap, .nui-lr[data-bar][data-mode="center"] > .nui-toast-wrap { bottom: 66px; }
+.nui-lr[data-bar] .nui-lr-list > .nui-toast-wrap, .nui-lr[data-bar][data-mode="center"] > .nui-toast-wrap { bottom: max(66px, calc(var(--nui-fab-safe-bottom, var(--notis-fab-safe-bottom, 0px)) + 12px)); }
 /* A list footer lifts the selection bar and the toast above it (it is 48px tall). */
 .nui-lr-list[data-footer] > .nui-selbar-slot { bottom: 48px; }
-.nui-lr-list[data-footer] > .nui-toast-wrap { bottom: 66px; }
-.nui-lr[data-bar] .nui-lr-list[data-footer] > .nui-toast-wrap { bottom: 114px; }
+.nui-lr-list[data-footer] > .nui-toast-wrap { bottom: max(66px, calc(var(--nui-fab-safe-bottom, var(--notis-fab-safe-bottom, 0px)) + 12px)); }
+.nui-lr[data-bar] .nui-lr-list[data-footer] > .nui-toast-wrap { bottom: max(114px, calc(var(--nui-fab-safe-bottom, var(--notis-fab-safe-bottom, 0px)) + 12px)); }
 .nui-toast { pointer-events: auto; box-sizing: border-box; display: flex; align-items: center; gap: 10px; max-width: min(560px, 100%); padding: 7px 8px 7px 14px; border-radius: 10px; font-size: 13px; color: hsl(var(--popover-foreground, var(--foreground))); background: hsl(var(--popover)); box-shadow: var(--nui-pop-ring, 0 0 0 1px rgb(0 0 0 / .08)), var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); }
 /* The words, with the reason as a muted second line under them. */
 .nui-toast-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
