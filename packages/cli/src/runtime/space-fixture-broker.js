@@ -5,12 +5,28 @@ import { usageError } from './errors.js';
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const exact = (value, keys) => object(value) && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 
+/** At most this many extra param sets are measured for loading skeletons. */
+export const SKELETON_PARAM_SETS_MAX = 4;
+
+/**
+ * The extra view params whose loading skeletons are measured too (fixtures `context.skeletonParams`): each is a
+ * flat object of string values, such as a tab the view opens on. Anything else is ignored.
+ */
+export function fixtureSkeletonParams(release) {
+  let list;
+  try { list = createSpaceFixtureEngine(release).context.skeletonParams; } catch { return []; }
+  if (!Array.isArray(list)) return [];
+  return list.filter(item => object(item) && Object.values(item).every(value => typeof value === 'string'))
+    .slice(0, SKELETON_PARAM_SETS_MAX).map(item => structuredClone(item));
+}
+
 export function createSpaceFixtureBroker({ release, capabilities, width, outputs = ['markdown', 'screenshot'],
-  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure }) {
+  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure, params: paramsOverride }) {
   const engine = createSpaceFixtureEngine(release);
   const frozen = spaceHarnessSnapshot(release, capabilities, engine, { authorizationMode, unavailableActions });
   const calls = [];
-  const params = structuredClone(engine.context.params || {});
+  // Skeleton capture may open the view with other params (a tab), on top of the fixture's own.
+  const params = structuredClone({ ...(engine.context.params || {}), ...(paramsOverride || {}) });
   // The fixture's own "now" pins the browser clock, so a view that asks for the
   // last hour sends the exact inputs its fixtures recorded.
   const now = engine.context.now;

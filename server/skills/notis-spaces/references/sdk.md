@@ -124,7 +124,10 @@ rather than from a copy.
   picture that opens full screen. Do not build your own lightbox.
 - **Comments**: `useComments` with `CommentPane` and `CommentPins` give review
   threads on a Comments database (pins, zones, replies, asks, Resolve, Copy
-  changes). For comments on a whole record with nothing to pin on, pass no
+  changes). A comment is signed with the viewer's first name; when the
+  Comments database's Author is a choice list, give it a `Person` option, which
+  signs anyone it does not name (without it the comment saves with no author).
+  Pass `me` only to sign with a fixed name. For comments on a whole record with nothing to pin on, pass no
   `anchors` and `columns.anchor: null`: the pane offers New comment itself.
   To let people attach pictures and files to a comment or a reply
   (paste, drop or the paperclip), give the Comments database a files column
@@ -205,6 +208,8 @@ said in the Space's language, default Loading content. Its shapes are
 measured from the view at verify time and drawn from the release; `skeletonKey`
 (default `main`) names the region when a view has several separately loading
 parts, and `variant` only draws the fallback before the first measured release.
+A region that only shows on another tab or page is measured when the
+verification fixtures list that tab's params in `context.skeletonParams`.
 
 For another explicitly idempotent read use `useActionQuery`, or
 `useQuery(keyArray, readCallback, { readOnly: true })` with every input in the

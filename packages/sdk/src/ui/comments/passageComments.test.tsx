@@ -122,7 +122,7 @@ function fakeRuntime(rows: Record<string, unknown>[], calls: Call[]) {
       shows: { comments: { database: 'comments' } },
       bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
     },
-    context: { params: {}, locale: 'en' },
+    context: { params: {}, locale: 'en', viewerName: 'Flo' },
     shown: async () => ({ rows, schema_revision: 3 }),
     callAction: async (action: string, input: { request: Record<string, unknown> }) => {
       calls.push({ action, request: input.request });

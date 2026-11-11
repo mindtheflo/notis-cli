@@ -81,7 +81,11 @@ export interface UseCommentsOptions {
   anchors?: readonly CommentAnchor[];
   /** The anchor on screen (its record key): the pane's "this item" filter and where pins are placed. */
   anchorKey?: string | null;
-  /** The person using the Space; their comments count as changes and never as new activity. Default 'Flo'. */
+  /**
+   * The person using the Space; their comments count as changes and never as new activity. Default: the viewer's
+   * first name from the host, and when the Author column refuses it (a choice list without that name) "Person",
+   * then no author. Pass it to sign comments with a fixed name.
+   */
   me?: string;
   /** Authors the Author select knows; anyone else reads as `fallbackAuthor`. Default: any name. */
   authors?: readonly string[];
@@ -178,6 +182,11 @@ export interface CommentController {
   say(key: CommentWordKey, vars?: Readonly<Record<string, string | number>>): string;
   locale: Locale;
   me: string;
+  /**
+   * Runs one comment write signed by the viewer: with the default author, a write the Author column refuses as a
+   * choice is tried again as "Person", then without an author, and the author that worked is kept for the session.
+   */
+  signed<T>(write: (author: string | null) => Promise<T>): Promise<T>;
   /** Opens an agent's thread in the side chat; undefined on hosts without one. */
   openThread?: (threadId: string) => void;
   loading: boolean;
@@ -191,12 +200,51 @@ interface CommentDraft { comment: CommentRecord; serverKey: string | null }
 
 const NO_ANCHORS: readonly CommentAnchor[] = Object.freeze([]);
 
+/** The neutral author a Comments database's choice list can offer for anyone it does not name. */
+export const COMMENT_PERSON_AUTHOR = 'Person';
+
+/**
+ * Who signs the viewer's comments, in the order to try: a fixed `me` alone; else the viewer's first name (when the
+ * known `authors` include it, or none are given), then "Person". Never a name that belongs to someone else.
+ */
+export function commentAuthorCandidates(fixed: string | undefined, viewerName: string | null,
+  authors?: readonly string[]): string[] {
+  if (fixed) return [fixed];
+  const allowed = (name: string) => !authors || authors.includes(name);
+  return [...new Set([viewerName, COMMENT_PERSON_AUTHOR].filter((name): name is string => Boolean(name) && allowed(name!)))];
+}
+
+/** The Author column refused the name: it is a choice list without that option. */
+export function isRefusedChoice(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.message} ${(error as { code?: unknown }).code ?? ''}` : String(error ?? '');
+  return /choice is missing|missing or ambiguous|invalid_property_value/i.test(text);
+}
+
 export function useComments(options: UseCommentsOptions = {}): CommentController {
   const {
-    list = 'comments', database = 'comments', scope = null, anchors = NO_ANCHORS, anchorKey = null, me = 'Flo',
+    list = 'comments', database = 'comments', scope = null, anchors = NO_ANCHORS, anchorKey = null, me: fixedAuthor,
     authors, fallbackAuthor = 'Notis', pageSize = 500, live = true,
   } = options;
   const runtime = useNotisRuntime();
+  const viewerName = runtime?.context?.viewerName?.trim() || null;
+  const authorChoices = useMemo(() => commentAuthorCandidates(fixedAuthor, viewerName, authors), [fixedAuthor, viewerName, authors]);
+  // The first author the Author column accepted this session (an index into the choices).
+  const [authorIndex, setAuthorIndex] = useState(0);
+  const authorIndexRef = useRef(0);
+  useEffect(() => { authorIndexRef.current = 0; setAuthorIndex(0); }, [authorChoices]);
+  const me = authorChoices[Math.min(authorIndex, authorChoices.length - 1)] ?? '';
+  const signed = useCallback(async <T,>(write: (author: string | null) => Promise<T>): Promise<T> => {
+    for (let index = authorIndexRef.current; ; index += 1) {
+      const author = authorChoices[index] ?? null;
+      try {
+        const result = await write(author);
+        if (index !== authorIndexRef.current) { authorIndexRef.current = index; setAuthorIndex(index); }
+        return result;
+      } catch (error) {
+        if (index >= authorChoices.length || !isRefusedChoice(error)) throw error;
+      }
+    }
+  }, [authorChoices]);
   const locale = useToolkitLocale();
   const words = useMemo(() => commentWords(options.words), [options.words]);
   const say = useCallback((key: CommentWordKey, vars?: Readonly<Record<string, string | number>>) =>
@@ -399,7 +447,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     };
     setDrafts(current => [...current, { comment, serverKey: null }]);
     const properties: Record<string, unknown> = {
-      [columns.author]: me, [columns.status]: 'Open', [columns.needs]: 'none', [columns.example]: false,
+      [columns.status]: 'Open', [columns.needs]: 'none', [columns.example]: false,
       ...changeProps(fields.change, at),
     };
     if (columns.scope && currentScope) properties[columns.scope] = [currentScope.id];
@@ -420,8 +468,9 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
         throw new Error(`The Comments database has no ${columns.thread} column for replies`);
       }
       // The draft is the new comment on screen: the list does not add a second one.
-      const receipt = await insertMutation.mutate({ columns: { title: fields.body }, properties: onlyKnown(properties) },
-        { schemaRevision, requestId: newCommentId(), showIn: [] });
+      const receipt = await signed(author => insertMutation.mutate(
+        { columns: { title: fields.body }, properties: onlyKnown(author ? { ...properties, [columns.author]: author } : properties) },
+        { schemaRevision, requestId: newCommentId(), showIn: [] }));
       setDrafts(current => current.map(draft => draft.comment.recordKey === tempKey ? { ...draft, serverKey: receipt.record_key } : draft));
       void refetch();
       return receipt.record_key;
@@ -430,7 +479,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       fail(error);
       return false;
     }
-  }, [schemaRevision, me, columns, changeProps, insertMutation, refetch, fail, onlyKnown]);
+  }, [schemaRevision, me, signed, columns, changeProps, insertMutation, refetch, fail, onlyKnown]);
 
   const actions: CommentActions = useMemo(() => ({
     reply: async (thread, body, files = []) => {
@@ -662,7 +711,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     attach, maxFileBytes, uploadFile, refreshFiles,
     zones, dragZone, zoneHandlers,
     deleting, cancelDelete: () => setDeleting(null), confirmDelete, copyChanges, copying,
-    busy, now, toaster, words, say, locale, me, openThread,
+    busy, now, toaster, words, say, locale, me, signed, openThread,
     loading: query.loading && !query.hasData, hasData: query.hasData, error: query.error ?? null, refetch,
   };
 }

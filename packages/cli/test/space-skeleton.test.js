@@ -233,6 +233,26 @@ function server(t, { publish = () => new Response('{"published_revision":1}') } 
 
 const decoded = encoded => JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 
+// A view with two tabs: it opens on the list, and on the board when its `tab` param says so. Each tab loads with
+// its own region, so only measuring the board through context.skeletonParams gives it its own bones.
+const TABS_BUNDLE = LIST_BUNDLE
+  .replace('export function SpaceView() {', 'export function SpaceView() {\n  const tab = useContext(globalThis[Symbol.for("notis.sdk.runtime_context")])?.context?.params?.tab;')
+  .replace('jsx(ViewSkeleton, { label: "Loading notes" })', 'jsx(ViewSkeleton, { label: "Loading notes", skeletonKey: tab === "board" ? "board" : "main" })');
+
+test('regions a view shows only under other params are measured from fixtures context.skeletonParams', async t => {
+  const { release, capabilities } = listRelease();
+  release.files['bundle/app.js'] = b(TABS_BUNDLE);
+  const fixtures = JSON.parse(Buffer.from(release.sourceFiles['fixtures.json'], 'base64').toString());
+  release.sourceFiles['fixtures.json'] = b({ ...fixtures, context: { skeletonParams: [{ tab: 'board' }, { bad: 1 }] } });
+  const result = await verifySpaceRelease(release, { capabilities, loadRenderer: async () => ({ ...renderer, rendererDigest }) });
+  assert.equal(result.status, 'passed', JSON.stringify(result));
+  assert.equal(result.skeleton.status, 'captured', JSON.stringify(result.skeleton));
+  assert.deepEqual(result.skeleton.regions, ['board', 'main'], 'the opening view and the board tab both have bones');
+  for (const width of ['390', '1440']) for (const locale of ['en', 'fr']) {
+    assert.ok(result.skeletonDocument.regions.board[width][locale].bones.length > 0, `${width} ${locale}`);
+  }
+});
+
 test('verify adds the measured skeleton in memory and binds it with a second source-verify', async t => {
   const root = await builtSpace(t), api = server(t), state = { mode: 'clean', boneWidth: 100, renders: [] };
   const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));

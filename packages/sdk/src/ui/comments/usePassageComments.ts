@@ -172,7 +172,7 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState(false);
   const intent = useRef<{ key: string; id: string } | null>(null);
-  const { setThreadKey, refetch, me } = controller;
+  const { setThreadKey, refetch, signed } = controller;
 
   const startDraft = useCallback((passage: PassageAnchor) => {
     setFailed(false);
@@ -191,7 +191,7 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     const at = new Date().toISOString();
     const properties: Record<string, unknown> = {
       ...passageProperties(draft, target, columns),
-      [baseColumns.author]: me, [baseColumns.status]: 'Open', [baseColumns.needs]: 'none', [baseColumns.example]: false,
+      [baseColumns.status]: 'Open', [baseColumns.needs]: 'none', [baseColumns.example]: false,
       [baseColumns.change]: 'created', [baseColumns.changedAt]: at,
     };
     if (baseColumns.scope && scope) properties[baseColumns.scope] = [scope.id];
@@ -201,7 +201,11 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     setSending(true);
     setFailed(false);
     try {
-      const receipt = await insert.mutate({ columns: { title: text }, properties }, { schemaRevision, requestId: intent.current.id });
+      // The intent's request ID replays one author; a retry under another author is a new request.
+      const first = intent.current.id;
+      const receipt = await signed(author => insert.mutate(
+        { columns: { title: text }, properties: author ? { ...properties, [baseColumns.author]: author } : properties },
+        { schemaRevision, requestId: author === controller.me ? first : newCommentId() }));
       intent.current = null;
       setDraft(null);
       setThreadKey(receipt.record_key);
@@ -213,7 +217,7 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     } finally {
       setSending(false);
     }
-  }, [query.data?.schema_revision, draft, field, sending, columns, baseColumns, me, insert, setThreadKey, refetch]);
+  }, [query.data?.schema_revision, draft, field, sending, columns, baseColumns, signed, controller.me, insert, setThreadKey, refetch]);
 
   const { selectThread } = controller;
   const open = useCallback((thread: CommentThread, from: PassageOpenedFrom) => {

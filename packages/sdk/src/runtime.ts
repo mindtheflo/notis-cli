@@ -205,6 +205,11 @@ export interface NotisRuntimeContext {
   resourceId?: string | null;
   /** Loading bones measured from this release at build time; `ViewSkeleton` draws them. Absent until the host has them. */
   readonly skeleton?: NotisSpaceSkeleton;
+  /**
+   * The signed-in viewer's first name, for signing what they write (comments). Display only, never an identity
+   * or a permission. Absent for visitors of a Site or a link, and on hosts that predate it.
+   */
+  readonly viewerName?: string | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,8 @@ import { NotisProvider } from '../../provider';
 import type { NotisRuntime } from '../../runtime';
 import {
   COMMENT_COLUMNS, CommentPane, CommentPins, applyCommentPatches, commentAttachmentFor, commentBodyParts, commentChangesSince,
-  commentDigest, commentRelativeTime, commentThreads, isCommentZone, readCommentRow, useComments, type CommentAnchor, type CommentController, type CommentRecord,
+  commentAuthorCandidates, commentDigest, commentRelativeTime, commentThreads, isCommentZone, isRefusedChoice, readCommentRow, useComments,
+  type CommentAnchor, type CommentController, type CommentRecord,
   type UseCommentsOptions,
 } from '.';
 import * as ui from '..';
@@ -182,7 +183,9 @@ interface Call { action: string; request: Record<string, unknown> }
 
 let cacheCounter = 0;
 function fakeRuntime(rows: Record<string, unknown>[], calls: Call[],
-  options: { fail?: boolean; locale?: 'en' | 'fr'; propertyNames?: string[] } = {}) {
+  options: { fail?: boolean; locale?: 'en' | 'fr'; propertyNames?: string[]; viewerName?: string | null;
+    /** Authors the Author choice list refuses, as the database does for a missing option. */
+    refusedAuthors?: string[] } = {}) {
   let next = 100;
   return {
     resource: { kind: 'space', id: 's1', revision: 1 },
@@ -192,11 +195,15 @@ function fakeRuntime(rows: Record<string, unknown>[], calls: Call[],
       shows: { comments: { database: 'comments' } },
       bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
     },
-    context: { params: {}, locale: options.locale ?? 'en' },
+    context: { params: {}, locale: options.locale ?? 'en', viewerName: options.viewerName === undefined ? 'Flo' : options.viewerName },
     shown: async () => ({ rows, schema_revision: 7, ...(options.propertyNames ? { property_names: options.propertyNames } : {}) }),
     callAction: async (action: string, input: { request: Record<string, unknown> }) => {
       calls.push({ action, request: input.request });
       if (options.fail) throw new Error('nope');
+      const author = (input.request.properties as Record<string, unknown> | undefined)?.Author;
+      if (typeof author === 'string' && options.refusedAuthors?.includes(author)) {
+        throw new Error('This choice is missing or ambiguous. Use an existing option ID.');
+      }
       return { record_key: `new-${next += 1}`, revision: 2 };
     },
     subscribeDatabase: () => () => {},
@@ -549,6 +556,60 @@ test('Comments on a whole record (no anchors): the pane starts one itself', asyn
   const props = request.properties as Record<string, unknown>;
   assert.deepEqual(props.Project, ['project-1']);
   assert.equal(props.Slide, undefined);
+});
+
+async function newWholeComment(runtime: NotisRuntime, body: string) {
+  const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
+  await mount(<Harness scope={project} columns={{ scope: 'Project', anchor: null }} pins={false} />, runtime);
+  await click(button('New comment')!);
+  const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, body);
+  await key(field, 'Enter');
+}
+const authorsSent = (calls: Call[]) => calls.filter(call => call.action === 'comments.insert')
+  .map(call => (call.request.properties as Record<string, unknown>).Author ?? null);
+
+test('Comments are signed with the viewer\'s first name, never someone else\'s', async () => {
+  const calls: Call[] = [];
+  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie' }), 'Looks good');
+  assert.deepEqual(authorsSent(calls), ['Marie']);
+  assert.equal(controller!.me, 'Marie');
+});
+
+test('An Author choice list without the viewer\'s name signs the comment Person, then remembers it', async () => {
+  const calls: Call[] = [];
+  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie', refusedAuthors: ['Marie'] }), 'First');
+  assert.deepEqual(authorsSent(calls), ['Marie', 'Person']);
+  assert.equal(controller!.me, 'Person');
+  await click(button('New comment')!);
+  const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, 'Second');
+  await key(field, 'Enter');
+  assert.deepEqual(authorsSent(calls), ['Marie', 'Person', 'Person'], 'the next comment goes straight to the accepted author');
+});
+
+test('Without Person in the choice list the comment is saved with no author, and a visitor is never Flo', async () => {
+  const calls: Call[] = [];
+  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie', refusedAuthors: ['Marie', 'Person'] }), 'Hi');
+  assert.deepEqual(authorsSent(calls), ['Marie', 'Person', null]);
+  const visitor: Call[] = [];
+  await newWholeComment(fakeRuntime([], visitor, { viewerName: null }), 'Hello');
+  assert.deepEqual(authorsSent(visitor), ['Person']);
+});
+
+test('Another failure is not taken for a refused name: no retry under another author', async () => {
+  const calls: Call[] = [];
+  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie', fail: true }), 'Hi');
+  assert.deepEqual(authorsSent(calls), ['Marie']);
+});
+
+test('commentAuthorCandidates: a fixed name alone, else the viewer then Person within the known authors', () => {
+  assert.deepEqual(commentAuthorCandidates('Ada', 'Marie'), ['Ada']);
+  assert.deepEqual(commentAuthorCandidates(undefined, 'Marie'), ['Marie', 'Person']);
+  assert.deepEqual(commentAuthorCandidates(undefined, 'Marie', ['Flo', 'Person']), ['Person']);
+  assert.deepEqual(commentAuthorCandidates(undefined, null, ['Flo']), []);
+  assert.equal(isRefusedChoice(new Error('This choice is missing or ambiguous. Use an existing option ID.')), true);
+  assert.equal(isRefusedChoice(new Error('Network down')), false);
 });
 
 // ---------------------------------------------------------------------------
