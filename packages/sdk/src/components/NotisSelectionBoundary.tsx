@@ -109,5 +109,30 @@ export function NotisSelectionBoundary({
     ...(resource ? { resource: { ...resource, snapshot: undefined } } : {}),
   }), [resource, runtime]);
 
-  return <div className={className} style={style} onCopy={onCopy}>{children}</div>;
+  // Cite reads the same resource as copy: the bar looks it up from the selection (`quoteResourceFor`).
+  const marker = resource ? JSON.stringify({ ...resource, snapshot: undefined }) : undefined;
+  return <div className={className} style={style} onCopy={onCopy} data-notis-quote-resource={marker}>{children}</div>;
+}
+
+/** The resource a Space's own boundary names for the text in `range`, as copy would quote it; null outside one. */
+export function quoteResourceFor(range: Range): ContextResource | null {
+  const start = range.commonAncestorContainer;
+  const element = start.nodeType === Node.ELEMENT_NODE ? start as Element : start.parentElement;
+  const marked = element?.closest('[data-notis-quote-resource]')?.getAttribute('data-notis-quote-resource');
+  if (!marked) return null;
+  try { return JSON.parse(marked) as ContextResource; } catch { return null; }
+}
+
+/**
+ * Cite for a Space (truth PRT-087): the selected text goes to chat as the quote copy would make, its Space as source
+ * and the boundary's resource when one names it. A Site's runtime has no chat, so it cites nothing.
+ */
+export function citeSpaceSelection(runtime: Pick<NotisRuntime, 'contextSource' | 'addContext'> | null, range: Range, text: string): Promise<boolean> {
+  if (!runtime?.addContext) return Promise.resolve(false);
+  const resource = quoteResourceFor(range);
+  const source = runtime.contextSource;
+  return runtime.addContext({
+    id: selectionId(), text,
+    ...(resource ? { resource } : source ? { title: source.appName } : {}),
+  });
 }

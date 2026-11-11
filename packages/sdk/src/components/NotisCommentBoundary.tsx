@@ -1,8 +1,11 @@
 'use client';
 import React, { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { ContextResource } from '../runtime';
-import { NotisSelectionBoundary } from './NotisSelectionBoundary';
+import { NotisSelectionBoundary, quoteResourceFor } from './NotisSelectionBoundary';
 import { useAgentContext } from '../hooks/useAgentContext';
+import { useNotisRuntime } from '../provider';
+import { COMMENT_GLYPH, QUOTE_GLYPH, SELECTION_BAR_WORDS, SelectionActionBar, clearSelectionIn, getSelectionBarPosition } from './SelectionActionBar';
+import { useToolkitLocale } from '../ui/engine/hooks';
 
 export interface NotisCommentBoxProps {
   quote?: string;
@@ -88,8 +91,12 @@ export function getOwnedCommentRange(selected: Range, content: Element): Range |
 /** Selection-to-chat convenience. No annotation database, polling or background attachment. */
 export function NotisCommentBoundary({ resource, children, className, commentClassName, renderComment }: NotisCommentBoundaryProps) {
   const context = useAgentContext();
+  // A host without a chat (a public Site) offers Comment alone: Cite would have nowhere to go.
+  const canCite = Boolean(useNotisRuntime()?.addContext);
   const root = useRef<HTMLDivElement>(null);
-  const [selection, setSelection] = useState<{ id: string; text: string; resource?: ContextResource | null; top: number; left: number } | null>(null);
+  const [selection, setSelection] = useState<{ id: string; text: string; resource?: ContextResource | null; range: Range; top: number; left: number } | null>(null);
+  const locale = useToolkitLocale();
+  const [barSize, setBarSize] = useState({ width: 176, height: 32 });
   const [editing, setEditing] = useState(false);
   const editingRef = useRef(false);
   const [comment, setComment] = useState('');
@@ -107,7 +114,12 @@ export function NotisCommentBoundary({ resource, children, className, commentCla
       const selected = scope.getSelection?.() || document.defaultView?.getSelection();
       const content = node.firstElementChild;
       if (!selected?.rangeCount || selected.isCollapsed || !selected.toString().trim()
-        || !content || !getOwnedCommentRange(selected.getRangeAt(0), content)) setSelection(null);
+        || !content || !getOwnedCommentRange(selected.getRangeAt(0), content)) { setSelection(null); return; }
+      // A touch selection has no mouse up: show the bar once its handles stop moving (truth PRT-094).
+      if (document.defaultView?.matchMedia?.('(pointer: coarse)').matches) {
+        document.defaultView.clearTimeout(touchSettle.current);
+        touchSettle.current = document.defaultView.setTimeout(() => captureRef.current(null), 450);
+      }
     };
     document.addEventListener('selectionchange', clearInvalidSelection);
     if (scope !== (document as unknown as ShadowRoot)) scope.addEventListener('selectionchange', clearInvalidSelection);
@@ -117,9 +129,11 @@ export function NotisCommentBoundary({ resource, children, className, commentCla
     };
   }, []);
   const open = () => { editingRef.current = true; setEditing(true); };
+  const touchSettle = useRef<number | undefined>(undefined);
+  const captureRef = useRef<(target: EventTarget | null) => void>(() => {});
   const capture = (target: EventTarget | null) => {
     // Clicking the action/editor must not unmount it before its click runs.
-    if (editing || (target instanceof Element && target.closest('[data-notis-comment-ui]'))) return;
+    if (editing || (target instanceof Element && target.closest('[data-notis-comment-ui],[data-notis-selection-ui]'))) return;
     const node = root.current;
     const scope = node?.getRootNode() as ShadowRoot & { getSelection?: () => Selection | null };
     const selected = scope?.getSelection?.() || window.getSelection();
@@ -143,9 +157,14 @@ export function NotisCommentBoundary({ resource, children, className, commentCla
       remainder.setStart(range.endContainer, range.endOffset);
       trailing.push(...Array.from(remainder.getClientRects?.() || []).filter(line => line.width > 0 && line.height > 0));
     }
-    const position = getCommentActionPosition(lines.length ? lines : [rect], { width: window.innerWidth, height: window.innerHeight }, boundary?.width ? boundary.right : window.innerWidth, trailing);
-    setSelection({ id: crypto.randomUUID(), text: selected.toString().trim(), resource: resource ? JSON.parse(JSON.stringify(resource)) : null, ...position });
+    // The bar (Cite, then Comment) sits where the old Comment tile did: after the last line, or below it.
+    const position = getSelectionBarPosition(lines.length ? lines : [rect], { width: window.innerWidth, height: window.innerHeight }, barSize,
+      { rightBoundary: boundary?.width ? boundary.right : window.innerWidth, trailing, coarse: window.matchMedia?.('(pointer: coarse)').matches });
+    setSelection({ id: crypto.randomUUID(), text: selected.toString().trim(), resource: resource ? JSON.parse(JSON.stringify(resource)) : null, range: range.cloneRange(), ...position });
   };
+  captureRef.current = capture;
+  // Once the bar measured itself, place it again with its real width.
+  useEffect(() => { if (!editingRef.current) captureRef.current(null); }, [barSize.width, barSize.height]);
   const close = () => { editingRef.current = false; setEditing(false); setSelection(null); setComment(''); setError(''); };
   const submit = async () => {
     if (!selection || !comment.trim() || pending) return;
@@ -157,16 +176,24 @@ export function NotisCommentBoundary({ resource, children, className, commentCla
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add this comment.'); }
     finally { setPending(false); }
   };
+  const cite = async () => {
+    if (!selection) return;
+    const quoted = selection;
+    clearSelectionIn(root.current);
+    setSelection(null);
+    // The quote copy would make: the innermost boundary's resource, else this boundary's.
+    const named = quoteResourceFor(quoted.range) ?? quoted.resource ?? null;
+    try { await context.add({ id: quoted.id, text: quoted.text, ...(named ? { resource: named } : {}) }); } catch { /* No chat in this host: copy still quotes. */ }
+  };
   const editorProps: NotisCommentBoxProps = { quote: selection?.text, value: comment, onChange: setComment, onSubmit: () => void submit(), onCancel: close, pending, error, className: commentClassName };
-  return <div ref={root} className="contents" onMouseUp={event => capture(event.target)} onDoubleClick={event => capture(event.target)} onKeyUp={event => { if (!editing && (event.shiftKey || event.key === 'Shift' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a'))) capture(event.target); }}>
+  return <div ref={root} className="contents" data-notis-comment-boundary onMouseUp={event => capture(event.target)} onDoubleClick={event => capture(event.target)} onKeyUp={event => { if (!editing && (event.shiftKey || event.key === 'Shift' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a'))) capture(event.target); }}>
     <NotisSelectionBoundary resource={resource} className={className} style={className ? undefined : { display: 'contents' }}>{children}</NotisSelectionBoundary>
-    {selection && <div data-notis-comment-ui className="fixed z-50 max-h-[calc(100dvh-1rem)]" style={{ overflow: editing ? 'auto' : 'visible', top: editing ? Math.min(selection.top, Math.max(8, window.innerHeight - 320)) : selection.top, left: `clamp(8px, ${selection.left}px, calc(100vw - ${editing ? 'min(20rem, calc(100vw - 1rem))' : '2rem'} - 8px))`, width: editing ? 'min(20rem, calc(100vw - 1rem))' : undefined } as CSSProperties}>
-      {editing ? (renderComment ? renderComment(editorProps) : <NotisCommentBox {...editorProps} />) : <button type="button" aria-label="Comment" title="Comment" onMouseDown={event => event.preventDefault()} onClick={open}
-        style={{ background: 'hsl(var(--sidebar-background, 0 0% 7.5%))', color: 'hsl(var(--sidebar-foreground, 240 4.8% 95.9%))' }}
-        className="relative flex size-8 items-center justify-center rounded-lg ring-1 ring-white/15 hover:opacity-90">
-        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M216,48H40A16,16,0,0,0,24,64V224a15.85,15.85,0,0,0,9.24,14.5A16.13,16.13,0,0,0,40,240a15.89,15.89,0,0,0,10.25-3.78l.09-.07L83,208H216a16,16,0,0,0,16-16V64A16,16,0,0,0,216,48ZM40,224h0ZM216,192H80a8,8,0,0,0-5.23,1.95L40,224V64H216ZM88,112a8,8,0,0,1,8-8h64a8,8,0,0,1,0,16H96A8,8,0,0,1,88,112Zm0,32a8,8,0,0,1,8-8h64a8,8,0,1,1,0,16H96A8,8,0,0,1,88,144Z" /></svg>
-        <span aria-hidden="true" className="absolute left-1/2 top-1/2 hidden size-12 -translate-x-1/2 -translate-y-1/2 [@media(pointer:coarse)]:block" />
-      </button>}
+    {selection && !editing && <SelectionActionBar anchor={selection} onSize={setBarSize} actions={[
+      ...(canCite ? [{ key: 'cite', label: SELECTION_BAR_WORDS.cite[locale], title: SELECTION_BAR_WORDS.citeHint[locale], icon: QUOTE_GLYPH, onSelect: () => void cite() }] : []),
+      { key: 'comment', label: SELECTION_BAR_WORDS.comment[locale], icon: COMMENT_GLYPH, onSelect: open },
+    ]} />}
+    {selection && editing && <div data-notis-comment-ui className="fixed z-50 max-h-[calc(100dvh-1rem)]" style={{ overflow: 'auto', top: Math.min(selection.top, Math.max(8, window.innerHeight - 320)), left: `clamp(8px, ${selection.left}px, calc(100vw - min(20rem, calc(100vw - 1rem)) - 8px))`, width: 'min(20rem, calc(100vw - 1rem))' } as CSSProperties}>
+      {renderComment ? renderComment(editorProps) : <NotisCommentBox {...editorProps} />}
     </div>}
   </div>;
 }

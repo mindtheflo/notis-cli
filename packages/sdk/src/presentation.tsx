@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useCallback, useId, useLayoutEffect, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
+import React, { useCallback, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { NotisProvider } from './provider';
-import { copySpaceSelection } from './components/NotisSelectionBoundary';
+import { citeSpaceSelection, copySpaceSelection } from './components/NotisSelectionBoundary';
+import { QUOTE_GLYPH, SELECTION_BAR_WORDS, SelectionActionBar, clearSelectionIn, useSelectionAnchor } from './components/SelectionActionBar';
+import { useToolkitLocale } from './ui/engine/hooks';
 import type { NotisRuntime } from './runtime';
 import { ShortcutScope } from './ui/engine/KeyboardEngine';
 
@@ -76,16 +78,46 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
   }, [active, mount]);
   // Every Space quotes copied text by default; a Site's runtime has no chat to quote into.
   const onCopy = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => copySpaceSelection(event, runtime), [runtime]);
+  const appRoot = useRef<HTMLDivElement>(null);
   return <PresentationErrorBoundary resetKey={resetKey} fallback={fallback} onError={onError}>
     {mount && runtime && Component ? createPortal(<CommittedPresentation mount={mount} onCommit={onCommit}>
       {boundsCss ? <style data-notis-runtime-bounds>{boundsCss}</style> : null}
       <ShortcutScope owner={shortcutOwner} kind="space" available={shortcutsAvailable()}>
       <NotisProvider runtime={runtime} onProtocolError={onProtocolError} shortcutsAvailable={shortcutsAvailable}>
-        <div data-notis-app-root data-notis-theme={theme.mode} style={theme.style} onCopy={onCopy}>
+        <div ref={appRoot} data-notis-app-root data-notis-theme={theme.mode} style={theme.style} onCopy={onCopy}>
           {Shell ? <Shell><Component /></Shell> : <Component />}
+          <SpaceSelectionCite root={appRoot} runtime={runtime} />
         </div>
       </NotisProvider>
       </ShortcutScope>
     </CommittedPresentation>, mount) : null}
   </PresentationErrorBoundary>;
+}
+
+/**
+ * Every Space view gets Cite on selected text by default (truth PRT-087), quoting what copy would quote. A comment
+ * boundary draws its own bar (Cite and Comment), and a Site's runtime has no chat, so neither shows this one.
+ */
+function SpaceSelectionCite({ root, runtime }: { root: React.RefObject<HTMLDivElement | null>; runtime: NotisRuntime }) {
+  const locale = useToolkitLocale();
+  const [barSize, setBarSize] = useState({ width: 72, height: 32 });
+  const { anchor, dismiss } = useSelectionAnchor(root, {
+    enabled: Boolean(runtime.addContext),
+    barSize,
+    accept: range => {
+      const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? range.commonAncestorContainer as Element : range.commonAncestorContainer.parentElement;
+      return !element?.closest('[data-notis-comment-boundary]');
+    },
+  });
+  if (!anchor) return null;
+  return <SelectionActionBar anchor={anchor} onSize={setBarSize} actions={[{
+    key: 'cite', label: SELECTION_BAR_WORDS.cite[locale], title: SELECTION_BAR_WORDS.citeHint[locale], icon: QUOTE_GLYPH,
+    onSelect: () => {
+      const { range, text } = anchor;
+      clearSelectionIn(root.current);
+      dismiss();
+      void citeSpaceSelection(runtime, range, text).catch(() => false);
+    },
+  }]} />;
 }

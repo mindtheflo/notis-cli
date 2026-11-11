@@ -52,6 +52,9 @@ export const DEFAULT_KEYMAP = Object.freeze({
   'host.search': entry('host.search', ['/'], 'app', 'Search', 'Rechercher', { host: true }),
   'host.newChat': entry('host.newChat', ['c'], 'app', 'New conversation', 'Nouvelle conversation', { host: true }),
   'host.call': entry('host.call', ['shift+c'], 'app', 'Open voice call', 'Ouvrir l’appel vocal', { host: true }),
+  // Cites the selected text in chat, like the Cite button on the selection (truth PRT-089).
+  'host.cite': entry('host.cite', ['mod+shift+c'], 'app', 'Cite selected text in chat', 'Citer le texte sélectionné dans le chat',
+    { host: true }),
   'host.toggleSidebar': entry('host.toggleSidebar', ['mod+s'], 'app', 'Toggle sidebar',
     'Afficher ou masquer la barre latérale', { host: true }),
   'host.voiceMessage': entry('host.voiceMessage', ['mod+d'], 'app', 'Voice message', 'Message vocal', { host: true }),
