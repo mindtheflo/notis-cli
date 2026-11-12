@@ -209,7 +209,9 @@ measured from the view at verify time and drawn from the release; `skeletonKey`
 (default `main`) names the region when a view has several separately loading
 parts, and `variant` only draws the fallback before the first measured release.
 A region that only shows on another tab or page is measured when the
-verification fixtures list that tab's params in `context.skeletonParams`.
+verification fixtures list that tab's params in `context.skeletonParams`. A Space
+with editor-only parts gets the skeleton of its public view, the one visitors
+see: an editors' page that loads differently keeps a plain loading state of its own.
 
 For another explicitly idempotent read use `useActionQuery`, or
 `useQuery(keyArray, readCallback, { readOnly: true })` with every input in the

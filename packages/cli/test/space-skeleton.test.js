@@ -261,6 +261,33 @@ test('regions a view shows only under other params are measured from fixtures co
   }
 });
 
+// A view that draws an editors' page and a public page, each loading with its own region. The Space marks an action
+// editor-only, so the one skeleton every visitor sees is measured from the public page, never from the editors' one.
+const AUDIENCE_BUNDLE = LIST_BUNDLE
+  .replace('export function SpaceView() {', 'export function SpaceView() {\n  const space = useContext(globalThis[Symbol.for("notis.sdk.runtime_context")])?.space;\n  const editor = space?.audience === "editor" && space?.viewAs !== "public";')
+  .replace('jsx(ViewSkeleton, { label: "Loading notes" })', 'jsx(ViewSkeleton, { label: "Loading notes", skeletonKey: editor ? "editors" : "public" })');
+
+test('a Space with editor-only parts measures its skeleton from the view the public sees', async t => {
+  const { release, capabilities } = listRelease();
+  release.files['bundle/app.js'] = b(AUDIENCE_BUNDLE);
+  // The public reads a document body only through a binding the Space declares.
+  capabilities.bindings = { notes: { kind: 'database' } };
+  const result = await verifySpaceRelease(release, { capabilities, loadRenderer: async () => ({ ...renderer, rendererDigest }) });
+  assert.equal(result.skeleton.audience, 'editor', 'nothing marked: measured as the editor, as before');
+  assert.deepEqual(result.skeleton.regions, ['editors']);
+
+  release.manifest.editors_only = { actions: ['write'] };
+  const marked = await verifySpaceRelease(release, { capabilities, loadRenderer: async () => ({ ...renderer, rendererDigest }) });
+  assert.equal(marked.status, 'passed', JSON.stringify(marked));
+  assert.equal(marked.skeleton.audience, 'public');
+  assert.deepEqual(marked.skeleton.regions, ['public'], 'the editors\u2019 page never becomes the skeleton visitors see');
+
+  release.manifest.editors_only = { view: true };
+  const editorsView = await verifySpaceRelease(release, { capabilities, loadRenderer: async () => ({ ...renderer, rendererDigest }) });
+  assert.equal(editorsView.skeleton.audience, 'editor', 'a wholly editor-only view has no public to draw');
+  assert.deepEqual(editorsView.skeleton.regions, ['editors']);
+});
+
 test('verify adds the measured skeleton in memory and binds it with a second source-verify', async t => {
   const root = await builtSpace(t), api = server(t), state = { mode: 'clean', boneWidth: 100, renders: [] };
   const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));

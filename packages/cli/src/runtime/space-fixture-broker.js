@@ -20,10 +20,15 @@ export function fixtureSkeletonParams(release) {
     .slice(0, SKELETON_PARAM_SETS_MAX).map(item => structuredClone(item));
 }
 
+/**
+ * `audience: 'public'` draws the view as the public sees it: the editor's descriptor with View as the public on, so
+ * the page applies the public floors itself (no editor-only lists, actions, params or columns), as in the Portal.
+ */
 export function createSpaceFixtureBroker({ release, capabilities, width, outputs = ['markdown', 'screenshot'],
-  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure, params: paramsOverride }) {
+  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure, params: paramsOverride, audience = 'editor' }) {
   const engine = createSpaceFixtureEngine(release);
   const frozen = spaceHarnessSnapshot(release, capabilities, engine, { authorizationMode, unavailableActions });
+  if (audience === 'public') frozen.descriptor.space.viewAs = 'public';
   const calls = [];
   // Skeleton capture may open the view with other params (a tab), on top of the fixture's own.
   const params = structuredClone({ ...(engine.context.params || {}), ...(paramsOverride || {}) });

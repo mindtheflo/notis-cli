@@ -146,7 +146,7 @@ function describeScreenshots(render) {
 /** Reviewable: the measured loading skeleton, its warnings and where the loading screenshots are. */
 function describeSkeleton(skeleton) {
   if (!skeleton) return '';
-  const parts = [skeleton.status === 'captured' ? `Loading skeleton measured for ${skeleton.regions.join(', ')}.`
+  const parts = [skeleton.status === 'captured' ? `Loading skeleton measured for ${skeleton.regions.join(', ')}${skeleton.audience === 'public' ? ', as the public sees the view' : ''}.`
     : skeleton.status === 'failed' ? 'The loading skeleton could not be measured; the view keeps its fallback skeleton.' : ''];
   const findings = skeleton.findings || [];
   if (findings.length) {

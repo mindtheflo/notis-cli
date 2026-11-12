@@ -148,8 +148,13 @@ async function captureSpaceSkeleton({ library, pool, release, capabilities, time
   const findings = [], screenshots = [], combos = [];
   let failed = false, document = null;
   const widths = library.SKELETON_WIDTHS || [390, 1440], locales = library.SKELETON_LOCALES || ['en', 'fr'];
+  // One skeleton is shown to everyone who opens the Space, Site visitors included. When the Space marks parts of its
+  // view editor-only, it is measured from the view the public sees, so it never draws the editors' page for them. A
+  // view that is wholly editor-only does not exist for the public: it keeps the editors' skeleton.
+  const marks = release.manifest.editors_only;
+  const audience = marks && !marks.view ? 'public' : 'editor';
   const render = (width, options, params) => library.renderView({ broker: createSpaceFixtureBroker({ release, capabilities, width,
-    outputs: ['markdown'], authorizationMode, unavailableActions, params }), pool, outputs: ['markdown'], width, timeoutMs, signal, ...options });
+    outputs: ['markdown'], authorizationMode, unavailableActions, params, audience }), pool, outputs: ['markdown'], width, timeoutMs, signal, ...options });
   // Both widths of one locale run together: the pool holds two renders at a time.
   const each = async (step) => {
     for (const locale of locales) {
@@ -229,6 +234,6 @@ async function captureSpaceSkeleton({ library, pool, release, capabilities, time
     screenshots.push({ width: combo.width, locale: combo.locale, png, sha256: sha256(png) });
   }
   const status = document ? 'captured' : failed ? 'failed' : 'none';
-  return { document, screenshots, skeleton: { status, regions: document ? Object.keys(document.regions).sort() : [], findings,
+  return { document, screenshots, skeleton: { status, audience, regions: document ? Object.keys(document.regions).sort() : [], findings,
     pending_screenshots: screenshots.map(({ width, locale, sha256: digest }) => ({ width, locale, sha256: digest })) } };
 }
