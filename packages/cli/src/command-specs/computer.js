@@ -173,8 +173,28 @@ const STATUS_LINES = {
   none: 'You have no Cloud Computer yet. It starts the first time Notis needs it.',
 };
 
+// boat's own word (machine_state) on a live read while it starts or stops. The status only knows Notis's own work,
+// so it reads "stopped" for a machine awake in its idle tail: boat's awake wins over that (bx_yaqe7sjj, 2026-11-12).
+const MACHINE_LINES = {
+  starting: 'Your Cloud Computer is starting.',
+  stopping: 'Your Cloud Computer is finishing a stop. It starts again when Notis has work to do.',
+};
+
+const AWAKE_IDLE = 'Your Cloud Computer is awake, with nothing to do. It goes to sleep after its sleep time.';
+const AWAKE_ALWAYS_ON = 'Your Cloud Computer is awake, with nothing to do. It stays on: always on is set.';
+
+function liveLine(computer) {
+  if (computer.status === 'stopped' && computer.machine_state === 'awake') {
+    // sleep.after_seconds is null when always on: that machine never goes to sleep.
+    return computer.sleep && computer.sleep.after_seconds === null ? AWAKE_ALWAYS_ON : AWAKE_IDLE;
+  }
+  return ['running', 'stopped'].includes(computer.status) ? MACHINE_LINES[computer.machine_state] : null;
+}
+
 function statusText(computer) {
-  if (computer.status !== 'not_responding') return STATUS_LINES[computer.status] || STATUS_LINES.none;
+  if (computer.status !== 'not_responding') {
+    return liveLine(computer) || STATUS_LINES[computer.status] || STATUS_LINES.none;
+  }
   const reason = computer.status_reason ? ` Reason: ${computer.status_reason}.` : '';
   const saved = computer.last_saved_at ? ` Last saved ${computer.last_saved_at}.` : '';
   return `Your Cloud Computer is not responding.${reason}${saved} Restart it with: notis computer restart`;

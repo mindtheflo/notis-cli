@@ -243,6 +243,27 @@ test('computer status says a machine is not responding, why, its last save and h
   assert.deepEqual(result.hints.map(hint => hint.command), ['notis computer restart']);
 });
 
+test('computer status follows boat\'s own word between awake and asleep', async t => {
+  // bx_yaqe7sjj (2026-11-12): boat said awake while the status said stopped, and this read "asleep".
+  const cases = [
+    [{ status: 'stopped', machine_state: 'awake', sleep: { after_seconds: 1800 } }, /nothing to do\. It goes to sleep/],
+    [{ status: 'stopped', machine_state: 'awake', sleep: { after_seconds: null } }, /nothing to do\. It stays on/],
+    [{ status: 'running', machine_state: 'awake' }, /is working\./],
+    [{ status: 'stopped', machine_state: 'asleep' }, /is asleep\./],
+    [{ status: 'running', machine_state: 'stopping' }, /is finishing a stop\./],
+    [{ status: 'stopped', machine_state: 'starting' }, /is starting\./],
+    [{ status: 'stopped', machine_state: null }, /is asleep\./],
+    [{ status: 'moving', machine_state: 'awake' }, /moving to a bigger disk/],
+  ];
+  for (const [computer, line] of cases) {
+    mockTools(t, [{ status: 'success', cloud_computer: computer }]);
+    const ctx = context(computerCommandSpecs, 'computer status');
+    const result = await ctx.spec.handler(ctx);
+    assert.match(result.humanSummary, line, JSON.stringify(computer));
+    t.mock.restoreAll();
+  }
+});
+
 test('computer restart previews and changes nothing without --yes in machine mode', async t => {
   const calls = mockTools(t, [RESTART_PREVIEW]);
   const ctx = context(computerCommandSpecs, 'computer restart');
