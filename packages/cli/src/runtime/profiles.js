@@ -164,28 +164,33 @@ export function profileHasCredential(profile = {}) {
  */
 export function listProfiles(config) {
   const normalized = normalizeConfig(config);
-  return Object.entries(normalized.profiles).map(([name, profile]) => ({
-    name,
-    active: name === normalized.current_profile,
-    // Report the endpoint the profile was created against, including the
-    // loopback address of a `./dev.sh` profile. getApiBase resolves a stale
-    // loopback value to the live API for routing; showing that here would
-    // claim a dev profile targets production, which it must never do.
-    // OAuth metadata owns the route for an OAuth profile. An older Desktop
-    // release may have left a conflicting api_base behind, but commands ignore
-    // that legacy value and so must profile inspection.
-    api_base: profile.oauth_access_token
-      ? getOAuthApiBase(profile) || resolveDefaultLiveApiBase(profile)
-      : profile.api_base || resolveDefaultLiveApiBase(profile),
-    label: profile.label || null,
-    credential_kind: profile.oauth_access_token
-      ? 'oauth'
-      : profile.dev_access_token
-        ? 'dev'
-        : null,
-    user_id: profile.oauth_user_id || profile.dev_user_id || null,
-    authenticated: profileHasCredential(profile),
-  }));
+  return Object.entries(normalized.profiles).map(([name, profile]) => {
+    // The stored profile alone: a NOTIS_JWT in this shell is not part of it.
+    const routed = routingProfile(profile, {});
+    return {
+      name,
+      active: name === normalized.current_profile,
+      // Report the endpoint the stored profile routes to, keeping the loopback address of a
+      // `./dev.sh` profile: getApiBase resolves a stale loopback value to the
+      // live API for routing; showing that here would claim a dev profile
+      // targets production, which it must never do. OAuth metadata owns the
+      // route for an OAuth profile; an older Desktop release may have left a
+      // conflicting api_base behind, but commands ignore that legacy value and
+      // so must profile inspection. A signed-out profile shows where its next
+      // login starts (routingProfile).
+      api_base: profile.oauth_access_token
+        ? getOAuthApiBase(profile) || resolveDefaultLiveApiBase(profile)
+        : routed.api_base || resolveDefaultLiveApiBase(routed),
+      label: profile.label || null,
+      credential_kind: profile.oauth_access_token
+        ? 'oauth'
+        : profile.dev_access_token
+          ? 'dev'
+          : null,
+      user_id: profile.oauth_user_id || profile.dev_user_id || null,
+      authenticated: profileHasCredential(profile),
+    };
+  });
 }
 
 function readJsonFile(path) {
@@ -532,6 +537,35 @@ function isLiveApiBase(value) {
 }
 
 /**
+ * The fields of a profile that may decide where it routes.
+ *
+ * A profile with no credential has no account behind it: its channel pin
+ * (`release_channel`, which normalization also fills from the older `beta`
+ * and `channel` keys) and its live `api_base` are leftovers of an earlier
+ * sign-in, which a logout or a Desktop sign-out keeps. The account may have
+ * changed channel since, so a signed-out profile starts on stable, and the
+ * login that follows moves a nightly account to its own API
+ * (followAccountReleaseChannel). A custom endpoint keeps its pin: it was
+ * chosen on purpose, not learned from an account. A loopback address stays
+ * for inspection (getApiBase never routes to it without a lease) but loses
+ * the pin. NOTIS_JWT supplies a credential without a route, so the profile
+ * keeps routing it.
+ */
+export function routingProfile(profile = {}, env = process.env) {
+  if (holdsAccount(profile) || env.NOTIS_JWT) return profile;
+  const apiBase = profile.api_base;
+  const local = isLocalApiBase(apiBase);
+  if (apiBase && !local && !isLiveApiBase(apiBase)) return profile;
+  const { api_base: _apiBase, oauth_api_base: _oauthApiBase, release_channel: _releaseChannel, ...rest } = profile;
+  return local ? { ...rest, api_base: apiBase } : rest;
+}
+
+/** A dev credential or an OAuth grant, a refresh token alone included (Desktop reads it so too). */
+function holdsAccount(profile = {}) {
+  return Boolean(profile.dev_access_token || profile.oauth_access_token || profile.oauth_refresh_token);
+}
+
+/**
  * Pick the live Notis API for this profile.
  *
  * Nightly accounts (`users.release_channel = 'nightly'`, pinned on the profile
@@ -553,7 +587,7 @@ export function getApiBase(config, profileName, override) {
   if (env) {
     return env;
   }
-  const profile = getProfile(config, profileName);
+  const profile = routingProfile(getProfile(config, profileName));
   const profileApiBase = profile.api_base;
 
   // A loopback api_base is only meaningful while the `./dev.sh` that wrote it
@@ -837,7 +871,7 @@ export function resolveRuntimeProfile(
             // An explicit route owns this invocation even when the stored
             // profile is pinned to the opposite release channel.
             ? { api_base: apiBase }
-            : { ...profile, api_base: apiBase },
+            : { ...routingProfile(profile), api_base: apiBase },
         ),
     apiBase,
     requestedApiBase: normalizedRequestedApiBase,

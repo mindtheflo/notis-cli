@@ -606,6 +606,8 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
         profiles: {
           default: {
             beta: true,
+            oauth_access_token: 'grant',
+            oauth_access_expires_at: 4102444800,
           },
         },
       },
@@ -620,6 +622,8 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
         profiles: {
           default: {
             api_base: 'https://api-beta.notis.ai',
+            oauth_access_token: 'grant',
+            oauth_access_expires_at: 4102444800,
           },
         },
       },
@@ -627,6 +631,24 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
       undefined,
     );
     assert.equal(betaFromStoredApi, 'https://api-beta.notis.ai');
+
+    // A signed-out profile keeps the pin and address of the account that left
+    // it (a logout keeps both). Its next login starts on stable, and a nightly
+    // account is then moved to its own API (followAccountReleaseChannel).
+    for (const leftover of [
+      { beta: true },
+      { release_channel: 'nightly' },
+      { channel: 'beta' },
+      { api_base: 'https://api-nightly.notis.ai', release_channel: 'nightly' },
+      { api_base: 'https://api-beta.notis.ai' },
+      { api_base: 'http://localhost:8123', release_channel: 'nightly' },
+    ]) {
+      assert.equal(
+        getApiBase({ current_profile: 'default', profiles: { default: leftover } }, 'default', undefined),
+        'https://api.notis.ai',
+        JSON.stringify(leftover),
+      );
+    }
   } finally {
     if (originalConductorPort) {
       process.env.CONDUCTOR_PORT = originalConductorPort;

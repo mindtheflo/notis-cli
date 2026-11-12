@@ -19,7 +19,7 @@ import {
   packageTagForChannel,
   resolveChannelSwitch,
 } from '../src/runtime/channel.js';
-import { resolveRuntimeProfile } from '../src/runtime/profiles.js';
+import { listProfiles, resolveRuntimeProfile } from '../src/runtime/profiles.js';
 
 test('CLI launch defers base refresh only to the already-locked skills sync command', () => {
   assert.equal(isSkillsSyncInvocation(['--json', 'skills', 'sync']), true);
@@ -227,7 +227,8 @@ test('environment profiles, JWT credentials, and worktree routing preserve the e
     profiles: {
       'stable-account': { release_channel: 'stable' },
       // Written by a CLI from before the nightly rename.
-      'beta-account': { channel: 'beta' },
+      'beta-account': { channel: 'beta', oauth_access_token: 'grant', oauth_access_expires_at: 4102444800 },
+      'signed-out-beta': { channel: 'beta' },
     },
   };
   assert.equal(
@@ -241,6 +242,14 @@ test('environment profiles, JWT credentials, and worktree routing preserve the e
   assert.equal(
     channelFromProfile(channelProfileForArgs([], { NOTIS_JWT: 'token' }, {
       config: { ...config, current_profile: 'beta-account' },
+      worktreeRuntime: null,
+    })),
+    'nightly',
+  );
+  // Even a profile with no credential keeps routing the NOTIS_JWT it is given.
+  assert.equal(
+    channelFromProfile(channelProfileForArgs([], { NOTIS_JWT: 'token' }, {
+      config: { ...config, current_profile: 'signed-out-beta' },
       worktreeRuntime: null,
     })),
     'nightly',
@@ -262,6 +271,34 @@ test('environment profiles, JWT credentials, and worktree routing preserve the e
       worktreeRuntime: { unavailable: new Error('stopped') },
     }),
     {},
+  );
+});
+
+test('a signed-out profile runs the stable build whatever channel it was pinned to', () => {
+  // A logout or a Desktop sign-out keeps the pin and the address of the
+  // account that used to be there; the next login follows the account instead.
+  const config = {
+    current_profile: 'signed-out',
+    profiles: {
+      'signed-out': { beta: true, release_channel: 'nightly', api_base: 'https://api-beta.notis.ai' },
+      custom: { api_base: 'https://notis.example.test', release_channel: 'nightly' },
+      'refresh-only': { api_base: 'https://api-nightly.notis.ai', release_channel: 'nightly', oauth_refresh_token: 'refresh' },
+    },
+  };
+  const current = channelProfileForArgs([], {}, { config, worktreeRuntime: null });
+  assert.equal(channelFromProfile(current), null);
+  assert.equal(resolveChannelSwitch({ runningVersion: '0.2.28', profile: current }).switch, false);
+  // A refresh token alone is still a sign-in (Desktop reads it so too).
+  assert.equal(
+    channelFromProfile(channelProfileForArgs([], { NOTIS_PROFILE: 'refresh-only' }, { config, worktreeRuntime: null })),
+    'nightly',
+  );
+  // `notis profile list` shows the route commands take.
+  assert.equal(listProfiles(config).find((entry) => entry.name === 'signed-out').api_base, 'https://api.notis.ai');
+  // A custom endpoint was chosen on purpose, so its pin stays.
+  assert.equal(
+    channelFromProfile(channelProfileForArgs([], { NOTIS_PROFILE: 'custom' }, { config, worktreeRuntime: null })),
+    'nightly',
   );
 });
 
@@ -292,6 +329,50 @@ test('an explicit API route overrides the stored profile channel in the effectiv
     else process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING = previous.disableWorktree;
     if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previous.nodeEnv;
+  }
+});
+
+test('the login of a signed-out profile starts on the stable API, a signed-in one keeps its channel', () => {
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-channel-signed-out-')), 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      // What a logout leaves of an account that was on the nightly channel.
+      default: { api_base: 'https://api-nightly.notis.ai', release_channel: 'nightly', beta: true },
+      nightly: {
+        api_base: 'https://api-nightly.notis.ai',
+        release_channel: 'nightly',
+        oauth_api_base: 'https://api-nightly.notis.ai',
+        oauth_access_token: 'grant',
+        oauth_access_expires_at: 4102444800,
+      },
+    },
+  }));
+  const previous = {
+    config: process.env.NOTIS_CLI_CONFIG_FILE,
+    disableWorktree: process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING,
+    nodeEnv: process.env.NODE_ENV,
+    apiBase: process.env.NOTIS_API_BASE,
+    jwt: process.env.NOTIS_JWT,
+  };
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING = '1';
+  process.env.NODE_ENV = 'test';
+  delete process.env.NOTIS_API_BASE;
+  delete process.env.NOTIS_JWT;
+  try {
+    const signedOut = resolveRuntimeProfile({}, { requireAuth: false });
+    assert.equal(signedOut.apiBase, 'https://api.notis.ai');
+    assert.equal(signedOut.channel, 'stable');
+    const signedIn = resolveRuntimeProfile({ profile: 'nightly' }, { requireAuth: false });
+    assert.equal(signedIn.apiBase, 'https://api-nightly.notis.ai');
+    assert.equal(signedIn.channel, 'nightly');
+  } finally {
+    for (const [key, name] of [['config', 'NOTIS_CLI_CONFIG_FILE'], ['disableWorktree', 'NOTIS_TEST_DISABLE_WORKTREE_ROUTING'],
+      ['nodeEnv', 'NODE_ENV'], ['apiBase', 'NOTIS_API_BASE'], ['jwt', 'NOTIS_JWT']]) {
+      if (previous[key] === undefined) delete process.env[name];
+      else process.env[name] = previous[key];
+    }
   }
 });
 

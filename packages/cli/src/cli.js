@@ -23,6 +23,7 @@ import {
   resolveOutputMode,
   resolveRuntimeProfile,
   resolveWorktreeRuntime,
+  routingProfile,
   workspacePath,
 } from './runtime/profiles.js';
 
@@ -283,7 +284,7 @@ export function channelProfileForArgs(
   const config = suppliedConfig || loadConfig();
   const explicitProfile = profileName || env.NOTIS_PROFILE;
   if (explicitProfile) {
-    return getProfile(config, explicitProfile);
+    return routingProfile(getProfile(config, explicitProfile), env);
   }
   const resolvedWorktree = suppliedWorktreeRuntime === undefined
     ? resolveWorktreeRuntime()
@@ -299,7 +300,9 @@ export function channelProfileForArgs(
   }
   // NOTIS_JWT replaces the credential, not the route. Unless NOTIS_API_BASE
   // was explicit above, the selected/current profile still owns the channel.
-  return getProfile(config, config.current_profile || DEFAULT_PROFILE);
+  // A signed-out profile's channel is a leftover (routingProfile): it runs on
+  // this build, and the next login pins the account's own channel.
+  return routingProfile(getProfile(config, config.current_profile || DEFAULT_PROFILE), env);
 }
 
 function interruptedExitCode(signal) {
