@@ -1,5 +1,5 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
-import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
+import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
 import { buildSpaceArtifact, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
@@ -131,6 +131,18 @@ function describePendingChanges(summary) {
 
 const SKELETON_FILE = 'bundle/skeleton.json';
 
+/** Reviewable: where the screenshots of the loaded view are, and each width that had not finished loading its data. */
+function describeScreenshots(render) {
+  const renders = render?.renders || [];
+  const paths = renders.filter(value => value.loaded && value.screenshot_path).map(value => value.screenshot_path);
+  const parts = paths.length ? [`Screenshots after the data loaded: ${paths.join(', ')}.`] : [];
+  for (const value of renders.filter(item => item.loaded === false)) {
+    const message = value.message;
+    if (message) parts.push(value.screenshot_path ? `${message.replace(/\.$/, '')}; ${value.screenshot_path} shows what it showed then.` : message);
+  }
+  return parts.length ? ` ${parts.join(' ')}` : '';
+}
+
 /** Reviewable: the measured loading skeleton, its warnings and where the loading screenshots are. */
 function describeSkeleton(skeleton) {
   if (!skeleton) return '';
@@ -160,6 +172,8 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
   if (!ctx.options.spaceId) throw usageError('Pass --space-id <id> for the existing Space.');
   const intentKey = publish ? requestId(ctx) : null;
   const release = await prepareSpaceRelease(directory, key);
+  // A verify that stops before it renders (a refused source check, a request ID mismatch) leaves no image of an older build.
+  saveSpaceScreenshots(directory, []);
   try {
     if (publish) requireSpaceIcon(release.manifest, key);
     const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, ctx.options.spaceId, intentKey];
@@ -196,6 +210,14 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       // Test seam only: the command context never carries it from user options.
       ...(typeof ctx.loadSpaceRenderer === 'function' ? { loadRenderer: ctx.loadSpaceRenderer } : {}) }); }
     finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
+    {
+      // Always: a verify that stopped early (cancelled, a container, a harness failure) keeps no image of an older build.
+      const saved = saveSpaceScreenshots(directory, render.screenshots || []);
+      if (render.renders) render.renders = render.renders.map(value => {
+        const path = saved.find(item => item.width === value.width)?.path;
+        return path ? { ...value, screenshot_path: path } : value;
+      });
+    }
     if (render.skeleton) {
       const paths = saveSpacePendingScreenshots(directory, render.pendingScreenshots || []);
       render.skeleton.pending_screenshots = render.skeleton.pending_screenshots.map((value, index) => ({ ...value, ...(paths[index] ? { path: paths[index] } : {}) }));
@@ -203,7 +225,7 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
     const diagnosticPath = saveSpaceVerification(directory, { ...render, space_id: body.space_id });
     if (!['passed', 'not_applicable_container'].includes(render.status)) {
       const reason = render.errors?.find(value => value.phase === 'fixture')?.message;
-      throw usageError(`The built Space did not pass offline render verification. Nothing was published.${reason ? ` ${reason}` : ''}`,
+      throw usageError(`The built Space did not pass offline render verification. Nothing was published.${reason ? ` ${reason}` : ''}${describeScreenshots(render)}`,
         { render, diagnostic_path: diagnosticPath });
     }
     // The measured skeleton joins the release in memory, replacing any file at its path; nothing is written to disk.
@@ -246,12 +268,12 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       : serverVerification;
     if (publish && !ctx.options.dryRun && !stageOnly) recordPublication(directory, local, result);
     const data = { ...result, render, diagnostic_path: diagnosticPath, ...(local.summary ? { local_changes: local.summary } : {}) };
-    const skeletonSummary = describeSkeleton(render.skeleton);
+    const skeletonSummary = describeSkeleton(render.skeleton), screenshotSummary = describeScreenshots(render);
     return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data,
       humanSummary: publish && !ctx.options.dryRun
-        ? stageOnly ? `Prepared ${key} as revision ${result.candidate_revision}. ${result.preview_url || 'This container has no executable preview.'} Live source was not changed.${describePendingChanges(local.summary).replace(/\.$/, '; they go live with notis spaces promote.')}`
-          : `Published ${key} as revision ${result.published_revision}${result.replayed ? ' (confirmed retry)' : ''}.${describeAppliedChanges(result)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}${skeletonSummary}`
-        : `Verified ${key}'s frozen source${render.status === 'passed' ? ', rendered fixtures' : ' (container)'} and current authorizations; nothing was published.${describePendingChanges(local.summary)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}${skeletonSummary}`,
+        ? stageOnly ? `Prepared ${key} as revision ${result.candidate_revision}. ${result.preview_url || 'This container has no executable preview.'} Live source was not changed.${describePendingChanges(local.summary).replace(/\.$/, '; they go live with notis spaces promote.')}${screenshotSummary}`
+          : `Published ${key} as revision ${result.published_revision}${result.replayed ? ' (confirmed retry)' : ''}.${describeAppliedChanges(result)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}${screenshotSummary}${skeletonSummary}`
+        : `Verified ${key}'s frozen source${render.status === 'passed' ? ', rendered fixtures' : ' (container)'} and current authorizations; nothing was published.${describePendingChanges(local.summary)}${describeViewerReads(serverVerification.capabilities)}${describeCloudComputer(serverVerification.capabilities)}${screenshotSummary}${skeletonSummary}`,
       warnings: skeletonWarnings.length ? [...(local.warnings || []), ...skeletonWarnings] : local.warnings, meta: { mutating: publish && !ctx.options.dryRun } });
   } finally { release.close(); }
 }

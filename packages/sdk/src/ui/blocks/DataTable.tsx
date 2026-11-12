@@ -184,7 +184,8 @@ export function DataTable<R>({ columns, rows, groups, rowKey, onRowPress, rowLab
     if (!fit.hidden.length && table.scrollWidth <= wrap.clientWidth + 0.5) return;
     table.setAttribute('data-measuring', '');
     const overflow = table.scrollWidth - wrap.clientWidth;
-    const heads = [...table.querySelectorAll<HTMLElement>('thead th')];
+    // Its own header row only: a table inside a cell has header cells of its own.
+    const heads = [...(table.tHead?.rows[0]?.cells ?? [])] as HTMLElement[];
     const widths = heads.map((th) => th.offsetWidth);
     table.removeAttribute('data-measuring');
     const next = wrap.clientWidth > 0 ? autoFit(overflow, widths, primaryIndex, fixedWidths) : NO_FIT;

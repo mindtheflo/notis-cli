@@ -434,6 +434,42 @@ test('DataTable: groups with counts, a press target covering each row, columns t
   assert.equal(css.indexOf('559.98') < css.indexOf('419.98'), true, 'narrower bands come later, so their rules win');
 });
 
+test('DataTable: a table inside a cell gets no sticky header and never counts as a DataTable column', async () => {
+  // Only the DataTable's own header row takes the sticky muted header: the header cells of a table a cell holds (a small
+  // breakdown) never stick, and they are never measured as columns when the DataTable fits its width.
+  const header = cssRule('.nui-dtable > thead > tr > th') ?? '';
+  assert.match(header, /position: sticky; top: 0; z-index: 2; height: 36px;/);
+  assert.equal(cssRule('.nui-dtable thead th'), null, 'no descendant selector reaches a nested table');
+  assert.doesNotMatch(toolkitCss, /\.nui-dtable thead\b/, 'no other rule styles every thead inside the table');
+
+  const columns: DataTableColumn<Box>[] = [
+    { id: 'name', label: 'Name', primary: true, cell: (box) => box.name },
+    { id: 'ram', label: 'Memory', cell: (box) => box.ram },
+    { id: 'split', label: 'Split', cell: (box) => (
+      <table className="nested"><thead><tr><th>Used</th><th>Free</th></tr></thead><tbody><tr><td>{box.ram}</td><td>-</td></tr></tbody></table>
+    ) },
+  ];
+  // 100 px of overflow: the DataTable's last column (200 px) is the one to hide. Counting the nested header cells as
+  // columns 3 and 4 hid an index no column has, so the table kept overflowing.
+  const proto = dom.window.HTMLElement.prototype;
+  const saved = (['offsetWidth', 'clientWidth', 'scrollWidth'] as const).map((key) => [key, Object.getOwnPropertyDescriptor(proto, key)] as const);
+  Object.defineProperty(proto, 'offsetWidth', { configurable: true, get(this: HTMLElement) {
+    return this.tagName === 'TH' ? (this.closest('table.nested') ? 500 : 200) : 0;
+  } });
+  Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.classList.contains('nui-dtable-wrap') ? 500 : 0; } });
+  Object.defineProperty(proto, 'scrollWidth', { configurable: true, get(this: HTMLElement) { return this.classList.contains('nui-dtable') ? 600 : 0; } });
+  try {
+    await mount(<DataTable columns={columns} rows={BOXES.slice(0, 1)} rowKey={(box) => box.id} />);
+  } finally {
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(proto, key, descriptor); else delete (proto as unknown as Record<string, unknown>)[key];
+    }
+  }
+  const css = doc.querySelector('.nui-dtable-wrap > style')?.textContent ?? '';
+  assert.match(css, /\[data-ci="2"\] \{ display: none; \}/, 'the last DataTable column hides');
+  assert.doesNotMatch(css, /\[data-ci="[34]"\]/, 'no nested header cell is taken for a column');
+});
+
 test('DataTable: a control in a cell of a pressable row opens itself, not the row', async () => {
   const pressed: string[] = [];
   const opened: string[] = [];
@@ -472,7 +508,7 @@ test('DataTable: plain rows are not pressable, the primary never hides, no rows 
   const cells = cssRule('.nui-dtable th, .nui-dtable td') ?? '';
   assert.match(cells, /height: 40px;/);
   assert.match(cells, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
-  assert.match(cssRule('.nui-dtable thead th') ?? '', /position: sticky; top: 0; z-index: 2; height: 36px;/, 'above the cell controls of pressable rows (z-index 1)');
+  assert.match(cssRule('.nui-dtable > thead > tr > th') ?? '', /position: sticky; top: 0; z-index: 2; height: 36px;/, 'above the cell controls of pressable rows (z-index 1)');
   assert.match(cssRule('.nui-dtable :is(th, td):first-child') ?? '', /padding-left: 24px;/);
   assert.match(cssRule('.nui-dtable [data-primary]') ?? '',
     /width: 100%; max-width: 0; min-width: calc\(var\(--nui-dtable-primary-min, 120px\) \+ 24px\);/,

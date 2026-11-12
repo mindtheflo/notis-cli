@@ -66,19 +66,38 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
     await acquire(signal); held = true;
     const library = await loadRenderer(); rendererDigest = library.rendererDigest;
     pool = library.createBrowserPool({ concurrency: 2, maxQueue: 2 });
+    // The screenshots kept for the agent are taken once the view has finished loading its data, as `spaces screenshot`
+    // waits; a view still loading after the bounded wait keeps a screenshot of what it showed, and says so.
+    const readyTimeoutMs = readyWait(timeoutMs);
+    const screenshots = [];
     const observations = await Promise.allSettled(brokers.map(async ({ width, broker, stop }) => {
       const cancel = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
-      const result = await library.renderView({ broker, pool, outputs: ['markdown', 'screenshot'], width, timeoutMs, signal: cancel });
+      const result = await library.renderView({ broker, pool, outputs: ['markdown', 'screenshot'], width, timeoutMs, signal: cancel,
+        ...(readyTimeoutMs ? { readyTimeoutMs } : {}) });
       const blocked = result.blocked_calls || [];
-      return { width, mounted: true, status: blocked.length ? 'failed' : 'passed',
+      const png = Buffer.from(result.screenshot.data_base64, 'base64');
+      screenshots.push({ width, png });
+      return { width, mounted: true, status: blocked.length ? 'failed' : 'passed', loaded: true,
         markdown_sha256: createHash('sha256').update(result.markdown).digest('hex'),
-        screenshot_sha256: createHash('sha256').update(Buffer.from(result.screenshot.data_base64, 'base64')).digest('hex'),
+        screenshot_sha256: sha256(png),
         screenshot_width: result.screenshot.width, screenshot_height: result.screenshot.height,
         rendered_at: result.rendered_at, blocked_calls: blocked };
     }));
-    const renders = observations.map((value, index) => value.status === 'fulfilled' ? value.value : {
-      width: brokers[index].width, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed',
+    const renders = observations.map((value, index) => {
+      if (value.status === 'fulfilled') return value.value;
+      const width = brokers[index].width, shot = value.reason?.code === 'render_not_ready' ? value.reason.screenshot : null;
+      if (!shot?.data_base64) return { width, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed' };
+      const png = Buffer.from(shot.data_base64, 'base64');
+      screenshots.push({ width, png });
+      const mounted = value.reason.mounted === true;
+      const seconds = value.reason.waitedSeconds || Math.round((readyTimeoutMs || 0) / 1000);
+      return { width, mounted, status: 'failed', error: 'render_not_ready', loaded: false,
+        message: mounted ? `At ${width} px the view had not finished loading its data after ${seconds} s.`
+          : `At ${width} px the view had not shown anything after ${seconds} s.`,
+        screenshot_sha256: sha256(png), screenshot_width: shot.width, screenshot_height: shot.height,
+        blocked_calls: Array.isArray(value.reason.blocked) ? value.reason.blocked : [] };
     });
+    screenshots.sort((left, right) => left.width - right.width);
     const runtimeCalls = brokers.flatMap(({ width, broker }) => broker.calls.map(call => ({ width, ...call })));
     const passed = renders.every(value => value.status === 'passed') && runtimeCalls.every(call => call.ok);
     // Each distinct fixture reason once (both widths usually hit the same one), ahead of the generic line.
@@ -86,10 +105,13 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
       .map(call => [call.error, { phase: 'fixture', operation: call.operation,
         ...(call.recordKey ? { record_key: call.recordKey } : {}), ...(call.actionId ? { action_id: call.actionId } : {}),
         message: call.error }])).values()].slice(0, 10);
+    const notReady = renders.filter(value => value.error === 'render_not_ready')
+      .map(value => ({ phase: 'renderer', width: value.width, message: value.message }));
     const result = { ...diagnostic, status: passed ? 'passed' : 'failed', mounted: renders.every(value => value.mounted),
       fixture_digest: brokers[0].broker.fixtureDigest, renderer_digest: rendererDigest,
       render_count: renders.length, browser_count: 1, renders, runtimeCalls,
-      errors: passed ? [] : [...fixtureErrors, { phase: 'renderer', message: 'At least one width or read-only fixture failed verification.' }] };
+      errors: passed ? [] : [...fixtureErrors, ...notReady, { phase: 'renderer', message: 'At least one width or read-only fixture failed verification.' }] };
+    Object.defineProperty(result, 'screenshots', { value: screenshots, enumerable: false });
     // The skeleton is measured only from a view that rendered cleanly, with a renderer that can measure it.
     if (passed && typeof library.buildSkeletonDocument === 'function') {
       const capture = await captureSpaceSkeleton({ library, pool, release, capabilities, timeoutMs, signal, authorizationMode, unavailableActions });
@@ -108,6 +130,10 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
   }
 }
 const FIXTURE_FAILURE_GRACE_MS = 1_500;
+// How long verify waits for the view to finish loading its data before it shoots what it shows: the render timeout less
+// a margin for that screenshot and the final checks (40 s of the default 45 s, about what the whole render left before).
+const READY_MARGIN_MS = 5_000;
+const readyWait = timeoutMs => (timeoutMs - READY_MARGIN_MS >= 1_000 ? timeoutMs - READY_MARGIN_MS : undefined);
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const captureFailure = (width, locale, error) => ({ check: 'capture_failed', severity: 'warning', width, locale,

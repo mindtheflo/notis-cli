@@ -192,8 +192,8 @@ ${staleSkeleton ? `fs.writeFileSync('.notis/output/bundle/skeleton.json', ${JSON
 function scriptedRenderer(state) {
   const shot = (label, width) => ({ data_base64: b(`png ${label} ${width}`), width, height: 900 });
   return async () => ({ ...renderer, rendererDigest, createBrowserPool: () => ({ close: async () => {} }),
-    async renderView({ width, pending, measure, locale, skeleton }) {
-      state.renders.push({ width, pending: Boolean(pending), measure: Boolean(measure), locale, skeleton: Boolean(skeleton) });
+    async renderView({ width, pending, measure, locale, skeleton, readyTimeoutMs }) {
+      state.renders.push({ width, pending: Boolean(pending), measure: Boolean(measure), locale, skeleton: Boolean(skeleton), readyTimeoutMs });
       if (pending) {
         if (state.mode === 'static') return { pending: { static: true, reads: 0, regions: [], landmarks: [] }, screenshot: shot('static', width) };
         return { pending: { static: false, reads: 1, viewport: { width, height: 900 }, landmarks: [],
@@ -205,6 +205,12 @@ function scriptedRenderer(state) {
         if (state.mode === 'broken') throw Object.assign(new Error('measure failed'), { code: 'fixture_measure_failed' });
         return { skeleton_measure: { landmarks: [], regions: [{ key: 'main', width, y: 0, groups: [],
           bones: [[0, 0, state.boneWidth, 300, 8, 0]] }] } };
+      }
+      if (state.failWidth === width) {
+        if (state.mode !== 'not_ready') throw new renderer.ViewRenderError('render_failed', 'The view could not be rendered.');
+        throw Object.defineProperties(new renderer.ViewRenderError('render_not_ready', 'Not ready.', 504),
+          { screenshot: { value: shot('still loading', width) }, mounted: { value: true }, waitedSeconds: { value: 38 },
+            blocked: { value: [{ code: 'render_read_only' }] } });
       }
       return { markdown: '# Board', screenshot: shot('final', width), rendered_at: new Date().toISOString(), blocked_calls: [] };
     } });
@@ -285,6 +291,63 @@ test('verify adds the measured skeleton in memory and binds it with a second sou
   assert.match(result.humanSummary, /Loading skeleton measured for main\./);
   assert.match(result.humanSummary, /Loading screenshots: .*pending-390-en\.png/);
   assert.deepEqual(result.warnings ?? [], []);
+});
+
+test('verify saves the screenshots of the loaded view at both widths and prints where they are', async t => {
+  const root = await builtSpace(t); server(t);
+  const state = { mode: 'clean', boneWidth: 100, renders: [] };
+  const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
+  const result = await ctx.spec.handler(ctx);
+  const finals = state.renders.filter(value => !value.pending && !value.measure);
+  assert.deepEqual(finals.map(value => value.readyTimeoutMs), [40_000, 40_000], 'each screenshot waits up to 40 s for the data');
+  for (const value of result.data.render.renders) {
+    assert.equal(value.loaded, true);
+    assert.equal(value.screenshot_path, join(root, '.notis', `view-${value.width}.png`));
+    const png = readFileSync(value.screenshot_path);
+    assert.equal(png.toString('utf8'), `png final ${value.width}`, 'the screenshot taken after the data arrived, not a loading one');
+    assert.equal(sha256(png), value.screenshot_sha256);
+  }
+  const diagnostic = JSON.parse(readFileSync(result.data.diagnostic_path, 'utf8'));
+  assert.equal(diagnostic.renders.every(value => value.loaded === true && value.screenshot_path), true);
+  assert.equal(JSON.stringify(diagnostic).includes(b('png final 390')), false, 'the image bytes stay out of the diagnostic');
+  assert.match(result.humanSummary, /Screenshots after the data loaded: [^ ]*view-390\.png, [^ ]*view-1440\.png\./);
+});
+
+test('a view still loading after the bounded wait keeps its screenshot, and verify says so', async t => {
+  const root = await builtSpace(t); server(t);
+  const state = { mode: 'not_ready', failWidth: 390, boneWidth: 100, renders: [] };
+  const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
+  const shot = join(root, '.notis', 'view-390.png');
+  await assert.rejects(ctx.spec.handler(ctx), error => {
+    assert.match(error.message, /did not pass offline render verification/);
+    // The seconds it actually waited: the wait also leaves the capture room before the render deadline.
+    assert.match(error.message, new RegExp(`At 390 px the view had not finished loading its data after 38 s; ${shot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} shows what it showed then\.`));
+    assert.match(error.message, /Screenshots after the data loaded: [^ ]*view-1440\.png\./);
+    const notReady = error.details.render.renders.find(value => value.width === 390);
+    assert.deepEqual(notReady.blocked_calls, [{ code: 'render_read_only' }], 'the calls it blocked while loading are kept');
+    assert.equal(error.details.render.errors.filter(value => value.width === 390).length, 1);
+    return true;
+  });
+  assert.equal(readFileSync(shot, 'utf8'), 'png still loading 390');
+  assert.equal(readFileSync(join(root, '.notis', 'view-1440.png'), 'utf8'), 'png final 1440');
+  // A later verify whose 390 render fails outright leaves no stale image behind.
+  state.mode = 'broken_render';
+  await assert.rejects(ctx.spec.handler(ctx), /did not pass offline render verification/);
+  assert.equal(existsSync(shot), false);
+  // Nor does one that stops before rendering anything (here the renderer cannot load).
+  assert.equal(existsSync(join(root, '.notis', 'view-1440.png')), true);
+  const stopped = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root },
+    async () => { throw new Error('The shared view renderer is missing.'); });
+  await assert.rejects(stopped.spec.handler(stopped), /did not pass offline render verification/);
+  assert.equal(existsSync(join(root, '.notis', 'view-1440.png')), false);
+  // Nor one the server refuses before verify renders anything.
+  state.mode = 'clean'; delete state.failWidth;
+  await ctx.spec.handler(ctx);
+  assert.equal(existsSync(shot), true);
+  t.mock.method(globalThis, 'fetch', async () => new Response('{"message":"source refused"}', { status: 422 }));
+  await assert.rejects(ctx.spec.handler(ctx));
+  assert.equal(existsSync(shot), false);
+  assert.equal(existsSync(join(root, '.notis', 'view-1440.png')), false);
 });
 
 test('a retried deploy reuses the stored verification and sends the same skeleton bytes', async t => {

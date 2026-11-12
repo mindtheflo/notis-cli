@@ -2022,17 +2022,40 @@ export function saveSpaceVerification(projectDir, diagnostic) {
   });
 }
 
+/** Replace one verify image in the pinned .notis directory (the working directory) without following a planted link. */
+function replaceVerifyImage(name, png) {
+  rmSync(name, { force: true });
+  if (png) writeFileSync(name, png, { flag: 'wx', mode: 0o600 });
+}
+
 /** The loading-state screenshots of the last verify, `pending-<width>-<locale>.png` beside the diagnostic. */
 export function saveSpacePendingScreenshots(projectDir, screenshots) {
   if (!screenshots?.length) return [];
   return withAppReleaseWorkspace(projectDir, (workspace) => screenshots.map(({ width, locale, png }) => {
     if (![390, 1440].includes(width) || !['en', 'fr'].includes(locale)) throw usageError('Unsafe pending screenshot name.');
     const name = `pending-${width}-${locale}.png`;
-    // Replace the previous verify's image without following a planted link.
-    rmSync(name, { force: true });
-    writeFileSync(name, png, { flag: 'wx', mode: 0o600 });
+    replaceVerifyImage(name, png);
     return join(workspace.projectDir, '.notis', name);
   }));
+}
+
+/**
+ * The screenshots of the last verify, `view-<width>.png` beside the diagnostic, taken once the view had loaded its data
+ * (or of what it showed when it had not). A width without one this time loses the previous verify's image.
+ */
+export function saveSpaceScreenshots(projectDir, screenshots) {
+  return withAppReleaseWorkspace(projectDir, (workspace) => {
+    const kept = new Map((screenshots || []).map(value => [value.width, value]));
+    if ([...kept.keys()].some(width => ![390, 1440].includes(width))) throw usageError('Unsafe screenshot name.');
+    const saved = [];
+    for (const width of [390, 1440]) {
+      const name = `view-${width}.png`;
+      replaceVerifyImage(name, kept.get(width)?.png);
+      if (!kept.has(width)) continue;
+      saved.push({ width, path: join(workspace.projectDir, NOTIS_DIR, name) });
+    }
+    return saved;
+  });
 }
 
 /** Retain the original CAS after an uncertain publish response, across CLI exits. */

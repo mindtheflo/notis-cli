@@ -2727,3 +2727,12 @@ test('a list in a scrolling page lets the wheel reach the page: its scroll area 
   assert.ok(rules.length >= 3, 'the list scroll rules are found');
   for (const [, selector, body] of rules) assert.doesNotMatch(body, /overscroll-behavior(-y)?: contain/, selector);
 });
+
+test('a reader in a scrolling page lets the wheel reach the page: its body never contains overscroll', () => {
+  // The same trap as the list's scroll area: a reader that grows with a scrolling page cannot scroll its body, and
+  // Chromium still applied `contain` there, so the wheel and touch over an open item never reached the page.
+  assert.match(cssRule('.nui-lr-reader-body') ?? '', /overflow-y: auto;/, 'a bounded reader still scrolls on its own');
+  const rules = [...toolkitCss.matchAll(/\n([^\n{}]*\.nui-lr-reader-body[^\n{}]*) \{([^}]*)\}/g)];
+  assert.ok(rules.length >= 2, 'the reader body rules are found');
+  for (const [, selector, body] of rules) assert.doesNotMatch(body, /overscroll-behavior(-y)?: contain/, selector);
+});

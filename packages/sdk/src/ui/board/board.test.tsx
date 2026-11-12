@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { act, useState, type ReactNode } from 'react';
@@ -384,4 +385,15 @@ test('a tile whose stage matches no column is not shown on the board', async () 
   await mount(() => <Page moves={[]} props={{ items: [...DEALS, { id: 'd', title: 'Dune', stage: 'archived' }] }} />);
   assert.deepEqual([...doc.querySelectorAll('.nui-tile')].map((tile) => tile.getAttribute('data-nui-item')), ['a', 'b', 'c']);
   assert.equal(q('[data-nui-item="d"]'), null);
+});
+
+test('a board in a scrolling page lets the wheel reach the page: its column bodies never contain overscroll', () => {
+  // A board that grows with a scrolling page cannot scroll its columns, and Chromium still applied `contain` to their
+  // bodies, so the wheel and touch over a column never reached the page. The host contains overscroll at the Space root.
+  const toolkitCss = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  const rules = [...toolkitCss.matchAll(/\n([^\n{}]*\.nui-board-body[^\n{}]*) \{([^}]*)\}/g)];
+  const own = rules.find(([, selector]) => selector === '.nui-board-body');
+  assert.match(own?.[2] ?? '', /overflow-y: auto;/, 'a bounded column still scrolls on its own');
+  assert.ok(rules.length >= 3, 'the column body rules are found');
+  for (const [, selector, body] of rules) assert.doesNotMatch(body, /overscroll-behavior(-y)?: contain/, selector);
 });
