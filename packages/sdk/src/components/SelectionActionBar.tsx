@@ -1,6 +1,5 @@
 'use client';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { createPortal } from 'react-dom';
 import { useToolkitLocale } from '../ui/engine/hooks';
 import type { Words } from '../words/types';
 
@@ -296,8 +295,12 @@ export interface CiteSelectionBarProps {
   onCite(range: Range, text: string): void;
   enabled?: boolean;
   accept?: UseSelectionAnchorOptions['accept'];
-  /** Render the bar in document.body, out of a container that clips or transforms it. */
-  portal?: boolean;
+  /**
+   * Draws the bar somewhere other than beside the surface. The Portal's own pages hand the bar to a React portal on
+   * the page body, out of a container that clips or transforms it. A Space view never gives one: a Notis app stays
+   * inside its app surface, so its bar is drawn there, fixed to the viewport.
+   */
+  portal?(bar: ReactNode): ReactNode;
 }
 
 /**
@@ -310,7 +313,7 @@ export function CiteSelectionBar({ root, onCite, enabled = true, accept, portal 
   const { anchor, dismiss } = useSelectionAnchor(root, { enabled, accept, barSize });
   if (!anchor) return null;
   const bar = <SelectionActionBar anchor={anchor} onSize={setBarSize} actions={[citeSelectionAction(locale, anchor, root, dismiss, onCite)]} />;
-  return portal && typeof document !== 'undefined' ? createPortal(bar, document.body) : bar;
+  return portal ? portal(bar) : bar;
 }
 
 export const QUOTE_GLYPH = <svg aria-hidden="true" width="14" height="14" viewBox="0 0 256 256" fill="currentColor"><path d="M100,56H40A16,16,0,0,0,24,72v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,100,56Zm0,80H40V72h60ZM216,56H156a16,16,0,0,0-16,16v64a16,16,0,0,0,16,16h60v8a32,32,0,0,1-32,32,8,8,0,0,0,0,16,48.05,48.05,0,0,0,48-48V72A16,16,0,0,0,216,56Zm0,80H156V72h60Z" /></svg>;
