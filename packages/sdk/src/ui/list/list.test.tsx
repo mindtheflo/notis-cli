@@ -1784,9 +1784,27 @@ test('row divider: a painted line, never a border, that steps aside around an op
   assert.doesNotMatch(cssRule('div.nui-row') ?? '', /border-top/);
 });
 test('table: the edge cells sit 24px in (the page head inset), a group head keeps its own padding', () => {
-  assert.match(cssRule('.nui-table :is(th, td):first-child:not(.nui-group-head)') ?? '', /^padding-left: 24px;$/);
-  assert.match(cssRule('.nui-table :is(th, td):last-child:not(.nui-group-head)') ?? '', /^padding-right: 24px;$/);
+  assert.match(cssRule('.nui-table > * > :where(tr) > :is(th, td):first-child:not(.nui-group-head)') ?? '', /^padding-left: 24px;$/);
+  assert.match(cssRule('.nui-table > * > :where(tr) > :is(th, td):last-child:not(.nui-group-head)') ?? '', /^padding-right: 24px;$/);
   assert.match(cssRule('tr.nui-row > td') ?? '', /padding: 0 12px;/, 'inner cells keep 12px');
+});
+test('table: a table inside a row cell keeps its own look, no sticky header and no 24px edge inset', async () => {
+  await mount(list({
+    layout: 'table',
+    columns: <><th>Title</th><th>Detail</th></>,
+    row: (t) => <><td>{t.title}</td><td><table className="nested"><thead><tr><th>In</th><th>Out</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></td></>,
+  }));
+  const rules = [...toolkitCss.matchAll(/\n([^\n{}@]*\.nui-table\b[^\n{}]*) \{/g)].map((m) => m[1]);
+  assert.ok(rules.length >= 4, `found the table rules: ${rules.join(' | ')}`);
+  const outer = q('table.nui-table')!;
+  for (const rule of rules) {
+    const hits = [...outer.querySelectorAll(rule)];
+    assert.ok(!hits.some((node) => node.closest('table.nested')), `${rule} reaches the nested table`);
+  }
+  // The table's own cells still take them.
+  assert.ok(outer.querySelector(':scope > thead > tr > th')!.matches('.nui-table > * > :where(tr) > th'), 'the own header stays sticky');
+  const firstCell = outer.querySelector(':scope > tbody > tr > td')!;
+  assert.ok(rules.some((r) => r.includes(':first-child') && firstCell.matches(r)), 'the first own cell keeps its 24px inset');
 });
 const SPLIT_OPEN_FOOTER = '.nui-panels[data-mode="split"][data-reader-open] > .nui-panels-list .nui-lr-footer';
 

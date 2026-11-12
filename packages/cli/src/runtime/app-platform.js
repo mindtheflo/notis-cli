@@ -1973,9 +1973,18 @@ export function freezeSourceWorkspace(projectDir, sourceFiles) {
   return withAppReleaseWorkspace(projectDir, workspace => freezePinnedArtifactSnapshot(workspace, {}, sourceFiles), { create: true });
 }
 
+/** Whether a Space key is safe to put in a file name under .notis. */
+function isSpaceKey(key) {
+  return typeof key === 'string' && /^[a-z][a-z0-9_-]{0,99}$/.test(key);
+}
+
+function assertSpaceKey(key, message) {
+  if (!isSpaceKey(key)) throw usageError(message);
+  return key;
+}
+
 function selectedBuildName(key) {
-  if (typeof key !== 'string' || !/^[a-z][a-z0-9_-]{0,99}$/.test(key)) throw usageError('Choose a valid selected build key.');
-  return `space-build-${key}.json`;
+  return `space-build-${assertSpaceKey(key, 'Choose a valid selected build key.')}.json`;
 }
 
 /** Immutable bytes, not another authoring project or installed dependency tree. */
@@ -1988,6 +1997,8 @@ export function saveSelectedBuild(projectDir, key, release) {
       writeFileSync(temporary, JSON.stringify(snapshot), { flag: 'wx', mode: 0o600 });
       renameSync(temporary, name);
     } finally { rmSync(temporary, { force: true }); }
+    // The verify images showed the build this one replaces.
+    removeSpaceImages(key);
     return join(projectDir, NOTIS_DIR, name);
   }, { create: true });
 }
@@ -2028,34 +2039,63 @@ function replaceVerifyImage(name, png) {
   if (png) writeFileSync(name, png, { flag: 'wx', mode: 0o600 });
 }
 
-/** The loading-state screenshots of the last verify, `pending-<width>-<locale>.png` beside the diagnostic. */
-export function saveSpacePendingScreenshots(projectDir, screenshots) {
+const VERIFY_WIDTHS = [390, 1440], VERIFY_LOCALES = ['en', 'fr'];
+/** Each Space's verify images carry its key, so two Spaces verified from one folder never share a file. */
+function viewImageName(key, width) {
+  if (!VERIFY_WIDTHS.includes(width)) throw usageError('Unsafe screenshot name.');
+  return `view-${assertSpaceKey(key, 'Unsafe screenshot name.')}-${width}.png`;
+}
+function pendingImageName(key, width, locale) {
+  if (!VERIFY_WIDTHS.includes(width) || !VERIFY_LOCALES.includes(locale)) throw usageError('Unsafe pending screenshot name.');
+  return `pending-${assertSpaceKey(key, 'Unsafe pending screenshot name.')}-${width}-${locale}.png`;
+}
+
+/**
+ * Remove this Space's verify images before a new verify, so one that stops at any point (its build refused as stale
+ * included), or a release without a loading skeleton, leaves no image of an older build. Images named before they
+ * carried a key say no Space, so they go too.
+ */
+export function clearSpaceScreenshots(projectDir, key) {
+  // A key no build accepts has no images, and a folder never built has no .notis; the release step says why.
+  if (!isSpaceKey(key) || !lstatSync(join(projectDir, NOTIS_DIR), { throwIfNoEntry: false })) return;
+  withAppReleaseWorkspace(projectDir, () => removeSpaceImages(key));
+}
+
+/** Remove one Space's verify images, and the unnamed ones, from the pinned .notis directory (the working directory). */
+function removeSpaceImages(key) {
+  for (const width of VERIFY_WIDTHS) {
+    replaceVerifyImage(viewImageName(key, width));
+    replaceVerifyImage(`view-${width}.png`);
+    for (const locale of VERIFY_LOCALES) {
+      replaceVerifyImage(pendingImageName(key, width, locale));
+      replaceVerifyImage(`pending-${width}-${locale}.png`);
+    }
+  }
+}
+
+/** The loading-state screenshots of the last verify, `pending-<key>-<width>-<locale>.png` beside the diagnostic. */
+export function saveSpacePendingScreenshots(projectDir, key, screenshots) {
   if (!screenshots?.length) return [];
-  return withAppReleaseWorkspace(projectDir, (workspace) => screenshots.map(({ width, locale, png }) => {
-    if (![390, 1440].includes(width) || !['en', 'fr'].includes(locale)) throw usageError('Unsafe pending screenshot name.');
-    const name = `pending-${width}-${locale}.png`;
-    replaceVerifyImage(name, png);
-    return join(workspace.projectDir, '.notis', name);
+  // Every name is checked before any file is written.
+  const names = screenshots.map(({ width, locale }) => pendingImageName(key, width, locale));
+  return withAppReleaseWorkspace(projectDir, (workspace) => screenshots.map(({ png }, index) => {
+    replaceVerifyImage(names[index], png);
+    return join(workspace.projectDir, NOTIS_DIR, names[index]);
   }));
 }
 
 /**
- * The screenshots of the last verify, `view-<width>.png` beside the diagnostic, taken once the view had loaded its data
- * (or of what it showed when it had not). A width without one this time loses the previous verify's image.
+ * The screenshots of the last verify, `view-<key>-<width>.png` beside the diagnostic, taken once the view had loaded
+ * its data (or of what it showed when it had not).
  */
-export function saveSpaceScreenshots(projectDir, screenshots) {
-  return withAppReleaseWorkspace(projectDir, (workspace) => {
-    const kept = new Map((screenshots || []).map(value => [value.width, value]));
-    if ([...kept.keys()].some(width => ![390, 1440].includes(width))) throw usageError('Unsafe screenshot name.');
-    const saved = [];
-    for (const width of [390, 1440]) {
-      const name = `view-${width}.png`;
-      replaceVerifyImage(name, kept.get(width)?.png);
-      if (!kept.has(width)) continue;
-      saved.push({ width, path: join(workspace.projectDir, NOTIS_DIR, name) });
-    }
-    return saved;
-  });
+export function saveSpaceScreenshots(projectDir, key, screenshots) {
+  // One image per width, every name checked before any file is written.
+  const kept = new Map((screenshots || []).map(value => [value.width, value]));
+  const names = new Map([...kept.keys()].map(width => [width, viewImageName(key, width)]));
+  return withAppReleaseWorkspace(projectDir, (workspace) => [...kept].map(([width, { png }]) => {
+    replaceVerifyImage(names.get(width), png);
+    return { width, path: join(workspace.projectDir, NOTIS_DIR, names.get(width)) };
+  }));
 }
 
 /** Retain the original CAS after an uncertain publish response, across CLI exits. */

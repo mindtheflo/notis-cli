@@ -97,7 +97,7 @@ function splitRules(name: string, id: string, breakpoint: number): string {
   const self = `.nui-side-pane[data-side-pane-id="${id}"]`;
   return `@container ${name} (min-width: ${breakpoint}px) {`
     + `${self} > .nui-side-pane-row { flex-direction: row; height: 100%; }`
-    + `${self} > .nui-side-pane-row > :is(.nui-side-pane-main, .nui-side-pane-aside) { overflow-y: auto; overscroll-behavior: contain; }`
+    + `${self} > .nui-side-pane-row > :is(.nui-side-pane-main, .nui-side-pane-aside) { overflow-y: auto; }`
     + `${self} > .nui-side-pane-row > .nui-side-pane-aside { flex: 0 0 auto; width: clamp(var(--nui-side-pane-min), var(--nui-side-pane-w), min(var(--nui-side-pane-max), calc(100cqw - var(--nui-side-pane-main-min))));`
     + ' box-shadow: inset 1px 0 0 hsl(var(--border)); }'
     + `${self} > .nui-side-pane-row > .nui-side-pane-aside > .nui-side-pane-handle { display: block; }`

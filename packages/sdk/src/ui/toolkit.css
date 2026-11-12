@@ -194,13 +194,13 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-avatar > img { width: 100%; height: 100%; object-fit: cover; }
 .nui-group-head { display: flex; align-items: center; gap: 8px; padding: 16px 16px 6px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
 
-/* Table rows share the row states. */
+/* Table rows share the row states. The rules reach only the table's own rows and cells (the added steps in :where() keep their weight), so a table a cell holds keeps its own look. */
 .nui-table { width: 100%; border-collapse: separate; border-spacing: 0; }
-.nui-table th { position: sticky; top: 0; z-index: 1; height: 36px; padding: 0 12px; text-align: left; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); box-shadow: inset 0 -1px 0 hsl(var(--border) / .8); white-space: nowrap; }
+.nui-table > * > :where(tr) > th { position: sticky; top: 0; z-index: 1; height: 36px; padding: 0 12px; text-align: left; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); box-shadow: inset 0 -1px 0 hsl(var(--border) / .8); white-space: nowrap; }
 tr.nui-row > td { height: 40px; padding: 0 12px; border-top: 1px solid hsl(var(--border) / .5); font-size: 13px; white-space: nowrap; }
 /* A table's edge cells sit 24px in, like the page head and a data section's table (lb deck). */
-.nui-table :is(th, td):first-child:not(.nui-group-head) { padding-left: 24px; }
-.nui-table :is(th, td):last-child:not(.nui-group-head) { padding-right: 24px; }
+.nui-table > * > :where(tr) > :is(th, td):first-child:not(.nui-group-head) { padding-left: 24px; }
+.nui-table > * > :where(tr) > :is(th, td):last-child:not(.nui-group-head) { padding-right: 24px; }
 /* TBL4: fills only, never an inset on the first cell or a ring; the cursor row takes the open row's fill. */
 tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-shadow: none; }
 
@@ -603,7 +603,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-side-pane-aside { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; box-shadow: inset 0 1px 0 hsl(var(--border)); }
 @container nui-side-pane (min-width: 840px) {
   .nui-side-pane:not([data-custom-split]) > .nui-side-pane-row { flex-direction: row; height: 100%; }
-  .nui-side-pane:not([data-custom-split]) > .nui-side-pane-row > :is(.nui-side-pane-main, .nui-side-pane-aside) { overflow-y: auto; overscroll-behavior: contain; }
+  .nui-side-pane:not([data-custom-split]) > .nui-side-pane-row > :is(.nui-side-pane-main, .nui-side-pane-aside) { overflow-y: auto; }
   .nui-side-pane:not([data-custom-split]) > .nui-side-pane-row > .nui-side-pane-aside { flex: 0 0 auto; box-shadow: inset 1px 0 0 hsl(var(--border));
     width: clamp(var(--nui-side-pane-min, 280px), var(--nui-side-pane-w, 340px), min(var(--nui-side-pane-max, 720px), calc(100cqw - var(--nui-side-pane-main-min, 520px)))); }
   .nui-side-pane:not([data-custom-split]) > .nui-side-pane-row > .nui-side-pane-aside > .nui-side-pane-handle { display: block; }
@@ -957,29 +957,31 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
  * each, a sticky 36px muted header, the edge cells 24px in (DataTable moves the inset when an edge column hides).
  * Cells never wrap: they truncate. The primary column takes the room left; a fixed width holds its own; mono is muted
  * 12px monospace. Group headings are muted 12px rows with their count. Columns hide by the rules DataTable writes for
- * its own container (hideBelow). The wrap clips instead of scrolling so the header sticks to the page scroll.
+ * its own container (hideBelow). Every rule reaches only the table's own rows and cells (child combinators from
+ * .nui-dtable, the added steps in :where() so each rule keeps its weight), so a table a cell holds keeps its own look;
+ * a control anywhere in a pressable row's cells still sits over the row's press layer. The wrap clips instead of scrolling so the header sticks to the page scroll.
  */
 .nui-dtable-wrap { min-width: 0; overflow-x: clip; container: nui-dtable / inline-size; }
 .nui-dtable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; }
-.nui-dtable th, .nui-dtable td { height: 40px; padding: 0 12px; box-sizing: border-box; text-align: left; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid hsl(var(--border) / .5); }
-.nui-dtable :is(th, td):first-child { padding-left: 24px; }
-.nui-dtable :is(th, td):last-child { padding-right: 24px; }
+.nui-dtable > * > :where(tr) > :is(th, td) { height: 40px; padding: 0 12px; box-sizing: border-box; text-align: left; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid hsl(var(--border) / .5); }
+.nui-dtable > * > :where(tr) > :is(th, td):first-child { padding-left: 24px; }
+.nui-dtable > * > :where(tr) > :is(th, td):last-child { padding-right: 24px; }
 .nui-dtable > thead > tr > th { position: sticky; top: 0; z-index: 2; height: 36px; border-top: 0; font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); background: hsl(var(--background)); box-shadow: inset 0 -1px 0 hsl(var(--border) / .8); }
-.nui-dtable [data-primary] { width: 100%; max-width: 0; min-width: calc(var(--nui-dtable-primary-min, 120px) + 24px); }
+.nui-dtable > * > :where(tr) > [data-primary] { width: 100%; max-width: 0; min-width: calc(var(--nui-dtable-primary-min, 120px) + 24px); }
 /* The primary column never gets narrower than its minimum: a zero-height block sets its min-content width. */
 /* The primary min-width sits on the cell: a spacer inside it is ignored under max-width: 0. Padding is added back (12 + 12, or 24 + 12 at an edge). */
-.nui-dtable [data-primary]:is(:first-child, :last-child) { min-width: calc(var(--nui-dtable-primary-min, 120px) + 36px); }
-.nui-dtable [data-align="end"] { text-align: right; }
-.nui-dtable tbody [data-mono] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); }
-.nui-dtable-group > th { height: 32px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nui-dtable > * > :where(tr) > [data-primary]:is(:first-child, :last-child) { min-width: calc(var(--nui-dtable-primary-min, 120px) + 36px); }
+.nui-dtable > * > :where(tr) > [data-align="end"] { text-align: right; }
+.nui-dtable > tbody > :where(tr) > [data-mono] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); }
+:where(.nui-dtable > tbody) > .nui-dtable-group > th { height: 32px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
 .nui-dtable-group-count { margin-left: 8px; font-weight: 400; }
-.nui-dtable .nui-dtable-empty > td { height: auto; padding: 0; white-space: normal; }
-.nui-dtable tr[data-pressable] { position: relative; }
-.nui-dtable tr[data-pressable]:hover > * { background: hsl(var(--foreground) / .03); }
+.nui-dtable > :where(tbody) > .nui-dtable-empty > td { height: auto; padding: 0; white-space: normal; }
+.nui-dtable > :where(tbody) > tr[data-pressable] { position: relative; }
+.nui-dtable > :where(tbody) > tr[data-pressable]:hover > * { background: hsl(var(--foreground) / .03); }
 .nui-dtable-pick { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; text-align: left; font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: default; }
 .nui-dtable-pick::after { content: ""; position: absolute; inset: 0; }
 /* A control in another cell of a pressable row sits over the row's press layer, so it opens itself and not the row. */
-.nui-dtable tr[data-pressable] :is(a, button, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-dtable-pick) { position: relative; z-index: 1; }
+.nui-dtable > :where(tbody) > tr[data-pressable] > * :is(a, button, input, select, textarea, label, summary, [role="button"], [tabindex]:not([tabindex="-1"]), [aria-haspopup]):not(.nui-dtable-pick) { position: relative; z-index: 1; }
 .nui-spark { display: block; overflow: visible; }
 .nui-spark-fill { fill: hsl(var(--chart-1, 210 100% 49%) / .12); }
 .nui-spark-line { fill: none; stroke: hsl(var(--chart-1, 210 100% 49%)); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }

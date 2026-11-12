@@ -116,7 +116,8 @@ const PRIMARY_EDGE_MIN = 'min-width: calc(var(--nui-dtable-primary-min, 120px) +
  */
 function autoHideCss(tableId: string, fit: AutoFit, primaryIndex: number): string {
   if (!fit.hidden.length) return '';
-  const scope = `.nui-dtable[data-dtable="${tableId}"]:not([data-measuring])`;
+  // The table's own cells only: a table inside a cell has cells of its own.
+  const scope = `.nui-dtable[data-dtable="${tableId}"]:not([data-measuring]) > * > :where(tr) >`;
   const rules = fit.hidden.map((index) => `${scope} [data-ci="${index}"] { display: none; }`);
   if (fit.first >= 0) rules.push(`${scope} [data-ci="${fit.first}"] { padding-left: 24px; }`);
   if (fit.last >= 0) rules.push(`${scope} [data-ci="${fit.last}"] { padding-right: 24px; }`);
@@ -140,7 +141,8 @@ function pressedControl(target: EventTarget | null, row: Element): boolean {
  */
 export function dataTableHideCss(tableId: string, limits: readonly (number | undefined)[], primaryIndex = -1): string {
   const widths = [...new Set(limits.filter((n): n is number => n !== undefined))].sort((a, b) => b - a);
-  const scope = `.nui-dtable[data-dtable="${tableId}"]`;
+  // The table's own cells only: a table inside a cell has cells of its own.
+  const scope = `.nui-dtable[data-dtable="${tableId}"] > * > :where(tr) >`;
   return widths.map((width) => {
     const shown = limits.map((limit, index) => (limit === undefined || limit < width ? index : -1)).filter((i) => i >= 0);
     const rules = [`${scope} [data-hide-below="${width}"] { display: none; }`];

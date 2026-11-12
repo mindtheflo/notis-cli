@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -128,5 +129,21 @@ test('custom minimums add their own container rule; the edge speaks French', asy
   try {
     assert.match(h.q('.nui-side-pane > style')!.textContent ?? '', /\(min-width: 900px\)/);
     assert.equal(h.handle().getAttribute('aria-label'), 'Redimensionner le panneau latéral');
+  } finally { await h.cleanup(); }
+});
+
+test('a page or pane that cannot scroll lets the wheel reach the page, with default or custom minimums', async () => {
+  // Side by side, the page and the pane each scroll on their own; in a Space whose page scrolls they grow with it and
+  // cannot. Chromium still applies overscroll-behavior to a scroll container that cannot scroll, so `contain` there kept
+  // every wheel and touch scroll over them from reaching the page. The host contains overscroll at the Space root.
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  const rules = [...css.matchAll(/\n\s*([^\n{}]*\.nui-side-pane-(?:main|aside)[^\n{}]*) \{([^}]*)\}/g)];
+  assert.ok(rules.some(([, , body]) => /overflow-y: auto;/.test(body)), 'side by side, each still scrolls on its own');
+  for (const [, selector, body] of rules) assert.doesNotMatch(body, /overscroll-behavior(-y)?: contain/, selector);
+  const h = await harness({ mainMin: 600, paneMin: 300 });
+  try {
+    const split = h.q('.nui-side-pane > style')!.textContent ?? '';
+    assert.match(split, /overflow-y: auto;/);
+    assert.doesNotMatch(split, /overscroll-behavior/);
   } finally { await h.cleanup(); }
 });

@@ -1,5 +1,5 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
-import { appFilesDigest, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
+import { appFilesDigest, clearSpaceScreenshots, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
 import { buildSpaceArtifact, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
@@ -171,9 +171,10 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
   const { directory, key } = selected(ctx);
   if (!ctx.options.spaceId) throw usageError('Pass --space-id <id> for the existing Space.');
   const intentKey = publish ? requestId(ctx) : null;
+  // A verify that stops at any point (a build older than its source, a refused source check, a cancelled render), or
+  // a release without a loading skeleton, leaves no image of an older build.
+  clearSpaceScreenshots(directory, key);
   const release = await prepareSpaceRelease(directory, key);
-  // A verify that stops before it renders (a refused source check, a request ID mismatch) leaves no image of an older build.
-  saveSpaceScreenshots(directory, []);
   try {
     if (publish) requireSpaceIcon(release.manifest, key);
     const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, ctx.options.spaceId, intentKey];
@@ -210,16 +211,13 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       // Test seam only: the command context never carries it from user options.
       ...(typeof ctx.loadSpaceRenderer === 'function' ? { loadRenderer: ctx.loadSpaceRenderer } : {}) }); }
     finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
-    {
-      // Always: a verify that stopped early (cancelled, a container, a harness failure) keeps no image of an older build.
-      const saved = saveSpaceScreenshots(directory, render.screenshots || []);
-      if (render.renders) render.renders = render.renders.map(value => {
-        const path = saved.find(item => item.width === value.width)?.path;
-        return path ? { ...value, screenshot_path: path } : value;
-      });
-    }
+    const saved = saveSpaceScreenshots(directory, key, render.screenshots || []);
+    if (render.renders) render.renders = render.renders.map(value => {
+      const path = saved.find(item => item.width === value.width)?.path;
+      return path ? { ...value, screenshot_path: path } : value;
+    });
     if (render.skeleton) {
-      const paths = saveSpacePendingScreenshots(directory, render.pendingScreenshots || []);
+      const paths = saveSpacePendingScreenshots(directory, key, render.pendingScreenshots || []);
       render.skeleton.pending_screenshots = render.skeleton.pending_screenshots.map((value, index) => ({ ...value, ...(paths[index] ? { path: paths[index] } : {}) }));
     }
     const diagnosticPath = saveSpaceVerification(directory, { ...render, space_id: body.space_id });
