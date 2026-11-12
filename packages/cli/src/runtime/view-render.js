@@ -28,8 +28,10 @@ export async function renderViewWithCliRuntime({ runtime, url, outputs = ['markd
     await broker.complete(result, { signal });
   }
   catch (error) {
+    // The stage a render stopped at (a fixed step name, never page content) makes a rare failure diagnosable.
     if (error instanceof library.ViewRenderError) throw new CliError({ code: error.code,
-      message: error.message, exitCode: EXIT_CODES.backend, retryable: error.status >= 500 || error.status === 429, cause: error });
+      message: error.message, exitCode: EXIT_CODES.backend, retryable: error.status >= 500 || error.status === 429, cause: error,
+      details: typeof error.stage === 'string' && /^[a-z_]{1,40}$/.test(error.stage) ? { stage: error.stage } : {} });
     throw error;
   }
   if (!directory) return { result, artifacts: null };

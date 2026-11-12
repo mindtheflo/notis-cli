@@ -86,6 +86,10 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
     const renders = observations.map((value, index) => {
       if (value.status === 'fulfilled') return value.value;
       const width = brokers[index].width, shot = value.reason?.code === 'render_not_ready' ? value.reason.screenshot : null;
+      if (value.reason?.code === 'render_view_failed') {
+        return { width, mounted: false, status: 'failed', error: 'render_view_failed', loaded: false,
+          message: `At ${width} px the view's code failed before it showed anything${value.reason.reason ? `: ${value.reason.reason}` : '.'}` };
+      }
       if (!shot?.data_base64) return { width, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed' };
       const png = Buffer.from(shot.data_base64, 'base64');
       screenshots.push({ width, png });
@@ -105,7 +109,7 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
       .map(call => [call.error, { phase: 'fixture', operation: call.operation,
         ...(call.recordKey ? { record_key: call.recordKey } : {}), ...(call.actionId ? { action_id: call.actionId } : {}),
         message: call.error }])).values()].slice(0, 10);
-    const notReady = renders.filter(value => value.error === 'render_not_ready')
+    const notReady = renders.filter(value => value.error === 'render_not_ready' || value.error === 'render_view_failed')
       .map(value => ({ phase: 'renderer', width: value.width, message: value.message }));
     const result = { ...diagnostic, status: passed ? 'passed' : 'failed', mounted: renders.every(value => value.mounted),
       fixture_digest: brokers[0].broker.fixtureDigest, renderer_digest: rendererDigest,

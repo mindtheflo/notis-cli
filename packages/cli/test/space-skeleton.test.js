@@ -209,6 +209,10 @@ function scriptedRenderer(state) {
           bones: [[0, 0, state.boneWidth, 300, 8, 0]] }] } };
       }
       if (state.failWidth === width) {
+        if (state.mode === 'view_failed') {
+          throw Object.defineProperty(new renderer.ViewRenderError('render_view_failed', "This view's code failed before it showed anything.", 422),
+            'reason', { value: "The requested module '@notis/sdk' does not provide an export named 'useThreadItem'" });
+        }
         if (state.mode !== 'not_ready') throw new renderer.ViewRenderError('render_failed', 'The view could not be rendered.');
         throw Object.defineProperties(new renderer.ViewRenderError('render_not_ready', 'Not ready.', 504),
           { screenshot: { value: shot('still loading', width) }, mounted: { value: true }, waitedSeconds: { value: 38 },
@@ -449,6 +453,20 @@ test('a release without a loading skeleton keeps no loading screenshot of an ear
   assert.ok(pending.every(path => existsSync(path)));
   await assert.rejects(run({ mode: 'broken_render', failWidth: 390, boneWidth: 100, renders: [] }), /did not pass offline render verification/);
   for (const path of pending) assert.equal(existsSync(path), false);
+});
+
+test('a view whose code fails before it shows anything says why in verify, at once', async t => {
+  const root = await builtSpace(t); server(t);
+  const state = { mode: 'view_failed', failWidth: 390, boneWidth: 100, renders: [] };
+  const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
+  await assert.rejects(ctx.spec.handler(ctx), error => {
+    assert.match(error.message, /did not pass offline render verification/);
+    assert.match(error.message, /At 390 px the view's code failed before it showed anything: The requested module '@notis\/sdk' does not provide an export named 'useThreadItem'/);
+    const failed = error.details.render.renders.find(value => value.width === 390);
+    assert.equal(failed.error, 'render_view_failed');
+    assert.equal(failed.mounted, false);
+    return true;
+  });
 });
 
 test('a retried deploy reuses the stored verification and sends the same skeleton bytes', async t => {
