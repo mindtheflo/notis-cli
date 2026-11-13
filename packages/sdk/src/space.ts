@@ -865,6 +865,15 @@ export interface SpaceActionOptions {
    * answer a moment later. Hosts that predate it ignore it.
    */
   fresh?: boolean;
+  /**
+   * A read that accepts an answer up to this many seconds old (1 to 300): a signed-in host answers it with the
+   * person's own result of that exact read from that window, checked like a last result (same sign-in, no write
+   * since), and asks the provider only when there is none. For data that changes slowly, such as a health board's
+   * provider reads, so a page opened again soon after costs the provider nothing. Pass it to `useAction(id).call`
+   * (or `callAction`); a `useActionQuery` read already opens on its last result. The host caps it at 300 and ignores
+   * it below 1, with `fresh` or `requestId`, and for Site or link visitors; hosts that predate it ignore it.
+   */
+  maxAgeSeconds?: number;
 }
 
 export type SpaceDocumentBodyRequest = {
