@@ -169,6 +169,17 @@ export function profileHasCredential(profile = {}) {
 }
 
 /**
+ * Signed in as `notis profile list` and `profile use` report it. An OAuth
+ * grant is used ahead of a dev token outside its lease, so it decides: one the
+ * sign-in server proved dead (CLI-035) routes like a signed-out profile and
+ * reads as one. Without a grant, a dev token is a sign-in.
+ */
+export function profileIsSignedIn(profile = {}, grantIsDead = oauthGrantIsDead(profile)) {
+  if (profile.oauth_access_token) return !grantIsDead;
+  return Boolean(profile.dev_access_token);
+}
+
+/**
  * Names every profile a switch can land on, newest config order preserved.
  * `notis profile use` and `--profile` both validate against this.
  */
@@ -177,20 +188,22 @@ export function listProfiles(config) {
   return Object.entries(normalized.profiles).map(([name, profile]) => {
     // The stored profile alone: a NOTIS_JWT in this shell is not part of it.
     const routed = routingProfile(profile, {});
+    const grantIsDead = oauthGrantIsDead(profile);
+    const liveGrant = Boolean(profile.oauth_access_token) && !grantIsDead;
     return {
       name,
       active: name === normalized.current_profile,
-      // Report the endpoint the stored profile routes to, keeping the loopback address of a
-      // `./dev.sh` profile: getApiBase resolves a stale loopback value to the
-      // live API for routing; showing that here would claim a dev profile
-      // targets production, which it must never do. OAuth metadata owns the
-      // route for an OAuth profile; an older Desktop release may have left a
-      // conflicting api_base behind, but commands ignore that legacy value and
-      // so must profile inspection. A signed-out profile shows where its next
-      // login starts (routingProfile).
-      api_base: profile.oauth_access_token && !oauthGrantIsDead(profile)
-        ? getOAuthApiBase(profile) || resolveDefaultLiveApiBase(profile)
-        : routed.api_base || resolveDefaultLiveApiBase(routed),
+      // Report the endpoint the stored profile routes to (CLI-036).
+      // - A live OAuth grant: its recorded OAuth server, which commands use
+      //   over any api_base an older Desktop release left behind; with none
+      //   recorded, where getApiBase sends it (storedApiBase).
+      // - Otherwise, where the next login starts (routingProfile), keeping the
+      //   loopback address of a `./dev.sh` profile: getApiBase resolves a
+      //   stale loopback value to the live API for routing, and showing that
+      //   here would claim a dev profile targets production.
+      api_base: liveGrant
+        ? getOAuthApiBase(profile) || storedApiBase(profile)
+        : isLocalApiBase(routed.api_base) ? routed.api_base : storedApiBase(routed),
       label: profile.label || null,
       credential_kind: profile.oauth_access_token
         ? 'oauth'
@@ -198,7 +211,7 @@ export function listProfiles(config) {
           ? 'dev'
           : null,
       user_id: profile.oauth_user_id || profile.dev_user_id || null,
-      authenticated: profileHasCredential(profile),
+      authenticated: profileIsSignedIn(profile, grantIsDead),
     };
   });
 }
@@ -650,17 +663,21 @@ export function getApiBase(config, profileName, override) {
   if (env) {
     return env;
   }
-  const profile = routingProfile(getProfile(config, profileName));
-  const profileApiBase = profile.api_base;
+  return storedApiBase(routingProfile(getProfile(config, profileName)));
+}
 
-  // A loopback api_base is only meaningful while the `./dev.sh` that wrote it
-  // is still running, and resolveRuntimeProfile checks that lease before it
-  // routes anywhere. Here — with no lease in hand — a leftover localhost value
-  // resolves to the live API rather than to a port nothing is listening on.
+/**
+ * The address a profile's stored api_base routes to. A loopback api_base is
+ * only meaningful while the `./dev.sh` that wrote it is still running, and
+ * resolveRuntimeProfile checks that lease before it routes anywhere. Here —
+ * with no lease in hand — a leftover localhost value resolves to the live API
+ * rather than to a port nothing is listening on.
+ */
+function storedApiBase(profile = {}) {
+  const profileApiBase = profile.api_base;
   if (typeof profileApiBase === 'string' && profileApiBase && !isLocalApiBase(profileApiBase)) {
     return profileApiBase.replace(/\/+$/, '');
   }
-
   return resolveDefaultLiveApiBase(profile);
 }
 

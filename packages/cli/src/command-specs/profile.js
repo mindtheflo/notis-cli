@@ -9,6 +9,7 @@ import {
   loadConfig,
   normalizeConfig,
   profileHasCredential,
+  profileIsSignedIn,
   profileExists,
   resolveWorktreeRuntime,
   updateConfig,
@@ -171,7 +172,8 @@ async function useHandler(ctx) {
   const profile = getProfile(next, requested);
   const worktreeOverride = Boolean(worktreeRuntime);
   const worktreeBlocked = Boolean(worktreeUnavailable);
-  const authenticated = profileHasCredential(profile);
+  // A dead grant (CLI-035) reads as signed out, as `profile list` shows it.
+  const authenticated = profileIsSignedIn(profile);
   if (authenticated) relinkSkillsInBackground(requested, profile);
 
   return ctx.output.emitSuccess({
@@ -193,7 +195,9 @@ async function useHandler(ctx) {
       ? `Saved profile "${requested}" as the default outside this worktree; this checkout still uses "${worktreeRuntime.profile}" unless --profile is explicit.`
       : authenticated
         ? `Switched to profile "${requested}".`
-        : `Switched to profile "${requested}", which has no credential yet.`,
+        : profileHasCredential(profile)
+          ? `Switched to profile "${requested}", whose sign-in has ended; sign in again.`
+          : `Switched to profile "${requested}", which has no credential yet.`,
     hints: worktreeBlocked
       ? [
           {

@@ -309,6 +309,49 @@ test('profile inspection reports the OAuth-owned endpoint over stale legacy rout
   assert.equal(listed[0].api_base, 'https://api.notis.ai');
 });
 
+test('profile inspection shows the address commands use for a grant with no recorded OAuth server', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-oauth-custom-endpoint-'));
+  const profiles = await loadProfilesWithHome(home, 'oauth-custom-endpoint');
+  const config = {
+    current_profile: 'custom',
+    profiles: {
+      custom: {
+        api_base: 'https://notis.example.test/',
+        release_channel: 'nightly',
+        oauth_access_token: 'oauth-token',
+        oauth_access_expires_at: 4102444800,
+      },
+      loopback: {
+        api_base: 'http://localhost:4311',
+        release_channel: 'nightly',
+        oauth_access_token: 'oauth-token',
+        oauth_access_expires_at: 4102444800,
+      },
+      // A live address that disagrees with the channel pin: commands keep it.
+      beta: {
+        api_base: 'https://api-beta.notis.ai',
+        release_channel: 'stable',
+        oauth_access_token: 'oauth-token',
+        oauth_access_expires_at: 4102444800,
+      },
+    },
+  };
+  const previousApiBase = process.env.NOTIS_API_BASE;
+  try {
+    delete process.env.NOTIS_API_BASE;
+    const listed = Object.fromEntries(profiles.listProfiles(config).map((entry) => [entry.name, entry.api_base]));
+    assert.equal(listed.custom, 'https://notis.example.test');
+    assert.equal(listed.custom, profiles.getApiBase(config, 'custom'));
+    // A loopback address without its lease is never where commands go.
+    assert.equal(listed.loopback, profiles.getApiBase(config, 'loopback'));
+    assert.equal(listed.beta, 'https://api-beta.notis.ai');
+    assert.equal(listed.beta, profiles.getApiBase(config, 'beta'));
+  } finally {
+    if (previousApiBase === undefined) delete process.env.NOTIS_API_BASE;
+    else process.env.NOTIS_API_BASE = previousApiBase;
+  }
+});
+
 function readLockConstants(source) {
   return Object.fromEntries(
     [...source.matchAll(/const (CONFIG_WRITE_LOCK_[A-Z_]+) = ([\d_]+);/g)]

@@ -661,9 +661,12 @@ test('a refresh the server refused routes the grant like a signed-out profile un
     NOTIS_API_BASE: process.env.NOTIS_API_BASE,
     NOTIS_JWT: process.env.NOTIS_JWT,
     NOTIS_TEST_DISABLE_WORKTREE_ROUTING: process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING,
+    NODE_ENV: process.env.NODE_ENV,
   };
   process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  // The bypass needs both: a checkout that ran ./dev.sh otherwise routes to its lease.
   process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING = '1';
+  process.env.NODE_ENV = 'test';
   delete process.env.NOTIS_API_BASE;
   delete process.env.NOTIS_JWT;
   const tokenUrls = [];
@@ -697,6 +700,8 @@ test('a refresh the server refused routes the grant like a signed-out profile un
     await assert.rejects(refreshWith(400, { error: 'invalid_grant' }), { code: 'invalid_grant' });
     assert.deepEqual([...new Set(tokenUrls)], ['https://mcp-beta.notis.ai/oauth/token']);
     assert.equal(listProfiles(loadConfig())[0].api_base, 'https://api.notis.ai');
+    // It lists as signed out too (CLI-036).
+    assert.equal(listProfiles(loadConfig())[0].authenticated, false);
 
     // Any other refresh token is not the one refused.
     updateConfig((latest) => {

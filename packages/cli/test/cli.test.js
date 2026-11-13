@@ -13,7 +13,7 @@ import { collectSourceFiles, pullAppSource, scaffoldProject } from '../src/runti
 import { collectProjectBoundaryViolations } from '../src/runtime/app-boundary-validator.js';
 import { doctorChannelSummary, DOCTOR_TOOL_ROUNDTRIP_TIMEOUT_MS, doctorToolRoundtripRuntime } from '../src/command-specs/meta.js';
 
-import { getApiBase, normalizeConfig, parseDebugEntitlementOverride } from '../src/runtime/profiles.js';
+import { getApiBase, normalizeConfig, parseDebugEntitlementOverride, refreshTokenFingerprint } from '../src/runtime/profiles.js';
 import { SPACES_PROTOCOL } from '../src/runtime/transport.js';
 import { COMMAND_SPECS } from '../src/command-specs/index.js';
 import { validateArguments } from '../src/command-specs/helpers.js';
@@ -2214,6 +2214,50 @@ test('logout clears only the profile it ran against', () => {
   assert.equal(stored.profiles.default.oauth_access_token, makeJwt('kept-user'));
 });
 
+test('profile use reads a grant the sign-in server refused as signed out (CLI-036)', () => {
+  const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-profile-dead-grant-'));
+  const configFile = join(configHome, 'config.json');
+  const refreshToken = 'refused-refresh-token';
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {},
+      work: {
+        api_base: 'https://api.notis.ai',
+        oauth_access_token: makeJwt('work-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_refresh_token: refreshToken,
+        oauth_refresh_rejected_for: refreshTokenFingerprint(refreshToken),
+        oauth_user_id: 'work-user',
+      },
+      // A dev token does not hide a dead grant: commands use the grant first.
+      devwork: {
+        api_base: 'http://localhost:4311',
+        dev_access_token: makeJwt('dev-user'),
+        oauth_access_token: makeJwt('work-user'),
+        oauth_access_expires_at: 4102444800,
+        oauth_refresh_token: refreshToken,
+        oauth_refresh_rejected_for: refreshTokenFingerprint(refreshToken),
+      },
+    },
+  }));
+
+  const listed = runCli(['profile', 'list', '--json'], { NOTIS_CLI_CONFIG_FILE: configFile });
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.deepEqual(
+    JSON.parse(listed.stdout).data.profiles.map((entry) => [entry.name, entry.authenticated]),
+    [['default', false], ['work', false], ['devwork', false]],
+  );
+
+  const switched = runCli(['profile', 'use', 'work', '--json'], {
+    NOTIS_CLI_CONFIG_FILE: configFile,
+  });
+  assert.equal(switched.status, 0, switched.stderr);
+  const envelope = JSON.parse(switched.stdout);
+  assert.equal(envelope.data.authenticated, false);
+  assert.match(JSON.stringify(envelope), /sign-in has ended/);
+});
+
 test('profile use switches the active account without touching any credential', () => {
   const configHome = mkdtempSync(join(tmpdir(), 'notis-cli-profile-switch-'));
   const configFile = join(configHome, 'config.json');
@@ -2256,7 +2300,8 @@ test('profile use switches the active account without touching any credential', 
     data.profiles.map((entry) => [entry.name, entry.api_base, entry.authenticated]),
     [
       ['default', 'https://api.notis.ai', true],
-      ['beta', 'https://api-nightly.notis.ai', true],
+      // Commands keep a stored live address (CLI-036), so the list shows it.
+      ['beta', 'https://api-beta.notis.ai', true],
     ],
   );
 });
