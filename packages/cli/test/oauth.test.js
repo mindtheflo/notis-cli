@@ -3854,6 +3854,84 @@ test('logout does not report a stored profile with no OAuth state as disconnecte
   assert.deepEqual(all.profiles, []);
 });
 
+// CLI-034: a logout forgets what it learned from the account (its channel pin
+// and a live API address) and keeps what someone chose (a custom or loopback
+// address, dev fields, the label).
+test('logout drops the channel pin and live API address but keeps chosen ones', async () => {
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-logout-route-')), 'config.json');
+  const grant = (apiBase) => ({
+    api_base: apiBase,
+    release_channel: 'nightly',
+    oauth_access_token: makeJwt('route-user'),
+    oauth_access_expires_at: future,
+    oauth_user_id: 'route-user',
+  });
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'nightly',
+    profiles: {
+      nightly: { ...grant('https://api-nightly.notis.ai'), label: 'Nightly' },
+      beta: { ...grant('https://api-beta.notis.ai'), beta: true },
+      stable: grant('https://api.notis.ai'),
+      custom: grant('https://notis.example.com'),
+      loopback: { ...grant('http://localhost:8123'), dev_workspace_root: '/tmp/worktree' },
+      // No grant to sign out: the logout leaves its route alone.
+      pinnedOnly: { api_base: 'https://api-nightly.notis.ai', release_channel: 'nightly' },
+      // A worktree credential still holds the account: it keeps its route.
+      worktree: { ...grant('https://api-nightly.notis.ai'), dev_access_token: 'dev-token' },
+    },
+  }));
+  await withConfigFileAsync(configFile, () => logoutOAuth(
+    { profileName: 'nightly', apiBase: 'https://api-nightly.notis.ai', config: normalizeConfig({}) },
+    { allProfiles: true },
+    async () => new Response('{}'),
+  ));
+  const stored = JSON.parse(readFileSync(configFile, 'utf-8')).profiles;
+  for (const name of ['nightly', 'beta', 'stable', 'loopback']) {
+    assert.equal(stored[name].release_channel, undefined, name);
+    assert.equal(stored[name].oauth_access_token, undefined, name);
+  }
+  assert.equal(stored.custom.release_channel, 'nightly');
+  assert.equal(stored.custom.oauth_access_token, undefined);
+  assert.equal(stored.pinnedOnly.api_base, 'https://api-nightly.notis.ai');
+  assert.equal(stored.pinnedOnly.release_channel, 'nightly');
+  assert.equal(stored.worktree.api_base, 'https://api-nightly.notis.ai');
+  assert.equal(stored.worktree.release_channel, 'nightly');
+  assert.equal(stored.worktree.dev_access_token, 'dev-token');
+  assert.equal(stored.nightly.api_base, undefined);
+  assert.equal(stored.nightly.label, 'Nightly');
+  assert.equal(stored.beta.api_base, undefined);
+  assert.equal(stored.stable.api_base, undefined);
+  assert.equal(stored.custom.api_base, 'https://notis.example.com');
+  assert.equal(stored.loopback.api_base, 'http://localhost:8123');
+  assert.equal(stored.loopback.dev_workspace_root, '/tmp/worktree');
+});
+
+test('a single-profile logout forgets only that profile\'s route (CLI-034)', async () => {
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-logout-route-one-')), 'config.json');
+  const grant = (userId) => ({
+    api_base: 'https://api-nightly.notis.ai',
+    release_channel: 'nightly',
+    oauth_access_token: makeJwt(userId),
+    oauth_access_expires_at: future,
+    oauth_user_id: userId,
+  });
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: { default: grant('route-one'), other: grant('route-two') },
+  }));
+  await withConfigFileAsync(configFile, () => logoutOAuth(
+    { profileName: 'default', apiBase: 'https://api-nightly.notis.ai', config: normalizeConfig({}) },
+    {},
+    async () => new Response('{}'),
+  ));
+  const stored = JSON.parse(readFileSync(configFile, 'utf-8')).profiles;
+  assert.equal(stored.default.api_base, undefined);
+  assert.equal(stored.default.release_channel, undefined);
+  assert.equal(stored.default.oauth_access_token, undefined);
+  assert.equal(stored.other.api_base, 'https://api-nightly.notis.ai');
+  assert.equal(stored.other.release_channel, 'nightly');
+});
+
 test('logout revokes an access-only OAuth profile before clearing it locally', async () => {
   const configFile = join(mkdtempSync(join(tmpdir(), 'notis-oauth-logout-access-only-')), 'config.json');
   const accessToken = makeJwt('access-only-user');

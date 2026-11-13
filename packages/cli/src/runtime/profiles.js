@@ -524,7 +524,7 @@ function isLocalApiBase(value) {
   }
 }
 
-function isLiveApiBase(value) {
+export function isLiveApiBase(value) {
   if (typeof value !== 'string' || !value) {
     return false;
   }
@@ -537,12 +537,28 @@ function isLiveApiBase(value) {
 }
 
 /**
+ * What a logout or a Desktop sign-out keeps of a profile's route (CLI-034).
+ *
+ * The channel pin and a live API address were learned from the account being
+ * signed out; the next sign-in learns them again. A loopback address stays
+ * without a pin, and a custom endpoint, chosen on purpose, keeps its address
+ * and pin, as routingProfile reads them.
+ */
+export function signedOutRoute(profile = {}) {
+  const apiBase = profile.api_base;
+  if (!apiBase || isLiveApiBase(apiBase)) return {};
+  if (isLocalApiBase(apiBase)) return { api_base: apiBase };
+  const releaseChannel = pinnedReleaseChannel(profile);
+  return releaseChannel ? { api_base: apiBase, release_channel: releaseChannel } : { api_base: apiBase };
+}
+
+/**
  * The fields of a profile that may decide where it routes.
  *
  * A profile with no credential has no account behind it: its channel pin
  * (`release_channel`, which normalization also fills from the older `beta`
  * and `channel` keys) and its live `api_base` are leftovers of an earlier
- * sign-in, which a logout or a Desktop sign-out keeps. The account may have
+ * sign-in, which logouts and Desktop sign-outs before CLI-034 kept. The account may have
  * changed channel since, so a signed-out profile starts on stable, and the
  * login that follows moves a nightly account to its own API
  * (followAccountReleaseChannel). A custom endpoint keeps its pin: it was

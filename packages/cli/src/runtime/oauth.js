@@ -37,6 +37,7 @@ import {
   getOAuthApiBase,
   getOAuthResource,
   getProfile,
+  signedOutRoute,
   loadConfig,
   resolveConfigFile,
   updateConfig,
@@ -2953,8 +2954,23 @@ export async function logoutOAuth(runtime, { allProfiles = false } = {}, fetchIm
           // A named pending login has no stored profile yet. Cancelling it must
           // not create an empty profile as a side effect of logout.
           if (!current) return latest;
+          // Signing an account out forgets the route learned from it
+          // (CLI-034, signedOutRoute). A profile with no grant, or one still
+          // holding a worktree credential, keeps its route.
+          const signsOutAccount = Boolean(
+            (current.oauth_access_token
+              || current.oauth_refresh_token
+              || current.oauth_client_id
+              || current.oauth_issuer
+              || current.oauth_resource
+              || current.oauth_user_id)
+            && !current.dev_access_token
+          );
           latest.profiles[profileName] = {
             ...current,
+            ...(signsOutAccount
+              ? { api_base: undefined, release_channel: undefined, ...signedOutRoute(current) }
+              : {}),
             oauth_access_token: undefined,
             oauth_refresh_token: undefined,
             oauth_access_expires_at: undefined,

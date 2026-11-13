@@ -633,7 +633,7 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
     assert.equal(betaFromStoredApi, 'https://api-beta.notis.ai');
 
     // A signed-out profile keeps the pin and address of the account that left
-    // it (a logout keeps both). Its next login starts on stable, and a nightly
+    // it (logouts before CLI-034 kept both). Its next login starts on stable, and a nightly
     // account is then moved to its own API (followAccountReleaseChannel).
     for (const leftover of [
       { beta: true },
