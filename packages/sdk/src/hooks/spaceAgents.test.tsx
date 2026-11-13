@@ -181,3 +181,32 @@ test('a comment an agent wrote carries its signature, clickable to its thread on
   assert.match(plain, /De Editor/);
   assert.equal(renderToStaticMarkup(<CommentAgentSource controller={controller('en')} comment={person} />), '');
 });
+
+test('useThreadItem reads the panel item and runs its actions through the host', async () => {
+  const { useThreadItem } = await import('./useThreadItem');
+  const item = { id: 'i1', kind: 'pull_request', thread_id: 't1', space_id: 's1', inputs: { number: 7 }, state: 'ready',
+    state_label: 'Ready to merge', icon: 'phosphor:git-pull-request', needs_you: true, final: false, title: '#7 Add Later',
+    url: null, checks: null, actions: [{ id: 'merge', label: 'Merge', primary: true }], refreshed_at: null, error: null };
+  const runs: Array<[string, string]> = [];
+  let reads = 0;
+  const runtime = runtimeWith({}, { spaceThreadItem: {
+    current: async () => { reads += 1; return item; },
+    run: async (itemId: string, actionId: string) => { runs.push([itemId, actionId]); return { ran: true, successful: true }; },
+  } });
+  let result: import('./useThreadItem').UseThreadItemResult | null = null;
+  const root = await mount(runtime, function Probe() { result = useThreadItem(); return null; });
+  assert.equal(result!.available, true);
+  assert.equal(result!.item?.title, '#7 Add Later');
+  await act(async () => { assert.deepEqual(await result!.run('merge'), { ran: true, successful: true }); });
+  await settle();
+  assert.deepEqual(runs, [['i1', 'merge']]);
+  assert.ok(reads >= 2, 'a run reads the item again');
+  act(() => root.unmount());
+
+  let outside: import('./useThreadItem').UseThreadItemResult | null = null;
+  const bare = await mount(runtimeWith({}), function Probe() { outside = useThreadItem(); return null; });
+  assert.equal(outside!.available, false);
+  assert.equal(outside!.item, null);
+  assert.deepEqual(await outside!.run('merge'), { ran: false });
+  act(() => bare.unmount());
+});

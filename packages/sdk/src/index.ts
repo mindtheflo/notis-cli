@@ -38,7 +38,9 @@ export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudCo
   SpaceCloudComputerImportResult } from './space';
 export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadInput, SpaceViewerReadResult, SpaceViewerLink,
   SpaceViewerDatabase, SpaceViewerDatabaseSchema, SpaceViewerSkill, SpaceViewerSkillPage } from './space';
-export type { SpaceAgentDeclaration, SpaceItemThread, SpaceAgentQueue, SpaceAgentsStatus, SpaceThreadsTransport } from './space';
+export type { SpaceAgentDeclaration, SpaceItemThread, SpaceAgentQueue, SpaceAgentsStatus, SpaceThreadsTransport,
+  SpaceThreadItemText, SpaceThreadItemCondition, SpaceThreadItemState, SpaceThreadItemConfirm, SpaceThreadItemAction,
+  SpaceThreadItemKind, SpaceThreadItem, SpaceThreadItemRun, SpaceThreadItemTransport } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
 export { spaceAudience, spaceMarksEditorsOnly, publicSpaceDescriptor, withoutEditorColumns } from './space';
 export type { SpaceAudience, SpaceEditorsOnly, SpaceResourceColumns, EditorOnlyColumns, AudienceRow } from './space';
@@ -75,6 +77,8 @@ export { useCloudComputer } from './hooks/useCloudComputer';
 export type { UseCloudComputerResult } from './hooks/useCloudComputer';
 export { useItemThread } from './hooks/useItemThread';
 export type { UseItemThreadResult } from './hooks/useItemThread';
+export { useThreadItem } from './hooks/useThreadItem';
+export type { UseThreadItemResult } from './hooks/useThreadItem';
 export { useAgentQueue, AGENT_QUEUE_WORDS } from './hooks/useAgentQueue';
 export type { UseAgentQueueResult, AgentQueueStatus } from './hooks/useAgentQueue';
 export { useCloudComputerShell } from './hooks/useCloudComputerShell';

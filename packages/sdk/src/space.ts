@@ -80,6 +80,136 @@ export interface SpaceThreadsTransport {
   agentStatus(agentId: string, scope?: string): Promise<SpaceAgentsStatus>;
   approveAgents(): Promise<{ approved: boolean; released: number }>;
 }
+
+/** Words shown to people: one string, or one per language (`en` required). */
+export type SpaceThreadItemText = string | { en: string; fr?: string };
+/**
+ * A condition on the item's last read. `path` starts with `data.` (the read action's answer) or `item.`
+ * (the attached inputs); `*` in a path flattens a list, and a condition on a list matches when any value does.
+ */
+export type SpaceThreadItemCondition =
+  | { path: string; equals: string | number | boolean | null }
+  | { path: string; in: Array<string | number | boolean | null> }
+  | { path: string; exists: boolean }
+  | { all: SpaceThreadItemCondition[] }
+  | { any: SpaceThreadItemCondition[] }
+  | { not: SpaceThreadItemCondition };
+/** One state of a kind. States are tried in order; the first whose `when` matches wins, and the last has no `when`. */
+export interface SpaceThreadItemState {
+  id: string;
+  label: SpaceThreadItemText;
+  /** `phosphor:<kebab-name>`, shown on the panel and on the thread's row. */
+  icon: string;
+  when?: SpaceThreadItemCondition;
+  /** Reaching this state opens the panel and brings the thread back to the inbox, unread. */
+  needsYou?: boolean;
+  /** Notis stops reading an item in a final state (merged, closed). Never also `needsYou`. */
+  final?: boolean;
+}
+/**
+ * A confirmation asked once, in a Notis dialog, before the action runs. Templates like `{item.number}` apply.
+ * A plain string is the title. In two languages, give each part as `{ en, fr }` (SPC-289):
+ * `{ title: { en, fr } }`, never the whole confirmation as `{ en, fr }`.
+ */
+export type SpaceThreadItemConfirm = string
+  | { title: SpaceThreadItemText; body?: SpaceThreadItemText; button?: SpaceThreadItemText };
+/** A button on the item, run with the person's own connection to the tool's app. */
+export interface SpaceThreadItemAction {
+  label: SpaceThreadItemText;
+  /** A connected app tool, such as `GITHUB_MERGE_A_PULL_REQUEST`. */
+  tool: string;
+  /** Templated arguments: a whole-string placeholder such as `'{item.number}'` keeps its type. */
+  arguments?: Record<string, unknown>;
+  confirm?: SpaceThreadItemConfirm;
+  /** The states it is offered in; every state that is not final when omitted. */
+  states?: string[];
+  primary?: boolean;
+}
+/**
+ * A kind of live item agents attach to a thread (`LOCAL_NOTIS_THREAD_ITEMS`), such as a pull request.
+ * Notis reads it through `read.action`, about every minute while the thread is open and every 15 minutes
+ * otherwise, until a final state. Declare it on the Space's root view:
+ *
+ * ```ts
+ * threadItems: { pull_request: {
+ *   label: 'Pull request',
+ *   inputs: { type: 'object', additionalProperties: false, required: ['owner', 'repo', 'number'],
+ *     properties: { owner: { type: 'string' }, repo: { type: 'string' }, number: { type: 'integer' } } },
+ *   read: { action: 'read_pull_request' },
+ *   title: '#{item.number} {data.title}',
+ *   states: [
+ *     { id: 'merged', when: { path: 'data.merged', equals: true }, icon: 'phosphor:git-merge', label: 'Merged', final: true },
+ *     { id: 'ready', icon: 'phosphor:git-pull-request', label: 'Ready to merge', needsYou: true },
+ *   ],
+ *   actions: { merge: { label: 'Merge', tool: 'GITHUB_MERGE_A_PULL_REQUEST', primary: true,
+ *     arguments: { owner: '{item.owner}', repo: '{item.repo}', pull_number: '{item.number}' },
+ *     confirm: { title: 'Merge #{item.number}?', button: 'Merge' } } },
+ *   page: { params: { pr: '{item.number}' } },
+ * } }
+ * ```
+ */
+export interface SpaceThreadItemKind {
+  label: SpaceThreadItemText;
+  description?: string;
+  /** A closed object schema of scalar fields: what an agent gives to attach one item. */
+  inputs: { type: 'object'; properties: Record<string, Record<string, unknown>>; required?: string[]; additionalProperties: false };
+  /** A read action of this view; its inputs default to the item's inputs by name. */
+  read: { action: string; inputs?: Record<string, unknown> };
+  title: string;
+  /** An https link to the item where it lives ("Open on GitHub"). */
+  url?: string;
+  states: SpaceThreadItemState[];
+  /** Summarises a list of checks into "2 of 9 failing": the latest run per `name` counts. */
+  checks?: { list: string; name: string; state: string; passed: string[]; failed: string[] };
+  actions?: Record<string, SpaceThreadItemAction>;
+  /** This view draws the item in the thread's panel; it receives these params plus the item through `useThreadItem`. */
+  page?: { params?: Record<string, string> };
+}
+/** An attached item as Notis last read it. */
+export interface SpaceThreadItem {
+  id: string;
+  kind: string;
+  kind_label?: SpaceThreadItemText | null;
+  thread_id: string;
+  space_id: string;
+  space?: { id: string; name: string | null; icon: string | null; has_page: boolean };
+  inputs: Record<string, unknown>;
+  state: string | null;
+  state_label: SpaceThreadItemText | null;
+  icon: string | null;
+  needs_you: boolean;
+  final: boolean;
+  title: string;
+  url: string | null;
+  checks: { total: number; passed: number; failed: number; running: number } | null;
+  /** The actions offered in the current state. */
+  /** `fingerprint` names the exact declaration shown; a confirmed run sends it back so a changed one is refused. */
+  actions: Array<{ id: string; label: SpaceThreadItemText; primary: boolean;
+    confirm?: { title: SpaceThreadItemText; body?: SpaceThreadItemText; button?: SpaceThreadItemText };
+    fingerprint?: string }>;
+  /** The kind's `page.params`, filled in for this item. */
+  page_params?: Record<string, unknown> | null;
+  /** The read action's last answer (only on the item a page draws). */
+  data?: unknown;
+  attached_at?: string | null;
+  refreshed_at: string | null;
+  /** The code of the last failed read, kept until a read succeeds. */
+  error: string | null;
+}
+export interface SpaceThreadItemRun {
+  /** False when the person cancelled the confirmation or the host cannot run actions. */
+  ran: boolean;
+  successful?: boolean;
+  error?: string | null;
+  item?: SpaceThreadItem;
+}
+/** Space-only transport of the item a thread's panel shows (`useThreadItem`). */
+export interface SpaceThreadItemTransport {
+  /** The item this page draws, or null when the page is not opened for one. */
+  current(): Promise<SpaceThreadItem | null>;
+  /** Run one of the item's actions; the host asks the person first when the action confirms. */
+  run(itemId: string, actionId: string): Promise<SpaceThreadItemRun>;
+}
 /**
  * A long-running program the Space keeps up on the viewer's cloud computer while the page is on screen (a dev
  * server, a media server). It runs with `bash -lc`, listens on `127.0.0.1:$PORT`, and gets `HOST`,
@@ -537,6 +667,11 @@ export interface SpaceDefinition {
    * moment, once that person allowed this Space's agents. Agents' own writes never wake anything.
    */
   agents?: SpaceAgentDeclaration[];
+  /**
+   * Kinds of live items agents attach to a thread (truth SPC-093), shown docked on the thread's composer
+   * with their state and actions. Declared on the view whose `actions` hold each kind's read action.
+   */
+  threadItems?: Record<string, SpaceThreadItemKind>;
   /**
    * Lists the database's records as sidebar rows under this Space. Only for a short list people navigate
    * like pages (folders, chapters); a database that keeps growing belongs in the view's `shows` instead.

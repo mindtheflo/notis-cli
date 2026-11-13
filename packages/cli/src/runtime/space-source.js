@@ -7,7 +7,7 @@ import { usageError } from './errors.js';
 import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifest.js';
 import { editorOnlyColumns, editorsOnlyFlag, withoutMarker } from './space-audience.js';
 
-const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
+const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'threadItems', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
 /** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-spaces-platform.md. */
 export const VIEWER_READ_FAMILIES = Object.freeze(['databases', 'skills']);
 const WORKSPACE_INDEXES = new Set(['notis.config.ts', 'notis.config.js', 'notis.config.mjs']);
@@ -226,6 +226,7 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
   if (definition.cloudComputer != null) validateCloudComputer(definition.cloudComputer);
   if (definition.cloudComputer != null && !entry) throw usageError('A container has no page, so it cannot use the cloud computer.');
   if (definition.agents != null) validateSpaceAgents(definition.agents, resources);
+  if (definition.threadItems != null) validateThreadItems(definition.threadItems, definition.actions || {});
   if (definition.collection && (resources[definition.collection.database]?.kind !== 'database' || !definition.collection.titleProperty)) {
     throw usageError('A collection needs a declared database binding and title property.');
   }
@@ -383,6 +384,70 @@ export function validateSpaceAgents(agents, resources = {}) {
     if (agent.columns != null && (typeof agent.columns !== 'object' || Array.isArray(agent.columns)
       || Object.entries(agent.columns).some(([name, value]) => !AGENT_COLUMNS.includes(name) || typeof value !== 'string' || !value || value.length > 100))) {
       throw usageError(`Agent ${agent.id} renames only the ${AGENT_COLUMNS.join(', ')} columns.`);
+    }
+  }
+}
+
+const THREAD_ITEM_FIELDS = ['label', 'description', 'inputs', 'read', 'title', 'url', 'states', 'checks', 'actions', 'page'];
+const THREAD_ITEM_STATE_FIELDS = ['id', 'label', 'icon', 'when', 'needsYou', 'final'];
+const THREAD_ITEM_ACTION_FIELDS = ['label', 'tool', 'arguments', 'confirm', 'states', 'primary'];
+const REFUSED_ITEM_TOOL = /^(LOCAL_|COMPOSIO_|NOTIS_|CUSTOM_|MCP_)/;
+
+function threadItemLabel(value) {
+  if (typeof value === 'string') return value.trim().length > 0;
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && typeof value.en === 'string' && value.en.trim().length > 0
+    && Object.keys(value).every(name => ['en', 'fr'].includes(name) && typeof value[name] === 'string' && value[name].trim());
+}
+
+/**
+ * The live item kinds agents attach to threads (`threadItems`). The shape is checked here so a
+ * mistake fails before the build; server/lib/space_thread_items.py repeats every check, including
+ * placeholders and conditions, when the Space is published.
+ */
+export function validateThreadItems(threadItems, actions = {}) {
+  const kinds = threadItems && typeof threadItems === 'object' && !Array.isArray(threadItems) ? Object.entries(threadItems) : null;
+  if (!kinds || kinds.length < 1 || kinds.length > 8) throw usageError('Declare threadItems as 1 to 8 item kinds.');
+  for (const [kind, spec] of kinds) {
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(kind)) throw usageError('Each thread item kind needs a short id: lowercase letters, digits and _.');
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec) || Object.keys(spec).some(name => !THREAD_ITEM_FIELDS.includes(name))) {
+      throw usageError(`Thread item ${kind} takes ${THREAD_ITEM_FIELDS.join(', ')} only.`);
+    }
+    if (!threadItemLabel(spec.label)) throw usageError(`Thread item ${kind} needs a label.`);
+    if (spec.inputs?.type !== 'object' || spec.inputs?.additionalProperties !== false || !spec.inputs.properties
+      || !Array.isArray(spec.inputs.required) || !spec.inputs.required.length) {
+      throw usageError(`Thread item ${kind} declares its inputs as a closed object with the fields an agent must give in required.`);
+    }
+    if (!spec.read || typeof spec.read.action !== 'string' || !Object.hasOwn(actions, spec.read.action)) {
+      throw usageError(`Thread item ${kind} reads through one of this Space's actions: read: { action: '<id>' }.`);
+    }
+    if (typeof spec.title !== 'string' && !threadItemLabel(spec.title)) throw usageError(`Thread item ${kind} needs a title template.`);
+    if (!Array.isArray(spec.states) || spec.states.length < 1 || spec.states.length > 12) {
+      throw usageError(`Thread item ${kind} lists 1 to 12 states in the order they are checked.`);
+    }
+    const stateIds = new Set();
+    for (const state of spec.states) {
+      if (!state || typeof state !== 'object' || Object.keys(state).some(name => !THREAD_ITEM_STATE_FIELDS.includes(name))
+        || typeof state.id !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(state.id) || stateIds.has(state.id)) {
+        throw usageError(`Each state of thread item ${kind} has its own id and takes ${THREAD_ITEM_STATE_FIELDS.join(', ')} only.`);
+      }
+      stateIds.add(state.id);
+      if (!threadItemLabel(state.label)) throw usageError(`State ${state.id} of thread item ${kind} needs a label.`);
+      if (typeof state.icon !== 'string' || !/^phosphor:[a-z0-9]+(-[a-z0-9]+)*$/.test(state.icon)) {
+        throw usageError(`State ${state.id} of thread item ${kind} needs a Phosphor icon, written phosphor:<name>.`);
+      }
+    }
+    if (spec.states.at(-1).when != null) throw usageError(`The last state of thread item ${kind} has no condition, so every item has a state.`);
+    for (const [actionId, action] of Object.entries(spec.actions || {})) {
+      if (!action || typeof action !== 'object' || Object.keys(action).some(name => !THREAD_ITEM_ACTION_FIELDS.includes(name))) {
+        throw usageError(`Action ${actionId} of thread item ${kind} takes ${THREAD_ITEM_ACTION_FIELDS.join(', ')} only.`);
+      }
+      if (!threadItemLabel(action.label)) throw usageError(`Action ${actionId} of thread item ${kind} needs a label.`);
+      if (typeof action.tool !== 'string' || !/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(action.tool) || REFUSED_ITEM_TOOL.test(action.tool)) {
+        throw usageError(`Action ${actionId} of thread item ${kind} runs one connected app tool, such as GITHUB_MERGE_A_PULL_REQUEST.`);
+      }
+      if (action.states != null && (!Array.isArray(action.states) || action.states.some(id => !stateIds.has(id)))) {
+        throw usageError(`Action ${actionId} of thread item ${kind} lists states this item declares.`);
+      }
     }
   }
 }
