@@ -14,12 +14,18 @@ import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import { channelFromProfile, cliCommandForChannel, pinnedReleaseChannel } from './channel.js';
 import { resolveRetryEnabled } from './retry.js';
 import { readAgentIdentity } from './agent-identity.js';
+import {
+  LIVE_API_HOSTS,
+  currentApiOrigin,
+  isOnRetiredApiHost,
+  renamedRetiredApiOrigin,
+} from './api-hosts.js';
 
 export const CONFIG_DIR = join(homedir(), '.notis');
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 export const WORKSPACE_DIR = join(CONFIG_DIR, 'workspace');
-export const DEFAULT_API_BASE = 'https://api.notis.ai';
-export const NIGHTLY_API_BASE = 'https://api-nightly.notis.ai';
+export const DEFAULT_API_BASE = currentApiOrigin('stable');
+export const NIGHTLY_API_BASE = currentApiOrigin('nightly');
 export const DEFAULT_PROFILE = 'default';
 const PROFILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const LEGACY_DESKTOP_PROFILE_KEYS = [
@@ -35,7 +41,6 @@ const WORKTREE_RUNTIME_FILENAME = join('.context', 'notis-runtime.json');
 const WORKTREE_ROUTING_FILENAME = join('.context', 'notis-routing.json');
 // WHATWG URL keeps the brackets of an IPv6 hostname: `new URL('http://[::1]:8123').hostname` is '[::1]'.
 const LOCAL_API_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-const LIVE_API_HOSTS = new Set(['api.notis.ai', 'api-nightly.notis.ai', 'api-beta.notis.ai']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -554,7 +559,7 @@ export function isLiveApiBase(value) {
   }
   try {
     const parsed = new URL(value);
-    return parsed.protocol === 'https:' && LIVE_API_HOSTS.has(parsed.hostname);
+    return parsed.protocol === 'https:' && LIVE_API_HOSTS.includes(parsed.hostname);
   } catch {
     return false;
   }
@@ -611,6 +616,23 @@ function holdsAccount(profile = {}) {
     && !oauthGrantIsDead(profile);
 }
 
+/**
+ * Whether an OAuth grant was minted while the nightly service answered as
+ * `api-beta.notis.ai` (CLI-038): its issuer or the resource its tokens are for
+ * names a retired API host. The service now checks issuer and audience
+ * against its current names exactly (server/lib/cli_oauth_credentials.py
+ * verify_cli_access_token) and keys refresh tokens by its current issuer, so
+ * such a grant is refused everywhere, and its refresh endpoint is the domain
+ * being removed. It counts as dead without asking the server: no request is
+ * sent with it, and the next sign-in starts on stable (CLI-035).
+ * A grant recorded only through a retired `oauth_api_base` but minted for the
+ * current names is live and routes to the current name (getOAuthApiBase).
+ */
+export function oauthGrantOnRetiredAddress(profile = {}) {
+  if (!profile.oauth_access_token && !profile.oauth_refresh_token) return false;
+  return isOnRetiredApiHost(profile.oauth_issuer) || isOnRetiredApiHost(getOAuthResource(profile));
+}
+
 /** A fingerprint of a refresh token that holds no part of it. */
 export function refreshTokenFingerprint(refreshToken) {
   return createHash('sha256').update(String(refreshToken)).digest('hex').slice(0, 32);
@@ -627,6 +649,8 @@ export function refreshTokenFingerprint(refreshToken) {
  * makes a grant dead: such a profile keeps its route until a refresh answers.
  */
 export function oauthGrantIsDead(profile = {}, nowSeconds = Math.floor(Date.now() / 1000)) {
+  // A grant minted for a retired API name can never be used again (CLI-038).
+  if (oauthGrantOnRetiredAddress(profile)) return true;
   const refreshToken = profile.oauth_refresh_token;
   if (!refreshToken) return false;
   if (
@@ -679,25 +703,11 @@ function storedApiBase(profile = {}) {
   if (typeof profileApiBase === 'string' && profileApiBase && !isLocalApiBase(profileApiBase)) {
     // api-beta.notis.ai is the retired name of the nightly API and is being
     // removed (docs/operations/release-channels-rollout.md): a profile that
-    // still stores it reaches the same API under its current name.
-    if (isRetiredNightlyApiBase(profileApiBase)) return NIGHTLY_API_BASE;
-    return profileApiBase.replace(/\/+$/, '');
+    // still stores it reaches the same API under its current name (CLI-037).
+    // Only the bare origin: an address with a port, path or query stays as stored.
+    return renamedRetiredApiOrigin(profileApiBase) || profileApiBase.replace(/\/+$/, '');
   }
   return resolveDefaultLiveApiBase(profile);
-}
-
-function isRetiredNightlyApiBase(value) {
-  try {
-    // Only the bare origin: an address with a port, path or query is not
-    // the retired API and stays as stored.
-    const parsed = new URL(value);
-    return parsed.origin === 'https://api-beta.notis.ai'
-      && /^\/*$/.test(parsed.pathname)
-      && !parsed.search
-      && !parsed.hash;
-  } catch {
-    return false;
-  }
 }
 
 export function isAgentMode(globalOptions = {}) {
@@ -785,7 +795,11 @@ export function getOAuthResource(profile = {}) {
 
 export function getOAuthApiBase(profile = {}) {
   if (typeof profile.oauth_api_base === 'string' && profile.oauth_api_base) {
-    return profile.oauth_api_base.replace(/\/+$/, '');
+    // A live grant recorded on a retired API name (its token minted for the
+    // current one, see oauthGrantOnRetiredAddress) is served by the same
+    // service under its current name (CLI-038).
+    return renamedRetiredApiOrigin(profile.oauth_api_base)
+      || profile.oauth_api_base.replace(/\/+$/, '');
   }
   const resource = getOAuthResource(profile);
   if (resource?.endsWith('/cli')) {
@@ -890,12 +904,16 @@ export function resolveRuntimeProfile(
   }
   const oauthApiBase = getOAuthApiBase(profile);
   const oauthResource = getOAuthResource(profile);
+  // A requested retired API name is compared under its current name, like the
+  // grant's own address (CLI-038).
   const normalizedRequestedApiBase = requestedApiBase
-    ? requestedApiBase.replace(/\/+$/, '')
+    ? (renamedRetiredApiOrigin(requestedApiBase) || requestedApiBase.replace(/\/+$/, ''))
     : null;
   if (
     requireAuth
     && credentialKind === 'oauth'
+    // A retired grant is refused with its own error when it is first used.
+    && !oauthGrantOnRetiredAddress(profile)
     && normalizedRequestedApiBase
     && oauthApiBase
     && normalizedRequestedApiBase !== oauthApiBase

@@ -352,14 +352,14 @@ test('runtime selection follows the active profile and its own OAuth grant', () 
       beta: {
         oauth_access_token: makeJwt('beta-user'),
         oauth_access_expires_at: future,
-        oauth_api_base: 'https://api-beta.notis.ai',
+        oauth_api_base: 'https://api-nightly.notis.ai',
         oauth_user_id: 'beta-user',
       },
     }, 'beta');
     const active = resolveRuntimeProfile({}, { requireAuth: true });
     assert.equal(active.profileName, 'beta');
     assert.equal(active.profileSource, 'current');
-    assert.equal(active.apiBase, 'https://api-beta.notis.ai');
+    assert.equal(active.apiBase, 'https://api-nightly.notis.ai');
     assert.equal(active.oauthUserId, 'beta-user');
 
     const explicit = resolveRuntimeProfile({ profile: 'default' }, { requireAuth: true });
@@ -642,16 +642,16 @@ test('a refresh the server refused routes the grant like a signed-out profile un
     current_profile: 'default',
     profiles: {
       default: {
-        api_base: 'https://api-beta.notis.ai',
+        api_base: 'https://api-nightly.notis.ai',
         beta: true,
         oauth_access_token: makeJwt('oauth-user', 1),
         oauth_refresh_token: 'beta-refresh-token',
         oauth_access_expires_at: 1,
         oauth_refresh_expires_at: 2,
         oauth_client_id: 'notis_cli',
-        oauth_issuer: 'https://mcp-beta.notis.ai',
-        oauth_api_base: 'https://api-beta.notis.ai',
-        oauth_resource: 'https://api-beta.notis.ai/cli',
+        oauth_issuer: 'https://mcp-nightly.notis.ai',
+        oauth_api_base: 'https://api-nightly.notis.ai',
+        oauth_resource: 'https://api-nightly.notis.ai/cli',
         oauth_user_id: 'oauth-user',
       },
     },
@@ -678,11 +678,9 @@ test('a refresh the server refused routes the grant like a signed-out profile un
     },
   );
   try {
-    // A locally guessed expiry is no evidence: the grant keeps its route (its
-    // stored api-beta address reads under the nightly API's current name, and
-    // its recorded OAuth server still owns the runtime route).
+    // A locally guessed expiry is no evidence: the grant keeps its route.
     assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-nightly.notis.ai');
-    assert.equal(resolveRuntimeProfile({}, { requireAuth: true }).apiBase, 'https://api-beta.notis.ai');
+    assert.equal(resolveRuntimeProfile({}, { requireAuth: true }).apiBase, 'https://api-nightly.notis.ai');
     // An unanswered refresh proves nothing either.
     await assert.rejects(refreshWith(503, { error: 'temporarily_unavailable' }));
     assert.equal(getProfile(loadConfig(), 'default').oauth_refresh_rejected_for, undefined);
@@ -700,7 +698,7 @@ test('a refresh the server refused routes the grant like a signed-out profile un
     // and keeps reporting the refusal.
     assert.equal(dead.credentialKind, 'oauth');
     await assert.rejects(refreshWith(400, { error: 'invalid_grant' }), { code: 'invalid_grant' });
-    assert.deepEqual([...new Set(tokenUrls)], ['https://mcp-beta.notis.ai/oauth/token']);
+    assert.deepEqual([...new Set(tokenUrls)], ['https://mcp-nightly.notis.ai/oauth/token']);
     assert.equal(listProfiles(loadConfig())[0].api_base, 'https://api.notis.ai');
     // It lists as signed out too (CLI-036).
     assert.equal(listProfiles(loadConfig())[0].authenticated, false);

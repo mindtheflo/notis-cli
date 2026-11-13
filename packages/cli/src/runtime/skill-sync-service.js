@@ -4,11 +4,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LIVE_API_ORIGINS } from './api-hosts.js';
 import { isValidProfileName, loadConfig } from './profiles.js';
 import { withSkillSyncLock } from './sync-skills.js';
 
-// Every live API, current names first, then the beta name nightly answered on.
-const LIVE_API_BASES = ['https://api.notis.ai', 'https://api-nightly.notis.ai', 'https://api-beta.notis.ai'];
 
 export const SKILL_SYNC_SERVICE_LABEL = 'ai.notis.skills-sync';
 const bundlePath = fileURLToPath(new URL('../../dist/skill-sync-worker.mjs', import.meta.url));
@@ -31,7 +30,7 @@ export async function maybeInstallSkillSyncService(runtime, {
 } = {}) {
   if (process.platform !== 'darwin' || runtime.credentialKind !== 'oauth'
     || config.current_profile !== runtime.profileName
-    || !LIVE_API_BASES.includes(runtime.apiBase)) return;
+    || !LIVE_API_ORIGINS.includes(runtime.apiBase)) return;
   // Ordinary commands must not steal another explicitly bound account's job.
   const plist = join(homedir(), 'Library', 'LaunchAgents', `${SKILL_SYNC_SERVICE_LABEL}.plist`);
   if (existsSync(plist)) {
@@ -50,7 +49,7 @@ export async function maybeInstallSkillSyncService(runtime, {
 export async function installSkillSyncService(runtime, options = {}) {
   if ((options.platform || process.platform) !== 'darwin') return { status: 'unsupported_platform' };
   if (runtime.credentialKind !== 'oauth' || !runtime.oauthUserId
-    || !LIVE_API_BASES.includes(runtime.apiBase)) {
+    || !LIVE_API_ORIGINS.includes(runtime.apiBase)) {
     return { status: 'skipped_non_personal_profile' };
   }
   // Registration upgrades must not kill a worker holding the filesystem lock,
@@ -68,7 +67,7 @@ async function installSkillSyncServiceLocked(runtime, {
   if (platform !== 'darwin') return { status: 'unsupported_platform' };
   if (runtime.credentialKind !== 'oauth' || runtime.envCredentialOverride
     || !isValidProfileName(runtime.profileName)
-    || !LIVE_API_BASES.includes(runtime.apiBase)) {
+    || !LIVE_API_ORIGINS.includes(runtime.apiBase)) {
     return { status: 'skipped_non_personal_profile' };
   }
   const root = join(home, '.notis', 'skills', 'service');

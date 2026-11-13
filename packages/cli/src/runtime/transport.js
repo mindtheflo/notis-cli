@@ -343,6 +343,10 @@ export async function httpRequest({
       // The stored refusal evidence (oauthGrantIsDead) of the same grant.
       oauth_refresh_token: storedGrant.oauth_refresh_token,
       oauth_refresh_rejected_for: storedGrant.oauth_refresh_rejected_for,
+      // A grant minted for a retired API name is spent too (CLI-038).
+      oauth_issuer: storedGrant.oauth_issuer,
+      oauth_resource: storedGrant.oauth_resource,
+      oauth_access_token: storedGrant.oauth_access_token,
     })) {
       await refreshOAuthCredential(runtime);
     }

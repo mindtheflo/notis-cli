@@ -12,16 +12,11 @@
 
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { channelForApiHost } from './api-hosts.js';
 
 export const RELEASE_CHANNELS = ['stable', 'nightly'];
 // Keep equal to the dist-tags in scripts/release-channels.cjs (a test checks).
 const CHANNEL_TAGS = { stable: 'latest', nightly: 'nightly' };
-// Live API hosts and the channel each one serves.
-const API_HOST_CHANNELS = {
-  'api.notis.ai': 'stable',
-  'api-beta.notis.ai': 'nightly',
-  'api-nightly.notis.ai': 'nightly',
-};
 export const CLI_PACKAGE_NAME = '@notis_ai/cli';
 // Set on the child so a build that disagrees about its own channel — a bad
 // version string, a half-published tag — cannot bounce the process forever.
@@ -49,7 +44,8 @@ export function normalizeReleaseChannel(value) {
 export function channelFromApiBase(apiBase) {
   if (typeof apiBase !== 'string' || !apiBase) return null;
   try {
-    return API_HOST_CHANNELS[new URL(apiBase).hostname] || null;
+    // The live API hosts and the channel each one serves (api-hosts.js).
+    return channelForApiHost(new URL(apiBase).hostname);
   } catch {
     // A malformed endpoint says nothing about the channel.
     return null;

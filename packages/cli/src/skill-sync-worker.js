@@ -4,13 +4,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getCurrentProfileName, getProfile, loadConfig, resolveRuntimeProfile } from './runtime/profiles.js';
 import { ensureFreshOAuthCredential } from './runtime/oauth.js';
+import { renamedRetiredApiOrigin } from './runtime/api-hosts.js';
 import { runSkillSync, fetchSyncSettings } from '../dist/skill-sync/index.js';
 import { withSkillSyncLock } from './runtime/sync-skills.js';
 
 // The server rejected the stored sign-in itself. Presenting it again can only
 // fail the same way, so the worker waits for the sign-in to change instead of
 // asking every minute (docs/no-dead-ends.md).
-const REJECTED_SIGN_IN_CODES = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client']);
+// A grant minted for a retired API name (CLI-038) is refused for good too.
+const REJECTED_SIGN_IN_CODES = new Set([
+  'invalid_grant', 'invalid_client', 'unauthorized_client', 'oauth_grant_retired_address',
+]);
 
 function currentCliProfile() {
   try {
@@ -42,10 +46,14 @@ export async function runAutomaticSkillSync({ profile, apiBase, userId }, {
   currentProfile = currentCliProfile,
 } = {}) {
   const runtime = resolveRuntime({ profile }, { requireAuth: true });
+  // A service installed on a retired API name serves the same API under its
+  // current name, which the grant now routes to (CLI-038).
+  const current = value => renamedRetiredApiOrigin(value) || value;
+  const boundApiBase = current(apiBase);
   // The service is bound to the API of the grant it was installed with. A
   // grant the server proved dead routes like a signed-out profile, so compare
   // the grant's own API: its refresh then reports the refusal code.
-  if (runtime.credentialKind !== 'oauth' || (runtime.oauthApiBase || runtime.apiBase) !== apiBase
+  if (runtime.credentialKind !== 'oauth' || current(runtime.oauthApiBase || runtime.apiBase) !== boundApiBase
     || runtime.oauthUserId !== userId) throw new Error('Automatic skill sync account changed; run notis skills sync to rebind');
   await refresh(runtime);
   const saved = await settings(runtime.apiBase, runtime.jwt);

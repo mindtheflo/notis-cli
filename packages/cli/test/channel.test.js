@@ -381,9 +381,9 @@ test('the login of a signed-out profile starts on the stable API, a signed-in on
 test('a grant the server proved dead signs in on stable, one with an unknown expiry keeps its channel', () => {
   const configFile = join(mkdtempSync(join(tmpdir(), 'notis-channel-dead-grant-')), 'config.json');
   const beta = {
-    api_base: 'https://api-beta.notis.ai',
+    api_base: 'https://api-nightly.notis.ai',
     beta: true,
-    oauth_api_base: 'https://api-beta.notis.ai',
+    oauth_api_base: 'https://api-nightly.notis.ai',
     oauth_access_token: 'grant',
     oauth_refresh_token: 'refresh',
     oauth_access_expires_at: 1,
@@ -417,11 +417,11 @@ test('a grant the server proved dead signs in on stable, one with an unknown exp
     assert.equal(dead.apiBase, 'https://api.notis.ai');
     assert.equal(dead.channel, 'stable');
     assert.equal(dead.credentialKind, 'oauth');
-    assert.equal(dead.oauthApiBase, 'https://api-beta.notis.ai');
+    assert.equal(dead.oauthApiBase, 'https://api-nightly.notis.ai');
     assert.equal(channelProfileForArgs(['login'], {}, { worktreeRuntime: null }).release_channel, undefined);
     for (const name of ['guessed', 'unknown', 'renewable', 'working']) {
       const kept = resolveRuntimeProfile({ profile: name }, { requireAuth: true });
-      assert.equal(kept.apiBase, 'https://api-beta.notis.ai', name);
+      assert.equal(kept.apiBase, 'https://api-nightly.notis.ai', name);
       assert.equal(kept.channel, 'nightly', name);
       assert.equal(channelProfileForArgs(['--profile', name, 'login'], {}, { worktreeRuntime: null }).release_channel, 'nightly', name);
     }
@@ -429,10 +429,10 @@ test('a grant the server proved dead signs in on stable, one with an unknown exp
       .map(({ name, api_base: apiBase }) => [name, apiBase]));
     assert.deepEqual(listed, {
       default: 'https://api.notis.ai',
-      guessed: 'https://api-beta.notis.ai',
-      unknown: 'https://api-beta.notis.ai',
-      renewable: 'https://api-beta.notis.ai',
-      working: 'https://api-beta.notis.ai',
+      guessed: 'https://api-nightly.notis.ai',
+      unknown: 'https://api-nightly.notis.ai',
+      renewable: 'https://api-nightly.notis.ai',
+      working: 'https://api-nightly.notis.ai',
     });
   } finally {
     for (const [name, value] of Object.entries(previous)) {

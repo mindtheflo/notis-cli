@@ -8,7 +8,7 @@ import { main as runSkillSyncWorker, runAutomaticSkillSync, signInFingerprint } 
 import { syncSkillsHandler } from '../src/command-specs/skills.js';
 import { refreshTokenFingerprint, resolveRuntimeProfile } from '../src/runtime/profiles.js';
 
-const account = { profile: 'beta', apiBase: 'https://api-beta.notis.ai', userId: 'owner' };
+const account = { profile: 'beta', apiBase: 'https://api-nightly.notis.ai', userId: 'owner' };
 const runtime = () => ({ profileName: account.profile, apiBase: account.apiBase, oauthUserId: 'owner', credentialKind: 'oauth', jwt: 'expired' });
 
 test('automatic sync refreshes its own OAuth grant and works without a desktop session', async () => {
@@ -122,15 +122,15 @@ test('background sync of a grant the server refused records the refusal, not an 
     current_profile: 'beta',
     profiles: {
       beta: {
-        api_base: 'https://api-beta.notis.ai',
-        oauth_api_base: 'https://api-beta.notis.ai',
+        api_base: 'https://api-nightly.notis.ai',
+        oauth_api_base: 'https://api-nightly.notis.ai',
         oauth_access_token: 'expired',
         oauth_refresh_token: 'beta-refresh',
         oauth_refresh_rejected_for: refreshTokenFingerprint('beta-refresh'),
         oauth_access_expires_at: 1,
         oauth_refresh_expires_at: 2,
         oauth_client_id: 'notis_cli',
-        oauth_issuer: 'https://mcp-beta.notis.ai',
+        oauth_issuer: 'https://mcp-nightly.notis.ai',
         oauth_user_id: 'owner',
       },
     },
@@ -162,7 +162,7 @@ test('background sync of a grant the server refused records the refusal, not an 
       },
     }),
   });
-  assert.deepEqual(refreshed, ['https://api-beta.notis.ai']);
+  assert.deepEqual(refreshed, ['https://api-nightly.notis.ai']);
   const recorded = JSON.parse(readFileSync(status, 'utf8'));
   assert.equal(recorded.code, 'invalid_grant');
   assert.equal(recorded.sign_in, signInFingerprint('beta'));

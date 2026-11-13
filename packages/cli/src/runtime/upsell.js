@@ -3,6 +3,8 @@
 // plus Cloud Computer overrides); this module only finds it in a payload and
 // turns it into the lines and hints a person or agent acts on.
 
+import { portalOriginForApiHost } from './api-hosts.js';
+
 const UPSELL_CODES = new Set([
   'entitlement_upgrade_required',
   'cloud_computer_team_limit',
@@ -10,11 +12,6 @@ const UPSELL_CODES = new Set([
 
 const NESTED_KEYS = ['error', 'details', 'data', 'result', 'response', 'entitlement_access'];
 
-const PORTAL_ORIGINS = {
-  'api.notis.ai': 'https://app.notis.ai',
-  'api-nightly.notis.ai': 'https://app-nightly.notis.ai',
-  'api-beta.notis.ai': 'https://app-nightly.notis.ai',
-};
 
 function isUpsellBody(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -66,7 +63,7 @@ export function findUpsell(value, depth = 0) {
 
 export function portalOriginFor(apiBase) {
   try {
-    return PORTAL_ORIGINS[new URL(apiBase).hostname] || null;
+    return portalOriginForApiHost(new URL(apiBase).hostname);
   } catch {
     return null;
   }

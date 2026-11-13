@@ -27,7 +27,8 @@ function runtime(spawnImpl, env = {}) {
 }
 
 test('profile use relinks the new default profile skills in a detached sync', () => {
-  for (const apiBase of ['https://api.notis.ai', 'https://api-beta.notis.ai/']) {
+  // Every live Notis API, nightly's current name included (CLI-039).
+  for (const apiBase of ['https://api.notis.ai', 'https://api-nightly.notis.ai', 'https://api-beta.notis.ai/']) {
     const { calls, spawnImpl } = fakeSpawn();
     assert.equal(relinkSkillsInBackground('beta', signedIn(apiBase), runtime(spawnImpl)), true);
     assert.equal(calls.length, 1);
@@ -45,6 +46,10 @@ test('profile use skips the relink off the hosted API, signed out, or under test
   assert.equal(relinkSkillsInBackground('local', signedIn('http://127.0.0.1:8000'), runtime(spawnImpl)), false);
   assert.equal(relinkSkillsInBackground('lookalike', signedIn('https://api.notis.ai.example.com'), runtime(spawnImpl)), false);
   assert.equal(relinkSkillsInBackground('default', { api_base: 'https://api.notis.ai' }, runtime(spawnImpl)), false);
+  // A grant minted for the retired api-beta names is signed out (CLI-038).
+  assert.equal(relinkSkillsInBackground('old', {
+    ...signedIn('https://api-beta.notis.ai'), oauth_issuer: 'https://api-beta.notis.ai',
+  }, runtime(spawnImpl)), false);
   assert.equal(relinkSkillsInBackground('default', hosted, runtime(spawnImpl, { NODE_ENV: 'test' })), false);
   assert.equal(relinkSkillsInBackground('default', hosted, runtime(spawnImpl, { NODE_TEST_CONTEXT: 'child-v8' })), false);
   assert.equal(relinkSkillsInBackground('default', hosted, { ...runtime(spawnImpl), argv: ['node'] }), false);

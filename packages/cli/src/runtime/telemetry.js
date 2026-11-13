@@ -1,3 +1,5 @@
+import { oauthGrantOnRetiredAddress } from './profiles.js';
+
 const ERROR_CATEGORIES = new Map([
   [2, 'usage'],
   [3, 'auth'],
@@ -66,6 +68,14 @@ export async function reportCliCommand({
   }
   // An OAuth token only goes to the API that issued it: a grant the server
   // proved dead routes the profile to stable (CLI-035), not its token.
+  // A grant minted for a retired API name goes nowhere (CLI-038).
+  if (runtime.credentialKind === 'oauth' && oauthGrantOnRetiredAddress({
+    oauth_issuer: runtime.oauthIssuer,
+    oauth_resource: runtime.oauthResource,
+    oauth_access_token: runtime.jwt,
+  })) {
+    return false;
+  }
   const apiBase = (runtime.credentialKind === 'oauth' && runtime.oauthApiBase) || runtime.apiBase;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1_500);

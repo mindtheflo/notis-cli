@@ -24,6 +24,7 @@ import { createInterface } from 'node:readline/promises';
 
 import { CliError, EXIT_CODES, usageError } from './errors.js';
 import { readComputerIdentity } from './computer-identity.js';
+import { isOnRetiredApiHost, renamedRetiredApiOrigin } from './api-hosts.js';
 import { getAuthRecovery, getRetryRecovery, quoteShellArgument } from './auth-recovery.js';
 import {
   channelFromApiBase,
@@ -40,6 +41,7 @@ import {
   signedOutRoute,
   loadConfig,
   oauthGrantIsDead,
+  oauthGrantOnRetiredAddress,
   refreshTokenFingerprint,
   resolveConfigFile,
   updateConfig,
@@ -2062,7 +2064,8 @@ function updateRuntimeFromOAuthProfile(runtime, profile) {
 }
 
 function assertOAuthApiTarget(runtime, profile) {
-  const requestedApiBase = String(runtime.requestedApiBase || '').replace(/\/+$/, '');
+  const requestedApiBase = renamedRetiredApiOrigin(runtime.requestedApiBase)
+    || String(runtime.requestedApiBase || '').replace(/\/+$/, '');
   const oauthApiBase = getOAuthApiBase(profile);
   if (requestedApiBase && oauthApiBase && requestedApiBase !== oauthApiBase) {
     throw oauthError(
@@ -2072,12 +2075,34 @@ function assertOAuthApiTarget(runtime, profile) {
   }
 }
 
+/**
+ * A grant minted while the nightly API answered as api-beta.notis.ai
+ * (oauthGrantOnRetiredAddress) is refused by the nightly service and its
+ * refresh endpoint is the retired domain, so it is never refreshed or sent:
+ * the person is told to sign in again, which starts on stable and follows the
+ * account (CLI-035, CLI-038).
+ */
+function retiredAddressGrantError(runtime, profile) {
+  const { hints } = getAuthRecovery(runtime);
+  const retiredHost = [profile.oauth_issuer, getOAuthResource(profile)]
+    .filter(isOnRetiredApiHost)
+    .map(value => new URL(value).hostname)[0];
+  return oauthError(
+    'oauth_grant_retired_address',
+    `This sign-in was made on ${retiredHost}, a retired address of Notis that no longer accepts it. `
+      + `Sign in again: ${hints[0].command}`,
+    hints,
+    { retired_host: retiredHost },
+  );
+}
+
 export async function ensureFreshOAuthCredential(runtime, fetchImpl = fetch) {
   if (runtime.credentialKind !== 'oauth') {
     return Boolean(runtime.jwt);
   }
 
   const profile = getProfile(loadConfig(), runtime.profileName);
+  if (oauthGrantOnRetiredAddress(profile)) throw retiredAddressGrantError(runtime, profile);
   assertOAuthApiTarget(runtime, profile);
   if (!credentialIsExpired({ credentialKind: 'oauth' }, profile)) {
     updateRuntimeFromOAuthProfile(runtime, profile);
@@ -2823,6 +2848,9 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch, tokenRe
     stopTouchingLocks = keepLockFoldersFresh([profileLock, oauthLockDir()]);
     const config = loadConfig();
     const profile = getProfile(config, runtime.profileName);
+    // Checked before the API target: a retired grant's own address is the
+    // retired one, and nothing is sent with it (CLI-038).
+    if (oauthGrantOnRetiredAddress(profile)) throw retiredAddressGrantError(runtime, profile);
     assertOAuthApiTarget(runtime, profile);
     if (
       profile.oauth_access_token
@@ -2971,6 +2999,9 @@ export async function logoutOAuth(runtime, { allProfiles = false } = {}, fetchIm
           revocationToken
           && profile.oauth_client_id
           && profile.oauth_issuer
+          // The nightly service no longer knows a grant minted on its retired
+          // name, and that name's domain is gone (CLI-038).
+          && !oauthGrantOnRetiredAddress(profile)
         ) {
           try {
             const metadata = storedOAuthMetadata(runtime, profile);

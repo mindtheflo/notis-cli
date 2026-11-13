@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { isLiveApiOrigin } from '../runtime/api-hosts.js';
 import { CHANNEL_SWITCH_ENV } from '../runtime/channel.js';
 import { CliError, EXIT_CODES } from '../runtime/errors.js';
 import { quoteShellArgument } from '../runtime/auth-recovery.js';
@@ -9,6 +10,7 @@ import {
   loadConfig,
   normalizeConfig,
   profileHasCredential,
+  oauthGrantOnRetiredAddress,
   profileIsSignedIn,
   profileExists,
   resolveWorktreeRuntime,
@@ -117,8 +119,6 @@ async function listHandler(ctx) {
   });
 }
 
-const SKILL_SYNC_API_BASE_PATTERN = /^https:\/\/api(?:-beta)?\.notis\.ai\/?$/;
-
 // Overrides that belong to this `profile use` run. Inherited, a NOTIS_JWT would
 // sync its own account into the agent folders under the named profile.
 const RELINK_DROPPED_ENV = ['NOTIS_JWT', 'NOTIS_API_BASE', 'NOTIS_PROFILE', CHANNEL_SWITCH_ENV];
@@ -135,7 +135,10 @@ export function relinkSkillsInBackground(name, profile, {
   // Never from a test run: a detached sync would outlive it and reach the real API.
   if (env.NODE_ENV === 'test' || env.NODE_TEST_CONTEXT || !argv[1]) return false;
   if (!profile?.oauth_access_token && !profile?.oauth_refresh_token) return false;
-  if (!SKILL_SYNC_API_BASE_PATTERN.test(String(profile.api_base || ''))) return false;
+  // A grant minted for a retired API name is signed out (CLI-038).
+  if (oauthGrantOnRetiredAddress(profile)) return false;
+  // Every live Notis API, nightly's current name included (CLI-039).
+  if (!isLiveApiOrigin(profile.api_base)) return false;
   // Like the automatic sync, the relink runs as the named profile alone: its
   // credential, its endpoint and the CLI build for its channel.
   const childEnv = { ...env };
