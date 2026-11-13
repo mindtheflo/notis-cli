@@ -632,7 +632,7 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
       'default',
       undefined,
     );
-    assert.equal(betaFromStoredApi, 'https://api-beta.notis.ai');
+    assert.equal(betaFromStoredApi, 'https://api-nightly.notis.ai');
 
     // A signed-out profile keeps the pin and address of the account that left
     // it (logouts before CLI-034 kept both). Its next login starts on stable, and a nightly
@@ -2301,7 +2301,7 @@ test('profile use switches the active account without touching any credential', 
     [
       ['default', 'https://api.notis.ai', true],
       // Commands keep a stored live address (CLI-036), so the list shows it.
-      ['beta', 'https://api-beta.notis.ai', true],
+      ['beta', 'https://api-nightly.notis.ai', true],
     ],
   );
 });

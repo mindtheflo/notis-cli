@@ -64,7 +64,7 @@ test('loadConfig still reads a well-formed config file', async () => {
   const previousApiBase = process.env.NOTIS_API_BASE;
   try {
     delete process.env.NOTIS_API_BASE;
-    assert.equal(profiles.getApiBase(config, 'work'), 'https://api-beta.notis.ai');
+    assert.equal(profiles.getApiBase(config, 'work'), 'https://api-nightly.notis.ai');
     process.env.NOTIS_API_BASE = 'https://api-nightly.notis.ai';
     assert.equal(profiles.getApiBase(config, 'work'), 'https://api-nightly.notis.ai');
     assert.equal(profiles.getApiBase(config, 'work', 'http://localhost:3456'), 'http://localhost:3456');
@@ -344,8 +344,37 @@ test('profile inspection shows the address commands use for a grant with no reco
     assert.equal(listed.custom, profiles.getApiBase(config, 'custom'));
     // A loopback address without its lease is never where commands go.
     assert.equal(listed.loopback, profiles.getApiBase(config, 'loopback'));
-    assert.equal(listed.beta, 'https://api-beta.notis.ai');
+    assert.equal(listed.beta, 'https://api-nightly.notis.ai');
     assert.equal(listed.beta, profiles.getApiBase(config, 'beta'));
+  } finally {
+    if (previousApiBase === undefined) delete process.env.NOTIS_API_BASE;
+    else process.env.NOTIS_API_BASE = previousApiBase;
+  }
+});
+
+test('a stored api-beta address reaches the nightly API under its current name', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-api-beta-rename-'));
+  const profiles = await loadProfilesWithHome(home, 'api-beta-rename');
+  const config = {
+    current_profile: 'old',
+    profiles: {
+      old: { api_base: 'https://api-beta.notis.ai/', oauth_access_token: 'oauth-token', oauth_access_expires_at: 4102444800 },
+      plain: { api_base: 'http://api-beta.notis.ai', oauth_access_token: 'oauth-token', oauth_access_expires_at: 4102444800 },
+      custom: { api_base: 'https://api-beta.example.test', oauth_access_token: 'oauth-token', oauth_access_expires_at: 4102444800 },
+      proxied: { api_base: 'https://api-beta.notis.ai:8443/proxy', oauth_access_token: 'oauth-token', oauth_access_expires_at: 4102444800 },
+    },
+  };
+  const previousApiBase = process.env.NOTIS_API_BASE;
+  try {
+    delete process.env.NOTIS_API_BASE;
+    assert.equal(profiles.getApiBase(config, 'old'), 'https://api-nightly.notis.ai');
+    assert.equal(profiles.listProfiles(config).find((entry) => entry.name === 'old').api_base, 'https://api-nightly.notis.ai');
+    // Only the https Notis address is renamed; anything else stays as stored.
+    assert.equal(profiles.getApiBase(config, 'plain'), 'http://api-beta.notis.ai');
+    assert.equal(profiles.getApiBase(config, 'custom'), 'https://api-beta.example.test');
+    assert.equal(profiles.getApiBase(config, 'proxied'), 'https://api-beta.notis.ai:8443/proxy');
+    // An explicit route still wins.
+    assert.equal(profiles.getApiBase(config, 'old', 'https://api-beta.notis.ai'), 'https://api-beta.notis.ai');
   } finally {
     if (previousApiBase === undefined) delete process.env.NOTIS_API_BASE;
     else process.env.NOTIS_API_BASE = previousApiBase;

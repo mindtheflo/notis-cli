@@ -677,9 +677,27 @@ export function getApiBase(config, profileName, override) {
 function storedApiBase(profile = {}) {
   const profileApiBase = profile.api_base;
   if (typeof profileApiBase === 'string' && profileApiBase && !isLocalApiBase(profileApiBase)) {
+    // api-beta.notis.ai is the retired name of the nightly API and is being
+    // removed (docs/operations/release-channels-rollout.md): a profile that
+    // still stores it reaches the same API under its current name.
+    if (isRetiredNightlyApiBase(profileApiBase)) return NIGHTLY_API_BASE;
     return profileApiBase.replace(/\/+$/, '');
   }
   return resolveDefaultLiveApiBase(profile);
+}
+
+function isRetiredNightlyApiBase(value) {
+  try {
+    // Only the bare origin: an address with a port, path or query is not
+    // the retired API and stays as stored.
+    const parsed = new URL(value);
+    return parsed.origin === 'https://api-beta.notis.ai'
+      && /^\/*$/.test(parsed.pathname)
+      && !parsed.search
+      && !parsed.hash;
+  } catch {
+    return false;
+  }
 }
 
 export function isAgentMode(globalOptions = {}) {

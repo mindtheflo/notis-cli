@@ -678,13 +678,15 @@ test('a refresh the server refused routes the grant like a signed-out profile un
     },
   );
   try {
-    // A locally guessed expiry is no evidence: the grant keeps its route.
-    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-beta.notis.ai');
+    // A locally guessed expiry is no evidence: the grant keeps its route (its
+    // stored api-beta address reads under the nightly API's current name, and
+    // its recorded OAuth server still owns the runtime route).
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-nightly.notis.ai');
     assert.equal(resolveRuntimeProfile({}, { requireAuth: true }).apiBase, 'https://api-beta.notis.ai');
     // An unanswered refresh proves nothing either.
     await assert.rejects(refreshWith(503, { error: 'temporarily_unavailable' }));
     assert.equal(getProfile(loadConfig(), 'default').oauth_refresh_rejected_for, undefined);
-    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-beta.notis.ai');
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-nightly.notis.ai');
 
     await assert.rejects(refreshWith(400, { error: 'invalid_grant' }), { code: 'invalid_grant' });
     const stored = getProfile(loadConfig(), 'default');
@@ -708,7 +710,7 @@ test('a refresh the server refused routes the grant like a signed-out profile un
       latest.profiles.default.oauth_refresh_token = 'another-refresh-token';
       return latest;
     });
-    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-beta.notis.ai');
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-nightly.notis.ai');
   } finally {
     for (const [name, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[name];
