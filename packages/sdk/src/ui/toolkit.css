@@ -46,7 +46,7 @@
   --nui-st-live: 142 71% 33%;
   --nui-tone-danger: var(--destructive);
   --nui-count-fg: 0 0% 40%;
-  /* A toned pill (Badge, Row label) draws its text over its own tint, so each tone has a shade that keeps 4.5:1 on
+  /* A toned Row label draws its text over its own tint, so each tone has a shade that keeps 4.5:1 on
      that tint over the list and the open row. */
   --nui-pill-info: 221 83% 40%; --nui-pill-success: 142 76% 24%; --nui-pill-warning: 30 95% 28%; --nui-pill-danger: 0 80% 38%;
 }
@@ -461,11 +461,18 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow) { flex-shrink: 0; }
 .nui-section[data-kind="bar"] .nui-section-tabs .nui-toggles { flex-wrap: nowrap; }
 .nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 6px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }
-/* The tone tints of a Badge and a toned Row label, one set: the text shade keeps 4.5:1 on its own tint. */
-.nui-badge[data-tone="info"], .nui-row-label[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-pill-info, 221 83% 40%)); }
-.nui-badge[data-tone="success"], .nui-row-label[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-pill-success, 142 76% 24%)); }
-.nui-badge[data-tone="warning"], .nui-row-label[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(var(--nui-pill-warning, 30 95% 28%)); }
-.nui-badge[data-tone="danger"], .nui-row-label[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-pill-danger, 0 80% 38%)); }
+/* A toned Badge keeps its brighter tone text (Flo, 2026-11-12, design review 6754a636: keep the brighter badge text,
+   never propose the darker light / lighter dark shades again). Same tints as a toned Row label. */
+.nui-badge[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-badge[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-st-active, 142 71% 45%)); }
+.nui-badge[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(32 95% 40%); }
+.dark .nui-badge[data-tone="warning"] { color: hsl(38 92% 60%); }
+.nui-badge[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-tone-danger, var(--destructive))); }
+/* A toned Row label is a pill on the same tints, its text a shade that keeps 4.5:1 on its own tint. */
+.nui-row-label[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-pill-info, 221 83% 40%)); }
+.nui-row-label[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-pill-success, 142 76% 24%)); }
+.nui-row-label[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(var(--nui-pill-warning, 30 95% 28%)); }
+.nui-row-label[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-pill-danger, 0 80% 38%)); }
 .nui-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 7px; font-size: 13px; font-weight: 500; white-space: nowrap; color: hsl(var(--foreground)); background: hsl(var(--foreground) / .06); }
 .nui-btn:hover:not(:disabled) { background: hsl(var(--foreground) / .1); }
 .nui-btn:disabled { opacity: .5; }

@@ -1880,9 +1880,12 @@ test('rows: a warning or danger label leads the labels, so a narrow row keeps it
   assert.equal(groups[0]!.textContent, 'Overdue, Billing', 'a hidden comma still separates the words when read');
   assert.equal(groups[1]!.querySelector('.nui-sr-only')?.textContent, ', ');
   assert.match(cssRule('.nui-row-label[data-tone]') ?? '', /border-radius: 5px/, 'a toned label is a tinted pill');
-  assert.match(cssRule('.nui-badge[data-tone="danger"], .nui-row-label[data-tone="danger"]') ?? '',
+  assert.match(cssRule('.nui-row-label[data-tone="danger"]') ?? '',
     /background: hsl\(var\(--destructive\) \/ \.12\); color: hsl\(var\(--nui-pill-danger, 0 80% 38%\)\)/,
     'state never rides on text colour alone: the Badge tint, with a shade that reads on it');
+  assert.match(cssRule('.nui-badge[data-tone="danger"]') ?? '',
+    /background: hsl\(var\(--destructive\) \/ \.12\); color: hsl\(var\(--nui-tone-danger, var\(--destructive\)\)\)/,
+    'a Badge keeps its brighter tone text (Flo, 2026-11-12)');
   assert.match(cssRule('.nui-row-labels') ?? '', /text-overflow: ellipsis/);
   assert.match(cssRule('.nui-row-meta') ?? '', /text-overflow: ellipsis/, 'the meta line ends in an ellipsis (C14)');
 });
