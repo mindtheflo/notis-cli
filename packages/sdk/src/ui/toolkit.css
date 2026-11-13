@@ -424,9 +424,16 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-section-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; margin-left: auto; }
 .nui-section[data-kind="bar"] { display: flex; align-items: center; gap: 8px; padding: 12px 24px 0; }
 .nui-section[data-kind="bar"] > * { flex-shrink: 0; }
+/* A period picker placed straight in a bar goes under the head when both do not fit, then shrinks to the row and
+   wraps its triggers (Compare to under the range) instead of widening the page. */
+.nui-section[data-kind="bar"]:has(> .nui-pp) { flex-wrap: wrap; row-gap: 8px; }
+.nui-section[data-kind="bar"] > .nui-pp { flex-shrink: 1; min-width: 0; }
 .nui-section[data-kind="bar"] > :is(.nui-section-head, .nui-tabrow) { flex: 1 1 auto; min-width: 0; }
 .nui-section[data-kind="chart"] { padding: 32px 24px 0; container: nui-section / inline-size; }
 .nui-section[data-kind="chart"] > .nui-section-head + * { margin-top: 16px; }
+/* Pickers in a chart head (a period, a comparison) move under the title when both do not fit, instead of cutting the
+   title to a few words. */
+.nui-section[data-kind="chart"] > .nui-section-head { flex-wrap: wrap; row-gap: 8px; }
 .nui-section[data-kind="chart"] .nui-section-tabs { flex-shrink: 0; margin-left: auto; }
 .nui-section[data-kind="chart"] .nui-section-tabs + .nui-section-actions { margin-left: 0; }
 /* A narrow chart section (560px or less): the title wraps instead of being cut to a few words, and the tabs (a chart
@@ -448,8 +455,11 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
    the head leaves and folds the pills that do not fit into More; its end content follows the pills. */
 :is(.nui-section-tabs, .nui-section[data-kind="bar"]) > .nui-tabrow { flex: 1 1 auto; height: auto; padding: 0; border-bottom: 0; }
 :is(.nui-section-tabs, .nui-section[data-kind="bar"]) > .nui-tabrow > .nui-tabrow-end { margin-left: 0; }
-/* Folded to one pill and More, a tabrow in a section's tabs slot keeps their width and the slot scrolls instead. */
-.nui-section-tabs > .nui-tabrow[data-fold="least"] { min-width: max-content; }
+/* Folded to one pill and More, a tabrow in a bar's tabs slot keeps their width and the slot scrolls instead. Any other
+   head does not scroll: there the folded slot stops shrinking and the title gives way (it ellipsizes), and only a head
+   too narrow even for that cuts the active pill's label, so the row never runs past the page. */
+.nui-section[data-kind="bar"] .nui-section-tabs > .nui-tabrow[data-fold="least"] { min-width: max-content; }
+.nui-section:not([data-kind="bar"]) .nui-section-tabs:has(> .nui-tabrow[data-fold="least"]) { flex-shrink: 0; max-width: 100%; }
 /* A bar's tabs slot (filter pills, a period picker, toggles) takes the room between the head and the actions; content
    that cannot fold scrolls sideways in its one row instead of overflowing the pane. The 2px pad keeps focus rings in. */
 .nui-section[data-kind="bar"] .nui-section-tabs { flex: 1 1 auto; gap: 8px; margin: -2px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
@@ -707,12 +717,16 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 .nui-dp-footer { margin-top: 8px; font-size: 12px; color: hsl(var(--muted-foreground)); }
 
 /* == section: period picker (A3) == */
-.nui-pp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.nui-pp-trigger { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; line-height: 18px; white-space: nowrap; background: hsl(var(--foreground) / .045); color: hsl(var(--foreground)); }
+.nui-pp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+/* A trigger never runs past its row: its dates give way first (ellipsis). */
+.nui-pp-trigger { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; line-height: 18px; white-space: nowrap; background: hsl(var(--foreground) / .045); color: hsl(var(--foreground)); }
 .nui-pp-trigger:hover, .nui-pp-trigger[aria-expanded="true"] { background: hsl(var(--foreground) / .08); }
 .nui-pp-glyph { width: 15px; height: 15px; color: hsl(var(--muted-foreground)); }
-.nui-pp-name { font-weight: 500; }
+/* On a narrow trigger the dates give way first, then the period name; both end in an ellipsis. */
+.nui-pp-name { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
 .nui-pp-dates, .nui-pp-muted { color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.nui-pp-dates { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1000; }
+.nui-pp-glyph, .nui-pp-caret { flex-shrink: 0; }
 .nui-pp-caret { width: 12px; height: 12px; color: hsl(var(--muted-foreground)); }
 .nui-popover.nui-pp-pop { padding: 0; border-radius: 8px; overflow: hidden; max-width: calc(100vw - 16px); }
 .nui-pp-pop-cmp { min-width: 264px; }

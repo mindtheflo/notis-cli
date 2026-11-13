@@ -224,6 +224,29 @@ test('V4 declared lists render from explicit shown fixtures; the descriptor carr
   assert.throws(() => createSpaceFixtureEngine(undeclared), /only for lists this view declares/);
 });
 
+test('a shown fixture answers the page a read asks for, so reading every page counts each row once', () => {
+  const release = fixture();
+  release.manifest.shows = { expenses: { database: 'rows', where: {} } };
+  const rows = Array.from({ length: 254 }, (_, index) => ({ record_key: `fictional-${index}` }));
+  release.sourceFiles['cases.json'] = encode({ actions: {}, shown: { expenses: [{ params: {}, result: { rows, list: 'expenses' } }] } });
+  const engine = createSpaceFixtureEngine(release);
+  assert.equal(engine.executeShown('expenses', {}).rows.length, 254);
+  assert.equal(engine.executeShown('expenses', {}, {}).rows.length, 254);
+  // useShown({ allPages: true }) reads 200-row pages until one comes back short.
+  const read = [];
+  for (let offset = 0; ; offset += 200) {
+    const page = engine.executeShown('expenses', {}, { page_size: 200, ...(offset ? { offset } : {}) });
+    read.push(...page.rows);
+    assert.equal(page.list, 'expenses');
+    if (page.rows.length < 200) break;
+  }
+  assert.equal(read.length, 254);
+  assert.deepEqual(read.map(row => row.record_key), rows.map(row => row.record_key));
+  assert.deepEqual(engine.executeShown('expenses', {}, { page_size: 5, offset: 252 }).rows.map(row => row.record_key), ['fictional-252', 'fictional-253']);
+  // An offset with no page size reads one page of the live default size, 100 rows.
+  assert.deepEqual(engine.executeShown('expenses', {}, { offset: 100 }).rows.map(row => row.record_key), rows.slice(100, 200).map(row => row.record_key));
+});
+
 test('a boolean-gated empty-date filter participates in the SDK query cache key', () => {
   const release = fixture();
   release.manifest.params = { notPlanned: { type: 'boolean', description: 'Unplanned tasks' } };

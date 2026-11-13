@@ -18,9 +18,11 @@ Ordinary data and resource edits apply immediately; only source needs a release.
    `.notis/space-lock.json`, resources, source key and current revisions. Never
    silently advance a stale checkout or create a duplicate to avoid a conflict.
 2. **Build.** Edit the selected definition, its view and linked Skill files.
-   Run `spaces build <dir> --space <key>`; it freezes source and artifact bytes
-   and validates the view contract and design.
-3. **Verify.** Run `spaces verify <dir> --space <key> --space-id <space-id>`.
+   Run `spaces build <dir>`; it freezes source and artifact bytes and validates
+   the view contract and design. A pulled folder holds one Space; a workspace
+   with several needs `--space <key>` on build, verify and deploy.
+3. **Verify.** Run `spaces verify <dir>`. A pulled folder targets the Space it
+   was pulled from; anything else needs `--space-id <space-id>`.
    This checks current action authorizations and renders explicit fictional
    fixtures at 390px and 1440px with the shared read-only renderer. Provide exact
    action/list/body/record fixtures. A denied read, write-on-load or failed width
@@ -28,8 +30,7 @@ Ordinary data and resource edits apply immediately; only source needs a release.
    Missing browser tooling blocks release: install `agent-browser` and make it
    available on PATH.
 4. **Publish source.** Deploy the frozen, verified snapshot, not edits made after
-   verification: `spaces deploy <dir> --space <key> --space-id <space-id>
-   --request-id <stable-id>`. Or `spaces preview` seals a candidate, and
+   verification: `spaces deploy <dir> --request-id <stable-id>`. Or `spaces preview` seals a candidate, and
    `spaces promote <release-id> <dir>` publishes that exact candidate. Preview
    authoring never silently gains live record-edit authority. Deployment updates
    the selected Space, not siblings or the Store.

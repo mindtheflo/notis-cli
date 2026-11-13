@@ -60,6 +60,21 @@ function recordViewExample(operation,key) {
 }
 const VIEWER_READS={list_databases:'databases',get_database:'databases',query_database:'databases',list_skills:'skills',get_skill:'skills'};
 
+/**
+ * A shown fixture holds the whole list; a read asks for one page of it (page_size rows from offset), as the host
+ * does live. Without this a view reading every page (useShown allPages) got all rows on each page and counted
+ * them once per page.
+ */
+function shownPage(result,options) {
+  if(!object(options) || !object(result) || !Array.isArray(result.rows)) return result;
+  const offset=Number.isSafeInteger(options.offset) && options.offset>0 ? options.offset : 0;
+  // An offset with no page size reads one page of the live default size (100, server/lib/space_view_manifest.py).
+  const size=Number.isSafeInteger(options.page_size) && options.page_size>0 ? options.page_size : offset ? 100 : null;
+  if(size===null) return result;
+  result.rows=result.rows.slice(offset,offset+size);
+  return result;
+}
+
 export function createSpaceFixtureEngine(release) {
   const bodyTemplates=structuredClone(release.manifest.actions || {});
   const bodyResources=structuredClone(release.manifest.resources || {});
@@ -203,12 +218,12 @@ export function createSpaceFixtureEngine(release) {
       if(!matched) throw usageError('Add an explicit synthetic document body fixture.');
       return structuredClone(matched.result);
     },
-    executeShown(name,params) {
+    executeShown(name,params,options={}) {
       if(!Object.hasOwn(declaredLists,name)) throw usageError('This view does not declare that list.');
       if(!object(params)) throw usageError('List params must be an object.');
       const matched=shownCases[name]?.find(entry=>isDeepStrictEqual(entry.params,params));
       if(!matched) throw usageError(`Add an explicit synthetic shown fixture for ${name} and these params.`);
-      return structuredClone(matched.result);
+      return shownPage(structuredClone(matched.result),options);
     },
     executeViewerRead(operation,input) {
       if(!Object.hasOwn(VIEWER_READS,operation) || !declaredReads.includes(VIEWER_READS[operation])) throw usageError('This Space does not declare that viewer read.');
@@ -318,8 +333,9 @@ export async function startSpaceTestServer({release,capabilities,port=0,authoriz
         const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if(object(input) && Object.keys(input).length===1 && Object.hasOwn(input,'shown')) {
           const list=input.shown;
-          if(!object(list) || Object.keys(list).sort().join(',')!=='name,params') return response(400,'{}');
-          try {return response(200,JSON.stringify({result:engine.executeShown(list.name,list.params)}));}
+          const keys=object(list) ? Object.keys(list).sort().join(',') : '';
+          if(keys!=='name,params' && keys!=='name,options,params') return response(400,'{}');
+          try {return response(200,JSON.stringify({result:engine.executeShown(list.name,list.params,list.options)}));}
           catch(error) {return response(400,JSON.stringify({message:error.message}));}
         }
         if(object(input) && Object.keys(input).length===1 && Object.hasOwn(input,'viewer_read')) {

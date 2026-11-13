@@ -261,8 +261,8 @@ Render one frozen Space with offline fixtures and validate its current action au
 When to use: Check immutable build bytes and authoring compatibility without executing actions or publishing.
 
 Options:
-- `--space <key>` — Exact source key from the workspace index.
-- `--space-id <id>` — Exact existing destination Space.
+- `--space <key>` — Exact source key from the workspace index. Optional when the workspace holds one Space.
+- `--space-id <id>` — Exact existing destination Space. Optional in a pulled workspace: the Space it was pulled from.
 - `--reuse-grants <json>` — Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.
 - `--reuse-grants-only` — Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.
 
@@ -276,8 +276,8 @@ Seal a checked unpublished revision of the same Space and return its authenticat
 When to use: Review a checked candidate using current Editor access without changing live source or cloning the Space.
 
 Options:
-- `--space <key>` — Exact source key from the workspace index.
-- `--space-id <id>` — Exact existing destination Space.
+- `--space <key>` — Exact source key from the workspace index. Optional when the workspace holds one Space.
+- `--space-id <id>` — Exact existing destination Space. Optional in a pulled workspace: the Space it was pulled from.
 - `--reuse-grants <json>` — Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.
 - `--reuse-grants-only` — Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.
 - `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
@@ -293,8 +293,8 @@ Publish one built Space with a retry-safe, independent source revision.
 When to use: Update only the selected existing Space; this does not publish to the Store or change siblings.
 
 Options:
-- `--space <key>` — Exact source key from the workspace index.
-- `--space-id <id>` — Exact existing destination Space.
+- `--space <key>` — Exact source key from the workspace index. Optional when the workspace holds one Space.
+- `--space-id <id>` — Exact existing destination Space. Optional in a pulled workspace: the Space it was pulled from.
 - `--reuse-grants <json>` — Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.
 - `--reuse-grants-only` — Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.
 - `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
@@ -528,7 +528,7 @@ Build one independent Space and save its frozen source/artifact snapshot.
 When to use: Prepare a selected Space for verification without publishing it or changing siblings.
 
 Options:
-- `--space <key>` — Exact source key from the workspace Space index.
+- `--space <key>` — Exact source key from the workspace Space index. Optional when the workspace holds one Space.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces build . --space overview`
@@ -540,7 +540,7 @@ Inspect one local Space definition and its declared capabilities.
 When to use: Read the selected source definition without loading sibling definitions or account resources.
 
 Options:
-- `--space <key>` — Exact source key from the workspace Space index.
+- `--space <key>` — Exact source key from the workspace Space index. Optional when the workspace holds one Space.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces inspect . --space overview`

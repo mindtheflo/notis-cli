@@ -312,6 +312,10 @@ in component props.
 once the host has taken the navigation and rejects when the host refuses it:
 `await` it (or `void` it in a click handler). Prefer declared portable navigation
 aliases for sibling destinations; the host resolves them under current access.
+Declare each alias in `navigation`, then bind it once per Space with
+`notis spaces navigation bind <space-id> --alias <name> --target '{"space_id":"<id>"}' --revision <n>`
+before you deploy: a binding takes effect at the next deploy, and an unbound name
+fails verify with `navigation_unavailable`.
 Use declared params for view state, for example `{params: {project: key, period: 'week'}}`.
 The destination drops unknown params and authorizes referenced records. Changing
 a slug cannot change identity. Agents cite current server-returned links.

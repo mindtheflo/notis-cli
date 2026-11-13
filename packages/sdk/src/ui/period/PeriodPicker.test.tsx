@@ -68,3 +68,20 @@ test('PeriodPicker with the custom preset keeps its calendar (follow-up B13)', a
   assert.ok(panel.querySelector('.nui-pp-cal'), 'the calendar sits beside the presets');
   assert.ok(panel.querySelector('.nui-pp-primary'));
 });
+
+test('a PeriodPicker with Compare never widens a phone page: in a bar it wraps under the head and its triggers shrink', () => {
+  assert.match(cssRule('.nui-section[data-kind="bar"]:has(> .nui-pp)') ?? '', /flex-wrap: wrap;/, 'the bar wraps');
+  assert.match(cssRule('.nui-section[data-kind="bar"] > .nui-pp') ?? '', /flex-shrink: 1; min-width: 0;/,
+    'the picker shrinks to the row, past the bar rule that keeps its other children whole');
+  assert.match(toolkitCss, /\n\.nui-pp \{[^}]*min-width: 0; max-width: 100%;/, 'the picker never runs past its row');
+  assert.match(cssRule('.nui-pp-trigger') ?? '', /min-width: 0; max-width: 100%;/);
+  assert.match(cssRule('.nui-pp-dates') ?? '', /min-width: 0; overflow: hidden; text-overflow: ellipsis;/,
+    'a long range ellipsizes inside its trigger');
+  assert.match(cssRule('.nui-pp-dates') ?? '', /flex-shrink: 1000;/, 'the dates give way before the period name');
+  assert.match(cssRule('.nui-pp-name') ?? '', /min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;/,
+    'a long period name still shrinks, so the trigger never outgrows a phone row');
+});
+
+test('a chart head moves its pickers under the title when both do not fit, instead of cutting the title', () => {
+  assert.match(cssRule('.nui-section[data-kind="chart"] > .nui-section-head') ?? '', /flex-wrap: wrap;/);
+});

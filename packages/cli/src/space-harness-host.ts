@@ -65,10 +65,13 @@ async function start() {
       if (!family || !authority.viewerReads.includes(family)) return protocolFailure('Undeclared verification viewer read.');
       return runFixture({ op: 'viewerRead', actionId: operation, ok: null }, { viewer_read: { operation, input } });
     } : undefined,
-    shown: Object.values(authority.shows || {}).some(list => 'database' in list) ? <T,>(name: string, params: Record<string, unknown> = {}): Promise<T> => {
+    shown: Object.values(authority.shows || {}).some(list => 'database' in list) ? <T,>(name: string, params: Record<string, unknown> = {},
+      options: { pageSize?: number; offset?: number } = {}): Promise<T> => {
       const list = authority.shows && Object.hasOwn(authority.shows, name) ? authority.shows[name] : null;
       if (!list || !('database' in list)) return protocolFailure('Undeclared verification list.');
-      return runFixture({ op: 'shown', actionId: name, ok: null }, { shown: { name, params } });
+      // The fixture holds the whole list; the page asked for is cut from it, as the host does live.
+      const page = { ...(options.pageSize ? { page_size: options.pageSize } : {}), ...(options.offset ? { offset: options.offset } : {}) };
+      return runFixture({ op: 'shown', actionId: name, ok: null }, { shown: { name, params, options: page } });
     } : undefined,
     documentBody(request: SpaceDocumentBodyRequest) {
       return runFixture({ op: 'documentBody', actionId: request?.readAction, ok: null }, { document_body: request });
@@ -101,7 +104,7 @@ async function start() {
   const host = document.createElement('div'); host.style.cssText = 'min-height:100vh;height:100vh';
   const shadow = host.attachShadow({ mode: 'open' });
   const css = document.createElement('style'); css.textContent = snapshot.css; shadow.appendChild(css);
-  NotisSDKUI.adoptToolkitStyles(shadow);
+  NotisSDKUI.adoptToolkitStyles(shadow, { cascade: NotisSDKUI.toolkitCascadeFor(snapshot.css) });
   const mount = document.createElement('div'); mount.setAttribute('data-notis-app-mount', 'true');
   mount.style.cssText = 'min-height:0;height:100%'; shadow.appendChild(mount);
   document.body.appendChild(host);

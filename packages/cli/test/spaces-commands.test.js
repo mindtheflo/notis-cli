@@ -480,3 +480,30 @@ test('deploy and preview refuse a Space whose icon is still empty, before any re
   }
   assert.deepEqual(calls, []);
 });
+
+test('a workspace with one Space needs no --space, and a pulled one deploys to the Space it was pulled from', async t => {
+  const { writeSpaceLock, lockAfterPull } = await import('../src/runtime/space-lock.js');
+  const root = await sourceFixture(t), calls = [];
+  const inspect = context('spaces inspect', {}, { dir: root });
+  assert.equal((await inspect.spec.handler(inspect)).data.key, 'one');
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    calls.push({ url, body: JSON.parse(request.body) });
+    return new Response('{"error":"fixture_stop","message":"stop"}', { status: 409 });
+  });
+  // Authored, not pulled: the destination is still asked for, before any request.
+  const authored = context('spaces deploy', { requestId: 'intent' }, { dir: root });
+  await assert.rejects(authored.spec.handler(authored), /--space-id/);
+  assert.equal(calls.length, 0);
+  // Pulled on another API: still asked for.
+  writeSpaceLock(root, lockAfterPull({ spaceId: 'pulled-space', apiBase: 'https://other.invalid', sourceRevision: 1, links: [], skills: {} }));
+  await assert.rejects(authored.spec.handler(authored), /--space-id/);
+  assert.equal(calls.length, 0);
+  writeSpaceLock(root, lockAfterPull({ spaceId: 'pulled-space', apiBase: 'https://fixture.invalid', sourceRevision: 1, links: [], skills: {} }));
+  await assert.rejects(authored.spec.handler(authored));
+  assert.equal(calls[0].url, 'https://fixture.invalid/portal_spaces/source-verify');
+  assert.equal(calls[0].body.space_id, 'pulled-space');
+  // Two Spaces: the command names them.
+  writeFileSync(join(root, 'notis.config.ts'), "export default {spaces:{one:{definition:'one.ts'},two:{definition:'one.ts'}}};");
+  const both = context('spaces inspect', {}, { dir: root });
+  await assert.rejects(both.spec.handler(both), /--space <key>: this workspace declares one, two\./);
+});

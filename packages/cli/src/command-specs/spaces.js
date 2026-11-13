@@ -1,5 +1,5 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
-import { appFilesDigest, clearSpaceScreenshots, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
+import { appFilesDigest, clearSpaceScreenshots, loadAppConfig, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
 import { buildSpaceArtifact, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
@@ -16,10 +16,24 @@ import { unifiedDiffSummary, versionName } from './version-history.js';
 import { createHash } from 'node:crypto';
 import { viewRenderCommandSpec } from './views.js';
 
-function selected(ctx) {
-  if (!ctx.options.space) throw usageError('Choose the independent Space with --space <key>.');
+async function selected(ctx) {
   // build, verify, preview, deploy and inspect write or stage inside this folder.
-  return { directory: assertSourceRoot(resolveProjectDir(ctx.args.dir || '.')), key: ctx.options.space };
+  const directory = assertSourceRoot(resolveProjectDir(ctx.args.dir || '.'));
+  if (ctx.options.space) return { directory, key: ctx.options.space };
+  // A folder that holds one Space (a pulled Space always does) needs no --space.
+  const workspace = await loadAppConfig(directory);
+  const keys = workspace && typeof workspace.spaces === 'object' && workspace.spaces ? Object.keys(workspace.spaces) : [];
+  if (keys.length === 1) return { directory, key: keys[0] };
+  throw usageError(keys.length ? `Choose the Space with --space <key>: this workspace declares ${keys.join(', ')}.`
+    : 'Choose the independent Space with --space <key>.');
+}
+
+/** --space-id, else the Space this folder was pulled from on the same API (its lock file). */
+function destinationSpaceId(ctx, directory) {
+  if (ctx.options.spaceId) return ctx.options.spaceId;
+  const lock = readSpaceLock(directory);
+  if (lock && lock.api_base === ctx.runtime.apiBase.replace(/\/$/, '')) return lock.space_id;
+  throw usageError('Pass --space-id <id> for the existing Space.');
 }
 
 function requestId(ctx) {
@@ -168,8 +182,8 @@ function sameVerification(verification, body, sourceDigest) {
 }
 
 async function sourceRelease(ctx, publish, stageOnly = false) {
-  const { directory, key } = selected(ctx);
-  if (!ctx.options.spaceId) throw usageError('Pass --space-id <id> for the existing Space.');
+  const { directory, key } = await selected(ctx);
+  const spaceId = destinationSpaceId(ctx, directory);
   const intentKey = publish ? requestId(ctx) : null;
   // A verify that stops at any point (a build older than its source, a refused source check, a cancelled render), or
   // a release without a loading skeleton, leaves no image of an older build.
@@ -177,11 +191,11 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
   const release = await prepareSpaceRelease(directory, key);
   try {
     if (publish) requireSpaceIcon(release.manifest, key);
-    const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, ctx.options.spaceId, intentKey];
+    const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, spaceId, intentKey];
     let verification = publish && !ctx.options.dryRun ? spacePublicationIntent(directory, identity) : null;
-    const local = intentChanges(directory, ctx.options.spaceId, release.manifest,
-      localSpaceChanges(directory, ctx.options.spaceId, release.manifest), verification);
-    const body = { space_id: ctx.options.spaceId, manifest: release.manifest, source_files: release.sourceFiles,
+    const local = intentChanges(directory, spaceId, release.manifest,
+      localSpaceChanges(directory, spaceId, release.manifest), verification);
+    const body = { space_id: spaceId, manifest: release.manifest, source_files: release.sourceFiles,
       artifact_files: release.files, reuse_grants: object(ctx.options.reuseGrants || '{}', '--reuse-grants'),
       ...(ctx.options.reuseGrantsOnly ? { authorization_mode: 'reuse_only' } : {}),
       ...(local.changes ? { changes: local.changes } : {}) };
@@ -691,8 +705,8 @@ export const spacesCommandSpecs = [
       : operation === 'preview' ? 'Review a checked candidate using current Editor access without changing live source or cloning the Space.'
         : 'Update only the selected existing Space; this does not publish to the Store or change siblings.',
     args_schema: { arguments: [{ token: '[dir]', key: 'dir', description: 'Source workspace (default current directory).' }],
-      options: [{ flags: '--space <key>', description: 'Exact source key from the workspace index.' },
-        { flags: '--space-id <id>', description: 'Exact existing destination Space.' },
+      options: [{ flags: '--space <key>', description: 'Exact source key from the workspace index. Optional when the workspace holds one Space.' },
+        { flags: '--space-id <id>', description: 'Exact existing destination Space. Optional in a pulled workspace: the Space it was pulled from.' },
         { flags: '--reuse-grants <json>', description: 'Explicit action-key to saved-grant-ID map. Otherwise your own connections are used.' },
         { flags: '--reuse-grants-only', description: 'Never authorize new actions. Reuse only the supplied saved grants; other declarations remain unavailable. Requires existing bound databases.' },
         ...(operation !== 'verify' ? [requestOption, { flags: '--dry-run', description: 'Validate without uploading or publishing.' }] : [])] },
@@ -906,12 +920,12 @@ export const spacesCommandSpecs = [
     summary: 'Build one independent Space and save its frozen source/artifact snapshot.',
     when_to_use: 'Prepare a selected Space for verification without publishing it or changing siblings.',
     args_schema: { arguments: [{ token: '[dir]', key: 'dir', description: 'Source workspace (default current directory).' }],
-      options: [{ flags: '--space <key>', description: 'Exact source key from the workspace Space index.' }] },
+      options: [{ flags: '--space <key>', description: 'Exact source key from the workspace Space index. Optional when the workspace holds one Space.' }] },
     examples: ['notis spaces build . --space overview'],
     mutates: true, idempotent: true, require_auth: false,
     backend_call: { type: 'local', name: 'space_build' },
     async handler(ctx) {
-      const { directory, key } = selected(ctx);
+      const { directory, key } = await selected(ctx);
       const result = await buildSpaceArtifact(directory, key, { stdio: ctx.output.isMachineMode() ? 'pipe' : 'inherit' });
       return ctx.output.emitSuccess({ command: 'spaces build', data: result, humanSummary: `Built ${key}; no Space was published.` });
     },
@@ -921,12 +935,12 @@ export const spacesCommandSpecs = [
     summary: 'Inspect one local Space definition and its declared capabilities.',
     when_to_use: 'Read the selected source definition without loading sibling definitions or account resources.',
     args_schema: { arguments: [{ token: '[dir]', key: 'dir', description: 'Source workspace (default current directory).' }],
-      options: [{ flags: '--space <key>', description: 'Exact source key from the workspace Space index.' }] },
+      options: [{ flags: '--space <key>', description: 'Exact source key from the workspace Space index. Optional when the workspace holds one Space.' }] },
     examples: ['notis spaces inspect . --space overview'],
     mutates: false, idempotent: true, require_auth: false,
     backend_call: { type: 'local', name: 'space_source_inspect' },
     async handler(ctx) {
-      const { directory, key } = selected(ctx);
+      const { directory, key } = await selected(ctx);
       const selection = await loadSelectedSpace(directory, key);
       return ctx.output.emitSuccess({ command: 'spaces inspect', data: { key, definition: selection.definition, definition_path: selection.definitionPath },
         humanSummary: `${selection.definition.name} (${key})` });
