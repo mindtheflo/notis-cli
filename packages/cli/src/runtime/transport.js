@@ -336,8 +336,12 @@ export async function httpRequest({
   // config write lock, instead of racing on a 401 retry.
   let currentProfile;
   if (runtime.credentialKind === 'oauth') {
+    const storedGrant = getProfile(loadConfig(), runtime.profileName);
     if (requireAuth && credentialIsExpired(runtime, {
       oauth_access_expires_at: runtime.oauthAccessExpiresAt,
+      // The stored refusal evidence (oauthGrantIsDead) of the same grant.
+      oauth_refresh_token: storedGrant.oauth_refresh_token,
+      oauth_refresh_rejected_for: storedGrant.oauth_refresh_rejected_for,
     })) {
       await refreshOAuthCredential(runtime);
     }

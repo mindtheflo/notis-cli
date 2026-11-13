@@ -27,9 +27,12 @@ import { promisify } from 'node:util';
 import {
   credentialIsExpired,
   ensureProfile,
+  getApiBase,
   getProfile,
+  listProfiles,
   loadConfig,
   normalizeConfig,
+  refreshTokenFingerprint,
   resolveRuntimeProfile,
   saveConfig,
   updateConfig,
@@ -42,6 +45,7 @@ import {
   openBrowserForAgent,
   createLoopbackReceiver,
   discoverCliOAuth,
+  ensureFreshOAuthCredential,
   acquireListenerGlobalLock,
   clearListenerState,
   listenerProcessIsAlive,
@@ -623,6 +627,245 @@ test('OAuth refresh errors keep recovery commands on the failed named profile', 
         return true;
       },
     );
+  } finally {
+    if (previousConfig === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
+    else process.env.NOTIS_CLI_CONFIG_FILE = previousConfig;
+  }
+});
+
+// CLI-035: only the sign-in server's own evidence makes a grant dead.
+test('a refresh the server refused routes the grant like a signed-out profile until a new grant replaces it', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-oauth-dead-grant-'));
+  const configFile = join(home, 'config.json');
+  // A grant from the beta days whose refresh expiry the CLI only guessed.
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: {
+        api_base: 'https://api-beta.notis.ai',
+        beta: true,
+        oauth_access_token: makeJwt('oauth-user', 1),
+        oauth_refresh_token: 'beta-refresh-token',
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: 2,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: 'https://mcp-beta.notis.ai',
+        oauth_api_base: 'https://api-beta.notis.ai',
+        oauth_resource: 'https://api-beta.notis.ai/cli',
+        oauth_user_id: 'oauth-user',
+      },
+    },
+  }));
+  const previous = {
+    NOTIS_CLI_CONFIG_FILE: process.env.NOTIS_CLI_CONFIG_FILE,
+    NOTIS_API_BASE: process.env.NOTIS_API_BASE,
+    NOTIS_JWT: process.env.NOTIS_JWT,
+    NOTIS_TEST_DISABLE_WORKTREE_ROUTING: process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING,
+  };
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING = '1';
+  delete process.env.NOTIS_API_BASE;
+  delete process.env.NOTIS_JWT;
+  const tokenUrls = [];
+  const refreshWith = (status, payload) => refreshOAuthCredential(
+    resolveRuntimeProfile({}, { requireAuth: true }),
+    async (url) => {
+      tokenUrls.push(url);
+      return new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } });
+    },
+  );
+  try {
+    // A locally guessed expiry is no evidence: the grant keeps its route.
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-beta.notis.ai');
+    assert.equal(resolveRuntimeProfile({}, { requireAuth: true }).apiBase, 'https://api-beta.notis.ai');
+    // An unanswered refresh proves nothing either.
+    await assert.rejects(refreshWith(503, { error: 'temporarily_unavailable' }));
+    assert.equal(getProfile(loadConfig(), 'default').oauth_refresh_rejected_for, undefined);
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-beta.notis.ai');
+
+    await assert.rejects(refreshWith(400, { error: 'invalid_grant' }), { code: 'invalid_grant' });
+    const stored = getProfile(loadConfig(), 'default');
+    assert.match(stored.oauth_refresh_rejected_for, /^[0-9a-f]{32}$/);
+    // Now it routes like a signed-out profile: stable sign-in, stable build.
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api.notis.ai');
+    const dead = resolveRuntimeProfile({}, { requireAuth: true });
+    assert.equal(dead.apiBase, 'https://api.notis.ai');
+    assert.equal(dead.channel, 'stable');
+    // It stays the credential, so its refresh asks the server that owns it
+    // and keeps reporting the refusal.
+    assert.equal(dead.credentialKind, 'oauth');
+    await assert.rejects(refreshWith(400, { error: 'invalid_grant' }), { code: 'invalid_grant' });
+    assert.deepEqual([...new Set(tokenUrls)], ['https://mcp-beta.notis.ai/oauth/token']);
+    assert.equal(listProfiles(loadConfig())[0].api_base, 'https://api.notis.ai');
+
+    // Any other refresh token is not the one refused.
+    updateConfig((latest) => {
+      latest.profiles.default.oauth_refresh_token = 'another-refresh-token';
+      return latest;
+    });
+    assert.equal(getApiBase(loadConfig(), 'default'), 'https://api-beta.notis.ai');
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+// CLI-035: the server revoked the grant while its access token still had time
+// left. The token must never reach the stable route, and start must not take
+// the grant for a sign-in.
+test('a refused grant with a live access token is spent: no request reaches the stable route', async () => {
+  let tokenCalls = 0;
+  let stableCalls = 0;
+  const issuer = createServer((req, res) => {
+    const origin = `http://127.0.0.1:${issuer.address().port}`;
+    if (req.url === '/.well-known/oauth-authorization-server') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ token_endpoint: `${origin}/oauth/token` }));
+      return;
+    }
+    if (req.url === '/oauth/token' && req.method === 'POST') {
+      tokenCalls += 1;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_grant' }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const stable = createServer((req, res) => {
+    stableCalls += 1;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"ok":true}');
+  });
+  await new Promise((resolve) => issuer.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => stable.listen(0, '127.0.0.1', resolve));
+  const issuerOrigin = `http://127.0.0.1:${issuer.address().port}`;
+  const stableOrigin = `http://127.0.0.1:${stable.address().port}`;
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-dead-live-token-'));
+  mkdirSync(join(home, '.notis'), { recursive: true });
+  const configFile = join(home, '.notis', 'config.json');
+  const profile = {
+    oauth_access_token: 'revoked-access-token',
+    oauth_refresh_token: 'refresh-token',
+    oauth_refresh_rejected_for: refreshTokenFingerprint('refresh-token'),
+    oauth_access_expires_at: future,
+    oauth_refresh_expires_at: future,
+    oauth_client_id: 'notis_cli',
+    oauth_issuer: issuerOrigin,
+    oauth_api_base: issuerOrigin,
+    oauth_resource: `${issuerOrigin}/cli`,
+    oauth_user_id: 'oauth-user',
+  };
+  writeFileSync(configFile, JSON.stringify({ current_profile: 'default', profiles: { default: profile } }));
+  const runtimeFields = {
+    apiBase: stableOrigin,
+    profileName: 'default',
+    jwt: 'revoked-access-token',
+    credentialKind: 'oauth',
+    credentialSource: 'oauth',
+    oauthAccessToken: 'revoked-access-token',
+    oauthRefreshToken: 'refresh-token',
+    oauthAccessExpiresAt: future,
+    oauthApiBase: issuerOrigin,
+    timeoutMs: 5000,
+    cliVersion: 'test',
+  };
+  const transportModule = new URL('../src/runtime/transport.js', import.meta.url).href;
+  const script = `
+    import { httpRequest } from ${JSON.stringify(transportModule)};
+    try {
+      await httpRequest({ runtime: ${JSON.stringify(runtimeFields)}, method: 'GET', path: '/probe', requireAuth: true });
+      process.stdout.write(JSON.stringify({ code: 'sent' }));
+    } catch (error) {
+      process.stdout.write(JSON.stringify({ code: error.code }));
+    }
+  `;
+  const previousConfig = process.env.NOTIS_CLI_CONFIG_FILE;
+  try {
+    // The live access token does not make a dead grant usable.
+    assert.equal(credentialIsExpired({ credentialKind: 'oauth' }, profile), true);
+    assert.equal(credentialIsExpired({ credentialKind: 'oauth' }, { ...profile, oauth_refresh_rejected_for: undefined }), false);
+
+    const result = await execFileAsync(
+      process.execPath,
+      ['--input-type=module', '-e', script],
+      { cwd: home, env: { PATH: process.env.PATH, HOME: home, NODE_ENV: 'test' }, encoding: 'utf-8' },
+    );
+    assert.deepEqual(JSON.parse(result.stdout), { code: 'invalid_grant' });
+    assert.equal(stableCalls, 0);
+    assert.equal(tokenCalls, 1);
+
+    // notis start refreshes first: the refusal leaves the runtime on the
+    // stable route, signed out, instead of moving it back to the grant's API.
+    process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+    const startRuntime = { ...runtimeFields };
+    await assert.rejects(ensureFreshOAuthCredential(startRuntime), { code: 'invalid_grant' });
+    assert.equal(startRuntime.apiBase, stableOrigin);
+    assert.equal(tokenCalls, 2);
+    assert.equal(stableCalls, 0);
+  } finally {
+    if (previousConfig === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
+    else process.env.NOTIS_CLI_CONFIG_FILE = previousConfig;
+    await new Promise((resolve) => issuer.close(resolve));
+    await new Promise((resolve) => stable.close(resolve));
+  }
+});
+
+test('only a refresh expiry the server sent is recorded as evidence, and a new grant clears a refusal', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'notis-cli-oauth-refresh-expiry-source-'));
+  const configFile = join(home, 'config.json');
+  const grant = {
+    api_base: 'https://api.notis.ai',
+    oauth_access_token: makeJwt('oauth-user', 1),
+    oauth_refresh_token: 'refresh-token',
+    oauth_access_expires_at: 1,
+    oauth_refresh_expires_at: future,
+    oauth_refresh_rejected_for: 'stale-fingerprint',
+    oauth_client_id: 'notis_cli',
+    oauth_issuer: 'https://mcp.notis.ai',
+    oauth_api_base: 'https://api.notis.ai',
+    oauth_resource: 'https://api.notis.ai/cli',
+    oauth_user_id: 'oauth-user',
+  };
+  const previousConfig = process.env.NOTIS_CLI_CONFIG_FILE;
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  const refreshAnswering = async (answer) => {
+    writeFileSync(configFile, JSON.stringify({ current_profile: 'default', profiles: { default: grant } }));
+    await refreshOAuthCredential({
+      apiBase: 'https://api.notis.ai',
+      profileName: 'default',
+      credentialKind: 'oauth',
+      oauthAccessToken: grant.oauth_access_token,
+    }, async () => new Response(JSON.stringify({
+      access_token: makeJwt('oauth-user'),
+      refresh_token: 'rotated-refresh-token',
+      expires_in: 3600,
+      scope: 'notis:read',
+      ...answer,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    return getProfile(loadConfig(), 'default');
+  };
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const sent = await refreshAnswering({ refresh_expires_in: 7200 });
+    assert.equal(sent.oauth_refresh_expiry_from_server, true);
+    assert.ok(Math.abs(sent.oauth_refresh_expires_at - (now + 7200)) < 60);
+    assert.equal(sent.oauth_refresh_rejected_for, undefined);
+    // Zero is a real answer: the refresh token is already at its end.
+    const zero = await refreshAnswering({ refresh_expires_in: 0 });
+    assert.equal(zero.oauth_refresh_expiry_from_server, true);
+    assert.ok(Math.abs(zero.oauth_refresh_expires_at - now) < 60);
+    // No answer: the CLI keeps its default but records it as a guess.
+    const guessed = await refreshAnswering({});
+    assert.equal(guessed.oauth_refresh_expiry_from_server, undefined);
+    assert.ok(guessed.oauth_refresh_expires_at > now + 29 * 24 * 60 * 60);
+    // The flag survives a config round trip; anything but true is dropped.
+    assert.equal(normalizeConfig({ profiles: { default: { oauth_refresh_expiry_from_server: true } } })
+      .profiles.default.oauth_refresh_expiry_from_server, true);
+    assert.equal(normalizeConfig({ profiles: { default: { oauth_refresh_expiry_from_server: 'yes' } } })
+      .profiles.default.oauth_refresh_expiry_from_server, undefined);
   } finally {
     if (previousConfig === undefined) delete process.env.NOTIS_CLI_CONFIG_FILE;
     else process.env.NOTIS_CLI_CONFIG_FILE = previousConfig;

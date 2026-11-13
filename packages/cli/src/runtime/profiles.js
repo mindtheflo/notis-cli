@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -106,6 +107,14 @@ function normalizeProfile(rawProfile = {}) {
       typeof raw.oauth_access_expires_at === 'number' ? raw.oauth_access_expires_at : undefined,
     oauth_refresh_expires_at:
       typeof raw.oauth_refresh_expires_at === 'number' ? raw.oauth_refresh_expires_at : undefined,
+    // True only when the token answer carried `refresh_expires_in`; otherwise
+    // oauth_refresh_expires_at is the CLI's own guess and proves nothing.
+    oauth_refresh_expiry_from_server:
+      raw.oauth_refresh_expiry_from_server === true ? true : undefined,
+    // A fingerprint of the refresh token the sign-in server refused with
+    // `invalid_grant` (oauthGrantIsDead).
+    oauth_refresh_rejected_for:
+      typeof raw.oauth_refresh_rejected_for === 'string' ? raw.oauth_refresh_rejected_for : undefined,
     oauth_client_id:
       typeof raw.oauth_client_id === 'string' ? raw.oauth_client_id : undefined,
     oauth_issuer: typeof raw.oauth_issuer === 'string' ? raw.oauth_issuer : undefined,
@@ -178,7 +187,7 @@ export function listProfiles(config) {
       // conflicting api_base behind, but commands ignore that legacy value and
       // so must profile inspection. A signed-out profile shows where its next
       // login starts (routingProfile).
-      api_base: profile.oauth_access_token
+      api_base: profile.oauth_access_token && !oauthGrantIsDead(profile)
         ? getOAuthApiBase(profile) || resolveDefaultLiveApiBase(profile)
         : routed.api_base || resolveDefaultLiveApiBase(routed),
       label: profile.label || null,
@@ -555,7 +564,8 @@ export function signedOutRoute(profile = {}) {
 /**
  * The fields of a profile that may decide where it routes.
  *
- * A profile with no credential has no account behind it: its channel pin
+ * A profile with no credential, or whose OAuth grant the sign-in server proved
+ * dead (oauthGrantIsDead), has no account behind it: its channel pin
  * (`release_channel`, which normalization also fills from the older `beta`
  * and `channel` keys) and its live `api_base` are leftovers of an earlier
  * sign-in, which logouts and Desktop sign-outs before CLI-034 kept. The account may have
@@ -576,9 +586,45 @@ export function routingProfile(profile = {}, env = process.env) {
   return local ? { ...rest, api_base: apiBase } : rest;
 }
 
-/** A dev credential or an OAuth grant, a refresh token alone included (Desktop reads it so too). */
+/**
+ * A dev credential or a live OAuth grant, a refresh token alone included
+ * (Desktop reads it so too). A grant the server proved dead is a leftover too.
+ */
 function holdsAccount(profile = {}) {
-  return Boolean(profile.dev_access_token || profile.oauth_access_token || profile.oauth_refresh_token);
+  if (profile.dev_access_token) return true;
+  return Boolean(profile.oauth_access_token || profile.oauth_refresh_token)
+    && !oauthGrantIsDead(profile);
+}
+
+/** A fingerprint of a refresh token that holds no part of it. */
+export function refreshTokenFingerprint(refreshToken) {
+  return createHash('sha256').update(String(refreshToken)).digest('hex').slice(0, 32);
+}
+
+/**
+ * Whether the stored OAuth grant can never be renewed, on evidence from the
+ * sign-in server only:
+ * - the server refused this very refresh token with `invalid_grant`
+ *   (`oauth_refresh_rejected_for`, written by refreshOAuthCredential), or
+ * - the access token lapsed and the refresh expiry the server itself sent
+ *   (`oauth_refresh_expiry_from_server`) has passed.
+ * An expiry the CLI filled in by default, or none at all, is unknown and never
+ * makes a grant dead: such a profile keeps its route until a refresh answers.
+ */
+export function oauthGrantIsDead(profile = {}, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const refreshToken = profile.oauth_refresh_token;
+  if (!refreshToken) return false;
+  if (
+    typeof profile.oauth_refresh_rejected_for === 'string'
+    && profile.oauth_refresh_rejected_for === refreshTokenFingerprint(refreshToken)
+  ) {
+    return true;
+  }
+  if (profile.oauth_refresh_expiry_from_server !== true) return false;
+  const refreshExpiry = Number(profile.oauth_refresh_expires_at);
+  const accessExpiry = Number(profile.oauth_access_expires_at);
+  return Number.isFinite(refreshExpiry) && refreshExpiry <= nowSeconds
+    && Number.isFinite(accessExpiry) && accessExpiry <= nowSeconds;
 }
 
 /**
@@ -835,7 +881,9 @@ export function resolveRuntimeProfile(
       }],
     });
   }
-  if (credentialKind === 'oauth' && oauthApiBase && !requestedApiBase) {
+  // A dead grant routes like a signed-out profile (routingProfile); it stays
+  // the credential so its refresh still reports the server's refusal.
+  if (credentialKind === 'oauth' && oauthApiBase && !requestedApiBase && !oauthGrantIsDead(profile)) {
     apiBase = oauthApiBase;
   }
   const agentMode = isAgentMode(globalOptions);
@@ -961,8 +1009,12 @@ export function credentialIsExpired(
     || (runtime?.credentialSource === 'env' ? 'env' : null);
   switch (credentialKind) {
     case 'oauth': {
+      // A grant the server proved dead (oauthGrantIsDead) is spent even while
+      // its access token has time left: the next use refreshes, so the issuer
+      // reports the refusal, and its token never reaches the stable route.
       const expiration = Number(profile.oauth_access_expires_at);
-      return !Number.isFinite(expiration) || expiration <= nowSeconds;
+      return !Number.isFinite(expiration) || expiration <= nowSeconds
+        || oauthGrantIsDead(profile, nowSeconds);
     }
     case 'env':
       // NOTIS_JWT is a complete override. Never combine it with expiry

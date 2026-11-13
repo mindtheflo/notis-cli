@@ -268,6 +268,8 @@ test('normalizeConfig keeps the dev.sh credential a worktree profile is built on
     oauth_refresh_token: undefined,
     oauth_access_expires_at: undefined,
     oauth_refresh_expires_at: undefined,
+    oauth_refresh_expiry_from_server: undefined,
+    oauth_refresh_rejected_for: undefined,
     oauth_client_id: undefined,
     oauth_issuer: undefined,
     oauth_api_base: undefined,

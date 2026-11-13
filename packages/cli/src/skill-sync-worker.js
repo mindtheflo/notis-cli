@@ -42,7 +42,10 @@ export async function runAutomaticSkillSync({ profile, apiBase, userId }, {
   currentProfile = currentCliProfile,
 } = {}) {
   const runtime = resolveRuntime({ profile }, { requireAuth: true });
-  if (runtime.credentialKind !== 'oauth' || runtime.apiBase !== apiBase
+  // The service is bound to the API of the grant it was installed with. A
+  // grant the server proved dead routes like a signed-out profile, so compare
+  // the grant's own API: its refresh then reports the refusal code.
+  if (runtime.credentialKind !== 'oauth' || (runtime.oauthApiBase || runtime.apiBase) !== apiBase
     || runtime.oauthUserId !== userId) throw new Error('Automatic skill sync account changed; run notis skills sync to rebind');
   await refresh(runtime);
   const saved = await settings(runtime.apiBase, runtime.jwt);

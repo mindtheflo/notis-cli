@@ -6,6 +6,7 @@ import test from 'node:test';
 import { installSkillSyncService } from '../src/runtime/skill-sync-service.js';
 import { main as runSkillSyncWorker, runAutomaticSkillSync, signInFingerprint } from '../src/skill-sync-worker.js';
 import { syncSkillsHandler } from '../src/command-specs/skills.js';
+import { refreshTokenFingerprint, resolveRuntimeProfile } from '../src/runtime/profiles.js';
 
 const account = { profile: 'beta', apiBase: 'https://api-beta.notis.ai', userId: 'owner' };
 const runtime = () => ({ profileName: account.profile, apiBase: account.apiBase, oauthUserId: 'owner', credentialKind: 'oauth', jwt: 'expired' });
@@ -43,7 +44,12 @@ test('disabled automatic sync never acquires a lock or cleans another account li
 });
 
 test('changed profile identity or endpoint cannot silently rebind the background job', async () => {
-  for (const patch of [{ oauthUserId: 'other' }, { apiBase: 'https://api.notis.ai' }, { credentialKind: 'dev' }]) {
+  for (const patch of [
+    { oauthUserId: 'other' },
+    { apiBase: 'https://api.notis.ai' },
+    { apiBase: 'https://api.notis.ai', oauthApiBase: 'https://api.notis.ai' },
+    { credentialKind: 'dev' },
+  ]) {
     await assert.rejects(runAutomaticSkillSync(account, {
       resolveRuntime: () => ({ ...runtime(), ...patch }),
       refresh: async () => assert.fail('must reject before using credentials'),
@@ -105,6 +111,61 @@ test('background sync stops presenting a rejected sign-in until it changes', asy
   });
   assert.equal(counter.runs, 2);
   assert.equal(JSON.parse(readFileSync(status, 'utf8')).status, 'synced');
+});
+
+// CLI-035: a dead grant routes to stable, but the worker is bound to the
+// grant's own API, so it reaches the refresh and records the refusal.
+test('background sync of a grant the server refused records the refusal, not an account change', async t => {
+  const { home, status } = workerHome(t);
+  const configFile = join(home, 'config.json');
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'beta',
+    profiles: {
+      beta: {
+        api_base: 'https://api-beta.notis.ai',
+        oauth_api_base: 'https://api-beta.notis.ai',
+        oauth_access_token: 'expired',
+        oauth_refresh_token: 'beta-refresh',
+        oauth_refresh_rejected_for: refreshTokenFingerprint('beta-refresh'),
+        oauth_access_expires_at: 1,
+        oauth_refresh_expires_at: 2,
+        oauth_client_id: 'notis_cli',
+        oauth_issuer: 'https://mcp-beta.notis.ai',
+        oauth_user_id: 'owner',
+      },
+    },
+  }));
+  const previous = {
+    NOTIS_CLI_CONFIG_FILE: process.env.NOTIS_CLI_CONFIG_FILE,
+    NOTIS_TEST_DISABLE_WORKTREE_ROUTING: process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING,
+    NOTIS_API_BASE: process.env.NOTIS_API_BASE,
+    NOTIS_JWT: process.env.NOTIS_JWT,
+  };
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING = '1';
+  delete process.env.NOTIS_API_BASE;
+  delete process.env.NOTIS_JWT;
+  assert.equal(resolveRuntimeProfile({ profile: 'beta' }).apiBase, 'https://api.notis.ai');
+  const refreshed = [];
+  await runSkillSyncWorker(workerArgs, {
+    home,
+    run: (bound) => runAutomaticSkillSync(bound, {
+      refresh: async (runtime) => {
+        refreshed.push(runtime.oauthApiBase);
+        throw Object.assign(new Error('The refresh token is invalid.'), { code: 'invalid_grant' });
+      },
+    }),
+  });
+  assert.deepEqual(refreshed, ['https://api-beta.notis.ai']);
+  const recorded = JSON.parse(readFileSync(status, 'utf8'));
+  assert.equal(recorded.code, 'invalid_grant');
+  assert.equal(recorded.sign_in, signInFingerprint('beta'));
 });
 
 test('background sync keeps trying after failures that leave the sign-in usable', async t => {

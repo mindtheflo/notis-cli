@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -372,6 +372,72 @@ test('the login of a signed-out profile starts on the stable API, a signed-in on
       ['nodeEnv', 'NODE_ENV'], ['apiBase', 'NOTIS_API_BASE'], ['jwt', 'NOTIS_JWT']]) {
       if (previous[key] === undefined) delete process.env[name];
       else process.env[name] = previous[key];
+    }
+  }
+});
+
+// CLI-035: a grant whose server-sent refresh expiry passed routes like a
+// signed-out profile; a guessed or unknown expiry keeps the route.
+test('a grant the server proved dead signs in on stable, one with an unknown expiry keeps its channel', () => {
+  const configFile = join(mkdtempSync(join(tmpdir(), 'notis-channel-dead-grant-')), 'config.json');
+  const beta = {
+    api_base: 'https://api-beta.notis.ai',
+    beta: true,
+    oauth_api_base: 'https://api-beta.notis.ai',
+    oauth_access_token: 'grant',
+    oauth_refresh_token: 'refresh',
+    oauth_access_expires_at: 1,
+    oauth_refresh_expires_at: 2,
+  };
+  writeFileSync(configFile, JSON.stringify({
+    current_profile: 'default',
+    profiles: {
+      default: { ...beta, oauth_refresh_expiry_from_server: true },
+      guessed: beta,
+      unknown: { ...beta, oauth_refresh_expires_at: undefined, oauth_refresh_expiry_from_server: true },
+      renewable: { ...beta, oauth_refresh_expires_at: 4102444800, oauth_refresh_expiry_from_server: true },
+      // The access token still works, whatever the refresh expiry says.
+      working: { ...beta, oauth_access_expires_at: 4102444800, oauth_refresh_expiry_from_server: true },
+    },
+  }));
+  const previous = {
+    NOTIS_CLI_CONFIG_FILE: process.env.NOTIS_CLI_CONFIG_FILE,
+    NOTIS_TEST_DISABLE_WORKTREE_ROUTING: process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING,
+    NODE_ENV: process.env.NODE_ENV,
+    NOTIS_API_BASE: process.env.NOTIS_API_BASE,
+    NOTIS_JWT: process.env.NOTIS_JWT,
+  };
+  process.env.NOTIS_CLI_CONFIG_FILE = configFile;
+  process.env.NOTIS_TEST_DISABLE_WORKTREE_ROUTING = '1';
+  process.env.NODE_ENV = 'test';
+  delete process.env.NOTIS_API_BASE;
+  delete process.env.NOTIS_JWT;
+  try {
+    const dead = resolveRuntimeProfile({}, { requireAuth: true });
+    assert.equal(dead.apiBase, 'https://api.notis.ai');
+    assert.equal(dead.channel, 'stable');
+    assert.equal(dead.credentialKind, 'oauth');
+    assert.equal(dead.oauthApiBase, 'https://api-beta.notis.ai');
+    assert.equal(channelProfileForArgs(['login'], {}, { worktreeRuntime: null }).release_channel, undefined);
+    for (const name of ['guessed', 'unknown', 'renewable', 'working']) {
+      const kept = resolveRuntimeProfile({ profile: name }, { requireAuth: true });
+      assert.equal(kept.apiBase, 'https://api-beta.notis.ai', name);
+      assert.equal(kept.channel, 'nightly', name);
+      assert.equal(channelProfileForArgs(['--profile', name, 'login'], {}, { worktreeRuntime: null }).release_channel, 'nightly', name);
+    }
+    const listed = Object.fromEntries(listProfiles(JSON.parse(readFileSync(configFile, 'utf-8')))
+      .map(({ name, api_base: apiBase }) => [name, apiBase]));
+    assert.deepEqual(listed, {
+      default: 'https://api.notis.ai',
+      guessed: 'https://api-beta.notis.ai',
+      unknown: 'https://api-beta.notis.ai',
+      renewable: 'https://api-beta.notis.ai',
+      working: 'https://api-beta.notis.ai',
+    });
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
     }
   }
 });

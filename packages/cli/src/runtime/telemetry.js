@@ -64,10 +64,13 @@ export async function reportCliCommand({
   ) {
     return false;
   }
+  // An OAuth token only goes to the API that issued it: a grant the server
+  // proved dead routes the profile to stable (CLI-035), not its token.
+  const apiBase = (runtime.credentialKind === 'oauth' && runtime.oauthApiBase) || runtime.apiBase;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1_500);
   try {
-    const response = await fetchImpl(`${runtime.apiBase}/cli_telemetry`, {
+    const response = await fetchImpl(`${apiBase}/cli_telemetry`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${runtime.jwt}`,

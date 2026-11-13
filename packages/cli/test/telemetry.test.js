@@ -91,3 +91,25 @@ test('CLI telemetry is best-effort and skips signed-out commands', async () => {
   assert.equal(sent, false);
   assert.equal(calls, 0);
 });
+
+// CLI-035: a dead grant routes the profile to stable, but its token stays on
+// the API that issued it.
+test('CLI telemetry sends an OAuth token only to the API that issued it', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    return { ok: true };
+  };
+  await reportCliCommand({
+    spec,
+    runtime: { ...runtime, credentialKind: 'oauth', oauthApiBase: 'https://api-nightly.notis.ai' },
+    result: 'success',
+    durationMs: 10,
+    fetchImpl,
+  });
+  await reportCliCommand({ spec, runtime: { ...runtime, credentialKind: 'worktree' }, result: 'success', durationMs: 10, fetchImpl });
+  assert.deepEqual(urls, [
+    'https://api-nightly.notis.ai/cli_telemetry',
+    'https://api.notis.ai/cli_telemetry',
+  ]);
+});

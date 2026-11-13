@@ -39,6 +39,8 @@ import {
   getProfile,
   signedOutRoute,
   loadConfig,
+  oauthGrantIsDead,
+  refreshTokenFingerprint,
   resolveConfigFile,
   updateConfig,
 } from './profiles.js';
@@ -347,6 +349,26 @@ function readRefreshAnswer(runtime, { response, text }) {
     );
   }
   return payload;
+}
+
+// The server refused this refresh token for good: remember which one, so the
+// profile routes like a signed-out one (oauthGrantIsDead) until a new grant
+// replaces it. Best effort; the refusal itself is still reported.
+function recordRefusedRefreshToken(runtime, refreshToken) {
+  if (!refreshToken) return;
+  try {
+    updateConfig((latest) => {
+      const current = latest.profiles?.[runtime.profileName];
+      if (!current || current.oauth_refresh_token !== refreshToken) return latest;
+      latest.profiles[runtime.profileName] = {
+        ...current,
+        oauth_refresh_rejected_for: refreshTokenFingerprint(refreshToken),
+      };
+      return latest;
+    });
+  } catch {
+    // The refusal is reported either way; the next refresh records it again.
+  }
 }
 
 async function persistRefreshedSignIn(runtime, metadata, tokenResponse) {
@@ -1031,6 +1053,10 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
   const now = Math.floor(Date.now() / 1000);
   const payload = decodeJwtPayload(tokenResponse.access_token);
   const oauthApiBase = (metadata.apiBase || runtime.apiBase || '').replace(/\/+$/, '');
+  const refreshExpiryFromServer = Boolean(tokenResponse.refresh_token)
+    && tokenResponse.refresh_expires_in !== null
+    && tokenResponse.refresh_expires_in !== ''
+    && Number.isFinite(Number(tokenResponse.refresh_expires_in));
   const config = updateConfig((latest) => {
     const next = ensureProfile(latest, runtime.profileName);
     const profile = next.profiles[runtime.profileName];
@@ -1053,8 +1079,14 @@ function persistOAuthTokenResponse(runtime, metadata, tokenResponse) {
       oauth_access_token: tokenResponse.access_token,
       oauth_refresh_token: tokenResponse.refresh_token || profile.oauth_refresh_token,
       oauth_access_expires_at: now + Number(tokenResponse.expires_in || 0),
-      oauth_refresh_expires_at:
-        now + Number(tokenResponse.refresh_expires_in || DEFAULT_REFRESH_EXPIRES_IN),
+      oauth_refresh_expires_at: now + (
+        refreshExpiryFromServer ? Number(tokenResponse.refresh_expires_in) : DEFAULT_REFRESH_EXPIRES_IN
+      ),
+      // Only an expiry the server sent for the refresh token it sent may later
+      // prove the grant dead (oauthGrantIsDead); the default above is a guess.
+      oauth_refresh_expiry_from_server: refreshExpiryFromServer || undefined,
+      // A new grant or a renewed one is no longer the token the server refused.
+      oauth_refresh_rejected_for: undefined,
       oauth_client_id: metadata.clientId,
       oauth_issuer: metadata.issuer,
       oauth_scopes: String(tokenResponse.scope || '').split(/\s+/).filter(Boolean),
@@ -2323,6 +2355,8 @@ export async function loginWithOAuth(
     if (
       storedProfile.oauth_access_token
       && !credentialIsExpired({ credentialKind: 'oauth' }, storedProfile)
+      // A grant the server refused is no sign-in to confirm.
+      && !oauthGrantIsDead(storedProfile)
     ) {
       assertOAuthApiTarget(runtime, storedProfile);
       updateRuntimeFromOAuthProfile(runtime, storedProfile);
@@ -2835,7 +2869,15 @@ export async function refreshOAuthCredential(runtime, fetchImpl = fetch, tokenRe
           failure.cause,
         );
     }
-    const rotatedResponse = readRefreshAnswer(runtime, answer);
+    let rotatedResponse;
+    try {
+      rotatedResponse = readRefreshAnswer(runtime, answer);
+    } catch (refusal) {
+      if (refusal?.code === 'invalid_grant') {
+        recordRefusedRefreshToken(runtime, profile.oauth_refresh_token);
+      }
+      throw refusal;
+    }
     const updated = await persistRefreshedSignIn(runtime, metadata, rotatedResponse);
     updateRuntimeFromOAuthProfile(runtime, updated);
     return true;
@@ -2975,6 +3017,8 @@ export async function logoutOAuth(runtime, { allProfiles = false } = {}, fetchIm
             oauth_refresh_token: undefined,
             oauth_access_expires_at: undefined,
             oauth_refresh_expires_at: undefined,
+            oauth_refresh_expiry_from_server: undefined,
+            oauth_refresh_rejected_for: undefined,
             oauth_client_id: undefined,
             oauth_issuer: undefined,
             oauth_api_base: undefined,
