@@ -33,7 +33,8 @@ const LEGACY_DESKTOP_PROFILE_KEYS = [
 ];
 const WORKTREE_RUNTIME_FILENAME = join('.context', 'notis-runtime.json');
 const WORKTREE_ROUTING_FILENAME = join('.context', 'notis-routing.json');
-const LOCAL_API_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+// WHATWG URL keeps the brackets of an IPv6 hostname: `new URL('http://[::1]:8123').hostname` is '[::1]'.
+const LOCAL_API_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const LIVE_API_HOSTS = new Set(['api.notis.ai', 'api-nightly.notis.ai', 'api-beta.notis.ai']);
 
 function clone(value) {
