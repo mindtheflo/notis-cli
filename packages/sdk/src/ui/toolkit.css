@@ -1247,9 +1247,23 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 
 /* == section: comments (E) == */
 /* CommentPane, CommentThreadCard, NewCommentBox and CommentPins. Flat: fills, no borders or coloured edges. */
-.nui-comment-pane { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto;
-  padding: 16px; font-size: 13px; line-height: 1.45; color: hsl(var(--foreground)); }
-.nui-comment-pane-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+/* The pane fills the height its host gives it and scrolls its own list (C7): the head stays on top, the toast at the
+   bottom of what shows, never inside the scrolled content. */
+.nui-comment-pane { position: relative; display: flex; flex-direction: column; box-sizing: border-box; height: 100%;
+  min-width: 0; min-height: 0; overflow: hidden; font-size: 13px; line-height: 1.45; color: hsl(var(--foreground)); }
+/* The head stays on top of the list with the pane's background, so a scrolled card never shows through it. */
+.nui-comment-pane-head { position: relative; z-index: 2; display: flex; flex: none; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 8px; padding: 16px 16px 0; background: hsl(var(--background)); }
+.nui-comment-pane-scroll { display: flex; flex: 1 1 auto; flex-direction: column; gap: 12px; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 16px; }
+.nui-comment-pane > .nui-toast-wrap { position: static; flex: none; left: auto; right: auto; bottom: auto;
+  padding: 8px 12px 12px; }
+.nui-comment-pane > .nui-toast-wrap:empty { display: none; }
+/* The pane draws in the host's own shadow root, outside .nui-root: its toast buttons get the toolkit's reset, so Undo
+   and its Z keycap read on the theme's popover in light and dark. */
+:where(.nui-comment-pane) :is(.nui-toast-btn, .nui-toast-x) { font: inherit; color: inherit; background: none; border: 0;
+  margin: 0; cursor: pointer; }
+:where(.nui-comment-pane) .nui-toast-x { color: hsl(var(--muted-foreground)); }
 .nui-comment-pane-title { margin: 0; font-size: 14px; font-weight: 600; }
 .nui-comment-copy { justify-content: space-between; width: 100%; }
 .nui-comment-copy-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
@@ -1257,6 +1271,9 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
   font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
 .nui-comment-list { display: flex; flex-direction: column; gap: 8px; }
 .nui-comment-empty { padding: 24px 8px; }
+.nui-comment-loading { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.nui-comment-loading-card { padding: 12px; border-radius: 10px; background: hsl(var(--foreground) / .04); }
+.nui-comment-loading-short { width: 60%; }
 
 .nui-comment-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
   background: hsl(var(--foreground) / .04); cursor: pointer; outline: none; scroll-margin: 12px; }
@@ -1273,6 +1290,24 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 .nui-comment-agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.nui-comment-agent { cursor: pointer; }
 button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+/* An agent's harness logo after its name, with what it ran on in a hover card (CommentAgentBadge), like the chat
+   timeline's runtime badge: small and grey. */
+.nui-runtime-badge { display: inline-flex; align-items: center; align-self: center; flex: none; padding: 1px; border-radius: 4px;
+  color: hsl(var(--muted-foreground)); opacity: .7; outline: none; cursor: default; }
+.nui-runtime-badge:hover { opacity: 1; }
+.nui-runtime-badge:focus-visible { opacity: 1; }
+.nui-runtime-logo, .nui-runtime-glyph { width: 12px; height: 12px; flex: none; }
+.nui-tip.nui-tip-card { align-items: flex-start; max-width: min(300px, calc(100vw - 16px)); padding: 6px 12px;
+  border: 1px solid hsl(var(--border)); color: hsl(var(--popover-foreground, var(--foreground))); background: hsl(var(--popover));
+  box-shadow: var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); font-size: 13px; line-height: 18px;
+  white-space: normal; }
+.nui-runtime-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: start; }
+.nui-runtime-card-head { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.nui-runtime-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.nui-runtime-glyphs { display: inline-flex; align-items: center; gap: 4px; flex: none;
+  color: hsl(var(--popover-foreground, var(--foreground)) / .7); }
+.nui-runtime-card-line { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere;
+  color: hsl(var(--popover-foreground, var(--foreground)) / .7); }
 .nui-comment-new { align-self: center; width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-comment-actions { display: flex; gap: 2px; margin-inline-start: auto; opacity: 0; transition: opacity .12s; }
 .nui-comment-card:hover .nui-comment-actions, .nui-comment-card:focus-within .nui-comment-actions,
@@ -1304,11 +1339,16 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-comment-ask-label { margin: 0; }
 .nui-comment-ask-who { font-weight: 600; }
 .nui-comment-answer { display: flex; align-items: center; gap: 6px; margin: 0; color: hsl(var(--muted-foreground)); }
+/* An input ask's own answer field, with Attach and Paste under it. */
+.nui-comment-ask-answer { display: flex; flex-direction: column; gap: 6px; }
 .nui-comment-choices { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .nui-comment-replies { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .nui-comment-reply { display: flex; gap: 8px; min-width: 0; }
 .nui-comment-reply-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+/* A reply's name line and its buttons share one row: the buttons never wrap to a line of their own above the text. */
+.nui-comment-reply-head { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+.nui-comment-reply-head > .nui-comment-reply-actions { flex: none; margin-top: -4px; margin-bottom: -4px; }
 
 .nui-comment-compose { display: flex; align-items: flex-end; gap: 4px; cursor: default; }
 .nui-comment-input { flex: 1; min-width: 0; min-height: 32px; max-height: 240px; padding: 6px 10px; border: 0; border-radius: 8px;
@@ -1378,7 +1418,11 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   background: hsl(var(--primary) / .12); }
 .nui-passage-mark[data-state="selected"] { background: hsl(var(--primary) / .24); }
 .nui-passage-mark[data-state="flash"] { background: hsl(var(--primary) / .35); }
-.nui-passage-pick { position: absolute; z-index: 10; }
+/* The words of the comment being written, while its box is open. */
+.nui-passage-mark[data-state="draft"] { background: hsl(var(--primary) / .24); }
+.nui-passage-pick { position: absolute; z-index: 10; white-space: nowrap; }
+/* Above the selection the button grows upward from the line's top, so it never covers the next line. */
+.nui-passage-pick[data-place="above"] { transform: translateY(-100%); }
 .nui-passage-thread { display: flex; flex-direction: column; gap: 6px; }
 .nui-passage-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; padding: 2px 4px;
   border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; }
@@ -1433,3 +1477,77 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-viewer-zoom { min-width: 60px; font-variant-numeric: tabular-nums; }
 .nui-viewer-count { min-width: 52px; text-align: center; font-size: 13px; color: rgb(255 255 255 / .8); font-variant-numeric: tabular-nums; }
 .nui-viewer-sep { width: 1px; height: 24px; margin: 0 8px; background: rgb(255 255 255 / .2); }
+
+/* Unified comments (SPC-113 to SPC-133): filter, New comment, routing lines, edit and delete states, tool bar. */
+.nui-comment-new-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.nui-comment-filter { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px;
+  background: transparent; color: hsl(var(--muted-foreground)); font: inherit; font-size: 12px; cursor: pointer; }
+.nui-comment-filter:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
+.nui-comment-filter-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.nui-comment-new-btn { margin-inline-start: auto; }
+.nui-comment-hint-cancel { opacity: .75; }
+.nui-comment-to { display: inline-flex; align-self: flex-start; align-items: center; gap: 4px; min-width: 0; max-width: 100%;
+  padding: 2px 8px; border: 0; border-radius: 999px; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground));
+  font: inherit; font-size: 12px; overflow: hidden; white-space: nowrap; }
+/* A long name ends with an ellipsis, never cut mid-word without one; the title attribute has it in full. */
+.nui-comment-to > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-comment-to > .nui-icon { flex: none; }
+button.nui-comment-to { cursor: pointer; }
+button.nui-comment-to:hover { background: hsl(var(--foreground) / .1); }
+/* The card's header row (SPC-114): the thread that owns the comment thread, once, on one line above the comments, with
+   a hairline under it. A long title ends with an ellipsis; the icon, the label and Change always show. */
+.nui-comment-goes { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; margin: 0; min-width: 0; padding-bottom: 8px;
+  border-bottom: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); font-size: 12px; line-height: 16px;
+  white-space: nowrap; cursor: default; }
+.nui-comment-goes > .nui-icon { width: 12px; height: 12px; flex: none; }
+.nui-comment-goes-label, .nui-comment-goes-change { flex: none; }
+.nui-comment-goes-title { flex: 0 1 auto; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none;
+  color: hsl(var(--foreground)); font: inherit; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.nui-comment-goes-title { cursor: pointer; }
+button.nui-comment-goes-title:hover { text-decoration: underline; }
+.nui-comment-goes-change { margin-inline-start: auto; padding: 0 0 0 4px; border: 0; background: none;
+  color: hsl(var(--muted-foreground)); font: inherit; text-decoration: underline;
+  text-decoration-color: hsl(var(--muted-foreground) / .4); cursor: pointer; }
+.nui-comment-goes-change:hover { color: hsl(var(--foreground)); }
+.nui-comment-goes-change:disabled { cursor: default; opacity: .5; }
+/* Where it goes is still being read: a placeholder the width of a short title, on the text's line. */
+.nui-comment-goes-skel { align-self: center; width: 96px; height: 10px; }
+/* A pick being saved: named at once, quiet until the link is saved. */
+.nui-comment-goes[data-saving] .nui-comment-goes-title { opacity: .6; }
+.nui-comment-group { margin: 8px 0 0; padding: 0 4px; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 600; }
+.nui-comment-group:first-child { margin-top: 0; }
+.nui-comment-edit { display: flex; flex-direction: column; gap: 6px; cursor: default; }
+.nui-comment-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.nui-comment-edited { color: hsl(var(--muted-foreground)); font-size: 12px; }
+.nui-comment-deleted { margin: 0; color: hsl(var(--muted-foreground)); font-size: 12px; font-style: italic; }
+.nui-comment-reply-actions { display: inline-flex; gap: 2px; margin-inline-start: auto; opacity: 0; transition: opacity .12s; }
+.nui-comment-reply:hover .nui-comment-reply-actions, .nui-comment-reply:focus-within .nui-comment-reply-actions { opacity: 1; }
+@media (hover: none) { .nui-comment-reply-actions { opacity: 1; } }
+.nui-comment-toolbar { display: inline-flex; align-items: center; gap: 2px; box-sizing: border-box; max-width: 100%; padding: 4px;
+  border-radius: 999px;
+  background: hsl(var(--popover, var(--background))); color: hsl(var(--popover-foreground, var(--foreground)));
+  box-shadow: 0 0 0 1px hsl(var(--foreground) / .08), 0 4px 16px hsl(var(--foreground) / .1); }
+.nui-comment-tool { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 30px; height: 30px;
+  border: 0; border-radius: 999px; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.nui-comment-tool:hover { background: hsl(var(--foreground) / .08); color: hsl(var(--foreground)); }
+.nui-comment-tool[aria-pressed="true"] { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+.nui-comment-tool .nui-icon { width: 16px; height: 16px; }
+.nui-comment-toolbar-hint { min-width: 0; padding: 0 8px; overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 12px;
+  text-overflow: ellipsis; white-space: nowrap; }
+.nui-comment-toolbar-hint .nui-comment-hint-cancel { margin-inline-start: 4px; }
+/* Over the page card by default: an inset from its top left corner, never wider than the card (K36). */
+.nui-comment-toolbar[data-place="overlay"] { position: absolute; top: 8px; left: 8px; z-index: 3; max-width: calc(100% - 16px); }
+/* "Esc cancels" means nothing without a keyboard: gone on touch screens and on narrow screens (a phone, a phone-width panel). */
+@media (hover: none), (max-width: 767px) { .nui-comment-hint-cancel { display: none; } }
+/* On a phone the hint wraps to two lines instead of running off the bar, and the idle hint (a keyboard tip) goes. The
+   overlay bar never covers the card: it sits just above the card's top edge, and the card moves down by the bar's height
+   and gap (`--nui-comment-toolbar-room`, which the bar measures) to make that room. */
+@media (max-width: 480px) {
+  .nui-comment-toolbar { flex-wrap: nowrap; border-radius: 16px; }
+  .nui-comment-toolbar[data-place="overlay"] { position: absolute; top: auto; bottom: calc(100% + 8px); left: 0; display: flex;
+    width: fit-content; max-width: 100%; margin: 0; }
+  :has(> .nui-comment-toolbar[data-place="overlay"]) { margin-top: var(--nui-comment-toolbar-room, 46px); }
+  .nui-comment-toolbar-hint { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    white-space: normal; line-height: 1.3; }
+  .nui-comment-toolbar-hint[data-idle] { display: none; }
+}

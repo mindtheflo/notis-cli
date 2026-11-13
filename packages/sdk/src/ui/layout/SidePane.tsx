@@ -24,6 +24,7 @@ import { pick, type Words } from '../../words';
 import { useToolkitLocale } from '../engine';
 import { PaneHandle, measureWidth } from './PaneHandle';
 import { parseStoredWidth } from './panelMath';
+import { isRetiredPane } from '../comments/hostComments';
 
 export const SIDE_PANE_MAIN_MIN_PX = 520;
 export const SIDE_PANE_MIN_PX = 280;
@@ -48,7 +49,12 @@ export function clampSidePaneWidth(
 export interface SidePaneProps {
   /** The page. */
   children: ReactNode;
-  /** The pane, always shown: beside the page while both fit, after it otherwise. */
+  /**
+   * The pane, always shown: beside the page while both fit, after it otherwise. A retired comment pane
+   * (`CommentPane`, `PassageCommentPane`) shows nothing here: the host Comments panel lists its threads. Only a
+   * direct `<CommentPane />` or `<PassageCommentPane />` element passed as `pane` is detected; one wrapped in another
+   * element or component keeps its pane column like any other pane.
+   */
   pane: ReactNode;
   /** The page never gets narrower than this beside the pane. */
   mainMin?: number;
@@ -170,6 +176,19 @@ export function SidePane({
     '--nui-side-pane-max': `${paneMax}px`,
     '--nui-side-pane-main-min': `${mainMin}px`,
   } as CSSProperties;
+
+  // A comment pane draws in the host Comments panel beside the chat: the page takes the whole row, and the pane
+  // element stays mounted (it renders nothing here) so its threads stay listed there.
+  if (isRetiredPane(pane)) {
+    return (
+      <div ref={rootRef} className={className ? `nui-side-pane ${className}` : 'nui-side-pane'} data-side-pane-id={id}>
+        <div className="nui-side-pane-row">
+          <div className={mainClassName ? `nui-side-pane-main ${mainClassName}` : 'nui-side-pane-main'}>{children}</div>
+        </div>
+        {pane}
+      </div>
+    );
+  }
 
   return (
     <div

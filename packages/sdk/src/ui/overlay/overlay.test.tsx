@@ -8,6 +8,7 @@ import { KeyboardEngine, KeyboardEngineCore, ShortcutScope, useShortcut } from '
 import { FieldText } from '../fields';
 import { Menu } from './Menu';
 import { Popover } from './Popover';
+import { fixedOrigin } from './floating';
 import { LAYER_ROOT_ATTRIBUTE, findLayerRoot } from './layerRoot';
 
 const doc = dom.window.document;
@@ -383,4 +384,33 @@ test('Menu accelerators in a Space: keys Notis keeps are left out without a clas
   assert.deepEqual(chosen, [], 'c stays with Notis');
   await press(doc.body, 'r');
   assert.deepEqual(chosen, ['two r'], 'one answer: the menu mounted last');
+});
+
+test('fixedOrigin: the screen corner, or the box of an ancestor that holds fixed children, across a shadow root', () => {
+  doc.body.innerHTML = '<div id="slide"><div id="host"></div></div><div id="plain"><span id="free"></span></div>';
+  assert.deepEqual(fixedOrigin(doc.getElementById('free')!), { x: 0, y: 0 }, 'no transformed ancestor: the screen');
+  const slide = doc.getElementById('slide') as HTMLElement;
+  slide.style.transform = 'translateX(0px)';
+  slide.getBoundingClientRect = () => ({ left: 1040, top: 56, right: 1440, bottom: 900, width: 400, height: 844, x: 1040, y: 56,
+    toJSON: () => ({}) }) as DOMRect;
+  const shadow = doc.getElementById('host')!.attachShadow({ mode: 'open' });
+  const menu = doc.createElement('div');
+  shadow.appendChild(menu);
+  assert.deepEqual(fixedOrigin(menu), { x: 1040, y: 56 }, 'a panel sliding in moves the origin of fixed menus inside it');
+  slide.style.transform = 'none';
+  slide.style.contain = 'paint';
+  assert.deepEqual(fixedOrigin(menu), { x: 1040, y: 56 }, 'paint containment holds fixed children too');
+  slide.style.contain = '';
+  assert.deepEqual(fixedOrigin(menu), { x: 0, y: 0 }, 'nothing holds fixed children: the screen again');
+  // The phone chat panel (Tailwind v4 `translate-x-0 scale-100`) writes the individual properties, not `transform`.
+  slide.style.setProperty('translate', '0px');
+  assert.deepEqual(fixedOrigin(menu), { x: 1040, y: 56 }, 'an individual translate holds fixed children');
+  slide.style.removeProperty('translate');
+  slide.style.setProperty('scale', '1');
+  assert.deepEqual(fixedOrigin(menu), { x: 1040, y: 56 }, 'an individual scale holds fixed children');
+  slide.style.removeProperty('scale');
+  // A query container (a Space's `@container`) does not hold fixed children: its menus stay placed from the screen.
+  slide.style.setProperty('container-type', 'inline-size');
+  assert.deepEqual(fixedOrigin(menu), { x: 0, y: 0 }, 'a container type leaves the screen origin');
+  slide.style.removeProperty('container-type');
 });

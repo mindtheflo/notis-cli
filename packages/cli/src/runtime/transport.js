@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { dirname } from 'node:path';
 import { CliError, EXIT_CODES } from './errors.js';
+import { agentIdentityHeaders } from './agent-identity.js';
 import {
   credentialIsExpired,
   getJwtExpiration,
@@ -355,6 +356,8 @@ export async function httpRequest({
     throw createExpiredAuthError(runtime);
   }
 
+  // The agent making the call, when it declares itself (agent-identity.js); a bad declaration goes as written for the backend to judge.
+  const agentHeaders = agentIdentityHeaders(runtime);
   let controller = new AbortController();
   let timeout = setTimeout(() => controller.abort(), timeoutMs);
   const requestId = `req_${randomUUID().replace(/-/g, '')}`;
@@ -367,6 +370,7 @@ export async function httpRequest({
   const headers = {
     'X-Notis-CLI-Version': runtime.cliVersion,
     'X-Notis-Request-Id': requestId,
+    ...agentHeaders,
   };
   if (spacesProtocol) headers['X-Notis-Spaces-Protocol'] = String(SPACES_PROTOCOL);
   if (!multipart) {

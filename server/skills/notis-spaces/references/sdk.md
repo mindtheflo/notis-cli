@@ -32,10 +32,13 @@ Text a person writes and reviews:
 - Comments on selected words of a text property (a Markdown body, a subject)
   come from `@notis/sdk/ui`: `usePassageComments` with `CommentableText` around
   an input or textarea, `CommentableRichText` around the `MarkdownEditor` or
-  rendered Markdown, and `PassageCommentPane` in a `SidePane`. The Comments
-  database needs Field, Quote, Prefix and Suffix columns; a thread whose words
-  are gone reads Text changed. Do not build your own highlights. Pins on a page
-  use `useComments` with `CommentPane` (see Comments under Toolkit pieces).
+  rendered Markdown, and `<PassageCommentPane comments={comments} />` mounted
+  once anywhere in the view (it draws in the host Comments panel, never in a
+  `SidePane`). The Comments database needs Field, Quote, Prefix and Suffix
+  columns; a thread whose words are gone reads Passage changed and stays open.
+  It lists newest first; pass `order="reading"` to list the text's threads in
+  reading order. Do not build your own highlights. Pins on a page use
+  `useComments` with `CommentPane` (see [Comments](#comments)).
 
 ## Toolkit pieces
 
@@ -122,19 +125,8 @@ rather than from a copy.
   button, `viewerActions` adds viewer buttons (class `nui-viewer-btn`) and
   `onNotice` hears copy and download results. Use `ImageViewer` alone for a
   picture that opens full screen. Do not build your own lightbox.
-- **Comments**: `useComments` with `CommentPane` and `CommentPins` give review
-  threads on a Comments database (pins, zones, replies, asks, Resolve, Copy
-  changes). A comment is signed with the viewer's first name; when the
-  Comments database's Author is a choice list, give it a `Person` option, which
-  signs anyone it does not name (without it the comment saves with no author).
-  Pass `me` only to sign with a fixed name. For comments on a whole record with nothing to pin on, pass no
-  `anchors` and `columns.anchor: null`: the pane offers New comment itself.
-  To let people attach pictures and files to a comment or a reply
-  (paste, drop or the paperclip), give the Comments database a files column
-  named `Attachments` (or pass `columns.attachments`); there is nothing to add
-  in the view. Without the column the pane takes text only. Files open from
-  the rows for an hour, for whoever may read the row; an agent downloads one
-  from the `url` its query returns, or queries again for a fresh one.
+- **Comments**: `useComments` with `CommentPane` and `CommentPins` give comment
+  threads on a Comments database; see [Comments](#comments).
 - **Presenting on a second screen**: `useAudienceScreen({ onAction, onClose,
   title })` works like PowerPoint. `secondScreen` says whether another screen
   is connected; call `open(anchor)` from the Present press itself. It answers
@@ -185,6 +177,75 @@ A status maps to one of ten groups (`backlog`, `todo`, `active`, `review`,
 `waiting`, `done`, `cancelled`, `failed`, and `up`/`down` for a service), each
 with its icon, words and the one status palette: pass the Space's own status to
 `Row` or `StatusIcon` (with `label` for its own name).
+
+## Comments
+
+`useComments` with `CommentPane` and `CommentPins` give comment
+threads on a Comments database (pins, zones, replies, asks, Archive, Delete,
+Edit, Copy changes). The pane draws in the host Comments panel beside the
+chat, not where it is mounted: mount `<CommentPane controller={comments} />`
+once anywhere in the view and never wrap it in `SidePane` (a `SidePane` given
+a comment pane shows its page alone). While comments are off for the viewer,
+or on a Site, a link or a preview, the pane, pins and tool bar render nothing:
+never build a fallback comment list. The host owns archive (Status
+`Resolved`, shown Done), delete with Undo, editing your own comment, the
+Open/Done/All filter, the Goes to line and To chip that name the thread a
+comment goes to, `comment=` links and push; the server checks who may change
+a comment and writes `Author` itself (the person's name, or the agent's on
+an agent's comment, adding the select choice when it is missing), so never
+set `Author` from the view or let people pick it. On someone else's comment
+people only archive, reopen, delete (with edit rights) or answer it: every
+other column is its author's, and agents change only what they wrote. Every
+Comments table is followed for waiting comments and push, with or without
+`agents`, and a person's comments, replies and answers go to the thread they
+name even in a Space that declares no `agents`: an answer, or a reply in a
+thread an agent started, goes back to that agent's own thread and subagent,
+and editing a comment wakes an agent only when it replied after the comment.
+A reply under a deleted comment is refused (`comment_not_found`). Every
+comment written through the Notis CLI needs the writing agent's band name
+(`NOTIS_AGENT_NAME` or `--agent-name`, such as `fred-and-the-machine`; the
+rule and the id the CLI keeps per name are in the notis-cli skill): the
+comment is then that agent's, signed "Fred And The Machine", and never wakes
+it. Without a name it is refused (`agent_name_required`), even for a person
+typing the CLI, and a view never writes comments with a Cloud Computer
+credential. The Notis assistant never writes comments itself
+(`orchestrator_comments_refused`): it starts a sub-agent for comment work,
+which signs with its own band name. On a host without the Comments panel a
+comment is signed with the viewer's first name; when the Comments
+database's Author is a choice list, give it a `Person` option, which signs
+anyone it does not name (without it the comment saves with no author). Pass
+`me` only to sign with a fixed name. For comments on a whole record with
+nothing to pin on, pass no `anchors` and `columns.anchor: null`: the pane
+offers New comment itself.
+
+Options:
+- `order` on the pane: `'newest'` (default), `'oldest'`, `'anchor'` or a
+  comparator. `groupBy`: a function returning `{ key, label }` per thread,
+  or false. A controller with no `scope` (the Space home) groups by page,
+  named by `scopeNames` on `useComments`; a scoped one is flat.
+- `modes` on `useComments`: any of `text`, `point`, `box`, `items`, `time`,
+  `page` (listed in that order). Default: `point` (plus `box` with zone
+  columns) when there are anchors, `items` when you pass `onStartItems`,
+  `time` when you pass `currentTime`, and `page`. The pane's New comment
+  button lists them; `<CommentToolBar controller={comments} />` puts one
+  button per mode on the page, toggled with C (`toggleKey`, or `pinned` to
+  keep it shown), and Escape cancels a mode.
+- `onStartItems()`: show your own picker (checkboxes, a selection), then call
+  `comments.startItems(anchors)`. `currentTime()`: the recording's moment in
+  seconds; name a Time column with `columns: { time: 'Time' }` to store it.
+- `focusKey` defaults to the `comment` view param, so a link with
+  `comment=<root key>` opens that thread; null turns it off. Give the table
+  an `Edited at` date column so edited comments say edited, and an
+  `Answer to` text column so an answer to an agent's question reaches only
+  the agent that asked (the server adds it to an existing table on the first
+  answer, so there is nothing to do by hand).
+
+To let people attach pictures and files to a comment or a reply
+(paste, drop or the paperclip), give the Comments database a files column
+named `Attachments` (or pass `columns.attachments`); there is nothing to add
+in the view. Without the column the pane takes text only. Files open from
+the rows for an hour, for whoever may read the row; an agent downloads one
+from the `url` its query returns, or queries again for a fresh one.
 
 ## Records and declared reads
 

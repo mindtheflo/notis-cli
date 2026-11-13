@@ -51,10 +51,13 @@ export function ActionToast({ toast, onUndo, onDismiss, owner }: ActionToastProp
           {toast.reason && <span className="nui-toast-reason">{t(toast.reason)}</span>}
         </span>
         {toast.undo && (
+          // Its name is the word alone ("Undo", "Annuler"): the Z keycap is hidden from screen readers and said by
+          // aria-keyshortcuts instead.
           <button type="button" className="nui-toast-btn" aria-disabled={undoing || undefined}
-            aria-busy={undoing || undefined} onClick={() => { if (!undoing) onUndo(); }}>
+            aria-busy={undoing || undefined} aria-keyshortcuts={undoing ? undefined : 'z'}
+            onClick={() => { if (!undoing) onUndo(); }}>
             {t(undoing ? ACTION_WORDS.undoing : SHELL_WORDS.undo)}
-            {!undoing && <Keycap keys="z" on="discreet" />}
+            {!undoing && <span aria-hidden="true"><Keycap keys="z" on="discreet" /></span>}
           </button>
         )}
         {onDismiss && !undoing && (

@@ -29,6 +29,8 @@ export interface ToastOptions {
   undo?: UndoFn | null;
   /** A muted second line under the words. */
   reason?: Words | string | null;
+  /** How long it stays, in ms (default ACTION_TOAST_MS); Dismiss still hides it sooner. */
+  durationMs?: number;
 }
 
 export interface UseToastOptions {
@@ -46,7 +48,7 @@ export interface ToastController {
   dismiss(): void;
 }
 
-type ToastInput = Omit<ActionToastState, 'id' | 'undoing'>;
+type ToastInput = Omit<ActionToastState, 'id' | 'undoing'> & { durationMs?: number };
 
 export function useToast(options: UseToastOptions = {}): ToastController {
   const [toast, setToast] = useState<ActionToastState | null>(null);
@@ -67,14 +69,14 @@ export function useToast(options: UseToastOptions = {}): ToastController {
   };
   useEffect(() => clearTimer, []);
 
-  const show = useCallback((next: ToastInput) => {
+  const show = useCallback(({ durationMs, ...next }: ToastInput) => {
     clearTimer();
     const state: ActionToastState = { ...next, undoing: false, id: ++seq.current };
     set(state);
     timer.current = setTimeout(() => {
       timer.current = null;
       if (current.current?.id === state.id && !current.current.undoing) set(null);
-    }, ACTION_TOAST_MS);
+    }, durationMs != null && Number.isFinite(durationMs) && durationMs > 0 ? durationMs : ACTION_TOAST_MS);
   }, []);
 
   const notify = useCallback((words: Words | string, notifyOptions: ToastOptions = {}) => {
@@ -83,6 +85,7 @@ export function useToast(options: UseToastOptions = {}): ToastController {
       reason: notifyOptions.reason ? toWords(notifyOptions.reason) : null,
       tone: notifyOptions.tone ?? 'default',
       undo: notifyOptions.undo ?? null,
+      durationMs: notifyOptions.durationMs,
     });
   }, [show]);
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { defineSpecimen, type SpecimenRenderContext } from '../../specimen';
-import { NotisProvider, type NotisRuntime } from '../../../src';
+import type { NotisRuntime } from '../../../src';
+import { HostCommentsProvider, HostPanelSlot, ROUTING_FIXTURE } from '../hostCommentsPanel';
 import {
   CommentableRichText, CommentableText, PassageCommentPane, usePassageComments, type CommentScope, type PassageField,
 } from '../../../src/ui/index';
@@ -29,12 +30,16 @@ const VALUES = {
 const GROUPS = { EN: w('the English copy', 'la version anglaise'), FR: w('the French copy', 'la version française') };
 
 interface Seed { key: string; field: string; lang: string; quote: string; prefix?: string; author: string; at: string;
-  body: { en: string; fr: string }; status?: string; thread?: string }
+  body: { en: string; fr: string }; status?: string; thread?: string;
+  /** The server's stamp of the agent that wrote it, with what it ran on (its logo and hover card). */
+  agent?: { name: string; runtime: Record<string, string | null> } }
 
 const SEEDS: Seed[] = [
   { key: 'p1', field: 'Body', lang: 'EN', quote: 'comments on any passage', prefix: 'a new editor, ', author: 'Flo',
     at: '2026-11-02T09:00:00Z', body: { en: 'Say what a passage is.', fr: 'Dis ce qu’est un passage.' } },
-  { key: 'r1', field: 'Body', lang: 'EN', quote: '', author: 'Claude', at: '2026-11-02T09:20:00Z', thread: 'p1',
+  { key: 'r1', field: 'Body', lang: 'EN', quote: '', author: 'fred-and-the-machine', at: '2026-11-02T09:20:00Z', thread: 'p1',
+    agent: { name: 'fred-and-the-machine', runtime: { provider: 'claude_code', label: 'Claude', model: 'claude-opus-5.5',
+      intelligence: null, effort: 'high', speed: 'normal' } },
     body: { en: 'Changed to "comments on the words you select".', fr: 'Remplacé par « commentaires sur les mots choisis ».' } },
   { key: 'p2', field: 'Subject', lang: 'EN', quote: 'Three new things', author: 'Flo', at: '2026-11-02T09:05:00Z',
     body: { en: 'Name them instead?', fr: 'Les nommer plutôt ?' } },
@@ -49,6 +54,7 @@ function rows(lang: Ctx['lang']) {
   const select = (value: string) => ({ type: 'select', select: { name: value } });
   return SEEDS.map(seed => ({
     id: `id-${seed.key}`, record_key: seed.key, revision: 1, title: seed.body[lang], created_at: seed.at,
+    ...(seed.agent ? { agent: seed.agent } : {}),
     properties: {
       Issue: { type: 'relation', relation: [{ id: 'issue-1' }] }, Author: select(seed.author),
       Status: select(seed.status ?? 'Open'), Needs: select('none'), Thread: text(seed.thread ?? ''),
@@ -78,7 +84,7 @@ function Issue({ drafting }: { drafting?: boolean }) {
   const [group, setGroup] = useState('EN');
   const comments = usePassageComments({
     scope: SCOPE, fields: FIELDS, values: VALUES, group, columns: { scope: 'Issue', anchor: null },
-    authors: ['Flo', 'Claude', 'Notis'],
+    authors: ['Flo', 'Claude', 'Notis', 'fred-and-the-machine'],
   });
   const { startDraft, controller } = comments;
   useEffect(() => {
@@ -96,13 +102,15 @@ function Issue({ drafting }: { drafting?: boolean }) {
         </CommentableRichText>
       </div>
       <PassageCommentPane comments={comments} groups={GROUPS} onGroup={setGroup} />
+      <HostPanelSlot />
     </div>
   );
 }
 
 function Demo({ ctx, empty = false, drafting }: { ctx: Ctx; empty?: boolean; drafting?: boolean }) {
   const runtime = useMemo(() => passageRuntime(ctx.lang, empty), [ctx.lang, empty]);
-  return <NotisProvider runtime={runtime}><Issue drafting={drafting} /></NotisProvider>;
+  // Each card names the thread it goes to at its top (the host's best match, from fixtures).
+  return <HostCommentsProvider runtime={runtime} routing={ROUTING_FIXTURE}><Issue drafting={drafting} /></HostCommentsProvider>;
 }
 
 export const specimen = defineSpecimen({
@@ -111,7 +119,7 @@ export const specimen = defineSpecimen({
   group: 'blocks',
   from: '@notis/sdk/ui',
   covers: ['CommentableText', 'CommentableRichText', 'PassageCommentPane'],
-  summary: 'Comments on passages of a record\'s text: highlights in a field or a Markdown body, Comment on a selection, Text changed when the words are gone, and the comments of the other language one click away.',
+  summary: 'Comments on passages of a record\'s text: highlights in a field or a Markdown body, Comment on a selection, Text changed when the words are gone, the comments of the other language one click away, the thread each card goes to at its top, and an agent\'s signature with its harness logo.',
   states: [
     {
       id: 'threads',

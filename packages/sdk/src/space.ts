@@ -211,6 +211,92 @@ export interface SpaceThreadItemTransport {
   run(itemId: string, actionId: string): Promise<SpaceThreadItemRun>;
 }
 /**
+ * A Space's comments as the host Comments panel reads them: one comment controller of the view (a `CommentController`
+ * from `useComments`, or a `PassageCommentController` from `usePassageComments` for kind 'passage'), with the options its
+ * pane was given. The host reads `current()` again after each `subscribe` call-back.
+ *
+ * `revealRequest` (the controller's, 0 at first) goes up by one each time the person picks a comment on the page (a pin,
+ * a highlight, a key on the page): the host opens its Comments panel, on Comments, at each increase. Picking a comment
+ * inside the panel leaves it as it is. The source object stays the same for the life of the pane, whatever transport
+ * object the host hands later.
+ */
+export interface SpaceCommentSource {
+  readonly kind: 'pins' | 'passage';
+  current(): { controller: unknown; options: Readonly<Record<string, unknown>>; revealRequest?: number };
+  subscribe(listener: () => void): () => void;
+  /**
+   * The host hands the element of its Comments panel the source draws its threads in (inside a shadow root carrying
+   * the toolkit styles), or null when the panel is closed, shows Chat or shows another source.
+   */
+  show(target: HTMLElement | null): void;
+}
+/**
+ * Space-only host Comments panel: the comment threads of the page sit in the host's right panel, beside the chat,
+ * instead of a pane inside the Space. Absent while comments are off for the viewer, on Sites, links, previews and
+ * older hosts: a Space then shows no comments at all (no pane, no pins, no highlights).
+ */
+export interface SpaceCommentsTransport {
+  /** Lists a source in the Comments panel until the returned call-back runs. */
+  attach(source: SpaceCommentSource): () => void;
+  /**
+   * The signed-in viewer: their name (the Author they write as; the server stamps it too) and whether they may edit
+   * the Space. Undefined while it is not known yet: comments cannot be sent until it is.
+   */
+  viewer?: SpaceCommentViewer;
+  /**
+   * The manager threads each comment thread is linked to (1..n, SPC-113), by root record key, for the comment database
+   * alias. The first one is where a reply goes ("Goes to"). A root missing from the answer has no link yet.
+   */
+  links?(input: { database: string; rootKeys: readonly string[] }): Promise<Record<string, SpaceCommentThreadRef[]>>;
+  /** The best-match thread for a new comment on this page (THR-024), the one the chat suggests; null starts a new one. */
+  bestMatch?(input: { recordKey?: string | null }): Promise<SpaceCommentThreadRef | null>;
+  /**
+   * Opens the host @ thread picker (chips All, Threads, Harness, People, Spaces; SPC-119) under `anchor`. Resolves with
+   * the pick, `{ newThread: harness }` for a "New Claude thread" style row, or null when dismissed.
+   */
+  pickThread?(input: { anchor: HTMLElement; current?: string | null; query?: string }): Promise<SpaceCommentThreadPick | null>;
+  /**
+   * Links a comment thread to a manager thread: after its first comment is saved (the To chip's thread), on Change, or
+   * when a reply @-mentions another thread (`primary: false` adds it). Resolves with the thread replies now go to.
+   */
+  link?(input: { database: string; rootKey: string; pick: SpaceCommentThreadPick; primary?: boolean }): Promise<SpaceCommentThreadRef | null>;
+  /** Opens a manager thread in the chat (the panel switches to Chat). */
+  openThread?(threadId: string): void;
+  /**
+   * The link that opens this Space page with one comment thread revealed (`comment=<root key>`, the link a push or a
+   * chat pill opens), as a full address another person can open: Copy link on a thread card copies it. Null when the
+   * page has no shareable address. Without it the pane copies the page's own address with that param. `database` is
+   * the comments database (its alias): the host may answer later (a promise) with the thread's own page in the link,
+   * wherever the pane is (the Space home, another page).
+   */
+  commentLink?(input: { rootKey: string; database?: string }): string | null | Promise<string | null>;
+  /**
+   * Shows the page under the Comments panel (SPC-132): called when a point, box, items or time mode starts on a narrow
+   * screen (under 768px wide), where the full-screen panel covers the page. The host closes its full-screen panel; the
+   * page tool bar shows the mode's hint, and the panel opens again when the new comment starts. A host whose panel
+   * does not cover the page ignores it.
+   */
+  showPage?(): void;
+}
+/**
+ * The viewer as comments see them. `id` (their user id), when the host gives it, tells their comments by the row's
+ * creator (`created_by`) instead of the Author name, so a renamed person keeps Edit and Delete on their comments.
+ */
+export interface SpaceCommentViewer { name: string; canEditSpace: boolean; id?: string | null }
+/**
+ * A manager thread a comment thread is linked to. `subagent` names the subagent a reply goes back to, when one wrote it.
+ * `threadId: null` with `status: 'pending'` is a "New <harness> thread" pick not started yet: the first wake
+ * starts it.
+ */
+export interface SpaceCommentThreadRef {
+  threadId: string | null;
+  title: string;
+  harness?: string | null;
+  status?: string | null;
+  subagent?: string | null;
+}
+export type SpaceCommentThreadPick = SpaceCommentThreadRef | { newThread: string };
+/**
  * A long-running program the Space keeps up on the viewer's cloud computer while the page is on screen (a dev
  * server, a media server). It runs with `bash -lc`, listens on `127.0.0.1:$PORT`, and gets `HOST`,
  * `NOTIS_SPACE_DIR`, `NOTIS_SPACE_ID` and `NOTIS_SERVICE_ID`. Reach it with `useCloudComputerService(id)`.

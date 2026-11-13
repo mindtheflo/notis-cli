@@ -12,20 +12,30 @@
  * | W, H        | number               | A zone from the pin, 0 to 1 of the anchor's width and height. Empty: a point. |
  * | Status      | select               | Open, Resolved or Deleted (a delete keeps the row for the digest).    |
  * | Needs       | select               | none, check, choice or input: what the author asks of the reader.     |
- * | Options     | text                 | The choices of a choice ask, separated by `|`.                       |
+ * | Options     | text                 | The choices of a choice ask, separated by `|` or new lines.          |
  * | Answer      | text                 | The reader's answer to the ask.                                       |
  * | Answered at | date                 | When the answer was given.                                            |
  * | Change      | select               | The last change made here: created, replied, answered, resolved, reopened, deleted. |
  * | Changed at  | date                 | When that change was made; the digest lists changes after the checkpoint. |
  * | Example     | checkbox             | A sample comment shown with an Example badge.                         |
  * | Attachments | files                | Pictures and files the author shows with the comment (optional).      |
+ * | Edited at   | date                 | When the author last edited the text (optional): the card says edited. |
+ * | Answer to   | text                 | On a reply that answers an ask: the ask's record key (optional).      |
+ * | Time        | number               | Seconds into a recording, for comments in time mode (opt-in, `time`). |
  *
  * Every column name can be renamed with `CommentColumns`; the defaults are the Slides names, so a Space that copies
  * the Slides table needs no mapping and no migration. Zones are opt-in: a table that adds W and H number columns
  * passes `{ w: 'W', h: 'H' }`. Without them (`w` and `h` null, the default) a drag on the anchor places a pin where it
  * started, and nothing writes a column the table does not have. Attachments are shown when the table has the files
  * column; the pane also lets people attach pictures and files to a new comment or a reply when the host can upload
- * them (`runtime.spaceFiles`). A table without the column shows none and takes text only.
+ * them (`runtime.spaceFiles`). A table without the column shows none and takes text only. Edited at is written only
+ * when the table has it (the edit itself always saves); Time is opt-in like zones (`{ time: 'Time' }`), and without it
+ * a time-mode comment starts its text with the moment ("0:24 ..."). Answer to is written only when the table has it:
+ * the reply that shows the answer to an agent's input ask names that ask, so the server sends it to the asking agent
+ * only and counts it as the answer, not a new reply; without the column the reply is an ordinary reply.
+ *
+ * Status `Resolved` is shown as Done (archived, SPC-124); `Deleted` keeps the row: a deleted first comment hides its
+ * whole thread, a deleted later one reads "Comment deleted" in place (SPC-127).
  */
 
 export type CommentRow = Record<string, unknown>;
@@ -55,13 +65,20 @@ export interface CommentColumns {
   example: string;
   /** The files column read for pictures and files shown with a comment. Null: the table has none. */
   attachments: string | null;
+  /** When the author last edited the text. Written only when the table has it. */
+  editedAt: string | null;
+  /** Seconds into a recording (time mode). Null: the table has none, and the moment starts the text. */
+  time: string | null;
+  /** On a reply that answers an ask, the ask's record key. Written only when the table has it. */
+  answerTo: string | null;
 }
 
 export const COMMENT_COLUMNS: Readonly<CommentColumns> = Object.freeze({
   body: 'Body', scope: 'Deck', anchor: 'Slide', thread: 'Thread', author: 'Author', x: 'X', y: 'Y', w: null, h: null,
   status: 'Status',
   needs: 'Needs', options: 'Options', answer: 'Answer', answeredAt: 'Answered at', change: 'Change',
-  changedAt: 'Changed at', example: 'Example', attachments: 'Attachments',
+  changedAt: 'Changed at', example: 'Example', attachments: 'Attachments', editedAt: 'Edited at', time: null,
+  answerTo: 'Answer to',
 });
 
 export function commentColumns(columns?: Partial<CommentColumns>): CommentColumns {
@@ -73,21 +90,72 @@ export interface CommentRecord {
   thread: string; author: string; x: number | null; y: number | null; w: number | null; h: number | null; status: CommentStatus; needs: CommentNeeds;
   options: string[]; answer: string; answeredAt: string | null; change: CommentChange | null; changedAt: string | null;
   example: boolean; createdAt: string | null; attachments: CommentAttachment[];
+  /** When the author edited the text, from the Edited at column (null: never, or the table has no such column). */
+  editedAt?: string | null;
+  /** Seconds into a recording, for a comment in time mode. */
+  time?: number | null;
+  /** On a reply that answers an ask, the ask's record key, from the Answer to column (null: none). */
+  answerTo?: string | null;
   /**
    * The agent that wrote this comment, from the server's write record (never the Author column): its name and,
    * for the person whose agent it is, the thread it works in. Absent on comments a person wrote.
    */
   agent?: CommentAgent | null;
+  /**
+   * Who created the row, from the server and never from the Author text (a renamed person keeps their comments):
+   * `createdByYou` is the server's answer for the signed-in viewer (`created_by_you`), `createdBy` the creator's user
+   * id (`created_by`), compared with the viewer's `id`. Null when the row does not say: the Author name decides then.
+   */
+  createdByYou?: boolean | null;
+  createdBy?: string | null;
 }
 
-/** An agent author, as the server stamped it. `threadId` is only given to the agent's owner. */
-export interface CommentAgent { name: string; threadId: string | null; rowId: string | null }
+/**
+ * What an agent ran on, as the server recorded it (`agent.runtime`): the harness (`provider`: notis, codex,
+ * claude_code, kimi, grok, opencode_go, muse, cursor_agent, kiro or antigravity), its name (`label`), the model, the
+ * intelligence level or reasoning effort and the speed. Each part is null when it was not recorded.
+ */
+export interface CommentAgentRuntime {
+  provider: string | null; label: string | null; model: string | null;
+  intelligence: string | null; effort: string | null; speed: string | null;
+}
+
+/**
+ * An agent author, as the server stamped it. `threadId` is only given to the agent's owner; `runtime` (when the
+ * server recorded it) is what it ran on, for the logo and the hover card beside its name.
+ */
+export interface CommentAgent { name: string; threadId: string | null; rowId: string | null; runtime?: CommentAgentRuntime | null }
+
+/** An agent name read out like a band: a band name ("fred-and-the-machine") reads "Fred And The Machine". */
+const BAND_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+
+/**
+ * How an author or agent name shows: a band name (lowercase words and digits joined by hyphens, the name agents
+ * declare) with its hyphens as spaces and each word capitalised; any other name as it is, so it is safe to call twice.
+ */
+export function agentDisplayName(name: string): string {
+  const trimmed = name.trim();
+  if (!BAND_NAME.test(trimmed)) return name;
+  return trimmed.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+function runtimeOf(value: unknown): CommentAgentRuntime | null {
+  const runtime = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!runtime) return null;
+  const text = (key: string) => typeof runtime[key] === 'string' && (runtime[key] as string).trim() ? (runtime[key] as string).trim() : null;
+  const read: CommentAgentRuntime = {
+    provider: text('provider'), label: text('label'), model: text('model'),
+    intelligence: text('intelligence'), effort: text('effort'), speed: text('speed'),
+  };
+  return Object.values(read).some(Boolean) ? read : null;
+}
 
 function agentOf(value: unknown): CommentAgent | null {
   const agent = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   if (!agent || typeof agent.name !== 'string' || !agent.name.trim()) return null;
+  const runtime = runtimeOf(agent.runtime);
   return { name: agent.name.trim(), threadId: typeof agent.thread_id === 'string' && agent.thread_id ? agent.thread_id : null,
-    rowId: typeof agent.row_id === 'string' && agent.row_id ? agent.row_id : null };
+    rowId: typeof agent.row_id === 'string' && agent.row_id ? agent.row_id : null, ...(runtime ? { runtime } : {}) };
 }
 
 /**
@@ -275,7 +343,12 @@ export function commentRowsHaveColumn(rows: readonly CommentRow[], name: string 
   return null;
 }
 
-/** One Comments row as a comment. An author outside `authors` (when given) reads as `fallbackAuthor`. */
+/**
+ * One Comments row as a comment. A row an agent wrote always reads as that agent (its Author, else the stamped agent
+ * name), whatever `authors` holds. A row the server says a person created (`created_by_you` or `created_by`) reads as
+ * its Author, the name the server set for that person, so a Space member reads as themselves. Any other row outside
+ * `authors` (when given), or with no Author, reads as `fallbackAuthor`.
+ */
 export function readCommentRow(row: CommentRow, options: {
   columns?: Partial<CommentColumns>; authors?: readonly string[]; fallbackAuthor?: string;
 } = {}): CommentRecord {
@@ -284,19 +357,29 @@ export function readCommentRow(row: CommentRow, options: {
   const author = textOf(row, c.author);
   const fallbackAuthor = options.fallbackAuthor ?? 'Notis';
   const value = property(row, c.example);
+  const agent = agentOf((row as Record<string, unknown>).agent);
+  // The server owns a person's Author (their account name) and says who created the row: a member is never Notis.
+  const person = !agent && (typeof row.created_by_you === 'boolean' || Boolean(str(row.created_by)));
   return {
     id: str(row.id), recordKey: str(row.record_key), revision: typeof row.revision === 'number' ? row.revision : 1,
     body: str(row.title) || textOf(row, c.body), scopeIds: relationOf(row, c.scope), anchorIds: relationOf(row, c.anchor),
     thread: textOf(row, c.thread).trim(),
-    author: options.authors ? (options.authors.includes(author) ? author : fallbackAuthor) : (author || fallbackAuthor),
+    author: agent ? (author.trim() || agent.name)
+      : person && author.trim() ? author
+      : options.authors ? (options.authors.includes(author) ? author : fallbackAuthor) : (author || fallbackAuthor),
     x: numberOf(row, c.x), y: numberOf(row, c.y), w: numberOf(row, c.w), h: numberOf(row, c.h), status: oneOf(textOf(row, c.status), STATUSES, 'Open'),
     needs: oneOf(textOf(row, c.needs), NEEDS, 'none'),
-    options: textOf(row, c.options).split('|').map(option => option.trim()).filter(Boolean),
+    options: textOf(row, c.options).split(/[|\r\n]+/).map(option => option.trim()).filter(Boolean),
     answer: textOf(row, c.answer), answeredAt: dateOf(row, c.answeredAt),
     change: CHANGES.includes(change as CommentChange) ? change as CommentChange : null, changedAt: dateOf(row, c.changedAt),
     example: value === true || value === 'true', createdAt: str(row.created_at) || null,
     attachments: attachmentsOf(row, c.attachments),
-    agent: agentOf((row as Record<string, unknown>).agent),
+    editedAt: c.editedAt ? dateOf(row, c.editedAt) : null,
+    time: numberOf(row, c.time),
+    answerTo: c.answerTo ? textOf(row, c.answerTo).trim() || null : null,
+    agent,
+    createdByYou: typeof row.created_by_you === 'boolean' ? row.created_by_you : null,
+    createdBy: str(row.created_by) || null,
   };
 }
 
@@ -323,7 +406,10 @@ export function commentAnchorOf(comment: CommentRecord, anchors: readonly Commen
   return anchors.find(anchor => comment.anchorIds.includes(anchor.id) || comment.anchorIds.includes(anchor.recordKey));
 }
 
-/** Threads in anchor order, then by creation; deleted replies are left out. Deleted roots stay (filter them to hide). */
+/**
+ * Threads in anchor order, then by creation. Deleted replies stay in place (the card reads "Comment deleted" there so
+ * the replies around it still read); deleted roots stay too (filter them to hide the whole thread).
+ */
 export function commentThreads(comments: readonly CommentRecord[], anchors: readonly CommentAnchor[]): CommentThread[] {
   const roots = comments.filter(comment => !comment.thread);
   const byRoot = new Map<string, CommentRecord[]>();
@@ -334,21 +420,108 @@ export function commentThreads(comments: readonly CommentRecord[], anchors: read
   const created = (comment: CommentRecord) => commentTimeOf(comment.createdAt) || 0;
   return roots.map(root => ({
     root,
-    replies: (byRoot.get(root.recordKey) ?? []).filter(reply => reply.status !== 'Deleted').sort((a, b) => created(a) - created(b)),
+    replies: [...(byRoot.get(root.recordKey) ?? [])].sort((a, b) => created(a) - created(b)),
     anchor: commentAnchorOf(root, anchors),
   })).sort((a, b) => (a.anchor?.order ?? 999) - (b.anchor?.order ?? 999) || created(a.root) - created(b.root));
 }
 
-/** Changes after the checkpoint: `me`'s comments and replies, and every answer or status change. */
+/** The time of a thread's latest comment that is not deleted (its root's time when every reply is gone). */
+export function commentThreadActivity(thread: CommentThread): number {
+  let latest = commentTimeOf(thread.root.createdAt) || 0;
+  for (const reply of thread.replies) {
+    if (reply.status === 'Deleted') continue;
+    latest = Math.max(latest, commentTimeOf(reply.createdAt) || 0);
+  }
+  return latest;
+}
+
+/**
+ * How a comment pane orders its threads (SPC-116): 'newest' (default) puts the newest thread first, by when its first
+ * comment was written, so a reply never makes the list jump; 'oldest' the reverse, 'anchor' keeps anchor order then
+ * creation (a deck read slide by slide), or the Space's own comparator (`commentThreadActivity` sorts by the latest
+ * comment).
+ */
+export type CommentOrder = 'newest' | 'oldest' | 'anchor' | ((a: CommentThread, b: CommentThread) => number);
+
+/** The threads in `order`. Stable: threads the order cannot tell apart keep their anchor order. */
+export function orderCommentThreads(threads: readonly CommentThread[], order: CommentOrder = 'newest'): CommentThread[] {
+  if (order === 'anchor') return [...threads];
+  if (typeof order === 'function') return [...threads].sort(order);
+  const sign = order === 'oldest' ? 1 : -1;
+  const created = (thread: CommentThread) => commentTimeOf(thread.root.createdAt) || 0;
+  return [...threads].sort((a, b) => sign * (created(a) - created(b)));
+}
+
+/**
+ * A thread's replies as the card shows them: each reply, and one "Comment deleted" line for each run of deleted
+ * replies in a row (SPC-127).
+ */
+export function commentReplyRuns(replies: readonly CommentRecord[]):
+  Array<{ deleted: false; reply: CommentRecord } | { deleted: true; replies: CommentRecord[] }> {
+  const runs: Array<{ deleted: false; reply: CommentRecord } | { deleted: true; replies: CommentRecord[] }> = [];
+  for (const reply of replies) {
+    const previous = runs.at(-1);
+    if (reply.status !== 'Deleted') runs.push({ deleted: false, reply });
+    else if (previous?.deleted) previous.replies.push(reply);
+    else runs.push({ deleted: true, replies: [reply] });
+  }
+  return runs;
+}
+
+/** A heading the pane groups threads under: threads with the same key sit together, under `label`. */
+export interface CommentGroup { key: string; label: string }
+
+/** Threads under their group headings, groups in the order their first thread comes. Null: the thread sits ungrouped. */
+export function groupCommentThreads(threads: readonly CommentThread[],
+  groupBy: (thread: CommentThread) => CommentGroup | null): Array<{ group: CommentGroup | null; threads: CommentThread[] }> {
+  const groups: Array<{ group: CommentGroup | null; threads: CommentThread[] }> = [];
+  const byKey = new Map<string, { group: CommentGroup | null; threads: CommentThread[] }>();
+  for (const thread of threads) {
+    const group = groupBy(thread);
+    const key = group ? `g:${group.key}` : 'none';
+    let entry = byKey.get(key);
+    if (!entry) {
+      entry = { group, threads: [] };
+      byKey.set(key, entry);
+      groups.push(entry);
+    }
+    entry.threads.push(thread);
+  }
+  return groups;
+}
+
+/** A moment in a recording: "0:24", "12:05", "1:02:03". */
+export function formatCommentTime(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+/** When the comment changed after `marker` (its Change, or `me`'s edit from Edited at), or NaN when it did not. */
+function changedAfter(comment: CommentRecord, marker: number, me: string): number {
+  let at = Number.NaN;
+  if (comment.change) {
+    const changed = commentTimeOf(comment.changedAt);
+    const counts = comment.change === 'created' || comment.change === 'replied' ? comment.author === me : true;
+    if (counts && Number.isFinite(changed) && changed > marker) at = changed;
+  }
+  // An edit is read from Edited at, so it never has to overwrite a Change that says resolved or answered.
+  if (comment.author === me && comment.status !== 'Deleted') {
+    const editedAt = commentTimeOf(comment.editedAt);
+    if (Number.isFinite(editedAt) && editedAt > marker && !(editedAt <= at)) at = editedAt;
+  }
+  return at;
+}
+
+/** Changes after the checkpoint: `me`'s comments, replies and edits, and every answer or status change. */
 export function commentChangesSince(comments: readonly CommentRecord[], checkpoint: string | null | undefined, me = 'Flo'): CommentRecord[] {
   const marker = commentTimeOf(checkpoint) || 0;
-  return comments.filter(comment => {
-    if (!comment.change) return false;
-    const at = commentTimeOf(comment.changedAt);
-    if (!Number.isFinite(at) || at <= marker) return false;
-    if (comment.change === 'created' || comment.change === 'replied') return comment.author === me;
-    return true;
-  }).sort((a, b) => commentTimeOf(a.changedAt) - commentTimeOf(b.changedAt));
+  return comments.map(comment => ({ comment, at: changedAfter(comment, marker, me) }))
+    .filter(item => Number.isFinite(item.at))
+    .sort((a, b) => a.at - b.at)
+    .map(item => item.comment);
 }
 
 export interface CommentDigestOptions {
@@ -381,15 +554,26 @@ function quote(value: string): string {
   return `"${value.replace(/\s+/g, ' ').trim()}"`;
 }
 
+/** True when the comment's last change is an edit of its text (its Changed at is when it was edited). */
+function edited(comment: CommentRecord): boolean {
+  return Boolean(comment.editedAt && comment.changedAt && commentTimeOf(comment.editedAt) === commentTimeOf(comment.changedAt));
+}
+
 /**
  * The compact digest pasted into an agent's chat: every change since the scope's checkpoint, with where it is, what
- * changed and the thread state. Always English: it is read by agents, not shown to people.
+ * changed and the thread state. Always English: it is read by agents, not shown to people. `since` (default the scope's
+ * checkpoint) tells an edit from Edited at: a comment written before it and edited after reads "edited".
  */
 export function commentDigest(input: {
   scope: CommentScope | null; comments: readonly CommentRecord[]; anchors: readonly CommentAnchor[];
-  changes: readonly CommentRecord[]; nowIso: string;
+  changes: readonly CommentRecord[]; nowIso: string; since?: string | null;
 }, options: CommentDigestOptions = {}): string {
   const { scope, comments, anchors, changes, nowIso } = input;
+  const since = commentTimeOf(input.since === undefined ? scope?.checkpoint ?? null : input.since) || 0;
+  const after = (iso: string | null | undefined) => { const at = commentTimeOf(iso); return Number.isFinite(at) && at > since; };
+  // Edited since the checkpoint and written before it: the digest says "edited" instead of "commented".
+  const editedSince = (comment: CommentRecord) => edited(comment)
+    || (after(comment.editedAt) && !after(comment.createdAt));
   const heading = options.heading ?? 'Slide comments';
   const scopeNoun = options.scopeNoun ?? 'Deck';
   const anchorNoun = options.anchorNoun ?? 'Slide';
@@ -408,10 +592,15 @@ export function commentDigest(input: {
     const anchor = commentAnchorOf(comment, anchors) ?? (root ? commentAnchorOf(root, anchors) : undefined);
     const where = anchor ? `${anchorNoun} ${anchor.order} ${quote(anchor.title)}` : `Unknown ${anchorNoun.toLowerCase()}`;
     const thread = root?.recordKey ?? comment.thread ?? comment.recordKey;
+    const to = root && comment.thread ? ` to ${root.author}: ${quote(root.body)}` : comment.thread ? ' to a thread' : '';
+    const editLine = `${comment.author} edited their ${comment.thread ? 'reply' : 'comment'} to ${quote(comment.body)}${to}`;
+    // In the list for an edit only (its Change is older than the checkpoint, or says resolved or answered).
+    const onlyEdit = comment.status !== 'Deleted' && after(comment.editedAt) && (!comment.change || !after(comment.changedAt));
     let what: string;
-    switch (comment.change) {
-      case 'created': what = `${comment.author} commented ${quote(comment.body)}`; break;
-      case 'replied': what = `${comment.author} replied ${quote(comment.body)} to ${root ? `${root.author}: ${quote(root.body)}` : 'a thread'}`; break;
+    if (onlyEdit) what = editLine;
+    else switch (comment.change) {
+      case 'created': what = editedSince(comment) ? editLine : `${comment.author} commented ${quote(comment.body)}`; break;
+      case 'replied': what = editedSince(comment) ? editLine : `${comment.author} replied ${quote(comment.body)}${to || ' to a thread'}`; break;
       case 'answered': what = `${me} answered ${comment.author}'s ${comment.needs} ${quote(comment.body)}: ${quote(comment.answer)}`; break;
       case 'resolved': what = `${me} resolved ${comment.author}: ${quote(comment.body)}`; break;
       case 'reopened': what = `${me} reopened ${comment.author}: ${quote(comment.body)}`; break;
@@ -474,7 +663,24 @@ export function commentRelativeTime(iso: string | null, locale: string, now: num
 }
 
 /** Clipboard API first; the selection copy runs inside `host` (the Space's own element), never on the page body. */
-export async function writeCommentClipboard(text: string, host: HTMLElement | null): Promise<boolean> {
+export async function writeCommentClipboard(text: string | Promise<string | null>, host: HTMLElement | null): Promise<boolean> {
+  if (typeof text !== 'string') {
+    // A text the host still works out (a link naming the comment's page): a ClipboardItem holding the promise keeps the
+    // click's permission to write while it resolves (Safari drops it after a wait); else it is copied once known.
+    const Item = typeof ClipboardItem === 'undefined' ? null : ClipboardItem;
+    if (Item && typeof navigator !== 'undefined' && navigator.clipboard?.write) {
+      try {
+        const blob = text.then((value) => {
+          if (!value) throw new Error('no text');
+          return new Blob([value], { type: 'text/plain' });
+        });
+        await navigator.clipboard.write([new Item({ 'text/plain': blob })]);
+        return true;
+      } catch { /* copied as plain text below */ }
+    }
+    const value = await text.catch(() => null);
+    return value ? writeCommentClipboard(value, host) : false;
+  }
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
   } catch { /* fall through to the selection copy */ }

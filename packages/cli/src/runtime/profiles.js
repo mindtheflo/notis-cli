@@ -13,6 +13,7 @@ import { withConfigFileWriteLock } from './config-lock.js';
 import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import { channelFromProfile, cliCommandForChannel, pinnedReleaseChannel } from './channel.js';
 import { resolveRetryEnabled } from './retry.js';
+import { readAgentIdentity } from './agent-identity.js';
 
 export const CONFIG_DIR = join(homedir(), '.notis');
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -958,6 +959,8 @@ export function resolveRuntimeProfile(
     timeoutMs,
     // Automatic retries of interrupted calls that are safe to repeat.
     retry: resolveRetryEnabled(globalOptions),
+    // The agent this run declares (--agent-name / NOTIS_AGENT_NAME, ...), checked and sent by httpRequest.
+    agentIdentity: readAgentIdentity(globalOptions),
     debugEntitlementOverride,
     worktreeRuntime: devRuntime,
     detachedWorktreeRuntime: devRuntime ? null : worktreeRuntime,

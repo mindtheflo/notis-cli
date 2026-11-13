@@ -10,6 +10,7 @@ import { SpaceFileError } from '../../space';
 import { Button } from '../blocks';
 import { Icon } from '../icons';
 import { Tooltip } from '../overlay';
+import { readCommentDraft, writeCommentDraft, type StoredCommentFile } from './commentDrafts';
 import type { CommentWordKey } from './commentWords';
 import type { CommentController, CommentFile } from './useComments';
 
@@ -34,6 +35,7 @@ export interface CommentFileDraft {
 }
 
 let draftCount = 0;
+const NO_FILES: CommentFileDraft[] = [];
 
 /** A pasted picture often comes as "image.png": name it by its kind so the comment shows something useful. */
 function namedFile(file: File): File {
@@ -80,14 +82,35 @@ function hasFiles(event: DragEvent<HTMLElement>): boolean {
   return Array.from(event.dataTransfer?.types ?? []).includes('Files');
 }
 
-/** The attachment queue of one comment box. */
-export function useCommentFiles(controller: CommentController): CommentFilesState {
-  const [drafts, setDrafts] = useState<CommentFileDraft[]>([]);
+function thumbOf(file: File): string | null {
+  return IMAGE_TYPE.test(file.type) && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : null;
+}
+
+/** The chips a box kept in the session store (`commentDrafts`): pictures get a new preview, a cut upload starts again. */
+function restoredFiles(key: string | null | undefined): CommentFileDraft[] {
+  return (readCommentDraft(key)?.files ?? []).map(stored => ({
+    id: `file-${++draftCount}`, name: stored.name, thumb: thumbOf(stored.file), state: stored.state,
+    percent: stored.state === 'ready' ? 100 : 0, file: stored.file, uploaded: (stored.uploaded ?? null) as CommentFile | null,
+    error: stored.error, retryable: stored.retryable,
+  }));
+}
+
+/**
+ * The attachment queue of one comment box. With `draftKey` the chips are kept in the session store while the box is
+ * away (the page's comments left the panel) and come back with it; an upload cut short by that starts again.
+ */
+export function useCommentFiles(controller: CommentController, draftKey: string | null = null): CommentFilesState {
+  // The chips and the draft they belong to travel together: a box that moves to another draft (another page) shows that
+  // draft's chips and never saves the previous draft's under the new key.
+  const [held, setHeld] = useState(() => ({ key: draftKey, drafts: restoredFiles(draftKey) }));
+  const drafts = held.key === draftKey ? held.drafts : NO_FILES;
+  const setDrafts = useCallback((change: (current: CommentFileDraft[]) => CommentFileDraft[]) =>
+    setHeld(before => ({ key: before.key, drafts: change(before.drafts) })), []);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const [dragging, setDragging] = useState(false);
   const aborts = useRef(new Map<string, AbortController>());
-  const thumbs = useRef(new Set<string>());
+  const thumbs = useRef(new Set<string>(drafts.flatMap(draft => draft.thumb ? [draft.thumb] : [])));
   const live = useRef(true);
   const { uploadFile, toaster, say } = controller;
   const sayRef = useRef(say);
@@ -109,7 +132,7 @@ export function useCommentFiles(controller: CommentController): CommentFilesStat
 
   const patch = useCallback((id: string, change: Partial<CommentFileDraft>) => {
     if (live.current) setDrafts(current => current.map(draft => draft.id === id ? { ...draft, ...change } : draft));
-  }, []);
+  }, [setDrafts]);
 
   const start = useCallback((draft: CommentFileDraft) => {
     const abort = new AbortController();
@@ -132,6 +155,36 @@ export function useCommentFiles(controller: CommentController): CommentFilesStat
     });
   }, [uploadFile, patch, toaster, maxMb]);
 
+  // Restored chips whose upload was cut short start again (once per mount).
+  useEffect(() => {
+    for (const draft of draftsRef.current) if (draft.state === 'uploading' && !aborts.current.has(draft.id)) start(draft);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Another draft for the same box: the previous draft's chips stay saved under its own key (an upload cut short starts
+  // again when it comes back), and this draft's chips load before anything is saved under its key.
+  useEffect(() => {
+    if (held.key === draftKey) return;
+    for (const abort of aborts.current.values()) abort.abort();
+    aborts.current.clear();
+    for (const url of thumbs.current) URL.revokeObjectURL(url);
+    thumbs.current.clear();
+    const restored = restoredFiles(draftKey);
+    for (const draft of restored) if (draft.thumb) thumbs.current.add(draft.thumb);
+    draftsRef.current = restored;
+    setHeld({ key: draftKey, drafts: restored });
+    for (const draft of restored) if (draft.state === 'uploading') start(draft);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // The chips follow the box into the session store, so they outlive it; only under the draft they belong to.
+  useEffect(() => {
+    if (!draftKey || held.key !== draftKey) return;
+    writeCommentDraft(draftKey, { files: held.drafts.map<StoredCommentFile>(draft => ({
+      name: draft.name, file: draft.file, state: draft.state, uploaded: draft.uploaded, error: draft.error, retryable: draft.retryable,
+    })) });
+  }, [draftKey, held]);
+
   const add = useCallback((files: Iterable<File>) => {
     if (controller.attach === 'off') { toaster.notify(controller.words.filesUnavailable, { tone: 'danger' }); return; }
     const incoming = Array.from(files).map(namedFile);
@@ -139,7 +192,7 @@ export function useCommentFiles(controller: CommentController): CommentFilesStat
     const room = COMMENT_MAX_FILES - draftsRef.current.length;
     if (incoming.length > room) toaster.notify(sayRef.current('fileTooMany', { n: COMMENT_MAX_FILES }), { tone: 'danger' });
     const added = incoming.slice(0, Math.max(0, room)).map<CommentFileDraft>(file => {
-      const thumb = IMAGE_TYPE.test(file.type) && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : null;
+      const thumb = thumbOf(file);
       if (thumb) thumbs.current.add(thumb);
       return { id: `file-${++draftCount}`, name: file.name, thumb, state: 'uploading', percent: 0, file, uploaded: null, error: null, retryable: true };
     });
@@ -147,7 +200,7 @@ export function useCommentFiles(controller: CommentController): CommentFilesStat
     draftsRef.current = [...draftsRef.current, ...added];
     setDrafts(current => [...current, ...added]);
     for (const draft of added) start(draft);
-  }, [controller.attach, controller.words, toaster, start]);
+  }, [controller.attach, controller.words, toaster, start, setDrafts]);
 
   const remove = useCallback((id: string) => {
     aborts.current.get(id)?.abort();
@@ -157,7 +210,7 @@ export function useCommentFiles(controller: CommentController): CommentFilesStat
       if (gone?.thumb) { URL.revokeObjectURL(gone.thumb); thumbs.current.delete(gone.thumb); }
       return current.filter(draft => draft.id !== id);
     });
-  }, []);
+  }, [setDrafts]);
 
   const retry = useCallback((id: string) => {
     const draft = drafts.find(item => item.id === id);
@@ -170,8 +223,8 @@ export function useCommentFiles(controller: CommentController): CommentFilesStat
   const clear = useCallback(() => {
     for (const url of thumbs.current) URL.revokeObjectURL(url);
     thumbs.current.clear();
-    setDrafts([]);
-  }, []);
+    setDrafts(() => []);
+  }, [setDrafts]);
 
   const enabled = controller.attach !== 'off';
   const boxHandlers = {

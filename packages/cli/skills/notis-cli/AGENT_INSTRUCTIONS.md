@@ -86,6 +86,7 @@ Call these with `notis tools exec <TOOL>` (add `--get-schema` first when you nee
 
 - Cold discovery can exceed 30 seconds. Use `--timeout-ms 90000` for discovery calls when needed; after `network_timeout`, retry the exact command once with that timeout instead of looping.
 - Before writing a Notion or native database row, read the schema and relevant property descriptions.
+- Before writing for the user (comments, rows), declare yourself once per session with a fresh lowercase imaginary rock-band name: `export NOTIS_AGENT_NAME="fred-and-the-machine"` (or `--agent-name`; lowercase letters and digits in at least two words joined by hyphens, 3 to 60 characters). The CLI keeps one id per name on this computer, so set `NOTIS_AGENT_ID` only to override it. Where the user has unified comments on, the write then shows your name, never reads as the user's own, and never wakes you, and a comment written through the CLI without a name is refused (`agent_name_required`); elsewhere the name is ignored.
 - When answering about meetings or availability, check every connected calendar.
 - Use `notis doctor` before concluding that authentication or API reachability is broken.
 - Keep credentials and other secrets out of tool arguments and search queries unless the target tool explicitly requires them.

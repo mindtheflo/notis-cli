@@ -1,15 +1,18 @@
 /**
  * The controller for comments on passages of a record's text: a `useComments` controller (reading, live feed,
- * replies, Resolve, Delete) plus where each thread sits (its field and quoted words), the comment being written on a
- * selection, which threads read Text changed, and the reading order. `CommentableText`, `CommentableRichText` and
- * `PassageCommentPane` render from it.
+ * replies, Archive, Delete, Edit, where a thread goes) plus where each thread sits (its field and quoted words), the
+ * comment being written on a selection, which threads read Passage changed (their words are gone; they stay open with
+ * the old quote), and the reading order. `CommentableText`, `CommentableRichText` and `PassageCommentPane` render from
+ * it. Its modes default to text (a selection) and the whole page.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNativeMutation } from '../../hooks/useNativeDocuments';
 import { useShown } from '../../hooks/useViewParams';
+import { commentDraftKey, forgetCommentDraft, hasDraftContent, readCommentDraft, writeCommentDraft } from './commentDrafts';
 import { commentColumns, commentRowsOf, newCommentId, type CommentThread } from './commentModel';
-import { useComments, type CommentController, type UseCommentsOptions } from './useComments';
+import { useCommentFocusParam } from './hostComments';
+import { useComments, type CommentController, type CommentFile, type UseCommentsOptions } from './useComments';
 import {
   passageColumns, passageOffset, passageProperties, readPassage, type PassageAnchor, type PassageColumns, type PassageField,
 } from './passageModel';
@@ -33,12 +36,15 @@ export interface UsePassageCommentsOptions extends Omit<UseCommentsOptions, 'anc
   onOpen?(thread: CommentThread, passage: PassageAnchor | undefined, from: PassageOpenedFrom): void;
   /** A selection started a new comment: show the pane, which holds its box. */
   onDraft?(passage: PassageAnchor): void;
-  /** Open the thread of this comment (a root or a reply) once it is read: a link to one comment. */
+  /**
+   * Open the thread of this comment (a root or a reply) once it is read: a link to one comment. Default: the
+   * `comment` view param (`useCommentFocusParam`); null turns that off.
+   */
   focusKey?: string | null;
 }
 
 export interface PassageCommentController {
-  /** The underlying comment controller: thread cards, Resolve, Delete, the status filter and the toast. */
+  /** The underlying comment controller: thread cards, Archive, Delete, Edit, the status filter, routing and the toast. */
   controller: CommentController;
   fields: readonly PassageField[];
   field(key: string): PassageField | undefined;
@@ -55,25 +61,40 @@ export interface PassageCommentController {
   isChanged(rootKey: string): boolean;
   /** The comment being written on a selection. */
   draft: PassageAnchor | null;
+  /** The comment being placed or written on the page (the New comment menu): the same as `controller.draftPin`. */
+  draftPin: CommentController['draftPin'];
   startDraft(passage: PassageAnchor): void;
   cancelDraft(): void;
-  /** Saves the draft. True once saved; its thread is then selected. */
-  send(body: string): Promise<boolean>;
+  /**
+   * Saves the draft with its text and the pictures and files attached to it (SPC-131: paste, drop or the paperclip),
+   * either one enough. True once saved; its thread is then selected.
+   */
+  send(body: string, files?: readonly CommentFile[]): Promise<boolean>;
   sending: boolean;
   /** The last send failed. */
   failed: boolean;
   /** The thread whose passage flashes, whether to scroll to it, and a count that changes on each flash. */
   flash: { key: string; scroll: boolean; n: number } | null;
+  /**
+   * Opens a thread: its passage flashes and the pane selects it. From the page ('passage': a highlight or a field's
+   * Comment count) or a link ('link') it is a reveal: `revealRequest` goes up by one and the host shows its Comments
+   * panel (C8). From the pane ('pane', 'quote') the panel stays as it is.
+   */
   open(thread: CommentThread, from: PassageOpenedFrom): void;
   openKey(rootKey: string, from: PassageOpenedFrom): void;
+  /** Starts at 0 and goes up by one on each comment picked on the page: the same number as `controller.revealRequest`. */
+  revealRequest: number;
   /** Rich text on screen reports which passages it shows: Text changed then follows what is rendered. */
   reportFound(field: string, keys: ReadonlySet<string> | null): void;
 }
 
 const NO_FIELDS: readonly PassageField[] = Object.freeze([]);
+const PASSAGE_MODES = Object.freeze(['text', 'page'] as const);
 
 export function usePassageComments(options: UsePassageCommentsOptions): PassageCommentController {
-  const { fields = NO_FIELDS, values, group = null, focusKey = null, list = 'comments', database = 'comments', pageSize = 500 } = options;
+  const { fields = NO_FIELDS, values, group = null, list = 'comments', database = 'comments', pageSize = 500 } = options;
+  const urlFocus = useCommentFocusParam();
+  const focusKey = options.focusKey === undefined ? urlFocus : options.focusKey;
   const columns = useMemo(() => passageColumns(options.passageColumns), [options.passageColumns]);
   const baseColumns = useMemo(() => commentColumns(options.columns), [options.columns]);
   const latest = useRef(options);
@@ -104,6 +125,9 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     ...options,
     anchors: undefined,
     anchorKey: null,
+    // This controller opens a linked comment itself, with its passage flash.
+    focusKey: null,
+    modes: options.modes ?? PASSAGE_MODES,
     onSelectThread: (thread) => {
       const passage = passagesRef.current.get(thread.root.recordKey);
       const from = openedFrom.current;
@@ -168,25 +192,55 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     threads(wanted).filter(thread => thread.root.status === 'Open').length, [threads]);
 
   // A new comment on a selection, saved with its passage.
-  const [draft, setDraft] = useState<PassageAnchor | null>(null);
+  // A comment being written on a passage outlives the pane, like a new comment's pin: the passage comes back while its
+  // box kept text (`commentDrafts`).
+  const draftKey = commentDraftKey(controller.draftScope, 'passage');
+  const restoredPassage = (key: string | null): PassageAnchor | null => {
+    const stored = readCommentDraft(key);
+    return hasDraftContent(stored) && stored?.place ? stored.place as PassageAnchor : null;
+  };
+  const [draft, setDraft] = useState<PassageAnchor | null>(() => restoredPassage(draftKey));
+  const passageKeyRef = useRef(draftKey);
+  useEffect(() => {
+    if (passageKeyRef.current !== draftKey) {
+      // Another page (record A to B while mounted): its own passage comes back, if one was left there, and A's passage
+      // is never saved under B's key.
+      passageKeyRef.current = draftKey;
+      setDraft(restoredPassage(draftKey));
+      return;
+    }
+    writeCommentDraft(draftKey, { place: draft ?? undefined });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, draft]);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState(false);
   const intent = useRef<{ key: string; id: string } | null>(null);
-  const { setThreadKey, refetch, signed } = controller;
+  const { setThreadKey, refetch, signed, canWrite, cancelMode, cancelPin, draftPin } = controller;
+  const { linkNew, clearPick } = controller.routing;
 
   const startDraft = useCallback((passage: PassageAnchor) => {
     setFailed(false);
+    cancelMode();
+    cancelPin();
     setDraft(passage);
     setThreadKey(null);
     latest.current.onDraft?.(passage);
-  }, [setThreadKey]);
-  const cancelDraft = useCallback(() => { setDraft(null); setFailed(false); }, []);
+  }, [setThreadKey, cancelMode, cancelPin]);
+  // A comment on the whole page started (the New comment menu): it replaces a comment on a selection.
+  useEffect(() => { if (draftPin) setDraft(null); }, [draftPin]);
+  // Cancelling forgets the conversation picked for it too: the next comment goes to the best match again.
+  const cancelDraft = useCallback(() => { setDraft(null); setFailed(false); clearPick(); forgetCommentDraft(draftKey); },
+    [clearPick, draftKey]);
 
-  const send = useCallback(async (body: string) => {
+  const send = useCallback(async (body: string, files: readonly CommentFile[] = []) => {
     const text = body.trim();
     const schemaRevision = query.data?.schema_revision;
     const target = draft ? field(draft.field) : undefined;
-    if (!draft || !target || !text || schemaRevision == null || sending) return false;
+    // Files go only where the table has a files column (the pane offers the paperclip only then).
+    const attached = baseColumns.attachments && controller.attach === 'on' ? files : [];
+    if (!draft || !target || (!text && !attached.length) || schemaRevision == null || sending) return false;
+    // The author is who is signed in (`me` is the viewer under the host): nothing is sent until they are known.
+    if (!canWrite) { console.warn('[comments] the viewer is not known yet: nothing was sent'); return false; }
     const scope = latest.current.scope ?? null;
     const at = new Date().toISOString();
     const properties: Record<string, unknown> = {
@@ -195,8 +249,11 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
       [baseColumns.change]: 'created', [baseColumns.changedAt]: at,
     };
     if (baseColumns.scope && scope) properties[baseColumns.scope] = [scope.id];
+    if (baseColumns.attachments && attached.length) {
+      properties[baseColumns.attachments] = attached.map(({ name, url }) => ({ name, url }));
+    }
     // One request ID per intent: sending the same comment again replays it instead of adding a second one.
-    const key = JSON.stringify([draft, text]);
+    const key = JSON.stringify([draft, text, attached.map(file => file.url)]);
     if (intent.current?.key !== key) intent.current = { key, id: newCommentId() };
     setSending(true);
     setFailed(false);
@@ -210,6 +267,8 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
       setDraft(null);
       setThreadKey(receipt.record_key);
       void refetch();
+      // The new comment thread goes to the thread picked with the chip or @, else the best match (SPC-117).
+      void linkNew(receipt.record_key);
       return true;
     } catch {
       setFailed(true);
@@ -217,13 +276,14 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     } finally {
       setSending(false);
     }
-  }, [query.data?.schema_revision, draft, field, sending, columns, baseColumns, signed, controller.me, insert, setThreadKey, refetch]);
+  }, [query.data?.schema_revision, draft, field, sending, columns, baseColumns, signed, controller.me, canWrite, insert,
+    setThreadKey, refetch, linkNew, controller.attach]);
 
-  const { selectThread } = controller;
+  const { selectThread, revealThread } = controller;
   const open = useCallback((thread: CommentThread, from: PassageOpenedFrom) => {
     openedFrom.current = from;
-    selectThread(thread);
-  }, [selectThread]);
+    if (from === 'passage' || from === 'link') revealThread(thread); else selectThread(thread);
+  }, [selectThread, revealThread]);
   const openKey = useCallback((rootKey: string, from: PassageOpenedFrom) => {
     const thread = controller.threads.find(item => item.root.recordKey === rootKey);
     if (thread) open(thread, from);
@@ -232,7 +292,9 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   // A link to one comment: open its thread once it is read.
   const focused = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusKey || focused.current === focusKey) return;
+    // A link the host took away is forgotten, so a later link to the same comment opens it again.
+    if (!focusKey) { focused.current = null; return; }
+    if (focused.current === focusKey) return;
     const thread = controller.threads.find(item => item.root.recordKey === focusKey
       || item.replies.some(reply => reply.recordKey === focusKey));
     if (!thread) return;
@@ -243,6 +305,7 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   return {
     controller, fields, field, passageOf: (rootKey: string) => passages.get(rootKey), group, threads, threadsOn, openCount,
     isChanged: (rootKey: string) => placement.changed.has(rootKey),
-    draft, startDraft, cancelDraft, send, sending, failed, flash, open, openKey, reportFound,
+    draft, draftPin, startDraft, cancelDraft, send, sending, failed, flash, open, openKey, reportFound,
+    revealRequest: controller.revealRequest,
   };
 }

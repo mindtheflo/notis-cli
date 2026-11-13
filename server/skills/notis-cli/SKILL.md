@@ -57,6 +57,17 @@ Two rules follow from the dev credential being scoped to that local backend:
 - A `dev-*` profile only exists while its `./dev.sh` lease is running. If it is stopped, the CLI fails with `dev_runtime_unavailable` instead of sending the test user's token to the live API.
 - To reach a real account from inside a worktree — including when the local backend is wedged — name a real profile explicitly: `notis --profile <name> ...`. That is the supported escape hatch.
 
+## Declare who you are before writing
+
+When you are an agent (Claude Code, Codex, a script) and not the person typing, name yourself so what you write is yours, not the person's: a comment then shows your name as its author, never counts as the person's comment and never wakes you up. Pick a fresh lowercase imaginary rock-band name (lowercase letters and digits in at least two words joined by hyphens, 3 to 60 characters, such as `fred-and-the-machine`, shown as "Fred And The Machine") and set it once per session:
+
+```bash
+export NOTIS_AGENT_NAME="fred-and-the-machine"   # your band name
+export NOTIS_AGENT_THREAD="<Notis thread id>"   # optional
+```
+
+or pass `--agent-name` and `--agent-thread` on a single command (a flag wins over its variable). The CLI generates one id for each name the first time it is used on the computer and keeps sending it, so you edit or delete only your own comments; set `NOTIS_AGENT_ID` (or `--agent-id`) only to override it. Name a Notis thread only when you work for one of the person's Notis threads: replies to your comments then wake that thread; anything else is kept as a label. Declarations take effect where the person has unified comments on (being rolled out); elsewhere Notis ignores them and writes count as the person's, as before. With unified comments on, every comment written through the CLI needs the name, even one the person types: without it the write is refused (`agent_name_required`), and a name sent without an id is refused too (`agent_id_required`). Other writes with the person's own sign-in and no name are the person's. A name that breaks the rule is sent as written and the server refuses the call (`invalid_agent_identity`) where unified comments are on, reads included; elsewhere it is ignored. A declaration names you; it never gives access to anything more. The Notis assistant itself never writes comments (`orchestrator_comments_refused`): it starts a sub-agent for comment work, signed with that sub-agent's band name.
+
 ## Critical rule for missing tools
 
 If the tool you need is not already available in your current tool surface, do not stop and do not assume the task is blocked.

@@ -1,9 +1,10 @@
 /**
  * Tooltip (toolkit spec 2.8): a label and an optional shortcut on a black pill, the Manager's tooltip. Shows after
  * 500ms of hover or at once on keyboard focus; hides on leave, blur, a press or any key. Never takes focus.
+ * With `card`, it shows that content on a popover card instead (the chat timeline's hover card), still never focusable.
  */
 
-import React, { useEffect, useRef, useState, type ReactElement } from 'react';
+import React, { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { KeySpec, Words } from '../../words';
 import { Keycap, KeycapSurface } from '../keycap';
@@ -23,9 +24,14 @@ export interface TooltipProps {
   /** One focusable element. */
   children: ReactElement;
   disabled?: boolean;
+  /**
+   * Rich content shown on a popover card in place of the label (several lines, logos). The card only describes the
+   * trigger (aria-describedby), so give the trigger an accessible name that says the same in words.
+   */
+  card?: ReactNode;
 }
 
-export function Tooltip({ label, keys, side = 'top', align = 'center', delay = 500, children, disabled }: TooltipProps) {
+export function Tooltip({ label, keys, side = 'top', align = 'center', delay = 500, children, disabled, card }: TooltipProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLElement | null>(null);
@@ -77,12 +83,16 @@ export function Tooltip({ label, keys, side = 'top', align = 'center', delay = 5
     <>
       {trigger}
       {open && layerRoot ? createPortal(
-        <KeycapSurface on="tooltip">
-          <div ref={tipRef} id={id} role="tooltip" className="nui-tip" style={style}>
-            <span>{t(label)}</span>
-            {keys ? <Keycap keys={keys} /> : null}
-          </div>
-        </KeycapSurface>,
+        card != null ? (
+          <div ref={tipRef} id={id} role="tooltip" className="nui-tip nui-tip-card" style={style}>{card}</div>
+        ) : (
+          <KeycapSurface on="tooltip">
+            <div ref={tipRef} id={id} role="tooltip" className="nui-tip" style={style}>
+              <span>{t(label)}</span>
+              {keys ? <Keycap keys={keys} /> : null}
+            </div>
+          </KeycapSurface>
+        ),
         layerRoot,
       ) : null}
     </>

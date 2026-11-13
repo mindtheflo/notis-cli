@@ -180,6 +180,9 @@ test('a comment an agent wrote carries its signature, clickable to its thread on
   assert.match(plain, /^<span class="nui-comment-agent">/);
   assert.match(plain, /De Editor/);
   assert.equal(renderToStaticMarkup(<CommentAgentSource controller={controller('en')} comment={person} />), '');
+  const band = readCommentRow({ ...base, agent: { name: 'fred-and-the-machine' } } as never);
+  assert.match(renderToStaticMarkup(<CommentAgentSource controller={controller('en')} comment={band} />), /From Fred And The Machine/,
+    'a band name reads out with spaces and capitals');
 });
 
 test('useThreadItem reads the panel item and runs its actions through the host', async () => {

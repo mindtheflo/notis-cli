@@ -11,7 +11,7 @@ import type { AgentContextContent, AgentContextItem, AgentContextSource } from '
 import type { ComponentType, ReactNode } from 'react';
 import type { NotisQueryClient } from './queryCache';
 import type { NotisSpaceSkeleton } from './skeleton';
-import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport, SpaceThreadsTransport, SpaceThreadItemTransport } from './space';
+import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport, SpaceThreadsTransport, SpaceThreadItemTransport, SpaceCommentsTransport } from './space';
 
 // ---------------------------------------------------------------------------
 // Database types
@@ -632,6 +632,11 @@ export interface NotisRuntime {
   spaceThreads?: SpaceThreadsTransport;
   /** The thread item a page draws in a thread's panel, and its actions. Signed-in Portal viewers only. */
   spaceThreadItem?: SpaceThreadItemTransport;
+  /**
+   * Space-only host Comments panel: comment controllers attach here and the host lists and answers their threads beside
+   * the chat. Absent while comments are off for the viewer, on Sites, links, previews and older hosts.
+   */
+  spaceComments?: SpaceCommentsTransport;
   /** Authenticated runtime identity; app below is presentation metadata only. */
   resource?: RuntimeResource;
   /** Optional host-scoped in-memory read cache. Older hosts remain supported. */

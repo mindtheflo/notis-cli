@@ -40,7 +40,8 @@ export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadIn
   SpaceViewerDatabase, SpaceViewerDatabaseSchema, SpaceViewerSkill, SpaceViewerSkillPage } from './space';
 export type { SpaceAgentDeclaration, SpaceItemThread, SpaceAgentQueue, SpaceAgentsStatus, SpaceThreadsTransport,
   SpaceThreadItemText, SpaceThreadItemCondition, SpaceThreadItemState, SpaceThreadItemConfirm, SpaceThreadItemAction,
-  SpaceThreadItemKind, SpaceThreadItem, SpaceThreadItemRun, SpaceThreadItemTransport } from './space';
+  SpaceThreadItemKind, SpaceThreadItem, SpaceThreadItemRun, SpaceThreadItemTransport,
+  SpaceCommentSource, SpaceCommentsTransport, SpaceCommentViewer, SpaceCommentThreadRef, SpaceCommentThreadPick } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
 export { spaceAudience, spaceMarksEditorsOnly, publicSpaceDescriptor, withoutEditorColumns } from './space';
 export type { SpaceAudience, SpaceEditorsOnly, SpaceResourceColumns, EditorOnlyColumns, AudienceRow } from './space';
