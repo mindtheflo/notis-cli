@@ -34,9 +34,12 @@ body {
   font-size: 14px;
   line-height: 1.5;
 }
-.ds-app :focus-visible {
-  outline: 2px solid hsl(var(--ds-focus));
-  outline-offset: 2px;
+/* No focus rings, as in the Portal and in Spaces (docs/portal-design-system.md). */
+@media (forced-colors: none) {
+  .ds-app :focus,
+  .ds-app :focus-visible {
+    outline: none;
+  }
 }
 .ds-app h1,
 .ds-app h2,
@@ -98,10 +101,6 @@ body {
   font-size: 13px;
   color: inherit;
   background: hsl(var(--background));
-}
-.ds-search:focus {
-  outline: 2px solid hsl(var(--ds-focus));
-  outline-offset: 0;
 }
 .ds-index-list {
   display: flex;
@@ -663,10 +662,6 @@ body {
 .ds-pin[data-pending] {
   color: #fff;
   background: hsl(var(--ds-focus));
-}
-.ds-pin:focus-visible {
-  outline: 2px solid hsl(var(--ds-focus) / 0.7);
-  outline-offset: 2px;
 }
 .ds-pin[data-resolved]:not(:hover, [data-active]) {
   color: hsl(var(--background));

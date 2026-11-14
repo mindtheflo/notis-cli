@@ -29,7 +29,7 @@ function SnoozePanel({ ctx, close }: { ctx: Ctx; close: PopoverController['close
       <p className="m-0 px-2 pb-1 text-xs font-medium text-muted-foreground">{ctx.t(OVERLAY_COPY.snoozeTitle)}</p>
       {SNOOZE_OPTIONS.map((option) => (
         <button key={option.id} type="button" onClick={close}
-          className="flex h-8 w-full items-center rounded-md text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none">
+          className="flex h-8 w-full items-center rounded-md text-left text-sm hover:bg-accent focus-visible:bg-accent">
           <span className="flex min-w-0 flex-1 items-center justify-between gap-3 px-2">
             <span className="truncate">{ctx.t(option.label)}</span>
             <span className="shrink-0 tabular-nums text-xs text-muted-foreground">{ctx.t(option.when)}</span>
@@ -37,7 +37,7 @@ function SnoozePanel({ ctx, close }: { ctx: Ctx; close: PopoverController['close
         </button>
       ))}
       <button type="button" onClick={close}
-        className="mt-1 flex h-8 w-full items-center rounded-md text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none">
+        className="mt-1 flex h-8 w-full items-center rounded-md text-left text-sm hover:bg-accent focus-visible:bg-accent">
         <span className="px-2 text-muted-foreground">{ctx.t(OVERLAY_COPY.pickDate)}</span>
       </button>
     </div>
@@ -78,7 +78,7 @@ function RenameView({ ctx }: { ctx: Ctx }) {
           <form className="flex w-72 flex-col gap-2" onSubmit={(event) => { event.preventDefault(); close(); }}>
             <label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">{ctx.t(OVERLAY_COPY.viewName)}</label>
             <input id={inputId} value={name} onChange={(event) => setName(event.target.value)}
-              className="h-8 w-full rounded-md bg-muted px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              className="h-8 w-full rounded-md bg-muted px-2 text-sm text-foreground outline-none" />
             <p className="m-0 text-xs text-muted-foreground">{ctx.t(OVERLAY_COPY.viewNameHint)}</p>
             <div className="mt-1 flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={close}>{ctx.t(SHORT_COPY.cancel)}</Button>

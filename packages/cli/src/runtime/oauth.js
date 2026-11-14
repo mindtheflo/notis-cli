@@ -651,7 +651,8 @@ function connectedCallbackHtml({ portalOrigin }) {
         transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
       }
       .button:hover { transform: translateY(-1px); border-color: #454b57; background: #1b1e24; }
-      .button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+      .button:focus-visible { border-color: var(--focus); }
+      @media (forced-colors: none) { :focus, :focus-visible { outline: none; } }
       .button-primary { border-color: var(--primary); background: var(--primary); color: var(--primary-ink); }
       .button-primary:hover { border-color: #fff; background: #fff; }
       .helper { margin: 12px 0 0; color: #777f8d; font-size: 0.78rem; line-height: 1.45; }

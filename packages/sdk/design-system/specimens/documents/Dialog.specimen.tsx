@@ -95,7 +95,7 @@ function RenameSpace({ t, outcome }: { t: T; outcome: RenameOutcome }) {
         <form className="mt-4 flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); if (!saving) save(); }}>
           <label htmlFor={inputId} className="text-sm font-medium">{t(COPY.nameLabel)}</label>
           <input id={inputId} value={name} data-ds-typed={t(COPY.typedName)} disabled={saving} onChange={(event) => setName(event.target.value)}
-            className="w-full rounded-md bg-muted px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />
+            className="w-full rounded-md bg-muted px-3 py-2 text-sm text-foreground outline-none disabled:opacity-60" />
           {phase === 'failed' && <Notice tone="danger" onRetry={save}>{FIELD_WORDS.saveFailed}</Notice>}
           <div className={actions}>
             <Button variant="ghost" disabled={saving} onClick={close}>{FIELD_WORDS.cancel}</Button>

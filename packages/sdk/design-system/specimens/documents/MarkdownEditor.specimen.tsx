@@ -9,7 +9,7 @@ import { Code, Columns, Example, Readout, Stack } from '../../fixtures/documents
 import { MARKDOWN_EDITOR_PROPS, PropsTable } from '../../fixtures/documents/props';
 
 /** How a Space styles the editor: flat, the Portal's muted fill, a full focus ring. */
-const SPACE_CLASS = 'block w-full rounded-md bg-muted/50 p-4 font-mono text-[13px] leading-6 text-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const SPACE_CLASS = 'block w-full rounded-md bg-muted/50 p-4 font-mono text-[13px] leading-6 text-foreground placeholder:text-muted-foreground outline-none';
 
 const COPY = {
   status: { en: 'Status:', fr: 'État :' },
