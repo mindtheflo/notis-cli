@@ -220,3 +220,71 @@ test('record view fixtures need a declared native database resource, not a recor
   assert.throws(() => createSpaceFixtureEngine(withFixtures({ slides: { kind: 'database', key: 'slides' } }, {},
     [{ ...html, result: { ...html.result, title: 3 } }])), /optional title/);
 });
+
+// A 2x2 red PNG, built here so the test needs no binary file.
+function redPng() {
+  const { deflateSync, crc32 } = require('node:zlib');
+  const chunk = (type, data) => { const out = Buffer.alloc(12 + data.length); out.writeUInt32BE(data.length, 0); out.write(type, 4, 'ascii');
+    data.copy(out, 8); out.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'ascii'), data])) >>> 0, 8 + data.length); return out; };
+  const header = Buffer.alloc(13); header.writeUInt32BE(2, 0); header.writeUInt32BE(2, 4); header[8] = 8; header[9] = 2;
+  const rows = Buffer.from([0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 255, 0, 0]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+}
+const photoView = url => `export function SpaceView(){const R=window.React;const [state,set]=R.useState('loading');`
+  + `return R.createElement('main',null,R.createElement('img',{src:'${url}',alt:'',onLoad:e=>set('loaded '+e.currentTarget.naturalWidth),onError:()=>set('failed')}),R.createElement('p',null,'Photo '+state))}`;
+
+test('a fixture image shows for the URL a fixture row holds, from a file next to the fixtures', async () => {
+  const { createRequire } = await import('node:module');
+  globalThis.require ??= createRequire(import.meta.url);
+  const url = 'https://photos.example.com/meals/noodles.png?size=large';
+  const release = fixture(photoView(url));
+  release.fixturePath = 'spaces/fixtures/day.json';
+  release.sourceFiles['spaces/fixtures/day.json'] = b({ actions: {}, images: { [url]: './photos/noodles.png' } });
+  release.sourceFiles['spaces/fixtures/photos/noodles.png'] = redPng().toString('base64');
+  const pool = renderer.createBrowserPool();
+  try {
+    const broker = createSpaceFixtureBroker({ release, capabilities: release.capabilities, width: 390, outputs: ['markdown'] });
+    const result = await renderer.renderView({ broker, pool, width: 390, outputs: ['markdown'] });
+    assert.match(result.markdown, /Photo loaded 2/);
+    assert.deepEqual(broker.calls.filter(call => call.operation === 'asset').map(call => call.ok), [true]);
+    await broker.finish();
+  } finally { await pool.close(); }
+});
+
+test('verify names an image URL the fixtures do not provide and says where to add it', async () => {
+  const url = 'https://photos.example.com/meals/missing.jpg';
+  const release = fixture(photoView(url));
+  release.fixturePath = 'fixtures.json';
+  release.sourceFiles['fixtures.json'] = b({ actions: {} });
+  const result = await verifySpaceRelease(release, { capabilities: release.capabilities, loadRenderer });
+  assert.equal(result.status, 'failed');
+  const missing = result.errors.filter(error => error.operation === 'asset');
+  assert.equal(missing.length, 1, JSON.stringify(result.errors));
+  assert.match(missing[0].message, /missing\.jpg/);
+  assert.match(missing[0].message, /"images"/);
+});
+
+test('fixture images must be https URLs mapped to a picture file in the fixture file\'s folder', () => {
+  const release = fixture();
+  release.fixturePath = 'spaces/fixtures/day.json';
+  const engine = images => { release.sourceFiles['spaces/fixtures/day.json'] = b({ actions: {}, images }); return createSpaceFixtureEngine(release); };
+  assert.throws(() => engine({ 'http://photos.example.com/a.png': './a.png' }), /https URL/);
+  assert.throws(() => engine({ 'https://photos.example.com/a.png': '../../../outside.png' }), /fixture file's folder or below it/);
+  // A sibling Space's picture is in the project, but never this Space's to publish.
+  release.sourceFiles['spaces/other/photo.png'] = redPng().toString('base64');
+  assert.throws(() => engine({ 'https://photos.example.com/a.png': '../other/photo.png' }), /fixture file's folder or below it/);
+  assert.throws(() => engine({ 'https://photos.example.com/a.png': './sub/../../other/photo.png' }), /fixture file's folder or below it/);
+  assert.throws(() => engine({ 'https://photos.example.com/a.png': './notes.txt' }), /\.png, \.jpg/);
+  assert.throws(() => engine({ 'https://photos.example.com/a.png': './absent.png' }), /missing from the Space folder/);
+  release.sourceFiles['spaces/fixtures/a.png'] = redPng().toString('base64');
+  assert.deepEqual(engine({ 'https://photos.example.com/a.png': './a.png' }).imageUrls, ['https://photos.example.com/a.png']);
+  release.sourceFiles['spaces/fixtures/big.png'] = Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64');
+  assert.throws(() => engine({ 'https://photos.example.com/a.png': './big.png' }), /larger than 2 MB/);
+  // Each under 2 MB, but together past what one render may load.
+  const many = {};
+  for (let index = 0; index < 9; index += 1) {
+    release.sourceFiles[`spaces/fixtures/p${index}.png`] = Buffer.alloc(1900 * 1024).toString('base64');
+    many[`https://photos.example.com/p${index}.png`] = `./p${index}.png`;
+  }
+  assert.throws(() => engine(many), /more than 16 MB/);
+});

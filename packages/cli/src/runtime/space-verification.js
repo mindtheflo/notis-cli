@@ -111,7 +111,8 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
         return { ...where, mounted: false, status: 'failed', error: 'render_view_failed', loaded: false,
           message: `At ${place} the view's code failed before it showed anything${value.reason.reason ? `: ${value.reason.reason}` : '.'}` };
       }
-      if (!shot?.data_base64) return { ...where, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed' };
+      if (!shot?.data_base64) return { ...where, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed',
+        ...(Array.isArray(value.reason?.blocked) && value.reason.blocked.length ? { blocked_calls: value.reason.blocked } : {}) };
       const png = Buffer.from(shot.data_base64, 'base64');
       screenshots.push({ ...where, png });
       const mounted = value.reason.mounted === true;
@@ -131,6 +132,11 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
       .map(call => [call.error, { phase: 'fixture', operation: call.operation,
         ...(call.recordKey ? { record_key: call.recordKey } : {}), ...(call.actionId ? { action_id: call.actionId } : {}),
         message: call.error }])).values()].slice(0, 10);
+    // An image URL the fixtures do not provide is named once, whatever width or language met it.
+    const images = [...new Set(renders.flatMap(value => (value.blocked_calls || []).map(call => call.image)).filter(Boolean))];
+    if (images.length) fixtureErrors.push({ phase: 'fixture', operation: 'asset',
+      message: `The view shows ${images.length === 1 ? 'an image' : `${images.length} images`} its fixtures do not provide (${images.slice(0, 3).join(', ')}${images.length > 3 ? ', ...' : ''}). `
+        + 'Add each URL to "images" in the fixtures, mapped to a picture file next to them: {"images": {"https://example.com/photo.jpg": "./photos/photo.jpg"}}.' });
     const notReady = renders.filter(value => value.error === 'render_not_ready' || value.error === 'render_view_failed')
       .map(value => ({ phase: 'renderer', ...tag(value), message: value.message }));
     const result = { ...diagnostic, status: passed ? 'passed' : 'failed', mounted: renders.every(value => value.mounted),

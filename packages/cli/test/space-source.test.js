@@ -99,6 +99,26 @@ test('selected source includes shared/type/style dependencies but no sibling def
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('the image files a fixture shows travel with the selected source, and nothing else from their folder', async () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), `import { defineSpace as space } from '@notis/sdk/config';
+export default space({ name: 'A', ${VIEW_DECLARATION}, entry: './view.tsx', verificationFixtures: './fixtures/day.json' });`);
+    mkdirSync(join(root, 'spaces/a/fixtures/photos'), { recursive: true });
+    writeFileSync(join(root, 'spaces/a/fixtures/day.json'), JSON.stringify({ actions: {}, images: { 'https://photos.example.com/noodles.jpg': './photos/noodles.jpg' } }));
+    writeFileSync(join(root, 'spaces/a/fixtures/photos/noodles.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    writeFileSync(join(root, 'spaces/a/fixtures/photos/unused.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    const source = collectSelectedSpaceSource(root, await loadSelectedSpace(root, 'a'));
+    assert.equal(source['spaces/a/fixtures/photos/noodles.jpg'], Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'));
+    assert.equal(source['spaces/a/fixtures/photos/unused.jpg'], undefined);
+    // A picture outside the fixture folder (a sibling Space's) never joins this Space's source; verify names it.
+    mkdirSync(join(root, 'spaces/b'), { recursive: true });
+    writeFileSync(join(root, 'spaces/b/photo.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    writeFileSync(join(root, 'spaces/a/fixtures/day.json'), JSON.stringify({ actions: {}, images: { 'https://photos.example.com/b.jpg': '../../b/photo.jpg' } }));
+    assert.equal(collectSelectedSpaceSource(root, await loadSelectedSpace(root, 'a'))['spaces/b/photo.jpg'], undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('linked Skill files stay on native transport rather than entering the view archive', async () => {
   const root = fixture();
   try {

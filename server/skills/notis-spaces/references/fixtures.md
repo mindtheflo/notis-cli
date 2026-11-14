@@ -1,7 +1,7 @@
 # Offline fixtures for Space views
 
 Declare a `verificationFixtures` JSON source with `actions` and optional `context`,
-`shown`, `viewerReads`, `documentBodies`, `recordViews`. Cases match exact action
+`shown`, `viewerReads`, `documentBodies`, `recordViews`, `images`. Cases match exact action
 inputs/list params. Each `useShown` name maps to an array of `{params, result}` cases:
 
 ```json
@@ -44,5 +44,11 @@ also saves the reader while the item loads
 the names leave out `.<name>`, and a `context` whose params open an item gets the
 reader screenshot too. The `shown`, `actions` and other cases are shared by
 every context.
+A photo or cover shows in verify when `images` maps the exact URL a fixture
+row holds to a picture next to the fixtures: `{"images":
+{"https://example.com/meal.jpg": "./photos/meal.jpg"}}` (png, jpg, webp, gif
+or avif, at most 32 of 2 MB each and 16 MB in all); an image it cannot load
+fails verify with its URL. These pictures are published with the Space's
+source, so use ones you may share.
 Keep every fixture fictional and include every load-time read. Failed or missing
 fixtures fail verification; there is no fallback to the user's real account.

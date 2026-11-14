@@ -4,6 +4,7 @@ import { realpathSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { collectSourceFiles, loadAppConfig } from './app-platform.js';
 import { usageError } from './errors.js';
+import { fixtureImageEntries } from './space-test-server.js';
 import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifest.js';
 import { editorOnlyColumns, editorsOnlyFlag, withoutMarker } from './space-audience.js';
 
@@ -308,7 +309,15 @@ export function collectSelectedSpaceSource(projectDir, selection, { buildInputs 
   if (selection.entry) add(selection.entry);
   if (selection.layout) add(selection.layout);
   if (selection.markdown) add(selection.markdown);
-  if (selection.fixturePath) add(selection.fixturePath);
+  if (selection.fixturePath) {
+    add(selection.fixturePath);
+    // The image files the fixtures show travel with them; verify reports a bad entry on its own.
+    let fixtures;
+    try { fixtures = JSON.parse(Buffer.from(files[selection.fixturePath], 'base64').toString('utf8')); } catch { fixtures = null; }
+    let images = [];
+    try { images = fixtureImageEntries(fixtures, selection.fixturePath); } catch { /* Reported by verify. */ }
+    for (const { path } of images) if (Object.hasOwn(files, path)) try { add(path); } catch { /* Verify names the file it cannot use. */ }
+  }
   for (const include of selection.definition.sourceIncludes || []) {
     const path = selection.resolveDefinitionPath(include);
     const matches = Object.keys(files).filter(name => name === path || name.startsWith(path + '/'));

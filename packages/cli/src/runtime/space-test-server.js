@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, extname, join, posix, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
@@ -101,6 +101,40 @@ function fixtureContexts(fixtures) {
   });
 }
 
+// Fixture images: a URL the fixture rows hold (a photo, a cover) shows an image file kept next to the fixtures.
+export const FIXTURE_IMAGES_MAX=32;
+export const FIXTURE_IMAGE_BYTES_MAX=2*1024*1024;
+// All of them together stay under what one render may load (32 MB, view-renderer).
+export const FIXTURE_IMAGES_TOTAL_BYTES_MAX=16*1024*1024;
+const FIXTURE_IMAGE_TYPES={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif','.avif':'image/avif'};
+
+/**
+ * `images` of a fixture file: `{ "<https URL a row holds>": "<image file, relative to the fixture file>" }`, as
+ * `[{url, path, type}]` with `path` relative to the Space folder. Throws on anything else.
+ */
+export function fixtureImageEntries(fixtures,fixturePath) {
+  const images=fixtures?.images;
+  if(images===undefined) return [];
+  const where=fixturePath ? ` in ${fixturePath}` : '';
+  if(!object(images) || Object.keys(images).length>FIXTURE_IMAGES_MAX) {
+    throw usageError(`Declare fixture images${where} as an object of at most ${FIXTURE_IMAGES_MAX} entries: {"https://example.com/photo.jpg": "./photos/photo.jpg"}.`);
+  }
+  const base=posix.dirname(fixturePath || 'fixtures.json');
+  return Object.entries(images).map(([url,file])=>{
+    let parsed;
+    try { parsed=new URL(url); } catch {}
+    if(!parsed || parsed.protocol!=='https:' || parsed.username || parsed.password || parsed.hash || parsed.href!==url) {
+      throw usageError(`Fixture image ${JSON.stringify(url)}${where} must be an https URL, written exactly as the fixture rows hold it.`);
+    }
+    const type=typeof file==='string' ? FIXTURE_IMAGE_TYPES[extname(file).toLowerCase()] : undefined;
+    const path=typeof file==='string' ? posix.normalize(posix.join(base,file)) : '';
+    if(!type || !path || posix.isAbsolute(file) || file.split(/[\\/]/).includes('..')) {
+      throw usageError(`Fixture image ${JSON.stringify(url)}${where} must name a .png, .jpg, .webp, .gif or .avif file in the fixture file's folder or below it.`);
+    }
+    return {url,path,type};
+  });
+}
+
 const VIEWER_READS={list_databases:'databases',get_database:'databases',query_database:'databases',list_skills:'skills',get_skill:'skills'};
 
 /**
@@ -128,9 +162,18 @@ export function createSpaceFixtureEngine(release) {
     try { fixtures=JSON.parse(Buffer.from(encoded,'base64').toString('utf8')); }
     catch { throw usageError('Verification fixtures must be finite JSON objects.'); }
   }
-  if(!object(fixtures) || Object.keys(fixtures).some(key=>!['actions','context','contexts','documentBodies','viewerReads','shown','recordViews'].includes(key)) || !object(fixtures.actions)
+  if(!object(fixtures) || Object.keys(fixtures).some(key=>!['actions','context','contexts','documentBodies','viewerReads','shown','recordViews','images'].includes(key)) || !object(fixtures.actions)
     || (fixtures.context!==undefined && !object(fixtures.context))) throw usageError('Verification fixtures declare actions and optional synthetic context.');
   const contexts=fixtureContexts(fixtures);
+  const images=new Map(fixtureImageEntries(fixtures,release.fixturePath).map(entry=>{
+    const encoded=release.sourceFiles[entry.path];
+    if(typeof encoded!=='string') throw usageError(`Fixture image ${entry.path} for ${entry.url} is missing from the Space folder.`);
+    if(Buffer.byteLength(encoded,'base64')>FIXTURE_IMAGE_BYTES_MAX) throw usageError(`Fixture image ${entry.path} is larger than 2 MB; use a smaller picture.`);
+    return [entry.url,{mime_type:entry.type,data_base64:encoded}];
+  }));
+  if([...images.values()].reduce((total,image)=>total+Buffer.byteLength(image.data_base64,'base64'),0)>FIXTURE_IMAGES_TOTAL_BYTES_MAX) {
+    throw usageError(`Fixture images${release.fixturePath ? ` in ${release.fixturePath}` : ''} add up to more than 16 MB; use smaller pictures.`);
+  }
   // Viewer reads have no grant: fixtures stand in for what a signed-in viewer could open.
   const declaredReads=release.manifest.viewer_reads || [];
   // V4: a declared list is served from fixtures per exact params, like a signed-in Editor's read.
@@ -246,7 +289,13 @@ export function createSpaceFixtureEngine(release) {
     if(entry.operation==='html' && value.title!==undefined && value.title!==null && typeof value.title!=='string') throw usageError('HTML fixtures contain a record key, HTML and an optional title.');
     if(entry.operation==='report' && (typeof value.source!=='string' || typeof value.export_name!=='string')) throw usageError('Report fixtures contain an explicit readonly source and export.');
   }
-  return { context:fixtures.context || {}, contexts, digest:createHash('sha256').update(JSON.stringify(fixtures)).digest('hex'),
+  return { context:fixtures.context || {}, contexts, digest:[...images.values()].reduce((hash,image)=>hash.update(image.data_base64),createHash('sha256').update(JSON.stringify(fixtures))).digest('hex'),
+    imageUrls:[...images.keys()],
+    executeImage(url) {
+      const image=images.get(url);
+      if(!image) throw usageError(`The view shows the image ${url}, which its fixtures do not provide. Add it to images in ${release.fixturePath || 'its fixtures'}.`);
+      return {...image};
+    },
     executeRecordView(operation,key) {
       const match=recordViews.find(value=>value.operation===operation && value.record_key===key);
       if(!match) {

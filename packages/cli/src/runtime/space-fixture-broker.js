@@ -51,7 +51,8 @@ export function createSpaceFixtureBroker({ release, capabilities, width, outputs
   const value = { ...frozen, url: `https://app.notis.ai/verification/${encodeURIComponent(release.manifest.local_key)}`,
     view: { space_id: frozen.descriptor.resource.id, name: release.manifest.name, revision: 1 },
     locale: selected.locale === 'fr' ? 'fr' : 'en', params,
-    markdownExport: release.manifest.markdown?.export_name || null, render_options: { outputs, width }, ...fixedClock };
+    markdownExport: release.manifest.markdown?.export_name || null, render_options: { outputs, width }, ...fixedClock,
+    asset_images: [...engine.imageUrls] };
   return {
     fixtureDigest: engine.digest,
     calls,
@@ -92,6 +93,8 @@ export function createSpaceFixtureBroker({ release, capabilities, width, outputs
     } else if (request?.operation === 'document_body' && exact(request, ['operation', 'record_key', 'binding', 'read_action'])) {
       if (frozen.descriptor.space.actions[request.read_action]?.readOnly !== true) throw usageError('This document read action is unavailable.');
       result = engine.executeBody({ operation: 'read', recordKey: request.record_key, binding: request.binding, readAction: request.read_action });
+    } else if (request?.operation === 'asset' && exact(request, ['operation', 'url', 'kind']) && request.kind === 'image') {
+      result = engine.executeImage(request.url);
     } else if (['record', 'html', 'report'].includes(request?.operation) && exact(request, ['operation', 'record_key'])) {
       result = engine.executeRecordView(request.operation, request.record_key);
     } else {
