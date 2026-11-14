@@ -27,8 +27,8 @@ export const CHANNEL_HOSTNAMES = {
     realtime: ['realtime.notis.ai', 'websocket-prod.onrender.com'],
   },
   nightly: {
-    portal: ['app-nightly.notis.ai', 'beta.notis.ai'],
-    api: ['api-nightly.notis.ai', 'api-beta.notis.ai'],
+    portal: ['app-nightly.notis.ai'],
+    api: ['api-nightly.notis.ai'],
     mcp: ['mcp-nightly.notis.ai'],
     realtime: ['realtime-nightly.notis.ai', 'notis-websocket.onrender.com'],
   },
