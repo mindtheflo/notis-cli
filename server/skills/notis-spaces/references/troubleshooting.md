@@ -11,6 +11,7 @@ revision and current target. [Delivery](release.md) owns the release sequence.
 | Source creation fails | Check its canonical schema and same-view main record param. Verify creates no resource; promotion is atomic. |
 | View-link warning after a successful write | Use `FIND_VIEWS` with the returned record key. The write is already committed; do not insert again. |
 | Empty list or missing properties | Inspect the live schema, filter, authorized binding and returned projection. Distinguish a successful empty result from a denied/failed read. |
+| A live read is refused: `connection_unavailable` in the page, or a render answers `render_read_unavailable` with that `reason` and the read's `action_id` | The connection the Space reads through is not usable as it was saved at publish. The Editor who published it reconnects that integration in Integrations; if it is already connected, they publish the Space again (`notis spaces deploy`) so the read is authorized with the connection as it is now. A re-render or a retry never clears it, and an agent never publishes another person's Space with its own connections. |
 | Verification fails on a read | Add the exact fictional case to the selected fixture file. Never fill missing fixtures with live private data. |
 | A caught write-on-load fails rendering | Remove the side effect from initial rendering. A read-only check cannot authorize writes. |
 | Stale binding/schema/record | Read current state, preserve the original receipt/intent and merge the intended edit. Do not overwrite concurrent changes. |

@@ -31,7 +31,10 @@ export async function renderViewWithCliRuntime({ runtime, url, outputs = ['markd
     // The stage a render stopped at (a fixed step name, never page content) makes a rare failure diagnosable.
     if (error instanceof library.ViewRenderError) throw new CliError({ code: error.code,
       message: error.message, exitCode: EXIT_CODES.backend, retryable: error.status >= 500 || error.status === 429, cause: error,
-      details: typeof error.stage === 'string' && /^[a-z_]{1,40}$/.test(error.stage) ? { stage: error.stage } : {} });
+      details: { ...(typeof error.stage === 'string' && /^[a-z_]{1,40}$/.test(error.stage) ? { stage: error.stage } : {}),
+        // A refused read names its action and reason code; a failed view's reason is page text and stays out.
+        ...(error.code === 'render_read_unavailable' ? { ...(typeof error.actionId === 'string' ? { action_id: error.actionId } : {}),
+          ...(typeof error.reason === 'string' && /^[a-z_]{1,40}$/.test(error.reason) ? { reason: error.reason } : {}) } : {}) } });
     throw error;
   }
   if (!directory) return { result, artifacts: null };

@@ -897,7 +897,9 @@ export interface SpaceActionFailureDetails {
   pendingRequestIds?: string[];
   /**
    * Why a settled action failed, when the host knows a stable reason: `read_timeout` (a read its time limit stopped)
-   * or `rate_limited` (the provider refused the call for sending too fast; it did not run, so retry after a few seconds).
+   * or `rate_limited` (the provider refused the call for sending too fast; it did not run, so retry after a few seconds)
+   * or `connection_unavailable` (the connection the action runs through is not usable as saved: a retry never clears it;
+   * the Editor who published the Space reconnects that integration, or publishes the Space again).
    */
   code?: string;
 }
