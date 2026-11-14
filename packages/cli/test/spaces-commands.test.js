@@ -507,3 +507,42 @@ test('a workspace with one Space needs no --space, and a pulled one deploys to t
   const both = context('spaces inspect', {}, { dir: root });
   await assert.rejects(both.spec.handler(both), /--space <key>: this workspace declares one, two\./);
 });
+
+test('verify compiles each SQL read with the server and verifies the compiled bytes', async t => {
+  const root = await sourceFixture(t), calls = [];
+  const plain = '/* notis-postgres-read-v4 */\nselect count(*) from public.a';
+  const read = { tool: 'CUSTOM_DB_EXECUTE_SQL', inputs: { type: 'object', properties: {}, additionalProperties: false }, arguments: { query: plain } };
+  const other = { tool: 'CUSTOM_DB_LIST_TABLES', inputs: { type: 'object', properties: {}, additionalProperties: false }, arguments: { schemas: ['public'] } };
+  writeFileSync(join(root, 'one.ts'), `export default {name:'One',icon:'phosphor:cube',actions:${JSON.stringify({ read, other })}};`);
+  await buildSpaceArtifact(root, 'one', { stdio: 'pipe', refreshSdk: false });
+  const compiled = { ...read, arguments: { query: '/* notis-postgres-read-v4 */\n/* guarded-relations:[["public","a"]] */\ncompiled' } };
+  let refuse = false, missing = false;
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    const body = JSON.parse(request.body); calls.push({ url, body });
+    if (url.endsWith('/sql-reads') && missing) return new Response(JSON.stringify({ error: 'not_found', message: 'This Space action is unavailable.' }), { status: 404 });
+    if (url.endsWith('/sql-reads')) return refuse
+      ? new Response(JSON.stringify({ error: 'sql_read_refused', message: 'These SQL reads were refused. read: Unreviewed function: pg_sleep.' }), { status: 400 })
+      : new Response(JSON.stringify({ actions: { read: compiled } }));
+    return new Response(JSON.stringify({ valid: true, actor_id: 'fixture-user', space_id: body.space_id, revision: 0, bindings: {},
+      reuse_grants: {}, source_digest: appFilesDigest(body.source_files), artifact_digest: appFilesDigest(body.artifact_files) }));
+  });
+  const ctx = context('spaces verify', { space: 'one', spaceId: 'fixture-space' }, { dir: root });
+  const result = await ctx.spec.handler(ctx);
+  assert.deepEqual(calls[0].body, { actions: { read } });
+  const verify = calls.find(call => call.url.endsWith('/source-verify')).body;
+  assert.deepEqual(verify.manifest.actions, { read: compiled, other });
+  assert.deepEqual(JSON.parse(Buffer.from(verify.artifact_files['manifest.json'], 'base64').toString('utf8')), verify.manifest);
+  assert.deepEqual(result.data.compiled_sql_reads, ['read']);
+  assert.match(result.humanSummary, /Compiled the SQL read read\./);
+  calls.length = 0; refuse = true;
+  await assert.rejects(ctx.spec.handler(ctx), /read: Unreviewed function: pg_sleep/);
+  assert.deepEqual(calls.map(call => call.url), ['https://fixture.invalid/portal_spaces/sql-reads']);
+  // A server without the check: a plain read cannot verify, a compiled one goes on to verification.
+  refuse = false; missing = true;
+  await assert.rejects(ctx.spec.handler(ctx), /cannot compile SQL reads yet/);
+  writeFileSync(join(root, 'one.ts'), `export default {name:'One',icon:'phosphor:cube',actions:${JSON.stringify({ read: compiled, other })}};`);
+  await buildSpaceArtifact(root, 'one', { stdio: 'pipe', refreshSdk: false });
+  calls.length = 0;
+  assert.equal((await ctx.spec.handler(ctx)).data.compiled_sql_reads, undefined);
+  assert.deepEqual(calls.find(call => call.url.endsWith('/source-verify')).body.manifest.actions, { read: compiled, other });
+});

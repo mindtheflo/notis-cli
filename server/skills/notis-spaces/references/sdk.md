@@ -327,6 +327,12 @@ these `arguments`: `{project_id: <number>, query: 'SELECT ...', context: '<what
 it answers>', llm_model: '<model name>'}`. The query is one fixed SELECT (no
 `;`, at most 32 KB); Notis runs it read-only. Read it with `useActionQuery`.
 
+A Supabase read is a declared action on the connected Supabase server's
+EXECUTE_SQL tool whose only argument is `query`: the header line
+`/* notis-postgres-read-v4 */` (30 seconds; `-v3` is 8, `-v5` admits CASE
+indexes), then one schema-qualified SELECT, as text or `$sql` parts. Verify
+compiles it into its guarded read and names any part the compiler refuses.
+
 For another explicitly idempotent read use `useActionQuery`, or
 `useQuery(keyArray, readCallback, { readOnly: true })` with every input in the
 key. Call declared read actions inside a custom read with

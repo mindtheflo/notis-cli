@@ -1,6 +1,6 @@
 import { scaffoldSpaceCollection } from '../runtime/space-collection-scaffold.js';
 import { appFilesDigest, clearSpaceScreenshots, loadAppConfig, pullAppSource, resolveProjectDir, saveSpacePendingScreenshots, saveSpaceScreenshots, saveSpaceVerification, spacePublicationIntent, syncSpaceSdk } from '../runtime/app-platform.js';
-import { buildSpaceArtifact, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
+import { buildSpaceArtifact, compileSpaceSqlReads, prepareSpaceRelease, requireSpaceIcon } from '../runtime/space-platform.js';
 import { verifySpaceRelease } from '../runtime/space-verification.js';
 import { loadSelectedSpace } from '../runtime/space-source.js';
 import { refreshSpaceAuthoring } from '../runtime/space-database-structures.js';
@@ -213,6 +213,9 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
   const release = await prepareSpaceRelease(directory, key);
   try {
     if (publish) requireSpaceIcon(release.manifest, key);
+    const call = (operation, data) => httpRequest({ runtime: { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, 600_000) },
+      method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: true });
+    const compiledReads = await compileSpaceSqlReads(release, call);
     const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, spaceId, intentKey];
     let verification = publish && !ctx.options.dryRun ? spacePublicationIntent(directory, identity) : null;
     const local = intentChanges(directory, spaceId, release.manifest,
@@ -222,8 +225,6 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       ...(ctx.options.reuseGrantsOnly ? { authorization_mode: 'reuse_only' } : {}),
       ...(local.changes ? { changes: local.changes } : {}) };
     const sourceDigest = appFilesDigest(release.sourceFiles), builtDigest = appFilesDigest(release.files);
-    const call = (operation, data) => httpRequest({ runtime: { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, 600_000) },
-      method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: true });
     if (verification && (verification.local_changes_fingerprint ?? null) !== local.fingerprint) {
       throw usageError('This request ID belongs to different Skill folders or list entries. Restore the state you first deployed to retry, or use a new request ID for a new release.');
     }
@@ -301,8 +302,9 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
       ? (await call(stageOnly ? 'source-stage' : 'source-publish', { ...body, verification: serverVerification, request_id: intentKey })).payload
       : serverVerification;
     if (publish && !ctx.options.dryRun && !stageOnly) recordPublication(directory, local, result);
-    const data = { ...result, render, diagnostic_path: diagnosticPath, ...(local.summary ? { local_changes: local.summary } : {}) };
-    const skeletonSummary = describeSkeleton(render.skeleton), screenshotSummary = describeScreenshots(render);
+    const data = { ...result, render, diagnostic_path: diagnosticPath, ...(local.summary ? { local_changes: local.summary } : {}),
+      ...(compiledReads.length ? { compiled_sql_reads: compiledReads } : {}) };
+    const skeletonSummary = describeSkeleton(render.skeleton) + (compiledReads.length ? ` Compiled the SQL read${compiledReads.length > 1 ? 's' : ''} ${compiledReads.join(', ')}.` : ''), screenshotSummary = describeScreenshots(render);
     return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data,
       humanSummary: publish && !ctx.options.dryRun
         ? stageOnly ? `Prepared ${key} as revision ${result.candidate_revision}. ${result.preview_url || 'This container has no executable preview.'} Live source was not changed.${describePendingChanges(local.summary).replace(/\.$/, '; they go live with notis spaces promote.')}${screenshotSummary}`

@@ -137,6 +137,45 @@ export async function buildSpaceArtifact(projectDir, selectedKey, options) {
   } finally { release.close(); }
 }
 
+const SQL_READ_HEADER = /^\/\* notis-postgres-read-v\d+ \*\/\n/;
+
+/** Declared actions whose query starts with a SQL read header line (the server's requests_read). */
+export function sqlReadActions(manifest) {
+  return Object.fromEntries(Object.entries(manifest?.actions || {}).filter(([, template]) => {
+    let query = template?.arguments?.query;
+    if (query && typeof query === 'object') query = query.$literal ?? query.$sql?.parts?.[0];
+    return typeof query === 'string' && SQL_READ_HEADER.test(query);
+  }));
+}
+
+/**
+ * Check every declared SQL read with the server's compiler before verification. A compiled read
+ * passes unchanged; a header line and plain SELECT joins the release compiled, in memory only, so
+ * the source keeps the plain query and each build compiles it to the same bytes. A refused read
+ * stops here with the compiler's reason.
+ */
+export async function compileSpaceSqlReads(release, call) {
+  const actions = sqlReadActions(release.manifest);
+  if (!Object.keys(actions).length) return [];
+  let response;
+  try { response = await call('sql-reads', { actions }); }
+  catch (error) {
+    // A server from before this check: compiled reads go on to its own verification.
+    if (error?.httpStatus !== 404) throw error;
+    const plain = Object.values(actions).filter(template => !JSON.stringify(template.arguments.query).includes('/* guarded-relations:'));
+    if (!plain.length) return [];
+    throw usageError('This Notis server cannot compile SQL reads yet. Write each read compiled, or verify against a newer server.');
+  }
+  const compiled = response.payload?.actions || {};
+  const names = Object.keys(compiled).filter(name => Object.hasOwn(actions, name));
+  if (!names.length) return [];
+  const manifest = { ...release.manifest, actions: { ...release.manifest.actions } };
+  for (const name of names) manifest.actions[name] = compiled[name];
+  release.manifest = manifest;
+  release.files = { ...release.files, 'manifest.json': Buffer.from(JSON.stringify(manifest, null, 2), 'utf8').toString('base64') };
+  return names;
+}
+
 export async function prepareSpaceRelease(projectDir, selectedKey) {
   const selection = await loadSelectedSpace(projectDir, selectedKey);
   const source = collectSelectedSpaceSource(projectDir, selection);
