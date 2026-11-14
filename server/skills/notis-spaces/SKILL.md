@@ -88,6 +88,7 @@ user asked, and quote their words in `user_words`. The CLI equivalents are
 | Task | Read |
 | --- | --- |
 | Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md); list filters (`in` for several options): [Params and declared lists](references/views.md#params-and-declared-lists) |
+| Verification fixtures, one view in several states (`contexts`) | [Fixtures](references/fixtures.md): one verify draws every state in English and French |
 | Read a saved view, chart, report or HTML page | [Read and render](references/reading.md) |
 | Save or revise a Notes report or interactive report | [Reports](references/reports.md) |
 | Choose a memory policy | [Memory](references/memory.md) |
@@ -171,7 +172,7 @@ stops receiving that piece's fixes.
 3. Declare each view ([View authoring](references/views.md)) and write it on the
    pieces ([Design](references/design.md)).
 4. Build and verify the selected frozen source with fictional fixtures for every
-   read. Look at EN and FR at 390 and 1440 px; fix failed reads, clipping, wrong
+   read ([Fixtures](references/fixtures.md)). Look at EN and FR at 390 and 1440 px; fix failed reads, clipping, wrong
    data and state transitions before release.
 5. Deploy within the user's authorization. Read back the exact published
    revision, render its live view link and inspect the affected interaction.

@@ -1,5 +1,5 @@
 /** Pure fixture adapter for the exact CLI/service renderer; no network client. */
-import { createSpaceFixtureEngine, spaceHarnessSnapshot } from './space-test-server.js';
+import { createSpaceFixtureEngine, selectedFixtureContext, spaceHarnessSnapshot } from './space-test-server.js';
 import { usageError } from './errors.js';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -21,24 +21,36 @@ export function fixtureSkeletonParams(release) {
 }
 
 /**
- * `audience: 'public'` draws the view as the public sees it: the editor's descriptor with View as the public on, so
+ * The fixture contexts verify opens the view in, in order: `[{ name, params, open }]` (`open`: the params open a list
+ * item through ListReader's default `open` param). Unreadable fixtures give none; verify reports them on its own.
+ */
+export function fixtureContexts(release) {
+  let engine;
+  try { engine = createSpaceFixtureEngine(release); } catch { return []; }
+  return engine.contexts.map(({ name, context }) => ({ name, params: structuredClone(context.params || {}),
+    open: typeof context.params?.open === 'string' && context.params.open.length > 0 }));
+}
+
+/**
+ * `context` names the fixture context to open the view with (default: the first). `audience: 'public'` draws the view as the public sees it: the editor's descriptor with View as the public on, so
  * the page applies the public floors itself (no editor-only lists, actions, params or columns), as in the Portal.
  */
 export function createSpaceFixtureBroker({ release, capabilities, width, outputs = ['markdown', 'screenshot'],
-  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure, params: paramsOverride, audience = 'editor' }) {
+  authorizationMode = 'authorize_missing', unavailableActions = [], onFailure, params: paramsOverride, audience = 'editor', context: contextName }) {
   const engine = createSpaceFixtureEngine(release);
-  const frozen = spaceHarnessSnapshot(release, capabilities, engine, { authorizationMode, unavailableActions });
+  const selected = selectedFixtureContext(engine, contextName).context;
+  const frozen = spaceHarnessSnapshot(release, capabilities, engine, { authorizationMode, unavailableActions, context: contextName });
   if (audience === 'public') frozen.descriptor.space.viewAs = 'public';
   const calls = [];
   // Skeleton capture may open the view with other params (a tab), on top of the fixture's own.
-  const params = structuredClone({ ...(engine.context.params || {}), ...(paramsOverride || {}) });
+  const params = structuredClone({ ...(selected.params || {}), ...(paramsOverride || {}) });
   // The fixture's own "now" pins the browser clock, so a view that asks for the
   // last hour sends the exact inputs its fixtures recorded.
-  const now = engine.context.now;
+  const now = selected.now;
   const fixedClock = typeof now === 'string' && Number.isFinite(Date.parse(now)) ? { fixed_clock: now } : {};
   const value = { ...frozen, url: `https://app.notis.ai/verification/${encodeURIComponent(release.manifest.local_key)}`,
     view: { space_id: frozen.descriptor.resource.id, name: release.manifest.name, revision: 1 },
-    locale: engine.context.locale === 'fr' ? 'fr' : 'en', params,
+    locale: selected.locale === 'fr' ? 'fr' : 'en', params,
     markdownExport: release.manifest.markdown?.export_name || null, render_options: { outputs, width }, ...fixedClock };
   return {
     fixtureDigest: engine.digest,

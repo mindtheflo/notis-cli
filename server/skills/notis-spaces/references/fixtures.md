@@ -27,10 +27,22 @@ sandbox and viewer CSP, sized by its `className` (a 1920x1080 slide box shows th
 real slide in verify screenshots); popups and network stay blocked offline.
 When a view reads a record view its fixtures lack, verify names the view, the read,
 the record key and the missing field, and prints a valid entry to copy.
-`context` sets how verify opens the view: `params` (the opening view params),
-`locale` (`"fr"` renders the data screenshots in French; run verify once with
-it to check French with data), `now` (an ISO time that pins the clock, so a
-view showing how old its data is can be checked with a later `now`) and
-`skeletonParams` (other params whose loading skeletons are measured too).
+`context` sets how verify opens the view: `params` (the opening view params,
+a flat object of text, numbers or true/false), `now` (an ISO time that pins the clock, so a view showing
+how old its data is can be checked with a later `now`) and `skeletonParams`
+(other params whose loading skeletons are measured too). Verify always draws
+the view in English and in French, so `locale` no longer changes the
+screenshots (still accepted). To check several states in one run, declare
+`contexts` instead of `context`: 1 to 4 entries `{name, params, now, locale}`
+with unique lowercase names (`a-z`, `0-9`, `-`, `_`), for example
+`[{"name": "week", "params": {"period": "week"}}, {"name": "opened",
+"params": {"open": "<row uuid>"}}]`. Verify renders each one at both widths
+and languages (`.notis/view-<key>.<name>-<width>-<locale>.png`), measures the
+loading skeleton of each, and for one whose params open a list item (`open`)
+also saves the reader while the item loads
+(`.notis/pending-<key>.<name>.reader-<width>-<locale>.png`); with one context
+the names leave out `.<name>`, and a `context` whose params open an item gets the
+reader screenshot too. The `shown`, `actions` and other cases are shared by
+every context.
 Keep every fixture fictional and include every load-time read. Failed or missing
 fixtures fail verification; there is no fallback to the user's real account.

@@ -19,8 +19,8 @@ test('offline verifier really renders both widths with shared Chromium host and 
   const release = fixture();
   const result = await verifySpaceRelease(release, { capabilities: release.capabilities, loadRenderer });
   assert.equal(result.status, 'passed', JSON.stringify(result));
-  assert.equal(result.browser_count, 1); assert.equal(result.render_count, 2);
-  assert.deepEqual(result.renders.map(value => value.width), [390, 1440]);
+  assert.equal(result.browser_count, 1); assert.equal(result.render_count, 4);
+  assert.deepEqual(result.renders.map(value => `${value.width} ${value.locale}`), ['390 en', '1440 en', '390 fr', '1440 fr']);
   assert.ok(result.renders.every(value => /^[a-f0-9]{64}$/.test(value.markdown_sha256) && value.screenshot_width === value.width));
 });
 
@@ -38,7 +38,7 @@ test('shared readonly DocumentEditor and HtmlFrame consume only explicit synthet
   const result = await verifySpaceRelease(release, { capabilities: { actions: {}, bindings: { notes: { kind: 'database' } } }, loadRenderer });
   assert.equal(result.status, 'passed', JSON.stringify(result));
   assert.deepEqual([...new Set(result.runtimeCalls.map(value => value.operation))].sort(), ['html', 'record']);
-  assert.equal(result.runtimeCalls.length, 4);
+  assert.equal(result.runtimeCalls.length, 8, 'two reads per render, at both widths in English and French');
 });
 
 test('a DocumentPage with the HTML viewer renders its stored HTML file, never the note editor', async () => {
@@ -124,7 +124,7 @@ test('two rendering widths settle before the owned pool is closed after one fail
       return { markdown: 'fixture', screenshot: { data_base64: 'Zml4dHVyZQ==', width, height: 900 } };
     },
   }) });
-  assert.equal(result.status, 'failed'); assert.deepEqual(events, ['second-settled', 'close']);
+  assert.equal(result.status, 'failed'); assert.deepEqual(events, ['second-settled', 'second-settled', 'close']);
 });
 
 test('verification launch budget is two owned browser pools, not one browser per width', async () => {
@@ -137,7 +137,7 @@ test('verification launch budget is two owned browser pools, not one browser per
   } });
   const results = await Promise.all(Array.from({ length: 5 }, () => verifySpaceRelease(release, { capabilities: release.capabilities, loadRenderer })));
   assert.ok(results.every(value => value.status === 'passed'));
-  assert.equal(maxActive, 2); assert.equal(active, 0); assert.equal(renders, 10);
+  assert.equal(maxActive, 2); assert.equal(active, 0); assert.equal(renders, 20, 'two widths in two languages per verification');
 });
 
 

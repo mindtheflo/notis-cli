@@ -162,7 +162,7 @@ test('the measured skeleton matches the final view at 390 and 1440 (IoU of at le
 const VIEW_DECLARATION = `path:'board',description:'A skeleton contract fixture.',memory:{markdown:false,attachments:false,screenshot:false,snapshots:[]}`;
 
 /** One presentation Space built by a stub bundler, which may also leave a hand-written bundle/skeleton.json. */
-async function builtSpace(t, { staleSkeleton = null, keys = ['board'] } = {}) {
+async function builtSpace(t, { staleSkeleton = null, keys = ['board'], fixtures = null } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'notis-space-skeleton-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const dir of [...keys.map(key => `spaces/${key}`), 'node_modules/.bin']) mkdirSync(join(root, dir), { recursive: true });
@@ -173,7 +173,8 @@ async function builtSpace(t, { staleSkeleton = null, keys = ['board'] } = {}) {
 export default defineSpaces({ spaces: { ${keys.map(key => `${key}: { definition: 'spaces/${key}/space.config.ts' }`).join(', ')} } });`);
   for (const key of keys) {
     writeFileSync(join(root, `spaces/${key}/space.config.ts`), `import { defineSpace } from '@notis/sdk/config';
-export default defineSpace({ name: '${key}', icon: 'phosphor:kanban', ${VIEW_DECLARATION}, entry: './view.tsx' });`);
+export default defineSpace({ name: '${key}', icon: 'phosphor:kanban', ${VIEW_DECLARATION}, entry: './view.tsx'${fixtures ? ", verificationFixtures: './verification.json'" : ''} });`);
+    if (fixtures) writeFileSync(join(root, `spaces/${key}/verification.json`), JSON.stringify(fixtures));
     writeFileSync(join(root, `spaces/${key}/view.tsx`), 'export default function View() { return null; }\n');
   }
   writeFileSync(join(root, 'node_modules/.bin/fixture-build'), `#!/usr/bin/env node
@@ -194,21 +195,26 @@ ${staleSkeleton ? `fs.writeFileSync('.notis/output/bundle/skeleton.json', ${JSON
 function scriptedRenderer(state) {
   const shot = (label, width) => ({ data_base64: b(`png ${label} ${width}`), width, height: 900 });
   return async () => ({ ...renderer, rendererDigest, createBrowserPool: () => ({ close: async () => {} }),
-    async renderView({ width, pending, measure, locale, skeleton, readyTimeoutMs }) {
-      state.renders.push({ width, pending: Boolean(pending), measure: Boolean(measure), locale, skeleton: Boolean(skeleton), readyTimeoutMs });
+    async renderView({ broker, width, pending, measure, locale, skeleton, readyTimeoutMs }) {
+      const params = (await broker.snapshot()).params;
+      state.renders.push({ width, pending: Boolean(pending), measure: Boolean(measure), locale, skeleton: Boolean(skeleton), readyTimeoutMs,
+        params, ...(pending?.hold ? { hold: pending.hold } : {}) });
       if (pending) {
         if (state.mode === 'static') return { pending: { static: true, reads: 0, regions: [], landmarks: [] }, screenshot: shot('static', width) };
+        // A view whose `period` param is month loads with its own region, as a tab would.
+        const key = params.period === 'month' ? 'month' : 'main';
+        const label = pending.hold ? 'reader' : skeleton ? 'checked' : 'first';
         return { pending: { static: false, reads: 1, viewport: { width, height: 900 }, landmarks: [],
-          regions: [{ key: 'main', valid: true, x: 0, y: 0, width, height: 300, ink: 5000, bones: 4 }],
+          regions: [{ key, valid: true, x: 0, y: 0, width, height: 300, ink: 5000, bones: 4 }],
           ...(state.mode === 'warnings' ? { loadingText: 'Loading', emptyStates: 1 } : {}) },
-        screenshot: shot(`${skeleton ? 'checked' : 'first'} ${locale}`, width) };
+        screenshot: shot(`${label} ${locale}`, width) };
       }
       if (measure) {
         if (state.mode === 'broken') throw Object.assign(new Error('measure failed'), { code: 'fixture_measure_failed' });
-        return { skeleton_measure: { landmarks: [], regions: [{ key: 'main', width, y: 0, groups: [],
-          bones: [[0, 0, state.boneWidth, 300, 8, 0]] }] } };
+        return { skeleton_measure: { landmarks: [], regions: measure.regions.map(({ key }) => ({ key, width, y: 0, groups: [],
+          bones: [[0, 0, state.boneWidth, 300, 8, 0]] })) } };
       }
-      if (state.failWidth === width) {
+      if (state.failWidth === width && (!state.failLocale || state.failLocale === locale)) {
         if (state.mode === 'view_failed') {
           throw Object.defineProperty(new renderer.ViewRenderError('render_view_failed', "This view's code failed before it showed anything.", 422),
             'reason', { value: "The requested module '@notis/sdk' does not provide an export named 'useThreadItem'" });
@@ -218,7 +224,7 @@ function scriptedRenderer(state) {
           { screenshot: { value: shot('still loading', width) }, mounted: { value: true }, waitedSeconds: { value: 38 },
             blocked: { value: [{ code: 'render_read_only' }] } });
       }
-      return { markdown: '# Board', screenshot: shot('final', width), rendered_at: new Date().toISOString(), blocked_calls: [] };
+      return { markdown: '# Board', screenshot: shot(`final ${locale}`, width), rendered_at: new Date().toISOString(), blocked_calls: [] };
     } });
 }
 
@@ -332,47 +338,47 @@ test('verify saves the screenshots of the loaded view at both widths and prints 
   const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
   const result = await ctx.spec.handler(ctx);
   const finals = state.renders.filter(value => !value.pending && !value.measure);
-  assert.deepEqual(finals.map(value => value.readyTimeoutMs), [40_000, 40_000], 'each screenshot waits up to 40 s for the data');
+  assert.deepEqual(finals.map(value => value.readyTimeoutMs), [40_000, 40_000, 40_000, 40_000], 'each screenshot waits up to 40 s for the data');
   for (const value of result.data.render.renders) {
     assert.equal(value.loaded, true);
-    assert.equal(value.screenshot_path, join(root, '.notis', `view-board-${value.width}.png`));
+    assert.equal(value.screenshot_path, join(root, '.notis', `view-board-${value.width}-${value.locale}.png`));
     const png = readFileSync(value.screenshot_path);
-    assert.equal(png.toString('utf8'), `png final ${value.width}`, 'the screenshot taken after the data arrived, not a loading one');
+    assert.equal(png.toString('utf8'), `png final ${value.locale} ${value.width}`, 'the screenshot taken after the data arrived, not a loading one');
     assert.equal(sha256(png), value.screenshot_sha256);
   }
   const diagnostic = JSON.parse(readFileSync(result.data.diagnostic_path, 'utf8'));
   assert.equal(diagnostic.renders.every(value => value.loaded === true && value.screenshot_path), true);
-  assert.equal(JSON.stringify(diagnostic).includes(b('png final 390')), false, 'the image bytes stay out of the diagnostic');
-  assert.match(result.humanSummary, /Screenshots after the data loaded: [^ ]*view-board-390\.png, [^ ]*view-board-1440\.png\./);
+  assert.equal(JSON.stringify(diagnostic).includes(b('png final en 390')), false, 'the image bytes stay out of the diagnostic');
+  assert.match(result.humanSummary, /Screenshots after the data loaded: [^ ]*view-board-390-en\.png, [^ ]*view-board-1440-en\.png, [^ ]*view-board-390-fr\.png, [^ ]*view-board-1440-fr\.png\./);
 });
 
 test('a view still loading after the bounded wait keeps its screenshot, and verify says so', async t => {
   const root = await builtSpace(t); server(t);
-  const state = { mode: 'not_ready', failWidth: 390, boneWidth: 100, renders: [] };
+  const state = { mode: 'not_ready', failWidth: 390, failLocale: 'fr', boneWidth: 100, renders: [] };
   const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
-  const shot = join(root, '.notis', 'view-board-390.png');
+  const shot = join(root, '.notis', 'view-board-390-fr.png');
   await assert.rejects(ctx.spec.handler(ctx), error => {
     assert.match(error.message, /did not pass offline render verification/);
     // The seconds it actually waited: the wait also leaves the capture room before the render deadline.
-    assert.match(error.message, new RegExp(`At 390 px the view had not finished loading its data after 38 s; ${shot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} shows what it showed then\.`));
-    assert.match(error.message, /Screenshots after the data loaded: [^ ]*view-board-1440\.png\./);
-    const notReady = error.details.render.renders.find(value => value.width === 390);
+    assert.match(error.message, new RegExp(`At 390 px in French the view had not finished loading its data after 38 s; ${shot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} shows what it showed then\.`));
+    assert.match(error.message, /Screenshots after the data loaded: [^ ]*view-board-390-en\.png, [^ ]*view-board-1440-en\.png, [^ ]*view-board-1440-fr\.png\./);
+    const notReady = error.details.render.renders.find(value => value.width === 390 && value.locale === 'fr');
     assert.deepEqual(notReady.blocked_calls, [{ code: 'render_read_only' }], 'the calls it blocked while loading are kept');
     assert.equal(error.details.render.errors.filter(value => value.width === 390).length, 1);
     return true;
   });
   assert.equal(readFileSync(shot, 'utf8'), 'png still loading 390');
-  assert.equal(readFileSync(join(root, '.notis', 'view-board-1440.png'), 'utf8'), 'png final 1440');
+  assert.equal(readFileSync(join(root, '.notis', 'view-board-1440-fr.png'), 'utf8'), 'png final fr 1440');
   // A later verify whose 390 render fails outright leaves no stale image behind.
   state.mode = 'broken_render';
   await assert.rejects(ctx.spec.handler(ctx), /did not pass offline render verification/);
   assert.equal(existsSync(shot), false);
   // Nor does one that stops before rendering anything (here the renderer cannot load).
-  assert.equal(existsSync(join(root, '.notis', 'view-board-1440.png')), true);
+  assert.equal(existsSync(join(root, '.notis', 'view-board-1440-fr.png')), true);
   const stopped = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root },
     async () => { throw new Error('The shared view renderer is missing.'); });
   await assert.rejects(stopped.spec.handler(stopped), /did not pass offline render verification/);
-  assert.equal(existsSync(join(root, '.notis', 'view-board-1440.png')), false);
+  assert.equal(existsSync(join(root, '.notis', 'view-board-1440-fr.png')), false);
   // Nor one the server refuses before verify renders anything.
   state.mode = 'clean'; delete state.failWidth;
   await ctx.spec.handler(ctx);
@@ -380,34 +386,78 @@ test('a view still loading after the bounded wait keeps its screenshot, and veri
   t.mock.method(globalThis, 'fetch', async () => new Response('{"message":"source refused"}', { status: 422 }));
   await assert.rejects(ctx.spec.handler(ctx));
   assert.equal(existsSync(shot), false);
-  assert.equal(existsSync(join(root, '.notis', 'view-board-1440.png')), false);
+  assert.equal(existsSync(join(root, '.notis', 'view-board-1440-en.png')), false);
 });
 
 test('two Spaces verified from one folder keep their own images, and older unnamed images are removed', async t => {
   const root = await builtSpace(t, { keys: ['board', 'notes'] }); server(t);
-  const legacy = ['view-390.png', 'view-1440.png', 'pending-390-en.png', 'pending-1440-fr.png'].map(name => join(root, '.notis', name));
+  const legacy = ['view-390.png', 'view-1440.png', 'pending-390-en.png', 'pending-1440-fr.png', 'view-board-390.png', 'view-board-1440.png']
+    .map(name => join(root, '.notis', name));
   for (const path of legacy) writeFileSync(path, 'png from an older CLI');
   const run = (space, state) => { const ctx = context('spaces verify', { space, spaceId: `fixture-${space}` }, { dir: root }, scriptedRenderer(state)); return ctx.spec.handler(ctx); };
   const board = await run('board', { mode: 'clean', boneWidth: 100, renders: [] });
-  for (const path of legacy) assert.equal(existsSync(path), false, `${path} names no Space, so it is removed`);
+  for (const path of legacy) assert.equal(existsSync(path), false, `${path} names no Space or no language, so it is removed`);
   const notes = await run('notes', { mode: 'clean', boneWidth: 100, renders: [] });
   const paths = result => [...result.data.render.renders.map(value => value.screenshot_path), ...result.data.render.skeleton.pending_screenshots.map(value => value.path)];
-  assert.equal(paths(board).length, 6);
-  assert.equal(paths(notes).length, 6);
+  assert.equal(paths(board).length, 8);
+  assert.equal(paths(notes).length, 8);
   for (const path of paths(board)) {
     assert.match(path, /[/\\](view|pending)-board-/);
     assert.equal(paths(notes).includes(path), false, 'no file is shared');
     assert.equal(existsSync(path), true, `${path} survives the other Space's verify`);
   }
-  assert.match(notes.humanSummary, /Screenshots after the data loaded: [^ ]*view-notes-390\.png, [^ ]*view-notes-1440\.png\./);
-  assert.equal(readFileSync(join(root, '.notis', 'view-board-390.png'), 'utf8'), 'png final 390');
+  assert.match(notes.humanSummary, /Screenshots after the data loaded: [^ ]*view-notes-390-en\.png, [^ ]*view-notes-1440-en\.png, /);
+  assert.equal(readFileSync(join(root, '.notis', 'view-board-390-fr.png'), 'utf8'), 'png final fr 390');
+});
+
+test('verify opens the view in every fixture context: named images, the extra context measured, the opened record loading', async t => {
+  const fixtures = { actions: {}, contexts: [{ name: 'week', params: { period: 'week' } },
+    { name: 'month', params: { period: 'month', open: 'fictional-row' } }] };
+  const root = await builtSpace(t, { fixtures }); server(t);
+  // Another Space whose key starts with this one keeps its images: only names this verify recorded are removed.
+  const sibling = join(root, '.notis', 'view-board-week-390-en.png');
+  writeFileSync(sibling, 'png of another Space');
+  const run = () => { const state = { mode: 'clean', boneWidth: 100, renders: [] };
+    const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
+    return ctx.spec.handler(ctx).then(result => ({ result, state })); };
+  const { result, state } = await run();
+  const renders = result.data.render.renders;
+  assert.equal(renders.length, 8, 'two contexts, two widths, two languages');
+  assert.deepEqual(result.data.render.contexts, ['week', 'month']);
+  for (const value of renders) {
+    assert.equal(value.screenshot_path, join(root, '.notis', `view-board.${value.context}-${value.width}-${value.locale}.png`));
+    assert.equal(readFileSync(value.screenshot_path, 'utf8'), `png final ${value.locale} ${value.width}`);
+  }
+  const finals = state.renders.filter(value => !value.pending && !value.measure);
+  assert.deepEqual(finals.map(value => value.params.period).sort(), ['month', 'month', 'month', 'month', 'week', 'week', 'week', 'week']);
+  assert.match(result.humanSummary, /Fixture contexts checked: week, month\./);
+  assert.match(result.humanSummary, /view-board\.week-390-en\.png/);
+  // The month context loads with its own region: measured like a skeletonParams set and added beside the first one.
+  assert.deepEqual(result.data.render.skeleton.regions, ['main', 'month']);
+  // Its params open a record: one pass per width and language lets the list answer and holds only the record reads.
+  const readers = state.renders.filter(value => value.hold);
+  assert.equal(readers.length, 4);
+  assert.deepEqual(readers[0].hold, ['record', 'document_body', 'html', 'report']);
+  assert.equal(readers.every(value => value.params.open === 'fictional-row' && value.skeleton), true);
+  const shots = result.data.render.skeleton.pending_screenshots;
+  const reader = shots.filter(value => value.state === 'reader');
+  assert.deepEqual(reader.map(value => `${value.context} ${value.width}-${value.locale}`).sort(), ['month 1440-en', 'month 1440-fr', 'month 390-en', 'month 390-fr']);
+  for (const value of reader) {
+    assert.equal(value.path, join(root, '.notis', `pending-board.month.reader-${value.width}-${value.locale}.png`));
+    assert.equal(readFileSync(value.path, 'utf8'), `png reader ${value.locale} ${value.width}`);
+  }
+  const written = [...renders.map(value => value.screenshot_path), ...shots.map(value => value.path)];
+  // A new build forgets every image of the last verify, context and reader names included, and nothing else.
+  await buildSpaceArtifact(root, 'board', { stdio: 'pipe', refreshSdk: false });
+  for (const path of written) assert.equal(existsSync(path), false, `${path} is removed with the build it showed`);
+  assert.equal(readFileSync(sibling, 'utf8'), 'png of another Space');
 });
 
 test('a verify refused for a build older than its source keeps no image of that build', async t => {
   const root = await builtSpace(t); server(t);
   const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer({ mode: 'clean', boneWidth: 100, renders: [] }));
   await ctx.spec.handler(ctx);
-  const images = ['view-board-390.png', 'view-board-1440.png', 'pending-board-390-en.png'].map(name => join(root, '.notis', name));
+  const images = ['view-board-390-en.png', 'view-board-1440-fr.png', 'pending-board-390-en.png'].map(name => join(root, '.notis', name));
   assert.ok(images.every(path => existsSync(path)));
   writeFileSync(join(root, 'spaces/board/view.tsx'), 'export default function View() { return 1; }\n');
   await assert.rejects(ctx.spec.handler(ctx), /Selected Space build is missing or stale/);
@@ -418,7 +468,7 @@ test('a new build of a Space removes its verify images; a folder never built or 
   const root = await builtSpace(t); server(t);
   const verify = (space) => { const ctx = context('spaces verify', { space, spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer({ mode: 'clean', boneWidth: 100, renders: [] })); return ctx.spec.handler(ctx); };
   await verify('board');
-  const images = ['view-board-390.png', 'pending-board-1440-fr.png'].map(name => join(root, '.notis', name));
+  const images = ['view-board-390-fr.png', 'pending-board-1440-fr.png'].map(name => join(root, '.notis', name));
   assert.ok(images.every(path => existsSync(path)));
   await buildSpaceArtifact(root, 'board', { stdio: 'pipe', refreshSdk: false });
   for (const path of images) assert.equal(existsSync(path), false, `${path} showed the build this one replaced`);
@@ -431,10 +481,13 @@ test('a new build of a Space removes its verify images; a folder never built or 
 test('an image verify cannot name writes nothing, not even the images before it', async t => {
   const root = await builtSpace(t);
   const png = Buffer.from('png');
-  assert.throws(() => saveSpaceScreenshots(root, 'board', [{ width: 390, png }, { width: 768, png }]), /Unsafe screenshot name/);
+  assert.throws(() => saveSpaceScreenshots(root, 'board', [{ width: 390, locale: 'en', png }, { width: 768, locale: 'en', png }]), /Unsafe screenshot name/);
+  assert.throws(() => saveSpaceScreenshots(root, 'board', [{ width: 390, locale: 'en', png }, { width: 390, locale: 'de', png }]), /Unsafe screenshot name/);
+  assert.throws(() => saveSpaceScreenshots(root, 'board', [{ width: 390, locale: 'en', context: '../week', png }]), /Unsafe screenshot name/);
+  assert.throws(() => saveSpacePendingScreenshots(root, 'board', [{ width: 390, locale: 'en', state: 'other', png }]), /Unsafe pending screenshot name/);
   assert.throws(() => saveSpacePendingScreenshots(root, 'board', [{ width: 390, locale: 'en', png }, { width: 390, locale: 'de', png }]), /Unsafe pending screenshot name/);
   assert.throws(() => saveSpaceScreenshots(root, '../board', [{ width: 390, png }]), /Unsafe screenshot name/);
-  for (const name of ['view-board-390.png', 'pending-board-390-en.png']) assert.equal(existsSync(join(root, '.notis', name)), false, name);
+  for (const name of ['view-board-390-en.png', 'pending-board-390-en.png']) assert.equal(existsSync(join(root, '.notis', name)), false, name);
 });
 
 test('a release without a loading skeleton keeps no loading screenshot of an earlier verify', async t => {
@@ -461,7 +514,7 @@ test('a view whose code fails before it shows anything says why in verify, at on
   const ctx = context('spaces verify', { space: 'board', spaceId: 'fixture-space' }, { dir: root }, scriptedRenderer(state));
   await assert.rejects(ctx.spec.handler(ctx), error => {
     assert.match(error.message, /did not pass offline render verification/);
-    assert.match(error.message, /At 390 px the view's code failed before it showed anything: The requested module '@notis\/sdk' does not provide an export named 'useThreadItem'/);
+    assert.match(error.message, /At 390 px in English the view's code failed before it showed anything: The requested module '@notis\/sdk' does not provide an export named 'useThreadItem'/);
     const failed = error.details.render.renders.find(value => value.width === 390);
     assert.equal(failed.error, 'render_view_failed');
     assert.equal(failed.mounted, false);
@@ -524,7 +577,8 @@ test('loading-state findings and a failed capture are warnings: verify still suc
   assert.ok(result.data.render.skeleton.findings.every(value => value.severity === 'warning'));
   assert.equal(result.data.render.status, 'passed');
   assert.equal(result.data.render.skeleton.status, 'captured');
-  assert.match(result.humanSummary, /Loading state warnings \(\d+\): \[390 en\] /);
+  // Each finding seen at every width and locale is one line.
+  assert.match(result.humanSummary, /Loading state warnings \(2\): \[390 and 1440, EN and FR\] The loading state shows the text "Loading"/);
   assert.equal(api.verifies().length, 2);
 
   const broken = { mode: 'broken', boneWidth: 100, renders: [] };

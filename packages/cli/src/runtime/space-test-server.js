@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { appFilesDigest } from './app-platform.js';
+import { appFilesDigest, VERIFY_CONTEXT_NAME } from './app-platform.js';
 import { usageError } from './errors.js';
 
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
@@ -58,6 +58,49 @@ function recordViewExample(operation,key) {
   }[operation];
   return JSON.stringify({operation,record_key:key,result});
 }
+const FIXTURE_CONTEXTS_MAX=4;
+/**
+ * View params a fixture opens the view with: a flat object, as a link carries them. Numbers and true or false are
+ * kept (the host passes every param as text, as it always did); nested values are refused.
+ */
+function checkContextFields(value,where) {
+  if(value.params!==undefined && (!object(value.params) || Object.values(value.params).some(item=>!['string','number','boolean'].includes(typeof item)))) {
+    throw usageError(`${where} params must be an object of text, number or true/false values, as a link carries them (for example {"period": "week"}).`);
+  }
+  if(value.now!==undefined && (typeof value.now!=='string' || !Number.isFinite(Date.parse(value.now)))) {
+    throw usageError(`${where} now must be a date string, such as "2026-03-01T09:00:00Z".`);
+  }
+}
+/**
+ * The states verify opens the view in: `contexts` (1 to 4 named ones, each with optional params, now and locale), or
+ * the one `context`, named default. Each entry keeps the object the view receives as its runtime context.
+ */
+function fixtureContexts(fixtures) {
+  if(fixtures.contexts===undefined) {
+    const value=fixtures.context || {};
+    checkContextFields(value,'The fixture context');
+    return [{name:'default',context:value}];
+  }
+  if(fixtures.context!==undefined) throw usageError('Verification fixtures declare either context or contexts, not both. Move context into contexts as one named entry.');
+  const list=fixtures.contexts;
+  if(!Array.isArray(list) || !list.length || list.length>FIXTURE_CONTEXTS_MAX) throw usageError(`Declare contexts as a list of 1 to ${FIXTURE_CONTEXTS_MAX} named contexts.`);
+  const names=new Set();
+  return list.map((value,index)=>{
+    const where=`Fixture context ${index+1}`;
+    if(!object(value) || Object.keys(value).some(key=>!['name','params','now','locale'].includes(key))) {
+      throw usageError(`${where} takes only name, params, now and locale.`);
+    }
+    if(typeof value.name!=='string' || !VERIFY_CONTEXT_NAME.test(value.name)) {
+      throw usageError(`${where} needs a name of lowercase letters, digits, "-" or "_" (at most 32), such as "this-week".`);
+    }
+    if(names.has(value.name)) throw usageError(`Two fixture contexts are named ${value.name}; give each its own name.`);
+    names.add(value.name);
+    checkContextFields(value,`Fixture context ${value.name}`);
+    const {name,...context}=value;
+    return {name,context};
+  });
+}
+
 const VIEWER_READS={list_databases:'databases',get_database:'databases',query_database:'databases',list_skills:'skills',get_skill:'skills'};
 
 /**
@@ -85,8 +128,9 @@ export function createSpaceFixtureEngine(release) {
     try { fixtures=JSON.parse(Buffer.from(encoded,'base64').toString('utf8')); }
     catch { throw usageError('Verification fixtures must be finite JSON objects.'); }
   }
-  if(!object(fixtures) || Object.keys(fixtures).some(key=>!['actions','context','documentBodies','viewerReads','shown','recordViews'].includes(key)) || !object(fixtures.actions)
+  if(!object(fixtures) || Object.keys(fixtures).some(key=>!['actions','context','contexts','documentBodies','viewerReads','shown','recordViews'].includes(key)) || !object(fixtures.actions)
     || (fixtures.context!==undefined && !object(fixtures.context))) throw usageError('Verification fixtures declare actions and optional synthetic context.');
+  const contexts=fixtureContexts(fixtures);
   // Viewer reads have no grant: fixtures stand in for what a signed-in viewer could open.
   const declaredReads=release.manifest.viewer_reads || [];
   // V4: a declared list is served from fixtures per exact params, like a signed-in Editor's read.
@@ -202,7 +246,7 @@ export function createSpaceFixtureEngine(release) {
     if(entry.operation==='html' && value.title!==undefined && value.title!==null && typeof value.title!=='string') throw usageError('HTML fixtures contain a record key, HTML and an optional title.');
     if(entry.operation==='report' && (typeof value.source!=='string' || typeof value.export_name!=='string')) throw usageError('Report fixtures contain an explicit readonly source and export.');
   }
-  return { context:fixtures.context || {}, digest:createHash('sha256').update(JSON.stringify(fixtures)).digest('hex'),
+  return { context:fixtures.context || {}, contexts, digest:createHash('sha256').update(JSON.stringify(fixtures)).digest('hex'),
     executeRecordView(operation,key) {
       const match=recordViews.find(value=>value.operation===operation && value.record_key===key);
       if(!match) {
@@ -241,7 +285,13 @@ export function createSpaceFixtureEngine(release) {
     } };
 }
 
-export function spaceHarnessSnapshot(release,capabilities,engine,{authorizationMode='authorize_missing',unavailableActions=[]}={}) {
+/** The fixture context a render opens with: the named one of `contexts`, else the first (the only `context`). */
+export function selectedFixtureContext(engine,name) {
+  const list=engine.contexts || [{name:'default',context:engine.context || {}}];
+  return (name===undefined ? list[0] : list.find(item=>item.name===name)) || (()=>{ throw usageError(`The fixtures have no context named ${JSON.stringify(String(name))}.`); })();
+}
+
+export function spaceHarnessSnapshot(release,capabilities,engine,{authorizationMode='authorize_missing',unavailableActions=[],context:contextName}={}) {
   if(release.manifest.kind!=='presentation') throw usageError('Containers do not have an executable preview.');
   const manifest=release.manifest;
   const names=Object.keys(manifest.actions || {}).sort();
@@ -288,7 +338,7 @@ export function spaceHarnessSnapshot(release,capabilities,engine,{authorizationM
         ...(viewerReads.length?{viewerReads}:{}),...viewDeclarations(manifest),
         // A local verification renders as an Editor, with the editor-only summary the server gives Editors.
         audience:'editor',...(manifest.editors_only?{editorsOnly:editorsOnlyDescriptor(manifest.editors_only)}:{})},
-      app:{id:identity,name:manifest.name},route:{slug:'view',path:'/',name:manifest.name},context:engine.context} };
+      app:{id:identity,name:manifest.name},route:{slug:'view',path:'/',name:manifest.name},context:selectedFixtureContext(engine,contextName).context} };
 }
 
 /** Existing CLI theme only; the legacy executable/JWT HTML is never served. */

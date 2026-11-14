@@ -145,11 +145,15 @@ function describePendingChanges(summary) {
 
 const SKELETON_FILE = 'bundle/skeleton.json';
 
-/** Reviewable: where the screenshots of the loaded view are, and each width that had not finished loading its data. */
+/**
+ * Reviewable: where the screenshots of the loaded view are (each width in English and French, per fixture context),
+ * and each one that had not finished loading its data.
+ */
 function describeScreenshots(render) {
   const renders = render?.renders || [];
   const paths = renders.filter(value => value.loaded && value.screenshot_path).map(value => value.screenshot_path);
-  const parts = paths.length ? [`Screenshots after the data loaded: ${paths.join(', ')}.`] : [];
+  const parts = render?.contexts?.length ? [`Fixture contexts checked: ${render.contexts.join(', ')}.`] : [];
+  if (paths.length) parts.push(`Screenshots after the data loaded: ${paths.join(', ')}.`);
   for (const value of renders.filter(item => item.loaded === false)) {
     const message = value.message;
     if (message) parts.push(value.screenshot_path ? `${message.replace(/\.$/, '')}; ${value.screenshot_path} shows what it showed then.` : message);
@@ -162,16 +166,34 @@ function describeSkeleton(skeleton) {
   if (!skeleton) return '';
   const parts = [skeleton.status === 'captured' ? `Loading skeleton measured for ${skeleton.regions.join(', ')}${skeleton.audience === 'public' ? ', as the public sees the view' : ''}.`
     : skeleton.status === 'failed' ? 'The loading skeleton could not be measured; the view keeps its fallback skeleton.' : ''];
-  const findings = skeleton.findings || [];
-  if (findings.length) {
-    const where = value => [value.width, value.locale].filter(Boolean).join(' ');
-    const shown = findings.slice(0, 5).map(value => `${where(value) ? `[${where(value)}] ` : ''}${value.message}`);
-    parts.push(`Loading state warnings (${findings.length}): ${shown.join(' ')}${findings.length > 5 ? ` And ${findings.length - 5} more in the diagnostic.` : ''}`);
+  const groups = groupFindings(skeleton.findings || []);
+  if (groups.length) {
+    const shown = groups.slice(0, 5).map(value => `${value.where ? `[${value.where}] ` : ''}${value.message}`);
+    parts.push(`Loading state warnings (${groups.length}): ${shown.join(' ')}${groups.length > 5 ? ` And ${groups.length - 5} more in the diagnostic.` : ''}`);
   }
   const paths = (skeleton.pending_screenshots || []).map(value => value.path).filter(Boolean);
   if (paths.length) parts.push(`Loading screenshots: ${paths.join(', ')}.`);
   const text = parts.filter(Boolean).join(' ');
   return text ? ` ${text}` : '';
+}
+
+/**
+ * One line per identical finding across widths and locales: `{ where: '390 and 1440, EN and FR, reader', message }`.
+ * The reader's loading state and each fixture context stay apart.
+ */
+function groupFindings(findings) {
+  const groups = new Map();
+  for (const value of findings) {
+    const id = JSON.stringify([value.check, value.message, value.region ?? null, value.state ?? null, value.context ?? null]);
+    const group = groups.get(id) || { widths: new Set(), locales: new Set(), state: value.state, context: value.context, message: value.message };
+    if (value.width) group.widths.add(value.width);
+    if (value.locale) group.locales.add(value.locale);
+    groups.set(id, group);
+  }
+  const and = values => values.join(' and ');
+  return [...groups.values()].map(group => ({ message: group.message, where: [and([...group.widths].sort((a, b) => a - b)),
+    and([...group.locales].sort().map(value => value.toUpperCase())), group.context ? `context ${group.context}` : '', group.state || '']
+    .filter(Boolean).join(', ') }));
 }
 
 /** Same server verification for this Space, source, grants and authorization mode. */
@@ -227,7 +249,7 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
     finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
     const saved = saveSpaceScreenshots(directory, key, render.screenshots || []);
     if (render.renders) render.renders = render.renders.map(value => {
-      const path = saved.find(item => item.width === value.width)?.path;
+      const path = saved.find(item => item.width === value.width && item.locale === value.locale && item.context === value.context)?.path;
       return path ? { ...value, screenshot_path: path } : value;
     });
     if (render.skeleton) {

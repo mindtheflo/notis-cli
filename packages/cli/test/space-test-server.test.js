@@ -5,6 +5,7 @@ import { createConnection } from 'node:net';
 import test from 'node:test';
 import { createSpaceFixtureEngine, spaceHarnessSnapshot, startSpaceTestServer } from '../src/runtime/space-test-server.js';
 import { spaceVerificationEnvironment, verifySpaceRelease } from '../src/runtime/space-verification.js';
+import { createSpaceFixtureBroker, fixtureContexts } from '../src/runtime/space-fixture-broker.js';
 
 const encode = value => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64');
 const schema = { type: 'object', properties: { count: { type: 'integer', minimum: 1 } }, required: ['count'], additionalProperties: false };
@@ -287,4 +288,47 @@ test('shown fixture capacity is finite and overflow names the list and limit wit
     assert.ok(!error.message.includes('private-fixture-value'));
     return true;
   });
+});
+
+test('fixtures may declare up to four named contexts; each render opens with the one it names', async () => {
+  const release = fixture();
+  const contexts = [{ name: 'this-week', params: { period: 'week' }, now: '2026-03-02T09:00:00Z' },
+    { name: 'opened', params: { period: 'month', open: 'fictional-row' }, locale: 'fr' }];
+  release.sourceFiles['cases.json'] = encode({ actions: {}, contexts });
+  const engine = createSpaceFixtureEngine(release);
+  assert.deepEqual(engine.contexts.map(value => value.name), ['this-week', 'opened']);
+  assert.deepEqual(fixtureContexts(release), [{ name: 'this-week', params: { period: 'week' }, open: false },
+    { name: 'opened', params: { period: 'month', open: 'fictional-row' }, open: true }]);
+  const first = await createSpaceFixtureBroker({ release, capabilities: capabilities(), width: 390 }).snapshot();
+  assert.deepEqual(first.params, { period: 'week' }, 'without a name, the first context');
+  assert.equal(first.fixed_clock, '2026-03-02T09:00:00Z');
+  assert.deepEqual(first.descriptor.context, { params: { period: 'week' }, now: '2026-03-02T09:00:00Z' });
+  const opened = await createSpaceFixtureBroker({ release, capabilities: capabilities(), width: 390, context: 'opened' }).snapshot();
+  assert.deepEqual(opened.params, { period: 'month', open: 'fictional-row' });
+  assert.equal(opened.locale, 'fr');
+  assert.equal(opened.fixed_clock, undefined);
+  assert.equal(spaceHarnessSnapshot(release, capabilities(), engine, { context: 'opened' }).descriptor.context.params.open, 'fictional-row');
+  assert.throws(() => createSpaceFixtureBroker({ release, capabilities: capabilities(), width: 390, context: 'missing' }), /no context named "missing"/);
+  // A single context keeps its plain object and is named default.
+  const single = fixture();
+  single.sourceFiles['cases.json'] = encode({ actions: {}, context: { params: { period: 'week' }, skeletonParams: [{ tab: 'board' }] } });
+  assert.deepEqual(fixtureContexts(single), [{ name: 'default', params: { period: 'week' }, open: false }]);
+});
+
+test('fixture contexts are checked: one of context or contexts, safe unique names, string params and a real now', () => {
+  const engineWith = value => { const release = fixture(); release.sourceFiles['cases.json'] = encode({ actions: {}, ...value }); return createSpaceFixtureEngine(release); };
+  assert.throws(() => engineWith({ context: {}, contexts: [{ name: 'a' }] }), /either context or contexts, not both/);
+  assert.throws(() => engineWith({ contexts: [] }), /1 to 4 named contexts/);
+  assert.throws(() => engineWith({ contexts: Array.from({ length: 5 }, (_, index) => ({ name: `c${index}` })) }), /1 to 4 named contexts/);
+  assert.throws(() => engineWith({ contexts: [{ name: 'This Week' }] }), /needs a name of lowercase letters/);
+  assert.throws(() => engineWith({ contexts: [{ name: '../up' }] }), /needs a name of lowercase letters/);
+  assert.throws(() => engineWith({ contexts: [{ name: 'a' }, { name: 'a' }] }), /Two fixture contexts are named a/);
+  assert.throws(() => engineWith({ contexts: [{ name: 'a', skeletonParams: [] }] }), /takes only name, params, now and locale/);
+  assert.throws(() => engineWith({ contexts: [{ name: 'a', params: { filter: ['done'] } }] }), /params must be an object of text, number or true\/false values/);
+  assert.throws(() => engineWith({ context: { params: { filter: { status: 'done' } } } }), /params must be an object of text, number or true\/false values/);
+  // Fixtures written before contexts, with a number or true/false param, still verify.
+  assert.equal(engineWith({ context: { params: { page: 2, archived: false } } }).contexts.length, 1);
+  assert.throws(() => engineWith({ context: { now: 'yesterday' } }), /now must be a date string/);
+  assert.throws(() => engineWith({ contexts: [{ name: 'a', now: 3 }] }), /now must be a date string/);
+  assert.equal(engineWith({ context: { params: { status: 'inbox' }, now: '2026-03-02', locale: 'fr' } }).contexts.length, 1);
 });

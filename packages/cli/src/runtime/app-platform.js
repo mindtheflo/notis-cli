@@ -2039,15 +2039,45 @@ function replaceVerifyImage(name, png) {
   if (png) writeFileSync(name, png, { flag: 'wx', mode: 0o600 });
 }
 
-const VERIFY_WIDTHS = [390, 1440], VERIFY_LOCALES = ['en', 'fr'];
-/** Each Space's verify images carry its key, so two Spaces verified from one folder never share a file. */
-function viewImageName(key, width) {
-  if (!VERIFY_WIDTHS.includes(width)) throw usageError('Unsafe screenshot name.');
-  return `view-${assertSpaceKey(key, 'Unsafe screenshot name.')}-${width}.png`;
+export const VERIFY_WIDTHS = [390, 1440], VERIFY_LOCALES = ['en', 'fr'];
+// A fixture context's name (space-test-server.js checks fixtures with it): it joins the image name only when the
+// fixtures declare several, after a dot, which no Space key has, so `view-a.b-...` is never Space `a-b`'s image.
+export const VERIFY_CONTEXT_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+function contextPart(context, message) {
+  if (context === undefined) return '';
+  if (typeof context !== 'string' || !VERIFY_CONTEXT_NAME.test(context)) throw usageError(message);
+  return `.${context}`;
 }
-function pendingImageName(key, width, locale) {
-  if (!VERIFY_WIDTHS.includes(width) || !VERIFY_LOCALES.includes(locale)) throw usageError('Unsafe pending screenshot name.');
-  return `pending-${assertSpaceKey(key, 'Unsafe pending screenshot name.')}-${width}-${locale}.png`;
+/**
+ * Each Space's verify images carry its key, so two Spaces verified from one folder never share a file:
+ * `view-<key>[.<context>]-<width>-<locale>.png`.
+ */
+function viewImageName(key, width, locale, context) {
+  if (!VERIFY_WIDTHS.includes(width) || !VERIFY_LOCALES.includes(locale)) throw usageError('Unsafe screenshot name.');
+  return `view-${assertSpaceKey(key, 'Unsafe screenshot name.')}${contextPart(context, 'Unsafe screenshot name.')}-${width}-${locale}.png`;
+}
+/** `pending-<key>[.<context>][.reader]-<width>-<locale>.png`; `reader` is an opened item's loading state. */
+function pendingImageName(key, width, locale, { context, state } = {}) {
+  if (!VERIFY_WIDTHS.includes(width) || !VERIFY_LOCALES.includes(locale) || (state !== undefined && state !== 'reader')) {
+    throw usageError('Unsafe pending screenshot name.');
+  }
+  return `pending-${assertSpaceKey(key, 'Unsafe pending screenshot name.')}${contextPart(context, 'Unsafe pending screenshot name.')}${state ? `.${state}` : ''}-${width}-${locale}.png`;
+}
+// The names of the images the last verify of a Space wrote: names carrying a context cannot be listed in advance, and
+// matching them by pattern could take another Space's images whose key starts with this one's.
+const imageIndexName = key => `verify-images-${key}.json`;
+function readImageIndex(key) {
+  const name = imageIndexName(key), stat = lstatSync(name, { throwIfNoEntry: false });
+  if (!stat?.isFile() || stat.size > 64 * 1024) return [];
+  try {
+    const names = JSON.parse(readFileSync(name, 'utf8'));
+    const own = new RegExp(`^(?:view|pending)-${key}(?:\\.[a-z0-9_-]+){0,2}-(?:390|1440)-(?:en|fr)\\.png$`);
+    return Array.isArray(names) ? names.filter(value => typeof value === 'string' && own.test(value)) : [];
+  } catch { return []; }
+}
+function recordImages(key, names) {
+  const known = [...new Set([...readImageIndex(key), ...names])];
+  replaceVerifyImage(imageIndexName(key), Buffer.from(JSON.stringify(known)));
 }
 
 /**
@@ -2063,39 +2093,53 @@ export function clearSpaceScreenshots(projectDir, key) {
 
 /** Remove one Space's verify images, and the unnamed ones, from the pinned .notis directory (the working directory). */
 function removeSpaceImages(key) {
+  for (const name of readImageIndex(key)) replaceVerifyImage(name);
+  replaceVerifyImage(imageIndexName(key));
   for (const width of VERIFY_WIDTHS) {
-    replaceVerifyImage(viewImageName(key, width));
+    // Names of older CLIs: one view image per width, with and without the key.
+    replaceVerifyImage(`view-${key}-${width}.png`);
     replaceVerifyImage(`view-${width}.png`);
     for (const locale of VERIFY_LOCALES) {
+      replaceVerifyImage(viewImageName(key, width, locale));
       replaceVerifyImage(pendingImageName(key, width, locale));
+      replaceVerifyImage(pendingImageName(key, width, locale, { state: 'reader' }));
       replaceVerifyImage(`pending-${width}-${locale}.png`);
     }
   }
 }
 
-/** The loading-state screenshots of the last verify, `pending-<key>-<width>-<locale>.png` beside the diagnostic. */
+/**
+ * The loading-state screenshots of the last verify, `pending-<key>[.<context>][.reader]-<width>-<locale>.png` beside
+ * the diagnostic.
+ */
 export function saveSpacePendingScreenshots(projectDir, key, screenshots) {
   if (!screenshots?.length) return [];
   // Every name is checked before any file is written.
-  const names = screenshots.map(({ width, locale }) => pendingImageName(key, width, locale));
-  return withAppReleaseWorkspace(projectDir, (workspace) => screenshots.map(({ png }, index) => {
-    replaceVerifyImage(names[index], png);
-    return join(workspace.projectDir, NOTIS_DIR, names[index]);
-  }));
+  const names = screenshots.map(({ width, locale, context, state }) => pendingImageName(key, width, locale, { context, state }));
+  return withAppReleaseWorkspace(projectDir, (workspace) => {
+    recordImages(key, names);
+    return screenshots.map(({ png }, index) => {
+      replaceVerifyImage(names[index], png);
+      return join(workspace.projectDir, NOTIS_DIR, names[index]);
+    });
+  });
 }
 
 /**
- * The screenshots of the last verify, `view-<key>-<width>.png` beside the diagnostic, taken once the view had loaded
- * its data (or of what it showed when it had not).
+ * The screenshots of the last verify, `view-<key>[.<context>]-<width>-<locale>.png` beside the diagnostic, taken once
+ * the view had loaded its data (or of what it showed when it had not). Each comes back with its width, locale and
+ * context and the path it was saved at.
  */
 export function saveSpaceScreenshots(projectDir, key, screenshots) {
-  // One image per width, every name checked before any file is written.
-  const kept = new Map((screenshots || []).map(value => [value.width, value]));
-  const names = new Map([...kept.keys()].map(width => [width, viewImageName(key, width)]));
-  return withAppReleaseWorkspace(projectDir, (workspace) => [...kept].map(([width, { png }]) => {
-    replaceVerifyImage(names.get(width), png);
-    return { width, path: join(workspace.projectDir, NOTIS_DIR, names.get(width)) };
-  }));
+  // One image per width, locale and context, every name checked before any file is written.
+  const kept = new Map((screenshots || []).map(value => [viewImageName(key, value.width, value.locale || 'en', value.context), value]));
+  return withAppReleaseWorkspace(projectDir, (workspace) => {
+    recordImages(key, [...kept.keys()]);
+    return [...kept].map(([name, { width, locale = 'en', context, png }]) => {
+      replaceVerifyImage(name, png);
+      return { width, locale, ...(context ? { context } : {}), path: join(workspace.projectDir, NOTIS_DIR, name) };
+    });
+  });
 }
 
 /** Retain the original CAS after an uncertain publish response, across CLI exits. */

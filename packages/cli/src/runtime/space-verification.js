@@ -2,8 +2,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { appFilesDigest } from './app-platform.js';
-import { createSpaceFixtureBroker, fixtureSkeletonParams } from './space-fixture-broker.js';
+import { appFilesDigest, VERIFY_LOCALES, VERIFY_WIDTHS } from './app-platform.js';
+import { createSpaceFixtureBroker, fixtureContexts, fixtureSkeletonParams } from './space-fixture-broker.js';
 
 // Kept for the standalone legacy worker's lifecycle tests while that diagnostic
 // entrypoint is retired. The primary verifier below never starts that worker.
@@ -43,7 +43,16 @@ async function acquire(signal) {
 }
 function releaseSlot() { const next = waiting.shift(); if (next) next.accept(); else active--; }
 
-/** Initial deployment checks the exact captured bytes at both product widths. */
+const LANGUAGES = { en: 'English', fr: 'French' };
+/** Where one render was taken, for messages: "390 px in French" and, with several contexts, the context's name. */
+const placeOf = ({ width, locale, context }) => `${width} px in ${LANGUAGES[locale]}${context ? `, context ${context}` : ''}`;
+// The reads a reader's loading pass holds: the opened item's record and body; the list around it answers.
+const READER_HOLDS = ['record', 'document_body', 'html', 'report'];
+
+/**
+ * Initial deployment checks the exact captured bytes at both product widths, in English and French, once per fixture
+ * context (`contexts` in the fixtures, else the one `context`).
+ */
 export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45_000, signal, loadRenderer = loadSpaceVerificationRenderer,
   authorizationMode = 'authorize_missing', unavailableActions = [] } = {}) {
   const diagnostic = { schema: 'notis-space-render/v1', local_key: release.manifest.local_key,
@@ -54,13 +63,18 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
   if (signal?.aborted) return { ...diagnostic, status: 'failed', errors: [{ phase: 'browser', message: 'Verification cancelled.' }] };
   if (release.manifest.kind === 'container') return { ...diagnostic, status: 'not_applicable_container' };
   let pool, held = false, rendererDigest;
-  const brokers = [390, 1440].map(width => ({ width, broker: null, stop: new AbortController(), timer: null }));
+  // Several contexts name their images and messages; one context keeps the plain names.
+  const contexts = fixtureContexts(release), named = contexts.length > 1;
+  const brokers = [];
+  for (const { name } of contexts.length ? contexts : [{ name: undefined }]) for (const locale of VERIFY_LOCALES) for (const width of VERIFY_WIDTHS) {
+    brokers.push({ width, locale, contextName: name, ...(named ? { context: name } : {}), broker: null, stop: new AbortController(), timer: null });
+  }
   try {
     // Validate fixture authority before opening a browser or acquiring a slot.
     // A failed fixture read already fails the check, and the view usually waits on it until the timeout: the
     // render stops shortly after, once the reads the view sends together have had their say.
     for (const item of brokers) item.broker = createSpaceFixtureBroker({ release, capabilities, width: item.width,
-      authorizationMode, unavailableActions, onFailure: () => {
+      authorizationMode, unavailableActions, context: item.contextName, onFailure: () => {
         item.timer ??= setTimeout(() => item.stop.abort(), FIXTURE_FAILURE_GRACE_MS);
       } });
     await acquire(signal); held = true;
@@ -70,39 +84,47 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
     // waits; a view still loading after the bounded wait keeps a screenshot of what it showed, and says so.
     const readyTimeoutMs = readyWait(timeoutMs);
     const screenshots = [];
-    const observations = await Promise.allSettled(brokers.map(async ({ width, broker, stop }) => {
-      const cancel = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
-      const result = await library.renderView({ broker, pool, outputs: ['markdown', 'screenshot'], width, timeoutMs, signal: cancel,
-        ...(readyTimeoutMs ? { readyTimeoutMs } : {}) });
-      const blocked = result.blocked_calls || [];
-      const png = Buffer.from(result.screenshot.data_base64, 'base64');
-      screenshots.push({ width, png });
-      return { width, mounted: true, status: blocked.length ? 'failed' : 'passed', loaded: true,
-        markdown_sha256: createHash('sha256').update(result.markdown).digest('hex'),
-        screenshot_sha256: sha256(png),
-        screenshot_width: result.screenshot.width, screenshot_height: result.screenshot.height,
-        rendered_at: result.rendered_at, blocked_calls: blocked };
-    }));
+    const tag = ({ width, locale, context }) => ({ width, locale, ...(context ? { context } : {}) });
+    const observations = [];
+    // Both widths of one context and locale render together: the pool holds two renders at a time.
+    for (let index = 0; index < brokers.length; index += VERIFY_WIDTHS.length) {
+      observations.push(...await Promise.allSettled(brokers.slice(index, index + VERIFY_WIDTHS.length).map(async (item) => {
+        const { width, locale, broker, stop } = item;
+        const cancel = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
+        const result = await library.renderView({ broker, pool, outputs: ['markdown', 'screenshot'], width, locale, timeoutMs, signal: cancel,
+          ...(readyTimeoutMs ? { readyTimeoutMs } : {}) });
+        const blocked = result.blocked_calls || [];
+        const png = Buffer.from(result.screenshot.data_base64, 'base64');
+        screenshots.push({ ...tag(item), png });
+        return { ...tag(item), mounted: true, status: blocked.length ? 'failed' : 'passed', loaded: true,
+          markdown_sha256: createHash('sha256').update(result.markdown).digest('hex'),
+          screenshot_sha256: sha256(png),
+          screenshot_width: result.screenshot.width, screenshot_height: result.screenshot.height,
+          rendered_at: result.rendered_at, blocked_calls: blocked };
+      })));
+    }
     const renders = observations.map((value, index) => {
       if (value.status === 'fulfilled') return value.value;
-      const width = brokers[index].width, shot = value.reason?.code === 'render_not_ready' ? value.reason.screenshot : null;
+      const item = brokers[index], where = tag(item), place = placeOf(item);
+      const shot = value.reason?.code === 'render_not_ready' ? value.reason.screenshot : null;
       if (value.reason?.code === 'render_view_failed') {
-        return { width, mounted: false, status: 'failed', error: 'render_view_failed', loaded: false,
-          message: `At ${width} px the view's code failed before it showed anything${value.reason.reason ? `: ${value.reason.reason}` : '.'}` };
+        return { ...where, mounted: false, status: 'failed', error: 'render_view_failed', loaded: false,
+          message: `At ${place} the view's code failed before it showed anything${value.reason.reason ? `: ${value.reason.reason}` : '.'}` };
       }
-      if (!shot?.data_base64) return { width, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed' };
+      if (!shot?.data_base64) return { ...where, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed' };
       const png = Buffer.from(shot.data_base64, 'base64');
-      screenshots.push({ width, png });
+      screenshots.push({ ...where, png });
       const mounted = value.reason.mounted === true;
       const seconds = value.reason.waitedSeconds || Math.round((readyTimeoutMs || 0) / 1000);
-      return { width, mounted, status: 'failed', error: 'render_not_ready', loaded: false,
-        message: mounted ? `At ${width} px the view had not finished loading its data after ${seconds} s.`
-          : `At ${width} px the view had not shown anything after ${seconds} s.`,
+      return { ...where, mounted, status: 'failed', error: 'render_not_ready', loaded: false,
+        message: mounted ? `At ${place} the view had not finished loading its data after ${seconds} s.`
+          : `At ${place} the view had not shown anything after ${seconds} s.`,
         screenshot_sha256: sha256(png), screenshot_width: shot.width, screenshot_height: shot.height,
         blocked_calls: Array.isArray(value.reason.blocked) ? value.reason.blocked : [] };
     });
-    screenshots.sort((left, right) => left.width - right.width);
-    const runtimeCalls = brokers.flatMap(({ width, broker }) => broker.calls.map(call => ({ width, ...call })));
+    const order = item => brokers.findIndex(value => value.width === item.width && value.locale === item.locale && value.context === item.context);
+    screenshots.sort((left, right) => order(left) - order(right));
+    const runtimeCalls = brokers.flatMap(item => item.broker.calls.map(call => ({ ...tag(item), ...call })));
     const passed = renders.every(value => value.status === 'passed') && runtimeCalls.every(call => call.ok);
     // Each distinct fixture reason once (both widths usually hit the same one), ahead of the generic line.
     const fixtureErrors = [...new Map(runtimeCalls.filter(call => !call.ok && call.error)
@@ -110,15 +132,16 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
         ...(call.recordKey ? { record_key: call.recordKey } : {}), ...(call.actionId ? { action_id: call.actionId } : {}),
         message: call.error }])).values()].slice(0, 10);
     const notReady = renders.filter(value => value.error === 'render_not_ready' || value.error === 'render_view_failed')
-      .map(value => ({ phase: 'renderer', width: value.width, message: value.message }));
+      .map(value => ({ phase: 'renderer', ...tag(value), message: value.message }));
     const result = { ...diagnostic, status: passed ? 'passed' : 'failed', mounted: renders.every(value => value.mounted),
       fixture_digest: brokers[0].broker.fixtureDigest, renderer_digest: rendererDigest,
-      render_count: renders.length, browser_count: 1, renders, runtimeCalls,
+      render_count: renders.length, browser_count: 1, ...(named ? { contexts: contexts.map(value => value.name) } : {}), renders, runtimeCalls,
       errors: passed ? [] : [...fixtureErrors, ...notReady, { phase: 'renderer', message: 'At least one width or read-only fixture failed verification.' }] };
     Object.defineProperty(result, 'screenshots', { value: screenshots, enumerable: false });
     // The skeleton is measured only from a view that rendered cleanly, with a renderer that can measure it.
     if (passed && typeof library.buildSkeletonDocument === 'function') {
-      const capture = await captureSpaceSkeleton({ library, pool, release, capabilities, timeoutMs, signal, authorizationMode, unavailableActions });
+      const capture = await captureSpaceSkeleton({ library, pool, release, capabilities, timeoutMs, signal, authorizationMode, unavailableActions,
+        contexts, named });
       result.skeleton = capture.skeleton;
       Object.defineProperty(result, 'skeletonDocument', { value: capture.document, enumerable: false });
       Object.defineProperty(result, 'pendingScreenshots', { value: capture.screenshots, enumerable: false });
@@ -140,15 +163,19 @@ const READY_MARGIN_MS = 5_000;
 const readyWait = timeoutMs => (timeoutMs - READY_MARGIN_MS >= 1_000 ? timeoutMs - READY_MARGIN_MS : undefined);
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-const captureFailure = (width, locale, error) => ({ check: 'capture_failed', severity: 'warning', width, locale,
+const captureFailure = (width, locale, error, extra = {}) => ({ check: 'capture_failed', severity: 'warning', width, locale, ...extra,
   message: `The loading skeleton could not be measured: ${String(error?.code || error?.message || error).slice(0, 300)}` });
 
 /**
  * Loading skeleton capture, per width and locale: (1) pending with the view's fallback skeleton gives the region
  * boxes and landmarks, (2) final measures the bones inside those boxes, (3) pending again with the measured bones
  * injected is checked and screenshotted. Never throws: failures become warnings and status `failed`.
+ * The first fixture context is the opening view; `context.skeletonParams` and every other context add the regions they
+ * show. (4) A context whose params open a list item (`open`) is also drawn with the list answered and the item's record
+ * held: the reader's loading state, checked and screenshotted as `state: 'reader'`.
  */
-async function captureSpaceSkeleton({ library, pool, release, capabilities, timeoutMs, signal, authorizationMode, unavailableActions }) {
+async function captureSpaceSkeleton({ library, pool, release, capabilities, timeoutMs, signal, authorizationMode, unavailableActions,
+  contexts = [], named = false }) {
   const findings = [], screenshots = [], combos = [];
   let failed = false, document = null;
   const widths = library.SKELETON_WIDTHS || [390, 1440], locales = library.SKELETON_LOCALES || ['en', 'fr'];
@@ -157,8 +184,10 @@ async function captureSpaceSkeleton({ library, pool, release, capabilities, time
   // view that is wholly editor-only does not exist for the public: it keeps the editors' skeleton.
   const marks = release.manifest.editors_only;
   const audience = marks && !marks.view ? 'public' : 'editor';
-  const render = (width, options, params) => library.renderView({ broker: createSpaceFixtureBroker({ release, capabilities, width,
-    outputs: ['markdown'], authorizationMode, unavailableActions, params, audience }), pool, outputs: ['markdown'], width, timeoutMs, signal, ...options });
+  const render = (width, options, params, context) => library.renderView({ broker: createSpaceFixtureBroker({ release, capabilities, width,
+    outputs: ['markdown'], authorizationMode, unavailableActions, params, audience, context }), pool, outputs: ['markdown'], width, timeoutMs, signal, ...options });
+  // The pending landmarks end a region's measurement at the next one below it (a section head under a KPI row).
+  const measuring = (regions, pending) => ({ measure: { regions, landmarks: pending?.landmarks || [] } });
   // Both widths of one locale run together: the pool holds two renders at a time.
   const each = async (step) => {
     for (const locale of locales) {
@@ -178,28 +207,30 @@ async function captureSpaceSkeleton({ library, pool, release, capabilities, time
       combo.regions = combo.first?.pending?.static ? [] : (combo.first?.pending?.regions || []);
       const valid = combo.regions.filter(region => region.valid);
       if (!valid.length) return;
-      combo.final = (await render(combo.width, { measure: { regions: valid }, locale: combo.locale })).skeleton_measure;
+      combo.final = (await render(combo.width, { ...measuring(valid, combo.first.pending), locale: combo.locale })).skeleton_measure;
     });
     const measurements = {};
     for (const combo of combos) if (combo.final) (measurements[combo.width] ||= {})[combo.locale] = { regions: combo.final.regions };
     // Regions a view shows only under other params (a tab it can open on), declared in the fixtures as
-    // context.skeletonParams: measured the same way and added beside the opening view's own regions. A failure here
-    // is a warning and never drops the regions already measured.
-    for (const params of fixtureSkeletonParams(release)) {
+    // context.skeletonParams, or in another fixture context: measured the same way and added beside the opening
+    // view's own regions. A failure here is a warning and never drops the regions already measured.
+    const extras = [...fixtureSkeletonParams(release).map(params => ({ params })),
+      ...contexts.slice(1).map(value => ({ context: value.name }))];
+    for (const { params, context } of extras) {
       for (const locale of locales) {
         const settled = await Promise.allSettled(widths.map(async (width) => {
-          const pending = (await render(width, { pending: true, locale }, params))?.pending;
+          const pending = (await render(width, { pending: true, locale }, params, context))?.pending;
           const known = new Set((measurements[width]?.[locale]?.regions || []).map(region => region.key));
           const valid = pending?.static ? [] : (pending?.regions || []).filter(region => region.valid && !known.has(region.key));
           if (!valid.length) return;
-          const final = (await render(width, { measure: { regions: valid }, locale }, params)).skeleton_measure;
+          const final = (await render(width, { ...measuring(valid, pending), locale }, params, context)).skeleton_measure;
           const added = (final?.regions || []).filter(region => !known.has(region.key));
           if (!added.length) return;
           const entry = ((measurements[width] ||= {})[locale] ||= { regions: [] });
           entry.regions = [...entry.regions, ...added];
         }));
         settled.forEach((value, index) => {
-          if (value.status === 'rejected') findings.push(captureFailure(widths[index], locale, value.reason));
+          if (value.status === 'rejected') findings.push(captureFailure(widths[index], locale, value.reason, context && named ? { context } : {}));
         });
       }
     }
@@ -225,6 +256,20 @@ async function captureSpaceSkeleton({ library, pool, release, capabilities, time
   } catch (error) {
     failed = true; findings.push(captureFailure(null, null, error));
   }
+  // The reader's loading state: the list answers, the opened item's reads stay held. A view that opens nothing
+  // with these params is static there and adds nothing.
+  const readers = [];
+  for (const value of contexts.filter(item => item.open)) {
+    const extra = { state: 'reader', ...(named ? { context: value.name } : {}) };
+    for (const locale of locales) {
+      const settled = await Promise.allSettled(widths.map(width => render(width, { pending: { hold: READER_HOLDS }, locale,
+        ...(document ? { skeleton: document } : {}) }, undefined, value.name)));
+      settled.forEach((result, index) => {
+        if (result.status === 'rejected') { findings.push(captureFailure(widths[index], locale, result.reason, extra)); return; }
+        readers.push({ width: widths[index], locale, extra, shown: result.value });
+      });
+    }
+  }
   for (const combo of combos) {
     const shown = combo.checked || combo.first;
     if (!shown) continue;
@@ -237,7 +282,16 @@ async function captureSpaceSkeleton({ library, pool, release, capabilities, time
     const png = Buffer.from(shown.screenshot.data_base64, 'base64');
     screenshots.push({ width: combo.width, locale: combo.locale, png, sha256: sha256(png) });
   }
+  for (const { width, locale, extra, shown } of readers) {
+    if (!shown?.pending || shown.pending.static) continue;
+    try {
+      findings.push(...library.runSkeletonChecks({ width, locale, pending: shown.pending, regions: [] }).map(finding => ({ ...finding, ...extra })));
+    } catch (error) { findings.push(captureFailure(width, locale, error, extra)); }
+    if (!shown.screenshot?.data_base64) continue;
+    const png = Buffer.from(shown.screenshot.data_base64, 'base64');
+    screenshots.push({ width, locale, ...extra, png, sha256: sha256(png) });
+  }
   const status = document ? 'captured' : failed ? 'failed' : 'none';
   return { document, screenshots, skeleton: { status, audience, regions: document ? Object.keys(document.regions).sort() : [], findings,
-    pending_screenshots: screenshots.map(({ width, locale, sha256: digest }) => ({ width, locale, sha256: digest })) } };
+    pending_screenshots: screenshots.map(({ png: _png, ...value }) => value) } };
 }

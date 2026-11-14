@@ -45,7 +45,7 @@ test('a sample Space that imports the host SDK renders in verify with the toolki
   };
   const result = await verifySpaceRelease(release, { capabilities: release.capabilities, loadRenderer });
   assert.equal(result.status, 'passed', JSON.stringify(result));
-  assert.equal(result.render_count, 2);
+  assert.equal(result.render_count, 4, 'both widths, in English and in French');
 });
 
 test('a Space that imports an SDK module the host does not provide fails verify', async () => {

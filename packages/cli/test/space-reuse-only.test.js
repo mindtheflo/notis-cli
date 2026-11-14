@@ -39,16 +39,17 @@ test('an unavailable declaration cannot reappear as a generic binding operation'
     authorizationMode: 'reuse_only', unavailableActions: ['write'] }), /unavailable action/);
 });
 
-test('shared verifier passes explicit mode to both width brokers without granting the skipped write', async () => {
-  const snapshots = [];
+test('shared verifier passes explicit mode to every width and language broker without granting the skipped write', async () => {
+  const snapshots = [], locales = [];
   const result = await verifySpaceRelease(release(), { capabilities: capabilities(), authorizationMode: 'reuse_only',
     unavailableActions: ['write'], loadRenderer: async () => ({ rendererDigest: 'offline',
       createBrowserPool: () => ({ close: async () => {} }),
-      renderView: async ({ broker, width }) => {
-        snapshots.push(await broker.snapshot());
+      renderView: async ({ broker, width, locale }) => {
+        snapshots.push(await broker.snapshot()); locales.push(locale);
         return { markdown: 'Read-only fixture', screenshot: { data_base64: 'cG5n', width, height: 100 } };
       } }) });
-  assert.equal(result.status, 'passed'); assert.equal(snapshots.length, 2);
+  assert.equal(result.status, 'passed'); assert.equal(snapshots.length, 4);
+  assert.deepEqual(locales.sort(), ['en', 'en', 'fr', 'fr']);
   assert.equal(result.authorization_mode, 'reuse_only'); assert.deepEqual(result.unavailable_actions, ['write']);
   assert.ok(snapshots.every(value => Object.keys(value.descriptor.space.actions).join() === 'read'));
 });
