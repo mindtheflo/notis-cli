@@ -84,6 +84,13 @@ The saved `read` action is deliberately constrained to one native record for
 body and record-Site reads; `shows.notes` owns the Editor's collection list. Keep
 both tied to the same declared resource.
 
+A `shows` list's `where` is a native filter: `{field: {property}, op, value}`
+conditions in `and` / `or` groups. For several options of one select or status,
+write one `in`, never an `or` of `equals`: `{field: {property: 'Stage'}, op:
+'in', value: ['Lead', 'Won']}`. For "how many", use `useNativeCount` ([SDK](sdk.md#records-and-declared-reads)),
+never a list paged to the end. Operators, limits and placeholders:
+[Params and declared lists](#params-and-declared-lists).
+
 ## Records in the sidebar
 
 `collection` lists the database's records as rows under the Space in the
@@ -267,12 +274,19 @@ navigation and the toolkit pieces.
 - `shows` for native data is `{database, where, open?}`. `where` is the native filter
   grammar and is what `useShown` executes, not commentary beside a different query.
   `open` names a record param over the same database.
-- `in` works only on identity columns (a record's own key). For several values of
-  a select or status property, use `{or: [{field: {property: 'Stage'}, op: 'equals',
-  value: 'Lead'}, {field: {property: 'Stage'}, op: 'equals', value: 'Won'}]}`.
+- `in` matches any of a list: up to 500 record keys on `record_key`/`id`, or up to
+  100 options (labels or IDs) of a select or status property, such as
+  `{field: {property: 'Stage'}, op: 'in', value: ['Lead', 'Won']}`. Each option must
+  exist; a row with no option matches none. A list of several values costs one
+  condition per value toward the filter's 200 (a placeholder counts once bound). In
+  `shows`, the list may mix options and placeholders: bound values naming no option
+  are dropped (a fixed one is refused), repeats count once,
+  more than 100 refuses the read, and a list left empty (an unset param, or only
+  unknown options) matches no row; it is never dropped like a single condition.
 - A `LOCAL_NOTIS_DATABASE_QUERY` read action's `request` may add `properties:
-  [{property: 'Name'}, ...]` (1 to 100) to return only those fields, and `mode:
-  'count'` to return a count instead of rows (`useNativeDocuments` reads rows).
+  [{property: 'Name'}, ...]` (1 to 100) to return only those fields. For "how many",
+  use `useNativeCount(binding, {query: {filter}})` ([SDK](sdk.md)): it sends `mode:
+  'count'` and loads no row, so never page through every row to count them.
 - A condition may add `when: 'late'`, naming a boolean param. It is included
   only when that setting is true; absent/false drops it before pagination.
   This also gates `is_empty` for unplanned tasks. `tasksViewFilter` pairs with

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNotisRuntime } from '../provider';
 import { normalizeDocumentRecord } from '../documents';
 import type { DocumentRecord, NotisRuntime } from '../runtime';
@@ -33,20 +33,11 @@ export function useNativeDocuments(binding: string, options: {
   query?: NativeQuery; fetchAll?: boolean; enabled?: boolean; staleTimeMs?: number; subscribe?: boolean;
 } = {}): UseQueryResult<{ documents: DocumentRecord[]; schemaRevision: number }> & { documents: DocumentRecord[]; schemaRevision?: number; live: boolean } {
   const runtime = useNotisRuntime();
-  const [live, setLive] = useState(false);
-  const follow = options.subscribe === true && options.enabled !== false;
-  useEffect(() => {
-    if (!follow || !runtime?.subscribeDatabase) { setLive(false); return; }
-    let cancelled = false;
-    // The Space host re-reads every query of the view when the database changes, so the
-    // change callback has nothing left to do; the feed is a signal and never carries rows.
-    const stop = runtime.subscribeDatabase(binding, () => {}, { onStatusChange: value => { if (!cancelled) setLive(value); } });
-    return () => { cancelled = true; setLive(false); stop?.(); };
-  }, [runtime, binding, follow]);
+  const live = useLiveBinding(runtime, binding, options.subscribe === true && options.enabled !== false);
   const locale = runtime?.context?.locale === 'fr' ? 'fr' : 'en';
   const query = useQuery<{ documents: DocumentRecord[]; schemaRevision: number }>(['native-documents', binding, options.query ?? {}, Boolean(options.fetchAll), locale], async (publish) => {
     const action = actionFor(runtime, binding, 'query');
-    if (options.query?.mode && !['rows', 'search'].includes(options.query.mode)) throw new Error('Use useActionQuery for counts and aggregates.');
+    if (options.query?.mode && !['rows', 'search'].includes(options.query.mode)) throw new Error('Use useNativeCount for counts and useActionQuery for aggregates.');
     const rows: unknown[] = [];
     let offset = options.query?.offset ?? 0;
     let revision: number | undefined;
@@ -74,6 +65,53 @@ export function useNativeDocuments(binding: string, options: {
   }, { readOnly: true, enabled: options.enabled, staleTimeMs: options.staleTimeMs,
     rows: { binding, at: 'documents', shape: 'document', query: options.query ?? {} } });
   return { ...query, documents: query.data?.documents ?? EMPTY_DOCUMENTS, schemaRevision: query.data?.schemaRevision, live };
+}
+
+/** Whether the binding's live change feed is attached; the host re-reads the view's queries on a change. */
+function useLiveBinding(runtime: NotisRuntime | null, binding: string, follow: boolean): boolean {
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    if (!follow || !runtime?.subscribeDatabase) { setLive(false); return; }
+    let cancelled = false;
+    // The Space host re-reads every query of the view when the database changes, so the
+    // change callback has nothing left to do; the feed is a signal and never carries rows.
+    const stop = runtime.subscribeDatabase(binding, () => {}, { onStatusChange: value => { if (!cancelled) setLive(value); } });
+    return () => { cancelled = true; setLive(false); stop?.(); };
+  }, [runtime, binding, follow]);
+  return live;
+}
+
+/** What a count reads: the rows its filter keeps, archived ones too when asked. */
+export type NativeCountQuery = Pick<NativeQuery, 'filter' | 'include_archived'>;
+
+/**
+ * How many rows of a database binding match `query.filter`, read with the native query's `mode: 'count'` through the
+ * same declared query action as `useNativeDocuments`: no row is loaded. `count` is undefined until the first answer;
+ * `loading`, `isFetching` and `error` behave as in every `useQuery` read. When the filter changes, the last count
+ * stays shown (`isPreviousData` true) until the new one is read; a new binding starts empty instead. A write
+ * refreshes it once confirmed, never before: an optimistic row does not move the count. `subscribe` follows the live
+ * change feed as in `useNativeDocuments`.
+ */
+export function useNativeCount(binding: string, options: {
+  query?: NativeCountQuery; enabled?: boolean; staleTimeMs?: number; subscribe?: boolean;
+} = {}): UseQueryResult<{ count: number; schemaRevision: number }> & { count?: number; schemaRevision?: number; live: boolean } {
+  const runtime = useNotisRuntime();
+  const live = useLiveBinding(runtime, binding, options.subscribe === true && options.enabled !== false);
+  const request = { ...(options.query?.filter ? { filter: options.query.filter } : {}),
+    ...(options.query?.include_archived === undefined ? {} : { include_archived: options.query.include_archived }), mode: 'count' as const };
+  // The last count stays shown only while the same binding reads a new filter: another database's count never does.
+  const shownBinding = useRef<string | null>(null);
+  const query = useQuery<{ count: number; schemaRevision: number }>(['native-count', binding, request], async () => {
+    const action = actionFor(runtime, binding, 'query');
+    const result = await runtime!.callAction!<{ count: number; schema_revision: number }>(
+      action, { request }, { readOnly: true, dedupe: true });
+    if (!result || !Number.isSafeInteger(result.count) || result.count < 0 || !Number.isSafeInteger(result.schema_revision)) {
+      throw new SdkQueryError('responseIncomplete', 'Native count must return a safe integer count and schema_revision.');
+    }
+    return { count: result.count, schemaRevision: result.schema_revision };
+  }, { readOnly: true, enabled: options.enabled, staleTimeMs: options.staleTimeMs, keepPrevious: shownBinding.current === binding });
+  if (query.data && !query.isPreviousData) shownBinding.current = binding;
+  return { ...query, count: query.data?.count, schemaRevision: query.data?.schemaRevision, live };
 }
 
 /** Options of one native write. */

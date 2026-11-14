@@ -43,7 +43,7 @@ must be nonempty. Invalid conditions fail—they never become an unrestricted qu
 | Text/title/URL | `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`, empty checks |
 | Number | `equals`, `not_equals`, `greater_than`, `less_than`, inclusive variants, empty checks |
 | Checkbox | `equals`, `not_equals` with real booleans |
-| Select/status | `equals`, `not_equals`, empty checks; use a current option ID or unambiguous label |
+| Select/status | `equals`, `not_equals`, `in` (any of up to 100 options), empty checks; use a current option ID or unambiguous label |
 | Multi-select/relation | `contains`, `does_not_contain`, empty checks |
 | Date | `equals`, `before`, `after`, `on_or_before`, `on_or_after`, empty checks; use ISO dates/timestamps |
 

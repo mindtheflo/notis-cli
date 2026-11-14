@@ -6,7 +6,7 @@ list-case format and every required initial-read fixture.
 
 | Import | Holds |
 | --- | --- |
-| `@notis/sdk` | Data hooks, navigation, host interactions and record components |
+| `@notis/sdk` | Data hooks (rows with `useNativeDocuments`, how many rows with `useNativeCount`, writes with `useNativeMutation`: [Records and declared reads](#records-and-declared-reads)), navigation, host interactions and record components |
 | `@notis/sdk/ui` | The toolkit pieces and their hooks |
 | `@notis/sdk/config` | `defineSpace` and view declarations |
 | `@notis/sdk/words` | Pure action ids, EN and FR words and key specs |
@@ -92,47 +92,8 @@ rather than from a copy.
   only reads. Use it rather than columns of your own.
 - **Time and numbers**: `PeriodPicker` with `usePeriod`, `DayPicker`,
   `CalendarView`, `TimelineView`, `Chart`, `StatRow`, `ChartTable`,
-  `RenderChartData`, `Meter`, `DataTable`, `formatDuration`. `Chart` stacks
-  bars or areas (`stacked`) and runs bars left to right (`horizontal`): each
-  label on up to two lines before its bar in a measured axis, and its value after it; `labelFormat` gives that short
-  value ("1.2k") while `format` stays the exact tooltip and table text.
-  One series of bars draws the bars other than the live one lighter until
-  hovered; `dim={false}` draws every bar full colour (months of a budget).
-  `barColor(row, series, index)` colours one bar by its row (a stage, over a
-  budget); never fake it with stacked series. Values under zero (no `domain`)
-  reach below zero with a line at zero (a balance, a net change); stacked
-  values under zero stack under the axis. Series take
-  `--chart-1` to `--chart-5` in order, then again: give a sixth series its own
-  `color`. Draw
-  category bars this way rather than with your own recharts. For a chart of
-  your own, `ChartContainer` takes `aspect` or `height`; `ChartTooltipContent`
-  and `ChartLegend` also work outside it; `<Bar shape={barShape}
-  label={{ content: barLabel }} />` keeps zero bars and their value labels. A
-  sparkline `null` is a gap. `domain={[min, max]}` fixes the value scale (a
-  percentage on 0 to 100) and `valueAxis` draws it on the left through
-  `labelFormat` (without a `domain` its top rises to a round quarter); x labels thin out with the room and never run off the edge. `PeriodPicker` without the `custom` preset offers
-  presets only; `presets={[...PRESETS.slice(0, -1), ...EXTRA_PRESETS, 'custom']}`
-  adds Last 6 months and Last 12 months (this month and the 5 or 11 before it,
-  binned by month and compared with the same months before, like any range
-  from the 1st spanning six months or more).
-  `Meter` is a labelled capacity bar (`label`, `value`, `max`,
-  `valueText`, `hint`, `tone`: `success`, `warning`, `info` or `danger` colour
-  the fill, such as a goal met or near; `danger` looks like a reached limit, so
-  keep it for a value that is already bad); at or past `limit` (a tick named by
-  `limitLabel`) it turns destructive. Set `limit` only to a threshold the data has (a memory
-  reserve, a quota), never to `max`: a full meter is not red by itself. `DataTable` is a read-only table with the `ChartTable`
-  look for rows that are not figures: `columns` (`id`, `label`, `cell`, `align`, `width`,
-  `mono`, `primary`, `hideBelow`, `wrap`), `rows` or `groups` (`key`, `label`, `rows`),
-  `rowKey`, and `onRowPress` with `rowLabel` to open a row (the primary cell
-  then sits inside the row's button: text and icons only, no link);
-  `canPressRow(row)` leaves a row that opens nothing plain. Cells truncate: a
-  column with `wrap` (a question, a note) wraps and its rows grow, and
-  `wrapHeaders` puts long headers (French ones over narrow figure columns) on
-  two lines instead of an ellipsis. The primary
-  column never gets under its `minWidth` (120 px by default): the last
-  columns that do not fit hide on their own.
-  `formatDuration(ms, locale, { units, smallest })` writes "1 h 31 min" (FR
-  "4 j 6 h").
+  `RenderChartData`, `Meter`, `DataTable`, `formatDuration`; their options
+  are in [Charts, meters and tables](#charts-meters-and-tables).
 - **Floating**: `Menu`, `Popover`, `Tooltip`, `InfoTip`. `InfoTip` is the
   info button beside a label (a figure's `about`, a section heading, a meter):
   `label` names what it explains and the children are one or two sentences
@@ -204,6 +165,54 @@ A status maps to one of ten groups (`backlog`, `todo`, `active`, `review`,
 `waiting`, `done`, `cancelled`, `failed`, and `up`/`down` for a service), each
 with its icon, words and the one status palette: pass the Space's own status to
 `Row` or `StatusIcon` (with `label` for its own name).
+
+## Charts, meters and tables
+
+`Chart` stacks bars or areas (`stacked`) and runs bars left to right
+(`horizontal`): each label on up to two lines before its bar in a measured axis,
+and its value after it; `labelFormat` gives that short value ("1.2k") while
+`format` stays the exact tooltip and table text. One series of bars draws the
+bars other than the live one lighter until hovered; `dim={false}` draws every
+bar full colour (months of a budget). `barColor(row, series, index)` colours one
+bar by its row (a stage, over a budget); never fake it with stacked series.
+Values under zero (no `domain`) reach below zero with a line at zero (a balance,
+a net change); stacked values under zero stack under the axis. Series take
+`--chart-1` to `--chart-5` in order, then again: give a sixth series its own
+`color`. Draw category bars this way rather than with your own recharts. For a
+chart of your own, `ChartContainer` takes `aspect` or `height`;
+`ChartTooltipContent` and `ChartLegend` also work outside it; `<Bar
+shape={barShape} label={{ content: barLabel }} />` keeps zero bars and their
+value labels. A sparkline `null` is a gap. `domain={[min, max]}` fixes the value
+scale (a percentage on 0 to 100) and `valueAxis` draws it on the left through
+`labelFormat` (without a `domain` its top rises to a round quarter); x labels
+thin out with the room and never run off the edge.
+
+`PeriodPicker` without the `custom` preset offers presets only;
+`presets={[...PRESETS.slice(0, -1), ...EXTRA_PRESETS, 'custom']}` adds Last 6
+months and Last 12 months (this month and the 5 or 11 before it, binned by month
+and compared with the same months before, like any range from the 1st spanning
+six months or more).
+
+`Meter` is a labelled capacity bar (`label`, `value`, `max`, `valueText`,
+`hint`, `tone`: `success`, `warning`, `info` or `danger` colour the fill, such
+as a goal met or near; `danger` looks like a reached limit, so keep it for a
+value that is already bad); at or past `limit` (a tick named by `limitLabel`) it
+turns destructive. Set `limit` only to a threshold the data has (a memory
+reserve, a quota), never to `max`: a full meter is not red by itself.
+
+`DataTable` is a read-only table with the `ChartTable` look for rows that are
+not figures: `columns` (`id`, `label`, `cell`, `align`, `width`, `mono`,
+`primary`, `hideBelow`, `wrap`), `rows` or `groups` (`key`, `label`, `rows`),
+`rowKey`, and `onRowPress` with `rowLabel` to open a row (the primary cell then
+sits inside the row's button: text and icons only, no link); `canPressRow(row)`
+leaves a row that opens nothing plain. Cells truncate: a column with `wrap` (a
+question, a note) wraps and its rows grow, and `wrapHeaders` puts long headers
+(French ones over narrow figure columns) on two lines instead of an ellipsis.
+The primary column never gets under its `minWidth` (120 px by default): the last
+columns that do not fit hide on their own.
+
+`formatDuration(ms, locale, { units, smallest })` writes "1 h 31 min" (FR "4 j 6
+h").
 
 ## Comments
 
@@ -283,6 +292,7 @@ from the `url` its query returns, or queries again for a fresh one.
 | `useShownAvailable(name)` | Check whether this host exposes the declared native list. A record Site can expose only its exact server-pinned row scope. |
 | `useAction<Inputs, Result>(name)` / `useActionQuery<Result>(name, inputs, options?)` | Call a declared action (`call(inputs, options)`); read the result of a declared read action. Never call account-wide tools from a Space. When a read action answers with native rows, pass `rows: { binding, at, query? }` (`at`: the answer field holding them, `''` for a bare list; `query`: the native query it runs) so native writes to that database show in it at once too; without it the read only refreshes after the write. A failed call throws a `SpaceActionError`; its `code` is `rate_limited` when the provider refused it for sending too fast (it did not run, and Notis already waited and retried safe calls), so offer a retry after a few seconds instead of adding your own limiter, and `read_timeout` when a read took too long. |
 | `useNativeMutation(binding, operation)` | Insert, update or delete one row of a linked database through the action that declares `LOCAL_NOTIS_DATABASE_INSERT`, `_UPDATE` or `_DELETE` on that binding with `request: { $input: 'request' }`. `mutate(input, {schemaRevision, requestId, showIn?})` returns the receipt (`record_key`, `revision`). The write shows in every list of that database at once, before the server answers: an edited row changes where it is (and moves to its sorted place, or leaves a `useNativeDocuments` read whose filter no longer keeps it), a new row joins the reads whose filter it passes and the `shows` lists named by `showIn` (by default the view's only list over that database), and a delete moves the record to the bin and leaves every list. A failed write puts the server's rows back. Do not keep your own copy of the change on top. One new request ID per effect. An insert action takes no `content_markdown`: insert, then save the body with `useNativeDocumentBody` and the record's revision. |
+| `useNativeCount(binding, {query?, enabled?, staleTimeMs?, subscribe?})` | How many rows of a linked database match `query.filter` (and `include_archived`), through the same query action as `useNativeDocuments`, without loading any row. `count` (and `schemaRevision`) stay undefined until the first answer; `loading`, `error`, `refetch` and `live` work as in the other reads. When the filter changes it keeps the last count (`isPreviousData` true) until the new one arrives; a write refreshes it once confirmed, not optimistically. Use it for badges, tab totals and empty checks instead of reading every page. |
 | `useNativeDelete(binding)` | Trash many rows of one linked database (a deck and its slides, a multi-select). `deleteMany(inputs, {schemaRevision, requestId})` hides every row from the lists at once, runs the writes a few at a time, each with the request ID `${requestId}:${record_key}` (a retry with the same `requestId` replays instead of trashing twice), refreshes the lists once at the end and brings back the rows whose write failed. It never throws for a failed row: it resolves to `{done, failed}`; say how many failed. Use it rather than a loop of `mutate`. |
 | `useNativeDocumentBody(binding, recordKey, {readAction, writeAction?, enabled?})` | Markdown body adapter. Keep drafts in the view; save with the original content, record/schema revisions and stable request ID. Rich editing normally uses `DocumentEditor`. |
 | `useNotis()` | Host resource, Space labels, route and ready state. Use `resource.id` for the current Space identity. |

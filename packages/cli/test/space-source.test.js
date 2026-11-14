@@ -420,6 +420,38 @@ test('V4 view manifest: specVersion 2 declares path, described params, shows, me
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('shows lists: an in lists 1 to 100 options, and costs the filter what the server query charges', async () => {
+  const { viewManifestFields } = await import('../src/runtime/space-view-manifest.js');
+  const resources = { tasks: { kind: 'database', key: 'tasks' } };
+  const check = where => viewManifestFields({ name: 'Tasks', path: 'tasks', description: 'Every task.',
+    memory: { markdown: false, attachments: false, screenshot: false, snapshots: [] },
+    params: { status: { type: 'text', description: 'A status.' } }, shows: { tasks: { database: 'tasks', where } } },
+  { entry: 'view.tsx', resources });
+  const options = count => Array.from({ length: count }, (_, index) => `W${index}`);
+  const stage = values => ({ field: { property: 'Stage' }, op: 'in', value: values });
+  for (const where of [
+    stage(['Lead', '{status}']),
+    stage(options(100)),
+    { field: { column: 'record_key' }, op: 'in', value: ['0f8fad5b-d9cb-469f-a165-70867728950e'] },
+    // 1 group + (1 + 100) + (1 + 97) = 200 conditions, the most a filter holds.
+    { and: [stage(options(100)), stage(options(97))] },
+  ]) check(where);
+  let nested = stage(['Lead']);
+  for (let level = 0; level < 12; level += 1) nested = { and: [nested] };
+  check(nested);
+  let deeper = stage(['Lead', 'Won']);
+  for (let level = 0; level < 12; level += 1) deeper = { and: [deeper] };
+  for (const [where, pattern] of [
+    [stage([]), /in takes a list of 1 to 100 options/],
+    [stage(options(101)), /in takes a list of 1 to 100 options/],
+    [stage(options(250)), /in takes a list of 1 to 100 options/],
+    [stage('Lead'), /in takes a list of 1 to 100 options/],
+    [{ field: { column: 'record_key' }, op: 'in', value: [] }, /in takes a list of 1 to 500 record ids/],
+    [{ and: [stage(options(100)), stage(options(98))] }, /too complex/],
+    [deeper, /too complex/],
+  ]) assert.throws(() => check(where), pattern, JSON.stringify(where).slice(0, 120));
+});
+
 test('a record param page rule: one per view, exactly { where }, fixed values over the page subset, created schemas checked', async () => {
   const { viewManifestFields } = await import('../src/runtime/space-view-manifest.js');
   const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
@@ -442,6 +474,7 @@ test('a record param page rule: one per view, exactly { where }, fixed values ov
     { field: { property: 'Published' }, op: 'equals', value: true },
     { field: { property_id: 'prop_type' }, op: 'not_equals', value: 'Report' },
     { field: { property: 'Status' }, op: 'is_empty' },
+    { field: { property: 'Type' }, op: 'in', value: ['HTML page', 'Report'] },
   ]) check(view({ note: note({ where }) }));
   const failures = [
     [{ note: note({ ...notesPage, open: 'note' }) }, /declare page as \{ where \}/],
@@ -454,7 +487,9 @@ test('a record param page rule: one per view, exactly { where }, fixed values ov
     [{ note: note({ where: { field: { column: 'created_at' }, op: 'after', value: '2026-01-01' } }) }, /reads the columns record_key, id, content_type, file_type, title/],
     [{ note: note({ where: { field: { column: 'title' }, op: 'contains', value: 'Q3' } }) }, /contains does not apply to "title"/],
     [{ note: note({ where: { field: { column: 'content_type' }, op: 'in', value: ['view'] } }) }, /in does not apply to "content_type"/],
-    [{ note: note({ where: { field: { property: 'Type' }, op: 'in', value: ['Report'] } }) }, /in does not apply to "Type"/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'in', value: [] } }) }, /in takes a list of 1 to 100 options/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'in', value: Array(101).fill('Report') } }) }, /in takes a list of 1 to 100 options/],
+    [{ note: note({ where: { field: { property: 'Type' }, op: 'in', value: ['Report', '{note.Type}'] } }) }, /fixed values, not \{param\} placeholders/],
     [{ note: note({ where: { field: { property: 'Type' }, op: 'equals', value: '{note.Type}' } }) }, /fixed values, not \{param\} placeholders/],
     [{ note: note({ where: { field: { column: 'record_key' }, op: 'in', value: ['{note}'] } }) }, /fixed values, not \{param\} placeholders/],
     // As on the server, {{param}} is refused too.
@@ -484,6 +519,7 @@ test('a record param page rule: one per view, exactly { where }, fixed values ov
     { field: { property: 'Format' }, op: 'not_equals', value: 'Report' },
     { field: { property: 'Stage' }, op: 'is_not_empty' },
     { field: { property_id: 'published' }, op: 'equals', value: false },
+    { field: { property: 'Stage' }, op: 'in', value: ['Draft', 'Live'] },
   ]) check(view({ note: note({ where }) }), created);
   for (const [where, pattern] of [
     [{ field: { property: 'Missing' }, op: 'equals', value: 'x' }, /"Missing" is not a property of that database/],
@@ -492,6 +528,8 @@ test('a record param page rule: one per view, exactly { where }, fixed values ov
     [{ field: { property: 'Tags' }, op: 'is_empty' }, /"Tags" is not a select, status or checkbox property/],
     [{ field: { property: 'Name' }, op: 'equals', value: 'Q3' }, /"Name" is not a select, status or checkbox property/],
     [{ field: { property: 'Published' }, op: 'is_empty' }, /is_empty does not apply to "Published"/],
+    [{ field: { property: 'Published' }, op: 'in', value: [true] }, /in does not apply to "Published"/],
+    [{ field: { property: 'Type' }, op: 'in', value: ['Report', true] }, /compare "Type" with an option name or ID/],
     [{ field: { property: 'Published' }, op: 'equals', value: 'yes' }, /compare "Published" with true or false/],
     [{ field: { property: 'Type' }, op: 'equals', value: true }, /compare "Type" with an option name or ID/],
   ]) assert.throws(() => check(view({ note: note({ where }) }), created), pattern, JSON.stringify(where));

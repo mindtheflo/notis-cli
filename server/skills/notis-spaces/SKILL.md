@@ -87,11 +87,11 @@ user asked, and quote their words in `user_words`. The CLI equivalents are
 
 | Task | Read |
 | --- | --- |
-| Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md) |
+| Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md); list filters (`in` for several options): [Params and declared lists](references/views.md#params-and-declared-lists) |
 | Read a saved view, chart, report or HTML page | [Read and render](references/reading.md) |
 | Save or revise a Notes report or interactive report | [Reports](references/reports.md) |
 | Choose a memory policy | [Memory](references/memory.md) |
-| Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md) |
+| Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md); rows and counts (`useNativeDocuments`, `useNativeCount`): [Records and declared reads](references/sdk.md#records-and-declared-reads) |
 | Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
 | Diagnose a failed check or release | [Troubleshooting](references/troubleshooting.md) |
 | Publish or share a Space or its update in the Store | [Store publishing](references/store.md): you only prepare the submission and send its page; the person publishes there. No tool publishes |

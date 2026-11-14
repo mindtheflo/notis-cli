@@ -14,7 +14,9 @@ inputs/list params. Each `useShown` name maps to an array of `{params, result}` 
 ```
 
 Use your declared list names and exact initial params (including defaults); add a
-case for every load-time list read. Put fictional rows in `result.rows` to verify
+case for every load-time list read. A `useNativeCount` read is an `actions` case of
+the binding's query action: `{"inputs": {"request": {"filter": ..., "mode": "count"}},
+"result": {"count": 3, "schema_revision": 1}}` (no `filter` key when it has none). Put fictional rows in `result.rows` to verify
 populated states. Record views use `{operation: 'record'|'html'|'report', record_key,
 result}`; native record snapshots require `writable: false` and no authoring target.
 A record view fixture needs a declared native database resource; a record param is

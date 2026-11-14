@@ -38,7 +38,23 @@ const OPS = new Set(['equals', 'not_equals', 'in', 'contains', 'not_contains', '
 const PAGE_COLUMN_OPS = { record_key: ['equals', 'not_equals', 'in'], id: ['equals', 'not_equals', 'in'],
   content_type: ['equals', 'not_equals', 'is_empty', 'is_not_empty'], file_type: ['equals', 'not_equals', 'is_empty', 'is_not_empty'],
   title: ['equals', 'not_equals', 'is_empty', 'is_not_empty'] };
-const PAGE_PROPERTY_OPS = { select: ['equals', 'not_equals', 'is_empty', 'is_not_empty'], checkbox: ['equals', 'not_equals'] };
+const PAGE_PROPERTY_OPS = { select: ['equals', 'not_equals', 'in', 'is_empty', 'is_not_empty'], checkbox: ['equals', 'not_equals'] };
+// `in` lists up to 500 record ids, or up to 100 options of a select or status property (in_list_limit in
+// server/lib/native_data_query.py).
+const IN_LIMITS = { column: [500, 'record ids'], property: [100, 'options'] };
+// A filter nests at most 12 levels and holds at most 200 conditions (normalize_native_filter).
+const MAX_FILTER_DEPTH = 12;
+const MAX_FILTER_CONDITIONS = 200;
+
+function inLimit(field) {
+  return IN_LIMITS[plain(field) && 'column' in field ? 'column' : 'property'];
+}
+
+// What an `in` adds to the filter: a property `in` listing more than one value reads as an `or` of them, so it adds
+// that many conditions and one level; a column `in` adds nothing (in_expansion in server/lib/native_data_query.py).
+function inExpansion(field, value) {
+  return plain(field) && !('column' in field) && Array.isArray(value) && value.length > 1 ? value.length : 0;
+}
 const EMPTY_OPS = new Set(['is_empty', 'is_not_empty']);
 const KIND_ALIASES = { phone: 'phone_number', string: 'text' };
 const CRON_BOUNDS = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
@@ -197,9 +213,9 @@ function checkPlaceholder(value, params, collection, where) {
   if (property !== undefined && params[name].type !== 'record') throw usageError(`${where}: only record params have properties, such as {${name}}.`);
 }
 
-function walkFilter(node, visit, where, depth = 0, budget = { left: 200 }) {
+function walkFilter(node, visit, where, depth = 0, budget = { left: MAX_FILTER_CONDITIONS }) {
   budget.left -= 1;
-  if (depth > 12 || budget.left < 0) throw usageError(`${where}: the filter is too complex; use fewer conditions.`);
+  if (depth > MAX_FILTER_DEPTH || budget.left < 0) throw usageError(`${where}: the filter is too complex; use fewer conditions.`);
   if (depth === 0 && plain(node) && !Object.keys(node).length) return;
   if (!plain(node)) throw usageError(`${where}: a filter is an object.`);
   for (const group of ['and', 'or']) {
@@ -214,6 +230,13 @@ function walkFilter(node, visit, where, depth = 0, budget = { left: 200 }) {
     || !plain(field) || Object.keys(field).length !== 1 || !FIELD_KEYS.includes(Object.keys(field)[0])
     || typeof Object.values(field)[0] !== 'string' || !OPS.has(node.op)) {
     throw usageError(`${where}: each condition is { field: { property }, op, value } in the native filter language.`);
+  }
+  // A list over its length limit is left to visit(), which names the limit instead of calling the filter too complex.
+  const fits = !Array.isArray(node.value) || node.value.length <= inLimit(field)[0];
+  const extra = node.op === 'in' && fits ? inExpansion(field, node.value) : 0;
+  budget.left -= extra;
+  if (extra && (depth + 1 > MAX_FILTER_DEPTH || budget.left < 0)) {
+    throw usageError(`${where}: the filter is too complex; use fewer conditions.`);
   }
   visit(node);
 }
@@ -268,8 +291,9 @@ function validatePage(name, page, resource) {
       return;
     }
     if (!('value' in condition)) throw usageError(`${where}: ${condition.op} needs a value.`);
-    if (condition.op === 'in' && (!Array.isArray(condition.value) || condition.value.length < 1 || condition.value.length > 500)) {
-      throw usageError(`${where}: in takes a list of 1 to 500 record ids.`);
+    const [cap, items] = inLimit(condition.field);
+    if (condition.op === 'in' && (!Array.isArray(condition.value) || condition.value.length < 1 || condition.value.length > cap)) {
+      throw usageError(`${where}: in takes a list of 1 to ${cap} ${items}.`);
     }
     for (const value of condition.op === 'in' ? condition.value : [condition.value]) {
       // Fixed values only: neither {param} nor {{param}} is ever bound in a page rule (the server refuses both).
@@ -315,6 +339,15 @@ function validateShows(name, declaration, params, resources, collection) {
       throw usageError(`${where}: when names a declared boolean param.`);
     }
     if (!('value' in condition)) return;
+    if (condition.op === 'in') {
+      // A property `in` (select or status) always lists 1 to 100 values; a column `in` given as a list lists 1 to
+      // 500 (a scalar there stays as before). Each value is fixed or one placeholder.
+      const [cap, items] = inLimit(condition.field);
+      const listed = condition.value;
+      if ((Array.isArray(listed) || !('column' in condition.field)) && (!Array.isArray(listed) || listed.length < 1 || listed.length > cap)) {
+        throw usageError(`${where}: in takes a list of 1 to ${cap} ${items}.`);
+      }
+    }
     const values = condition.op === 'in' && Array.isArray(condition.value) ? condition.value : [condition.value];
     values.forEach(value => checkPlaceholder(value, params, collection, where));
   }, where);
