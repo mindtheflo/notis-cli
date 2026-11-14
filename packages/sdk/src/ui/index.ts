@@ -33,7 +33,7 @@ export {
 } from './period/dateFormat';
 export type { Delta, DeltaTone, FormatDurationOptions } from './period/dateFormat';
 export {
-  CALENDAR_WORDS, CHART_WORDS, COMPARE_WORDS, PERIOD_WORDS, PRESET_WORDS, TIMELINE_WORDS, VS_WORDS,
+  CALENDAR_WORDS, CHART_WORDS, COMPARE_WORDS, HEATMAP_WORDS, PERIOD_WORDS, PRESET_WORDS, TIMELINE_WORDS, VS_WORDS,
 } from './period/dateWords';
 export { usePeriod } from './period/usePeriod';
 export type { UsePeriodOptions, UsePeriodResult } from './period/usePeriod';
@@ -63,6 +63,8 @@ export { StatRow, metricView } from './charts/StatRow';
 export type { StatMetric, StatRowProps } from './charts/StatRow';
 export { ChartTable, Sparkline } from './charts/ChartTable';
 export type { ChartTableProps, SparklineProps } from './charts/ChartTable';
+export { CalendarHeatmap } from './charts/CalendarHeatmap';
+export type { CalendarHeatmapDay, CalendarHeatmapProps } from './charts/CalendarHeatmap';
 export { RenderChartData } from './charts/RenderChartData';
 export type { RenderChartDataProps } from './charts/RenderChartData';
 // recharts primitives, shared so a Space draws with the host's one recharts. Tooltip is the overlay one; recharts'

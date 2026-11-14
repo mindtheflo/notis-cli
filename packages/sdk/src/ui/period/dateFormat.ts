@@ -38,7 +38,8 @@ function joinFrenchParts(parts: Intl.DateTimeFormatPart[]): string {
   return parts.map((part) => (part.type === 'day' && part.value === '1' ? '1er' : part.value)).join('');
 }
 
-function formatDay(fmt: Intl.DateTimeFormat, date: Date, locale: Locale): string {
+/** A date through `fmt`, French writing the first of the month "1er". */
+export function formatDay(fmt: Intl.DateTimeFormat, date: Date, locale: Locale): string {
   return locale === 'fr' ? joinFrenchParts(fmt.formatToParts(date)) : fmt.format(date);
 }
 

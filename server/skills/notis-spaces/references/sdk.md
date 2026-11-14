@@ -92,7 +92,7 @@ rather than from a copy.
   only reads. Use it rather than columns of your own.
 - **Time and numbers**: `PeriodPicker` with `usePeriod`, `DayPicker`,
   `CalendarView`, `TimelineView`, `Chart`, `StatRow`, `ChartTable`,
-  `RenderChartData`, `Meter`, `DataTable`, `formatDuration`; their options
+  `CalendarHeatmap`, `RenderChartData`, `Meter`, `DataTable`, `formatDuration`; their options
   are in [Charts, meters and tables](#charts-meters-and-tables).
 - **Floating**: `Menu`, `Popover`, `Tooltip`, `InfoTip`. `InfoTip` is the
   info button beside a label (a figure's `about`, a section heading, a meter):
@@ -213,6 +213,15 @@ columns that do not fit hide on their own.
 
 `formatDuration(ms, locale, { units, smallest })` writes "1 h 31 min" (FR "4 j 6
 h").
+
+`CalendarHeatmap` is a GitHub-style grid of days coloured by value (a habit,
+journal entries, a mood): `data` rows with `dateKey` and `valueKey` (default
+`date` and `value`; `valueKey={null}` counts rows), `from` and `to` (default
+the last 12 months), `tone`, `scale="diverging"` with `domain` or `midpoint`
+for good to bad data (`higherIsBetter={false}` swaps the colours), `levels`,
+`format`, `onSelect(day)` (cells become buttons; `day` is `{ date, key }`
+with `key` the ISO day, plus `value` and the day's `rows`), `title`, `legend`,
+`weekStartsOn`. It brings its tooltips, keys and data table.
 
 ## Comments
 
@@ -429,8 +438,8 @@ cloud computer.
 
 ## Visual data and Markdown
 
-Give a chart its numbers through `RenderChartData` (the toolkit's `Chart` and
-`ChartTable` already do): it adds a semantic table without a second visible one.
+Give a chart its numbers through `RenderChartData` (the toolkit's `Chart`,
+`ChartTable` and `CalendarHeatmap` already do): it adds a semantic table without a second visible one.
 The renderer never guesses exact numbers from SVG or canvas geometry; a chart
 without it contributes only its accessible name to the Markdown.
 

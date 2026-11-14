@@ -59,6 +59,16 @@ export const CHART_WORDS = Object.freeze({
   noValue: w('No data', 'Aucune donnée'),
 });
 
+/** The calendar heatmap (CalendarHeatmap): a day's cell, its legend and its default name. */
+export const HEATMAP_WORDS = Object.freeze({
+  title: w('Activity by day', 'Activité par jour'),
+  /** A day's cell and its tooltip: the value (through `format`), then the day. */
+  day: w('{v} on {d}', '{v} le {d}'),
+  noData: w('No data on {d}', 'Aucune donnée le {d}'),
+  less: w('Less', 'Moins'),
+  more: w('More', 'Plus'),
+});
+
 export const CALENDAR_WORDS = Object.freeze({
   month: w('Month', 'Mois'),
   week: w('Week', 'Semaine'),

@@ -1587,3 +1587,48 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
     white-space: normal; line-height: 1.3; }
   .nui-comment-toolbar-hint[data-idle] { display: none; }
 }
+
+/* == section: calendar heatmap (charts) == */
+/* CalendarHeatmap: one square per day, weeks as columns. The cells fill the width up to 16px and shrink to 10px; under
+   that the grid scrolls inside its own box. Colour is a hue (--nui-heat-color) at one opacity per level (--nui-heat-a,
+   set per cell); an empty day or a value at the bottom of the scale is the Meter track, a diverging value at its
+   midpoint a step darker. The legend sits under the grid's right edge. Focus marks the cell with an inset outline,
+   never a ring around it. */
+.nui-heat { --nui-heat-color: var(--chart-1, 210 100% 49%); --nui-heat-down: var(--nui-tone-danger, var(--destructive, 0 84% 60%));
+  --nui-heat-label: 16px; --nui-heat-gap: 3px; container-type: inline-size; display: flex; flex-direction: column; gap: 8px;
+  min-width: 0; color: hsl(var(--foreground)); }
+.nui-heat[data-tone="info"] { --nui-heat-color: var(--nui-blue, 217 91% 60%); }
+.nui-heat[data-tone="success"] { --nui-heat-color: var(--nui-st-active, 142 71% 45%); }
+.nui-heat[data-tone="warning"] { --nui-heat-color: 38 92% 50%; }
+.nui-heat[data-tone="danger"] { --nui-heat-color: var(--nui-tone-danger, var(--destructive, 0 84% 60%)); }
+.nui-heat[data-scale="diverging"] { --nui-heat-color: var(--nui-st-active, 142 71% 45%); }
+.nui-heat[data-scale="diverging"][data-flip] { --nui-heat-color: var(--nui-tone-danger, var(--destructive, 0 84% 60%));
+  --nui-heat-down: var(--nui-st-active, 142 71% 45%); }
+.nui-heat-scroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.nui-heat-body { --nui-heat-cell: clamp(10px, calc((100cqi - 4px - var(--nui-heat-label) - var(--nui-heat-gap) * var(--nui-heat-weeks)) / var(--nui-heat-weeks)), 16px);
+  display: flex; flex-direction: column; gap: 4px; width: max-content; padding: 2px; }
+.nui-heat-months, .nui-heat-row { display: grid; grid-template-columns: var(--nui-heat-label) repeat(var(--nui-heat-weeks), var(--nui-heat-cell));
+  column-gap: var(--nui-heat-gap); }
+.nui-heat-grid { display: flex; flex-direction: column; gap: var(--nui-heat-gap); outline: none; }
+.nui-heat-month { grid-row: 1; min-width: 0; overflow: visible; white-space: nowrap; font-size: 11px; line-height: 14px;
+  color: hsl(var(--muted-foreground)); }
+.nui-heat-wd { align-self: center; font-size: 10px; line-height: 1; color: hsl(var(--muted-foreground)); }
+.nui-heat-slot { display: flex; }
+.nui-heat-cell { box-sizing: border-box; display: block; width: var(--nui-heat-cell); height: var(--nui-heat-cell); margin: 0;
+  padding: 0; border: 0; border-radius: 2px; background: hsl(var(--foreground) / .08); outline: none; font: inherit;
+  transition: box-shadow .12s ease; }
+.nui-heat-cell[data-level] { background: hsl(var(--nui-heat-color) / var(--nui-heat-a, 1)); }
+.nui-heat-cell[data-side="down"] { background: hsl(var(--nui-heat-down) / var(--nui-heat-a, 1)); }
+.nui-heat-cell[data-neutral] { background: hsl(var(--foreground) / .22); }
+.nui-heat-cell[data-out] { background: transparent; }
+button.nui-heat-cell { cursor: pointer; }
+.nui-heat-cell:not([data-out]):hover { box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .45); }
+.nui-heat-cell:focus { outline: none; }
+.nui-heat-cell:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--foreground) / .85); }
+.nui-heat-legend { display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-top: 4px; font-size: 11px;
+  line-height: 14px; color: hsl(var(--muted-foreground)); }
+.nui-heat-legend > span:first-child { margin-inline-end: 4px; }
+.nui-heat-legend > span:last-child { margin-inline-start: 4px; }
+.nui-heat-swatch { --nui-heat-cell: 10px; flex: none; }
+@container (max-width: 480px) { .nui-heat-body { --nui-heat-gap: 2px; } }
+@media (prefers-reduced-motion: reduce) { .nui-heat-cell { transition: none; } }
