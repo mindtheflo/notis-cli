@@ -3,7 +3,9 @@
 Decide what the view is for before choosing how to build it: what the person
 does there, what they look at first, how dense or calm it should be. Then take
 what fits from `@notis/sdk/ui` ([SDK](sdk.md#toolkit-pieces)). The host frame,
-theme tokens, keyboard engine and EN/FR words stay Notis's.
+theme tokens, keyboard engine and EN/FR words stay Notis's. The theme colours
+are Tailwind colours that take any opacity (`bg-accent/10`, `bg-chart-2/40`,
+`text-foreground/60`).
 
 Floating UI comes from `Menu`, `Popover` and `Tooltip`; they open inside the
 Space and pick up its theme. Open as Side, Center or Full belongs to the list

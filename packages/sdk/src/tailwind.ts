@@ -1,8 +1,40 @@
-/** Build-only SDK content discovery. Author configuration and PostCSS plugins stay intact. */
+/**
+ * Build-only SDK content discovery and Notis theme colours. Author configuration and PostCSS plugins stay intact:
+ * a colour, theme value or opacity step the Space defines itself always wins over the defaults added here.
+ */
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const tone = (name: string) => `hsl(var(--${name}))`;
+const pair = (name: string) => ({ DEFAULT: tone(name), foreground: tone(`${name}-foreground`) });
+
+/**
+ * The colours the Notis host sets on every Space page (light and dark), as Tailwind colours, so `bg-accent`,
+ * `text-chart-2` and opacity modifiers such as `bg-chart-2/40` or `bg-foreground/12` work in every Space.
+ */
+export const NOTIS_THEME_COLORS = {
+  border: tone('border'), input: tone('input'), ring: tone('ring'),
+  background: tone('background'), foreground: tone('foreground'),
+  primary: pair('primary'), secondary: pair('secondary'), destructive: pair('destructive'), muted: pair('muted'),
+  accent: pair('accent'), popover: pair('popover'), card: pair('card'),
+  chart: { 1: tone('chart-1'), 2: tone('chart-2'), 3: tone('chart-3'), 4: tone('chart-4'), 5: tone('chart-5') },
+} as const;
+
+/** Tailwind 4 theme block: `default` keeps every colour a Space sets in its own `@theme` or `@config` first. */
+const THEME_MARK = '/* notis-theme-colors */';
+const themeBlock = () => {
+  const lines: string[] = [];
+  for (const [name, value] of Object.entries(NOTIS_THEME_COLORS)) {
+    if (typeof value === 'string') { lines.push(`  --color-${name}: ${value};`); continue; }
+    for (const [key, shade] of Object.entries(value)) lines.push(`  --color-${name}${key === 'DEFAULT' ? '' : `-${key}`}: ${shade};`);
+  }
+  return `${THEME_MARK}\n@theme default inline {\n${lines.join('\n')}\n}`;
+};
+
+/** Tailwind 3 only knows the opacity steps of its scale (5, 10, 15...): every whole percent works, as in Tailwind 4. */
+const OPACITY_STEPS = Object.fromEntries(Array.from({ length: 101 }, (_, step) => [String(step), String(step / 100)]));
 
 export function notisTailwindContent() {
   let root = process.cwd();
@@ -26,7 +58,8 @@ export function notisTailwindContent() {
         const sdkSource = dirname(fileURLToPath(import.meta.url));
         const relativeSource = './' + relative(dirname(stylesheet), sdkSource).replaceAll('\\', '/');
         const directive = `@source ${JSON.stringify(relativeSource)};`;
-        return source.includes(directive) ? null : { code: `${source}\n${directive}\n`, map: null };
+        const added = [source.includes(directive) ? '' : `${directive}\n`, source.includes(THEME_MARK) ? '' : `${themeBlock()}\n`].join('');
+        return added ? { code: `${source}\n${added}`, map: null } : null;
       }
       if (!/@tailwind\s/.test(source)) return null;
       const explicit = source.match(/@config\s+(['"])(.*?)\1\s*;/);
@@ -41,11 +74,28 @@ export function notisTailwindContent() {
         const sdkGlob = join(dirname(fileURLToPath(import.meta.url)), '**/*.{ts,tsx}').replaceAll('\\', '/');
         writeFileSync(wrapper, `import config from ${JSON.stringify(config)};
 import { resolve } from 'node:path';
+const defaults = ${JSON.stringify({ colors: NOTIS_THEME_COLORS, opacity: OPACITY_STEPS })};
+const theme = config.theme || {};
+const extend = theme.extend || {};
+const presets = (config.presets || []).filter(preset => preset && typeof preset === 'object').map(preset => preset.theme || {});
+// The Space's own colours and opacity steps win: a default fills only what the Space (or its presets) leaves unset,
+// one level deep, so a Space's own card keeps the Notis card-foreground. A scale the Space replaces stays as it is.
+const fill = (key) => {
+  if (typeof theme[key] === 'function' || (key === 'opacity' && theme.opacity)) return extend[key];
+  const own = [...presets.flatMap(t => [t[key], (t.extend || {})[key]]), theme[key], extend[key]].filter(v => v && typeof v === 'object');
+  const added = {};
+  for (const [name, value] of Object.entries(defaults[key])) {
+    const set = own.map(o => o[name]).filter(v => v !== undefined);
+    if (!set.length) added[name] = value;
+    else if (typeof value === 'object' && set.every(v => v && typeof v === 'object')) added[name] = Object.assign({}, value, ...set);
+  }
+  return typeof extend[key] === 'function' ? (utils) => ({ ...added, ...extend[key](utils) }) : { ...extend[key], ...added };
+};
 const content = config.content || [];
 const files = Array.isArray(content) ? content : (content.files || []);
 const base = ${JSON.stringify(root)};
 const relativeBase = ${JSON.stringify(dirname(config))};
-export default { ...config, content: {
+export default { ...config, theme: { ...theme, extend: { ...extend, colors: fill('colors'), opacity: fill('opacity') } }, content: {
   ...(Array.isArray(content) ? {} : content),
   relative: false,
   files: [...files.map(file => typeof file !== 'string' ? file :
