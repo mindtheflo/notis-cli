@@ -117,6 +117,42 @@ async function sourceFixture(t) {
   return root;
 }
 
+test('a deploy whose server step got no answer says the network cause and resumes under the same request ID', async t => {
+  // Nov 2026: dashboard agents saw a bare "fetch failed" from verify and deploy, with nothing saying what to do next.
+  const root = await sourceFixture(t), calls = [];
+  let dropped = true;
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    const body = JSON.parse(request.body); calls.push({ url, body, dispatcher: request.dispatcher });
+    if (url.endsWith('/source-verify')) return new Response(JSON.stringify({ valid: true, actor_id: 'fixture-user',
+      space_id: body.space_id, revision: 0, bindings: {}, reuse_grants: body.reuse_grants,
+      source_digest: appFilesDigest(body.source_files), artifact_digest: appFilesDigest(body.artifact_files) }));
+    if (dropped) throw new TypeError('fetch failed', { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) });
+    return new Response('{"published_revision":1,"replayed":true}');
+  });
+  const progress = [];
+  const ctx = context('spaces deploy', { space: 'one', spaceId: 'fixture-space', requestId: 'intent' }, { dir: root });
+  ctx.output.emitProgress = value => progress.push(value.phase);
+  ctx.runtime.retry = false;
+  await assert.rejects(ctx.spec.handler(ctx), error => {
+    assert.equal(error.code, 'network_error');
+    assert.match(error.message, /\/portal_spaces\/source-publish failed before https:\/\/fixture\.invalid answered: fetch failed \(UND_ERR_SOCKET\)/);
+    assert.match(error.message, /run the same notis spaces deploy command again \(same folder and options\) with --request-id intent; it resumes this release and never publishes it twice\./);
+    assert.equal(error.details.cause_code, 'UND_ERR_SOCKET');
+    assert.equal(error.details.request_id_to_reuse, 'intent');
+    assert.deepEqual(error.hints[0], { command: '--request-id intent', reason: 'Add to the same notis spaces deploy command to resume this release' });
+    return true;
+  });
+  assert.deepEqual(progress, ['source-verify', 'render', 'source-publish'], 'each step is announced before it starts');
+  assert.ok(calls.every(call => call.dispatcher), 'every request carries the dispatcher without the hidden 300 s limits');
+  dropped = false;
+  const result = await ctx.spec.handler(ctx);
+  assert.equal(result.data.replayed, true);
+  assert.equal(calls.filter(call => call.url.endsWith('/source-verify')).length, 1, 'the retry resumes, it does not verify again');
+  const verify = context('spaces verify', { space: 'one', spaceId: 'fixture-space' }, { dir: root });
+  t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo'), { code: 'ENOTFOUND' }) }); });
+  await assert.rejects(verify.spec.handler(verify), /\(ENOTFOUND\).* Nothing was published: run the same notis spaces verify command again\./);
+});
+
 test('interrupted source deployment keeps the original verification CAS and exact bytes on retry', async t => {
   const root = await sourceFixture(t), calls = [];
   let lost = true;

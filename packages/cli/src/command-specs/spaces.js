@@ -203,6 +203,28 @@ function sameVerification(verification, body, sourceDigest) {
     && (verification.authorization_mode ?? 'authorize_missing') === (body.authorization_mode ?? 'authorize_missing');
 }
 
+// What each server step of a verify or deploy is doing, said before it starts so a long wait never looks like a hang.
+const RELEASE_STEPS = { 'sql-reads': 'Compiling the SQL reads', 'source-verify': 'Checking the source and its authorizations',
+  'source-publish': 'Publishing', 'source-stage': 'Preparing the candidate revision' };
+
+/**
+ * A verify or deploy whose server step got no answer says how to continue: a deploy resumes under the same
+ * request ID (the server finishes or confirms that release, never a second one); a verify published nothing.
+ */
+function resumableReleaseError(error, ctx, intentKey) {
+  if (!(error instanceof CliError) || !['network_error', 'network_timeout'].includes(error.code)) return error;
+  // The same command: its folder, --space, --space-id and --profile decide which release the request ID resumes.
+  const command = `notis ${ctx.spec.command_path.join(' ')}`;
+  const next = intentKey
+    ? `Nothing is lost: run the same ${command} command again (same folder and options) with --request-id ${intentKey}; `
+      + 'it resumes this release and never publishes it twice.'
+    : `Nothing was published: run the same ${command} command again.`;
+  return new CliError({ code: error.code, message: `${error.message} ${next}`, exitCode: error.exitCode, retryable: true,
+    details: { ...error.details, ...(intentKey ? { request_id_to_reuse: intentKey } : {}) },
+    hints: [intentKey ? { command: `--request-id ${intentKey}`, reason: `Add to the same ${command} command to resume this release` }
+      : { command, reason: 'Run the same command again' }, ...(error.hints || [])], cause: error.cause });
+}
+
 async function sourceRelease(ctx, publish, stageOnly = false) {
   const { directory, key } = await selected(ctx);
   const spaceId = destinationSpaceId(ctx, directory);
@@ -213,8 +235,13 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
   const release = await prepareSpaceRelease(directory, key);
   try {
     if (publish) requireSpaceIcon(release.manifest, key);
-    const call = (operation, data) => httpRequest({ runtime: { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, 600_000) },
-      method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: true });
+    const call = async (operation, data) => {
+      ctx.output.emitProgress?.({ phase: operation, message: `${RELEASE_STEPS[operation] || operation} on the server` });
+      try {
+        return await httpRequest({ runtime: { ...ctx.runtime, timeoutMs: Math.max(ctx.runtime.timeoutMs || 0, 600_000) },
+          method: 'POST', path: `/portal_spaces/${operation}`, body: data, spacesProtocol: true });
+      } catch (error) { throw resumableReleaseError(error, ctx, publish && !ctx.options.dryRun ? intentKey : null); }
+    };
     const compiledReads = await compileSpaceSqlReads(release, call);
     const identity = [ctx.runtime.apiBase.replace(/\/$/, ''), ctx.runtime.profileName, key, spaceId, intentKey];
     let verification = publish && !ctx.options.dryRun ? spacePublicationIntent(directory, identity) : null;
@@ -243,6 +270,7 @@ async function sourceRelease(ctx, publish, stageOnly = false) {
     const cancel = () => controller.abort();
     process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
     let render;
+    ctx.output.emitProgress?.({ phase: 'render', message: 'Rendering the fixtures in a local browser' });
     try { render = await verifySpaceRelease(release, { capabilities: verification.capabilities, signal: controller.signal,
       authorizationMode: body.authorization_mode, unavailableActions: verification.unavailable_actions,
       // Test seam only: the command context never carries it from user options.

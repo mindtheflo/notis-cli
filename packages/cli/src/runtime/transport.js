@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { dirname } from 'node:path';
 import { CliError, EXIT_CODES } from './errors.js';
 import { agentIdentityHeaders } from './agent-identity.js';
+import { deadlineDispatcher, isTransportTimeout, networkCauseCode } from './http-agent.js';
 import {
   credentialIsExpired,
   getJwtExpiration,
@@ -401,6 +402,8 @@ export async function httpRequest({
     };
   };
 
+  // The AbortController above is this request's one deadline (http-agent.js).
+  const dispatcher = await deadlineDispatcher();
   try {
     let requestBody = resolveBody();
     let response = await fetch(`${runtime.apiBase}${path}`, {
@@ -408,6 +411,7 @@ export async function httpRequest({
       headers: { ...headers, ...requestBody.headers },
       body: requestBody.body,
       signal: controller.signal,
+      ...(dispatcher ? { dispatcher } : {}),
       ...(requestBody.duplex ? { duplex: requestBody.duplex } : {}),
     });
 
@@ -435,6 +439,7 @@ export async function httpRequest({
           headers: { ...headers, ...requestBody.headers },
           body: requestBody.body,
           signal: controller.signal,
+          ...(dispatcher ? { dispatcher } : {}),
           ...(requestBody.duplex ? { duplex: requestBody.duplex } : {}),
         });
         payloadReadError = null;
@@ -487,24 +492,34 @@ export async function httpRequest({
       throw error;
     }
 
-    if (error?.name === 'AbortError') {
+    // This attempt's own limit, which a command may set longer or a retry shorter than --timeout-ms.
+    if (error?.name === 'AbortError' || isTransportTimeout(error)) {
+      // Our own deadline names its limit; a transport that stopped first (a checkout without undici) names its code.
+      const limit = error?.name === 'AbortError'
+        ? `within ${timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)} s` : `${timeoutMs} ms`}` : `before the transport gave up (${networkCauseCode(error)})`;
       throw new CliError({
         code: 'network_timeout',
-        message: `Request timed out after ${runtime.timeoutMs}ms`,
+        message: `${path} got no answer from ${runtime.apiBase} ${limit} (request ${requestId}).`,
         exitCode: EXIT_CODES.network,
         retryable: true,
+        details: { path, request_id: requestId, timeout_ms: timeoutMs },
         hints: [
           { command: 'notis doctor', reason: 'Check API reachability' },
-          { command: `--timeout-ms ${runtime.timeoutMs * 2}`, reason: 'Retry with a longer timeout' },
+          // A retry's attempt gets only what is left of the budget: never suggest less than the limit already set.
+          { command: `--timeout-ms ${Math.max(timeoutMs, runtime.timeoutMs || 0) * 2}`, reason: 'Retry with a longer timeout' },
         ],
       });
     }
 
+    // fetch says only "fetch failed": the network code under it (ECONNRESET, ENOTFOUND, ...) is what a user can act on.
+    const causeCode = networkCauseCode(error);
+    const message = error instanceof Error ? error.message : String(error);
     throw new CliError({
       code: 'network_error',
-      message: error instanceof Error ? error.message : String(error),
+      message: `${path} failed before ${runtime.apiBase} answered: ${message}${causeCode && !message.includes(causeCode) ? ` (${causeCode})` : ''} (request ${requestId}).`,
       exitCode: EXIT_CODES.network,
       retryable: true,
+      details: { path, request_id: requestId, ...(causeCode ? { cause_code: causeCode } : {}) },
       cause: error,
     });
   }
