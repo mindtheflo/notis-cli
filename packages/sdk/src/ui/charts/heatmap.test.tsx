@@ -293,11 +293,13 @@ test('CalendarHeatmap: tones and the diverging scale set the colour; empty data 
 
 const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
 
-test('CalendarHeatmap CSS: its own section, focus is an inset outline (no ring), it scrolls inside itself', () => {
+test('CalendarHeatmap CSS: its own section, a focused day grows and an empty one fills in (no ring), it scrolls inside itself', () => {
   const at = css.indexOf('/* == section: calendar heatmap (charts) == */');
   assert.ok(at > 0);
   const section = css.slice(at);
-  assert.match(section, /\.nui-heat-cell:focus-visible \{ box-shadow: inset /);
+  assert.match(section, /\.nui-heat-cell:focus-visible \{[^}]*transform: scale\(1\.25\)/);
+  assert.match(section, /\.nui-heat-cell:not\(\[data-level\]\):not\(\[data-neutral\]\):not\(\[data-out\]\):focus-visible \{ background: /);
+  assert.doesNotMatch(section, /:focus[^{}]*\{[^}]*(box-shadow|outline:(?!\s*none))/, 'focus draws no ring or outline');
   assert.match(section, /\.nui-heat-scroll \{ overflow-x: auto;/);
   assert.match(section, /container-type: inline-size/);
   assert.match(section, /prefers-reduced-motion/);

@@ -1616,7 +1616,7 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
 .nui-heat-slot { display: flex; }
 .nui-heat-cell { box-sizing: border-box; display: block; width: var(--nui-heat-cell); height: var(--nui-heat-cell); margin: 0;
   padding: 0; border: 0; border-radius: 2px; background: hsl(var(--foreground) / .08); outline: none; font: inherit;
-  transition: box-shadow .12s ease; }
+  transition: box-shadow .12s ease, transform .12s ease; }
 .nui-heat-cell[data-level] { background: hsl(var(--nui-heat-color) / var(--nui-heat-a, 1)); }
 .nui-heat-cell[data-side="down"] { background: hsl(var(--nui-heat-down) / var(--nui-heat-a, 1)); }
 .nui-heat-cell[data-neutral] { background: hsl(var(--foreground) / .22); }
@@ -1624,7 +1624,9 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
 button.nui-heat-cell { cursor: pointer; }
 .nui-heat-cell:not([data-out]):hover { box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .45); }
 .nui-heat-cell:focus { outline: none; }
-.nui-heat-cell:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--foreground) / .85); }
+/* Focus draws no ring (docs/portal-design-system.md): the focused day grows over its neighbours and an empty day fills in. */
+.nui-heat-cell:focus-visible { position: relative; z-index: 1; transform: scale(1.25); border-radius: 3px; }
+.nui-heat-cell:not([data-level]):not([data-neutral]):not([data-out]):focus-visible { background: hsl(var(--foreground) / .35); }
 .nui-heat-legend { display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-top: 4px; font-size: 11px;
   line-height: 14px; color: hsl(var(--muted-foreground)); }
 .nui-heat-legend > span:first-child { margin-inline-end: 4px; }
