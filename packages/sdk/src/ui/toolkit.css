@@ -126,8 +126,10 @@ div.nui-row[data-open] + div.nui-row, div.nui-row[data-cursor] + div.nui-row { b
 div.nui-row:has(> .nui-row-main[data-wrap]), div.nui-row[data-wrap] { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
 div.nui-row:has(> .nui-row-main[data-wrap]) > .nui-row-trail, div.nui-row[data-wrap] > .nui-row-trail { align-self: flex-start; line-height: 20px; }
 div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap] .nui-row-more { margin-top: -4px; }
-.nui-row-lead { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; }
-.nui-row-icon { display: inline-flex; font-size: 16px; line-height: 1; color: hsl(var(--muted-foreground)); }
+.nui-row-lead { position: relative; display: inline-flex; align-items: center; justify-content: center; width: var(--nui-row-lead, 20px); height: var(--nui-row-lead, 20px); flex-shrink: 0; }
+/* A larger lead (iconSize) draws its glyph at 80% of it; a picture in it fills it. */
+.nui-row-icon { display: inline-flex; font-size: calc(var(--nui-row-lead, 20px) * .8); line-height: 1; color: hsl(var(--muted-foreground)); }
+.nui-row-lead[data-size] > .nui-row-icon > :where(img, picture, video) { display: block; width: var(--nui-row-lead, 20px); height: var(--nui-row-lead, 20px); object-fit: cover; border-radius: 4px; }
 /* The checkbox shows like the Manager's: over the leading strip (the lead and the gutter before it), on a selected
    row, or on every row once one is selected; never on a hover of the rest of the row. A press on the strip that
    drags draws the selection rectangle, so a full list still has a place to start one. */
@@ -168,6 +170,8 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row-labels { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Except a warning or danger label (Overdue, Failed): the meta start gives way to it, so a narrow row still says what is wrong. */
 .nui-row-labels[data-urgent] { flex: 0 0 auto; max-width: 75%; }
+/* Labels that say where the row stands (keepLabels) hold too: the meta start truncates first. */
+.nui-row-labels[data-keep] { flex: 0 0 auto; max-width: 75%; }
 .nui-star { display: inline-flex; flex-shrink: 0; font-size: 14px; color: hsl(32 95% 40%); }
 .dark .nui-star { color: hsl(38 92% 60%); }
 /* A toned label is a small pill, the Badge tints: state is never carried by text colour alone. */
@@ -554,6 +558,11 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-meter-limit-label { flex-shrink: 0; font-variant-numeric: tabular-nums; white-space: nowrap; color: hsl(var(--muted-foreground)); }
 .nui-meter-track { position: relative; height: 6px; border-radius: 9999px; background: hsl(var(--foreground) / .08); }
 .nui-meter-fill { position: absolute; top: 0; bottom: 0; left: 0; max-width: 100%; border-radius: inherit; background: hsl(var(--foreground) / .55); transition: width .2s ease; }
+/* A toned fill (tone) takes the Board dot colours; a reached limit still wins with the destructive fill. */
+.nui-meter[data-tone="info"] .nui-meter-fill { background: hsl(var(--nui-blue, 217 91% 60%)); }
+.nui-meter[data-tone="success"] .nui-meter-fill { background: hsl(var(--nui-st-active, 142 71% 45%)); }
+.nui-meter[data-tone="warning"] .nui-meter-fill { background: hsl(38 92% 50%); }
+.nui-meter[data-tone="danger"] .nui-meter-fill { background: hsl(var(--nui-tone-danger, var(--destructive))); }
 .nui-meter[data-over] .nui-meter-fill { background: hsl(var(--nui-tone-danger, var(--destructive))); }
 .nui-meter-limit { position: absolute; top: -3px; width: 2px; height: 12px; margin-left: -1px; border-radius: 1px; background: hsl(var(--foreground) / .7); }
 @media (prefers-reduced-motion: reduce) { .nui-meter-fill { transition: none; } }
@@ -976,7 +985,7 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 /*
  * Data table (DataTable): the metric table's look for rows that are not figures. 40px rows with a hairline above
  * each, a sticky 36px muted header, the edge cells 24px in (DataTable moves the inset when an edge column hides).
- * Cells never wrap: they truncate. The primary column takes the room left; a fixed width holds its own; mono is muted
+ * Cells truncate unless their column wraps (wrap) or the headers do (wrapHeaders). The primary column takes the room left; a fixed width holds its own; mono is muted
  * 12px monospace. Group headings are muted 12px rows with their count. Columns hide by the rules DataTable writes for
  * its own container (hideBelow). Every rule reaches only the table's own rows and cells (child combinators from
  * .nui-dtable, the added steps in :where() so each rule keeps its weight), so a table a cell holds keeps its own look;
@@ -993,6 +1002,17 @@ dialog.notis-dialog[data-native-confirm]::backdrop { background: transparent; }
 /* The primary min-width sits on the cell: a spacer inside it is ignored under max-width: 0. Padding is added back (12 + 12, or 24 + 12 at an edge). */
 .nui-dtable > * > :where(tr) > [data-primary]:is(:first-child, :last-child) { min-width: calc(var(--nui-dtable-primary-min, 120px) + 36px); }
 .nui-dtable > * > :where(tr) > [data-align="end"] { text-align: right; }
+/* A wrapping column (wrap): its cells and header break onto more lines and the row grows; one line keeps the 40px row
+   (11 + 18 + 11), every cell of the row on its first line. Wrapping headers (wrapHeaders) do the same in the 36px header (9 + 18 + 9), sitting on its bottom line. */
+.nui-dtable > * > :where(tr) > [data-wrap] { white-space: normal; overflow-wrap: break-word; text-wrap: pretty; }
+/* A wrapping column keeps room for a few words beside a full-width primary column; a fixed width still wins. */
+.nui-dtable > tbody > :where(tr) > [data-wrap]:not([data-primary]) { min-width: 10rem; }
+/* A row with a wrapping cell sets every cell on its first line. */
+.nui-dtable > tbody > :where(tr):has(> [data-wrap]) > :is(th, td) { vertical-align: top; padding-top: 11px; padding-bottom: 11px; }
+.nui-dtable > * > :where(tr) > [data-wrap] > .nui-dtable-pick { display: inline; white-space: normal; }
+.nui-dtable[data-wrap-headers] > thead > tr > th, .nui-dtable > thead > tr > th[data-wrap] { white-space: normal; overflow-wrap: break-word; text-wrap: balance; }
+/* Every header of a row that may wrap sits on the same bottom line. */
+.nui-dtable[data-wrap-headers] > thead > tr > th, .nui-dtable > thead > tr:has(> [data-wrap]) > th { vertical-align: bottom; padding-top: 9px; padding-bottom: 9px; }
 .nui-dtable > tbody > :where(tr) > [data-mono] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: hsl(var(--muted-foreground)); }
 :where(.nui-dtable > tbody) > .nui-dtable-group > th { height: 32px; font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--muted-foreground)); }
 .nui-dtable-group-count { margin-left: 8px; font-weight: 400; }
@@ -1094,6 +1114,8 @@ div.nui-row:not(.nui-lr-list div.nui-row) { container: nui-row / inline-size; }
 /* Tabs: the strip scrolls sideways when narrow. */
 .nui-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 2px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .nui-tabs::-webkit-scrollbar { display: none; }
+/* A wrapping strip (wrap) puts the tabs that do not fit on a next line, every tab in sight. */
+.nui-tabs[data-wrap] { flex-wrap: wrap; overflow: visible; row-gap: 4px; }
 .nui-tabpanel { min-width: 0; outline: none; }
 
 /* TabRow (TLB1): the 44px row over a list (6 before, 8 after) or a page (20 each side). It never wraps or scrolls:

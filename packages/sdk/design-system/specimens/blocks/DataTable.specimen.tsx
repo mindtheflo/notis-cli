@@ -57,6 +57,44 @@ function Threads({ lang, threads = THREADS }: { lang: SpecimenLang; threads?: re
   );
 }
 
+interface QuestionFixture { id: string; question: { en: string; fr: string }; answers: number; cited: number; source: string | null }
+
+/** Questions people ask AI assistants: the question wraps whole; a row with no source page opens nothing. */
+const QUESTIONS: readonly QuestionFixture[] = [
+  { id: 'q1', question: { en: 'What is the best AI assistant that works inside WhatsApp and remembers what I told it last week?', fr: 'Quel est le meilleur assistant IA qui fonctionne dans WhatsApp et se souvient de ce que je lui ai dit la semaine dernière ?' }, answers: 42, cited: 18, source: '/blog/whatsapp-assistant' },
+  { id: 'q2', question: { en: 'How do I get reminders by voice message?', fr: 'Comment recevoir des rappels par message vocal ?' }, answers: 17, cited: 0, source: null },
+  { id: 'q3', question: { en: 'Can an assistant sort my email every morning?', fr: 'Un assistant peut-il trier mes e-mails chaque matin ?' }, answers: 9, cited: 4, source: '/use-cases/email' },
+];
+
+const QUESTION_WORDS = {
+  questions: { en: 'Questions', fr: 'Questions' },
+  question: { en: 'Question', fr: 'Question' },
+  answers: { en: 'Answers seen', fr: 'Réponses observées' },
+  cited: { en: 'Times we are cited', fr: 'Fois où on est cité' },
+} as const;
+
+function Questions({ lang }: { lang: SpecimenLang }) {
+  const [opened, setOpened] = useState<string | null>(null);
+  return (
+    <Section kind="data" title={QUESTION_WORDS.questions} count={QUESTIONS.length}>
+      <DataTable
+        label={QUESTION_WORDS.questions}
+        rows={QUESTIONS}
+        rowKey={(row) => row.id}
+        wrapHeaders
+        onRowPress={(row) => setOpened(row.id)}
+        canPressRow={(row) => row.source !== null}
+        columns={[
+          { id: 'question', label: QUESTION_WORDS.question, primary: true, wrap: true, cell: (row) => row.question[lang] },
+          { id: 'answers', label: QUESTION_WORDS.answers, align: 'end', width: 104, cell: (row) => formatNumber(row.answers, lang) },
+          { id: 'cited', label: QUESTION_WORDS.cited, align: 'end', width: 104, cell: (row) => formatNumber(row.cited, lang) },
+        ]}
+      />
+      {opened && <p className="sr-only">{opened}</p>}
+    </Section>
+  );
+}
+
 export const specimen = defineSpecimen({
   id: 'data-table',
   name: 'DataTable',
@@ -110,6 +148,17 @@ export const specimen = defineSpecimen({
       label: 'Narrow (390): grouped threads keep the title and the duration',
       width: 390,
       render: ({ lang }) => <Bleed><Threads lang={lang} /></Bleed>,
+    },
+    {
+      id: 'wrap',
+      label: 'A question column that wraps whole, headers on two lines, and a row with nowhere to go that is not pressable',
+      render: ({ lang }) => <Bleed><Questions lang={lang} /></Bleed>,
+    },
+    {
+      id: 'wrap-narrow',
+      label: 'Narrow (390): the questions wrap, the French headers take two lines instead of an ellipsis',
+      width: 390,
+      render: ({ lang }) => <Bleed><Questions lang={lang} /></Bleed>,
     },
     {
       id: 'empty',

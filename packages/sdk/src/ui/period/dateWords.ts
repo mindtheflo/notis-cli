@@ -16,6 +16,8 @@ export const PRESET_WORDS: Readonly<Record<PresetId, Words>> = Object.freeze({
   lastMonth: w('Last month', 'Le mois dernier'),
   thisQuarter: w('This quarter', 'Ce trimestre'),
   thisYear: w('This year', 'Cette année'),
+  last6Months: w('Last 6 months', '6 derniers mois'),
+  last12Months: w('Last 12 months', '12 derniers mois'),
   custom: w('Custom range', 'Période personnalisée'),
 });
 

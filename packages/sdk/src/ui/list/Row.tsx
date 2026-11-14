@@ -4,7 +4,7 @@
  * looks of its `state` prop.
  */
 
-import { Fragment, useContext, type ReactNode } from 'react';
+import { Fragment, useContext, type CSSProperties, type ReactNode } from 'react';
 import { SHELL_WORDS, fillWords, pick, type Locale, type Words } from '../../words';
 import { useToolkitLocale } from '../engine/hooks';
 import { Icon, renderIcon } from '../icons';
@@ -40,11 +40,21 @@ export interface RowOwner {
 export interface RowProps {
   /** Lead, 20px. `{ status }` draws the status icon of that status (see `statusGroup`). */
   icon?: ReactNode | { status: string };
+  /**
+   * The lead's size in px, for a lead that is a picture (a meal photo, a cover, a logo) rather than an icon. Default 20;
+   * an icon glyph draws at 80% of it. The row grows to fit a lead taller than its title and meta.
+   */
+  iconSize?: number;
   title: ReactNode;
   /** The start of the muted line under the title (12/16); `labels` follow it after a " · ". */
   meta?: ReactNode;
   /** One clamped line (13/18). */
   snippet?: ReactNode;
+  /**
+   * The labels keep their whole width and the meta start truncates first, for labels that say where the row stands
+   * (a stage, a plan). Default false: the labels give way first, then the meta start.
+   */
+  keepLabels?: boolean;
   /**
    * Words on the meta line, as text joined by ", ". A warning or danger label (Overdue, Failed) comes first as a small
    * tinted pill: state is never shown by text colour alone.
@@ -318,8 +328,8 @@ function isStatusIcon(icon: unknown): icon is { status: string } {
 
 /** One list row: lead icon, a title over a meta line, then the trail (trailing, time, avatar, More). */
 export function Row({
-  icon, title, meta, snippet, labels, tags, owner, time, dateOnly, now, trailing, more, state, wrap, className, onPress,
-  pressLabel,
+  icon, iconSize, title, meta, snippet, keepLabels, labels, tags, owner, time, dateOnly, now, trailing, more, state, wrap,
+  className, onPress, pressLabel,
 }: RowProps) {
   const locale = useToolkitLocale();
   const source = useContext(RowStateContext);
@@ -341,7 +351,8 @@ export function Row({
   const content = (
     <>
       {(lead || toggle) && (
-        <span className="nui-row-lead">
+        <span className="nui-row-lead" {...(typeof iconSize === 'number' && Number.isFinite(iconSize) && iconSize > 0
+          ? { 'data-size': '', style: { '--nui-row-lead': `${iconSize}px` } as CSSProperties } : {})}>
           {lead && <span className="nui-row-icon">{lead}</span>}
           {toggle && (
             <button type="button" className="nui-row-check" tabIndex={-1} role="checkbox"
@@ -360,7 +371,8 @@ export function Row({
             {hasMeta && <span className="nui-row-meta-start">{meta}</span>}
             {hasMeta && ordered.length > 0 && <span className="nui-row-dot" aria-hidden="true">·</span>}
             {ordered.length > 0 && (
-              <span className="nui-row-labels" data-urgent={isUrgentLabel(ordered[0]!) ? '' : undefined}>
+              <span className="nui-row-labels" data-urgent={isUrgentLabel(ordered[0]!) ? '' : undefined}
+                data-keep={keepLabels ? '' : undefined}>
                 {ordered.map((entry, index) => {
                   const label = typeof entry === 'string' ? entry : entry.label;
                   const toned = rowLabelTone(entry);

@@ -68,6 +68,7 @@ const SHAPES: Record<string, Shape> = {
   'file-image': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M3.5 12l3-3 2 2 1.5-1.5 2.5 2.5" /><circle cx="6.5" cy="6.75" r=".75" /></g>,
   'file-video': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M6.5 8v3.5L9.5 9.75z" /></g>,
   'file-audio': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M6 9.5v1.5h1.25L9 12.25v-4.5L7.25 9H6M10.5 8.5a1.8 1.8 0 010 2.5" /></g>,
+  'fork-knife': <path {...S} d="M3.5 2v3.5a1.5 1.5 0 003 0V2M5 2v12M11.5 14V2c-1.4.9-2.2 3-2.2 6.5h2.2" />,
 };
 
 export function hasIcon(name: string): boolean {

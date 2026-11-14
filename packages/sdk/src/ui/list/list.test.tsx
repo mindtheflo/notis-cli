@@ -2757,3 +2757,40 @@ test('a reader in a scrolling page lets the wheel reach the page: its body never
   assert.ok(rules.length >= 2, 'the reader body rules are found');
   for (const [, selector, body] of rules) assert.doesNotMatch(body, /overscroll-behavior(-y)?: contain/, selector);
 });
+
+test('Tabs: wrap puts the tabs that do not fit on a next line instead of scrolling; the default strip scrolls', async () => {
+  await mount(<Tabs tabs={TAB_ITEMS} value="open" onChange={() => undefined} wrap />);
+  assert.equal(q('[role="tablist"]')?.hasAttribute('data-wrap'), true);
+  await mount(<TabsHarness />);
+  assert.equal(q('[role="tablist"]')?.hasAttribute('data-wrap'), false);
+  const rule = toolkitCss.slice(toolkitCss.indexOf('\n.nui-tabs[data-wrap] {'));
+  assert.match(rule.slice(0, rule.indexOf('}')), /flex-wrap: wrap; overflow: visible;/);
+});
+
+test('Row: iconSize sizes the lead for a picture; keepLabels holds the labels while the meta start truncates', async () => {
+  await mount(
+    <>
+      <Row icon={<img src="data:," alt="" />} iconSize={40} title="Lunch" meta="640 kcal" />
+      <Row icon="fork-knife" title="Dinner" meta="Pasta" labels={[{ label: 'Negotiation' }]} keepLabels />
+      <Row icon="fork-knife" title="Snack" meta="Apple" labels={[{ label: 'Negotiation' }]} />
+    </>,
+  );
+  const leads = [...doc.querySelectorAll('.nui-row-lead')] as HTMLElement[];
+  assert.equal(leads[0]!.style.getPropertyValue('--nui-row-lead'), '40px');
+  assert.equal(leads[0]!.hasAttribute('data-size'), true);
+  assert.equal(leads[1]!.style.getPropertyValue('--nui-row-lead'), '', 'the 20px default');
+  assert.equal(leads[1]!.hasAttribute('data-size'), false, 'an image lead without iconSize keeps its own size');
+  assert.ok(leads[1]!.querySelector('svg'), 'fork-knife is in the icon set');
+  const labels = [...doc.querySelectorAll('.nui-row-labels')] as HTMLElement[];
+  assert.equal(labels[0]!.hasAttribute('data-keep'), true);
+  assert.equal(labels[1]!.hasAttribute('data-keep'), false);
+  const rule = (selector: string) => {
+    const at = toolkitCss.indexOf(`\n${selector} {`);
+    return at < 0 ? '' : toolkitCss.slice(toolkitCss.indexOf('{', at) + 1, toolkitCss.indexOf('}', at));
+  };
+  assert.match(rule('.nui-row-lead'), /width: var\(--nui-row-lead, 20px\); height: var\(--nui-row-lead, 20px\);/);
+  assert.match(rule('.nui-row-icon'), /font-size: calc\(var\(--nui-row-lead, 20px\) \* \.8\);/, 'a 16px glyph in the 20px lead');
+  assert.match(rule('.nui-row-labels[data-keep]'), /flex: 0 0 auto;/);
+  assert.match(rule('.nui-row-lead[data-size] > .nui-row-icon > :where(img, picture, video)'), /object-fit: cover;/,
+    'a sized lead crops its picture square');
+});

@@ -17,6 +17,7 @@ import {
   endOfDay,
   endOfMonth,
   format as formatDate,
+  isLastDayOfMonth,
   isValid,
   parseISO,
   startOfDay,
@@ -36,6 +37,8 @@ export type PresetId =
   | 'lastMonth'
   | 'thisQuarter'
   | 'thisYear'
+  | 'last6Months'
+  | 'last12Months'
   | 'custom';
 
 export type CompareId = 'prev' | 'year' | 'none';
@@ -67,13 +70,21 @@ export const PRESETS: readonly PresetId[] = Object.freeze([
   'custom',
 ] as PresetId[]);
 
+/**
+ * Presets a picker can offer that the default list leaves out: trailing windows of whole months (this month and the 5
+ * or 11 before it), for monthly figures such as spending. Pass them in `presets`, such as
+ * `[...PRESETS.slice(0, -1), ...EXTRA_PRESETS, 'custom']`.
+ */
+export const EXTRA_PRESETS: readonly PresetId[] = Object.freeze(['last6Months', 'last12Months'] as PresetId[]);
+
 export const COMPARES: readonly CompareId[] = Object.freeze(['prev', 'year', 'none'] as CompareId[]);
 
 export const DEFAULT_PRESET: PresetId = 'last30';
 export const DEFAULT_COMPARE: CompareId = 'prev';
 
 export function isPresetId(value: unknown): value is PresetId {
-  return typeof value === 'string' && (PRESETS as readonly string[]).includes(value);
+  return typeof value === 'string'
+    && ((PRESETS as readonly string[]).includes(value) || (EXTRA_PRESETS as readonly string[]).includes(value));
 }
 
 export function isCompareId(value: unknown): value is CompareId {
@@ -134,6 +145,10 @@ export function presetRange(preset: PresetId, now: Date = new Date(), custom?: {
     }
     case 'thisYear':
       return wholeDays(startOfYear(today), today);
+    case 'last6Months':
+      return wholeDays(subMonths(startOfMonth(today), 5), today);
+    case 'last12Months':
+      return wholeDays(subMonths(startOfMonth(today), 11), today);
     case 'custom': {
       const from = fromIsoDay(custom?.from);
       const to = fromIsoDay(custom?.to);
@@ -146,14 +161,33 @@ export function presetRange(preset: PresetId, now: Date = new Date(), custom?: {
 }
 
 /**
+ * The calendar months a range spans when it is binned by month: it starts on the 1st and spans six months or more
+ * (Last 6 months, Last 12 months, a year to date from June). 0 otherwise.
+ */
+export function monthSpan(range: DateRange): number {
+  const from = startOfDay(range.from);
+  if (from.getDate() !== 1) return 0;
+  const months = (range.to.getFullYear() - from.getFullYear()) * 12 + range.to.getMonth() - from.getMonth() + 1;
+  return months >= 6 ? months : 0;
+}
+
+/**
  * The range a period is compared with.
- * - prev: the same number of days just before (`[from - n, from - 1]`).
+ * - prev: the same number of days just before (`[from - n, from - 1]`). A range binned by month (`monthSpan`: it
+ *   starts on the 1st and spans six calendar months or more, such as Last 6 months) moves back by that many months
+ *   instead, so each month is compared with a whole month; a range ending on a month's last day ends on one too.
  * - year: the same calendar days one year back (29 February lands on 28 February).
  * - none: no comparison.
  */
 export function compareRange(range: DateRange, compare: CompareId): DateRange | null {
   if (compare === 'none') return null;
   if (compare === 'year') return wholeDays(subYears(startOfDay(range.from), 1), subYears(startOfDay(range.to), 1));
+  const months = monthSpan(range);
+  if (months) {
+    const to = startOfDay(range.to);
+    const end = isLastDayOfMonth(to) ? endOfMonth(subMonths(startOfMonth(to), months)) : subMonths(to, months);
+    return wholeDays(subMonths(startOfDay(range.from), months), end);
+  }
   const n = dayCount(range);
   const from = startOfDay(range.from);
   return wholeDays(addDays(from, -n), addDays(from, -1));

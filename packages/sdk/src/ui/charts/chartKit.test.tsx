@@ -232,3 +232,32 @@ test('Chart bars on a narrow plot: hour labels thin out and the last one ends in
   assert.ok(ticks.length > 0 && ticks.length <= 5, `a 400px plot keeps labels apart (got ${ticks.length})`);
   assert.equal(ticks[ticks.length - 1]!.getAttribute('text-anchor'), 'end', 'the last label anchors inward, never clipped');
 });
+
+test('Chart bars: dim={false} draws every bar full colour; barColor colours a bar by its row (Expenses, CRM)', async () => {
+  const data = [{ label: 'Jun', value: 2380 }, { label: 'Jul', value: 2910 }, { label: 'Aug', value: 2140 }];
+  const bars = () => [...doc.querySelectorAll('.recharts-bar-rectangle path.recharts-rectangle')]
+    .map((el) => ({ fill: el.getAttribute('fill'), opacity: el.getAttribute('fill-opacity') }));
+  await mount(<Chart kind="bar" data={data} locale="en" live={false} />);
+  assert.deepEqual(bars().map((b) => b.opacity), ['0.55', '0.55', '0.55'], 'by default bars rest lighter until hovered');
+  await mount(<Chart kind="bar" data={data} locale="en" dim={false}
+    barColor={(row) => ((row as { value: number }).value > 2800 ? 'red' : undefined)} />);
+  const drawn = bars();
+  assert.deepEqual(drawn.map((b) => b.opacity), ['1', '1', '1'], 'no bar dimmed');
+  assert.equal(drawn[1]!.fill, 'red', 'the bar over budget takes its own colour');
+  assert.equal(drawn[0]!.fill, 'var(--color-value)', 'the others keep the series colour');
+});
+
+test('Chart values under zero: the scale reaches below zero with a line at zero; positive data keeps zero at the bottom', async () => {
+  const data = [{ label: 'Jun', value: 640 }, { label: 'Jul', value: -320 }, { label: 'Aug', value: 910 }];
+  await mount(<Chart kind="bar" data={data} locale="en" valueAxis />);
+  const ticks = [...doc.querySelectorAll('.recharts-yAxis-tick-labels text')].map((el) => Number(el.textContent?.replace(/[^\d.-]/g, '')));
+  assert.ok(ticks[0]! < 0 && ticks.includes(0), `ticks run from under zero through zero (got ${ticks.join(', ')})`);
+  assert.equal(doc.querySelectorAll('.recharts-reference-line').length, 1, 'a line at zero');
+  const rects = [...doc.querySelectorAll('.recharts-bar-rectangle path.recharts-rectangle')];
+  assert.equal(rects.length, 3, 'the bar under zero is drawn too');
+
+  await mount(<Chart kind="bar" data={data.map((row) => ({ ...row, value: Math.abs(row.value) }))} locale="en" valueAxis />);
+  const positive = [...doc.querySelectorAll('.recharts-yAxis-tick-labels text')].map((el) => Number(el.textContent?.replace(/[^\d.-]/g, '')));
+  assert.ok(positive.every((v) => v > 0), 'positive data: quarters above zero, as before');
+  assert.equal(doc.querySelectorAll('.recharts-reference-line').length, 0);
+});

@@ -25,5 +25,10 @@ sandbox and viewer CSP, sized by its `className` (a 1920x1080 slide box shows th
 real slide in verify screenshots); popups and network stay blocked offline.
 When a view reads a record view its fixtures lack, verify names the view, the read,
 the record key and the missing field, and prints a valid entry to copy.
+`context` sets how verify opens the view: `params` (the opening view params),
+`locale` (`"fr"` renders the data screenshots in French; run verify once with
+it to check French with data), `now` (an ISO time that pins the clock, so a
+view showing how old its data is can be checked with a later `now`) and
+`skeletonParams` (other params whose loading skeletons are measured too).
 Keep every fixture fictional and include every load-time read. Failed or missing
 fixtures fail verification; there is no fallback to the user's real account.

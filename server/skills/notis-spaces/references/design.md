@@ -61,6 +61,10 @@ ring on all four sides. Never restyle the pieces' states.
   locale (`useNotisRuntime()?.context.locale`). Format dates and numbers with
   that locale. French runs 15 to 30 percent longer: leave room in tabs, section
   titles, buttons, badges and table cells.
+- A count in words takes its plural from the count, in each language:
+  `pluralWords(n, { one: { en: '{n} campaign', fr: '{n} campagne' }, other: {
+  en: '{n} campaigns', fr: '{n} campagnes' } })` from `@notis/sdk/words`
+  (French uses the singular for 0 and 1). Never write "1 campaigns" or "(s)".
 
 ## Loading, empty and error
 

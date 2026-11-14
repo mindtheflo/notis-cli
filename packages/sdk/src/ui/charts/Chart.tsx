@@ -21,6 +21,7 @@ import {
   ComposedChart,
   Line,
   Rectangle,
+  ReferenceLine,
   ResponsiveContainer,
   Text,
   Tooltip,
@@ -40,7 +41,7 @@ import type { CompareId } from '../period/periods';
 import { useDateLocale } from '../period/useDateLocale';
 import { useElementWidth } from '../period/viewHelpers';
 import { axisWidth, textWidth, TICK_INSET, valueMargin, wrapLabel } from './axisLabels';
-import { chartMax, edgeAnchor, endsToday, niceQuarterMax, showAxisLabel } from './chartData';
+import { chartMax, chartMin, divergingScale, edgeAnchor, endsToday, niceQuarterMax, showAxisLabel } from './chartData';
 import { RenderChartData } from './RenderChartData';
 
 export {
@@ -400,7 +401,10 @@ export interface ChartSeries {
   /** Field of each row holding the value. */
   key: string;
   label: Words | string;
-  /** Any CSS colour. Default the chart tokens in order (`--chart-1`, `--chart-2`...). */
+  /**
+   * Any CSS colour. Default the chart tokens in order (`--chart-1` to `--chart-5`, then again), so a sixth series
+   * needs its own colour here, such as `hsl(var(--chart-1) / .5)`.
+   */
   color?: string;
 }
 
@@ -445,7 +449,8 @@ export interface ChartProps {
   labelFormat?: (value: number, locale: Locale) => string;
   /**
    * A fixed value scale `[min, max]`, such as `[0, 100]` for percentages, instead of one that fits the data. Values
-   * outside it are clipped. Vertical charts only.
+   * outside it are clipped. Vertical charts only. Without it, a vertical chart with values under zero reaches below
+   * zero too (diverging bars: a balance, a net change), with a line at zero.
    */
   domain?: readonly [number, number];
   /**
@@ -458,6 +463,17 @@ export interface ChartProps {
    * hovered (deck period-r6). Default: true when the last row's `to` is today.
    */
   live?: boolean;
+  /**
+   * One series of bars: the bars that are not the live one or the hovered one draw lighter (default true). False
+   * draws every bar full colour, for bars that each stand alone (months of a budget, stages of a funnel).
+   */
+  dim?: boolean;
+  /**
+   * The colour of one bar, for bars of a series that differ by what their row is (a stage, a category, over or under a
+   * budget): any CSS colour, or undefined for the series colour. Called with the row, the series and the row's index.
+   * The legend keeps the series colours, so say what the colours mean in the section or the axis labels.
+   */
+  barColor?: (row: object, series: ChartSeries, index: number) => string | undefined;
   locale?: Locale;
   className?: string;
 }
@@ -528,6 +544,11 @@ function rowTotal(row: object, series: readonly ChartSeries[]): number {
   return series.reduce((sum, s) => sum + Math.max(0, numberOf(field(row, s.key)) ?? 0), 0);
 }
 
+/** What a stack reaches below zero: the sum of a row's values under zero (stacked bars put them under the axis). */
+function rowNegativeTotal(row: object, series: readonly ChartSeries[]): number {
+  return series.reduce((sum, s) => sum + Math.min(0, numberOf(field(row, s.key)) ?? 0), 0);
+}
+
 /** The hidden table of a chart: one row per point, the point name then each series value. */
 export function chartTableRows(
   data: readonly object[],
@@ -567,6 +588,8 @@ export function Chart({
   domain: domainProp,
   valueAxis: valueAxisProp = false,
   live: liveProp,
+  dim = true,
+  barColor,
   locale: localeProp,
   className,
 }: ChartProps) {
@@ -596,28 +619,39 @@ export function Chart({
   const lastTo = last ? field(last, 'to') : undefined;
   const live = liveProp ?? (lastTo instanceof Date ? endsToday({ from: lastTo, to: lastTo }) : false);
 
-  const [max, integers] = React.useMemo((): [number, boolean] => {
+  const [max, min, integers, positive] = React.useMemo((): [number, number, boolean, boolean] => {
     const values: Array<number | null> = [];
+    const lows: Array<number | null> = [];
     for (const row of data) {
-      if (stack) values.push(rowTotal(row, series));
-      else for (const s of series) values.push(numberOf(field(row, s.key)));
+      if (stack) {
+        values.push(rowTotal(row, series));
+        lows.push(rowNegativeTotal(row, series));
+      } else for (const s of series) values.push(numberOf(field(row, s.key)));
       if (compare) values.push(numberOf(field(row, compare.key)));
     }
     // Horizontal bars keep their value labels in the right margin, so the longest bar takes the whole width.
     const top = horizontal ? values.reduce<number>((most, v) => (v != null && v > most ? v : most), 1) : chartMax(values);
-    return [top, values.every((v) => v == null || Number.isInteger(v))];
+    return [top, horizontal ? 0 : chartMin([...values, ...lows]), values.every((v) => v == null || Number.isInteger(v)),
+      values.some((v) => v != null && v > 0)];
   }, [data, series, compare, stack, horizontal]);
   const fixed = !horizontal && domainProp && Number.isFinite(domainProp[0]) && Number.isFinite(domainProp[1])
     && domainProp[1] > domainProp[0] ? domainProp : null;
   const valueAxis = valueAxisProp && !horizontal;
-  const low = fixed ? fixed[0] : 0;
+  // Values under zero (vertical charts, no fixed scale) reach below zero as well: diverging bars, with a line at zero.
+  // Both sides share one round step, so zero sits on a gridline; values all at or under zero end the scale at zero.
+  const below = !fixed && min < 0;
+  const diverging = React.useMemo(() => (below ? divergingScale(min, positive ? max : 0, integers) : null),
+    [below, min, max, positive, integers]);
+  const low = fixed ? fixed[0] : diverging ? diverging.low : 0;
   // A drawn value axis labels its quarters, so its top is raised to keep each label a round number (whole for counts).
-  const high = fixed ? fixed[1] : valueAxis ? niceQuarterMax(max, integers) : max;
+  const high = fixed ? fixed[1] : diverging ? diverging.high : valueAxis ? niceQuarterMax(max, integers) : max;
   const scale: [number, number] = [low, high];
   const isFixed = fixed !== null;
   const scaleTicks = React.useMemo(() => (isFixed
     ? [0, 0.25, 0.5, 0.75, 1].map((f) => low + f * (high - low))
-    : [0.25, 0.5, 0.75, 1].map((f) => f * high)), [isFixed, low, high]);
+    : diverging
+      ? diverging.ticks
+      : [0.25, 0.5, 0.75, 1].map((f) => f * high)), [isFixed, diverging, low, high]);
   const shortValue = React.useCallback(
     (v: number) => (labelFormatProp ? labelFormatProp(v, locale) : format(v)), [labelFormatProp, locale, format]);
   // Horizontal bars and the value axis measure their labels in the plot's font: the categories before the bars on two lines, and the
@@ -707,9 +741,10 @@ export function Chart({
       {...(horizontal && (!stack || i === series.length - 1)
         ? { label: { content: barLabel, position: 'right' as const, formatter: labelText } }
         : {})}>
-      {single && !horizontal && data.map((row, index) => {
-        const full = hover === index || (live && index === data.length - 1);
-        return <Cell key={String(field(row, xKey) ?? index)} fillOpacity={full ? 1 : 0.55} />;
+      {(barColor || (single && !horizontal)) && data.map((row, index) => {
+        const lighter = dim && single && !horizontal && !(hover === index || (live && index === data.length - 1));
+        const colour = barColor?.(row, s, index);
+        return <Cell key={String(field(row, xKey) ?? index)} {...(colour ? { fill: colour } : {})} fillOpacity={lighter ? 0.55 : 1} />;
       })}
     </Bar>
   )) : null;
@@ -720,6 +755,7 @@ export function Chart({
         <ChartContainer config={config} className="nui-chart-box">
           <ComposedChart
             data={data as object[]}
+            stackOffset={stack && kind === 'bar' ? 'sign' : undefined}
             layout={horizontal ? 'vertical' : 'horizontal'}
             margin={horizontal ? { top: 4, right: labelRoom + PLOT_MARGIN.right, bottom: 4, left: 0 } : PLOT_MARGIN}
             barCategoryGap={sideBySide ? 6 : '38%'}
@@ -769,6 +805,7 @@ export function Chart({
                 />
               )}
             />
+            {below && <ReferenceLine y={0} stroke="hsl(var(--foreground) / .25)" ifOverflow="extendDomain" />}
             {bars && stack && <BarStack radius={horizontal ? [0, 3, 3, 0] : [3, 3, 0, 0]}>{bars}</BarStack>}
             {bars && !stack && bars}
             {kind !== 'bar' && series.map((s) => {

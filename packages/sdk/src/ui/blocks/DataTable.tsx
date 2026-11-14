@@ -1,7 +1,7 @@
 /**
  * DataTable: a read-only table for a dashboard `Section kind="data"` (machines, threads, jobs), styled like the
- * ChartTable: 40px rows with a hairline above each, a sticky 36px muted header, the edge cells 24px in. Cells never
- * wrap: they truncate. One primary column takes the room left, never under its `minWidth` (default 120 px); the others
+ * ChartTable: 40px rows with a hairline above each, a sticky 36px muted header, the edge cells 24px in. Cells
+ * truncate, unless a column wraps (`wrap`) or the headers do (`wrapHeaders`). One primary column takes the room left, never under its `minWidth` (default 120 px); the others
  * fit their content or a fixed width, and a column can hide under a container width so a phone never scrolls
  * sideways. When the columns kept still do not fit, the last ones hide on their own, so the primary text is never
  * crushed. A real table, so view Markdown reads it.
@@ -21,7 +21,7 @@ export interface DataTableColumn<R> {
   id: string;
   /** The header text. */
   label: Text;
-  /** The cell of one row. Text truncates with an ellipsis; it never wraps. */
+  /** The cell of one row. Text truncates with an ellipsis, unless the column wraps. */
   cell: (row: R) => ReactNode;
   /** Default 'start'. Use 'end' for numbers. */
   align?: 'start' | 'end';
@@ -39,6 +39,11 @@ export interface DataTableColumn<R> {
   hideBelow?: number;
   /** On the primary column: the narrowest it gets, in px (padding excluded). Default 120. */
   minWidth?: number;
+  /**
+   * The column's cells and header wrap onto more lines instead of truncating (a note, a question), and their rows grow
+   * to fit. For long text the reader needs whole; keep figures, dates and ids on one line.
+   */
+  wrap?: boolean;
 }
 
 export interface DataTableGroup<R> {
@@ -56,12 +61,22 @@ export interface DataTableProps<R> {
   rowKey: (row: R) => string;
   /** Makes rows pressable: a button in the primary cell covers the row and takes Tab focus. */
   onRowPress?: (row: R) => void;
+  /**
+   * With `onRowPress`: whether this row opens anything. A row it returns false for is plain (no hover, no button, no
+   * press), so a row with nowhere to go never looks clickable. Default every row.
+   */
+  canPressRow?: (row: R) => boolean;
   /** The accessible name of a row's press target. Default the primary cell's text. */
   rowLabel?: (row: R) => string;
   /** The table's accessible name (the Section title, usually). */
   label?: Text;
   /** Shown in place of the rows when there are none. Default an EmptyState. */
   empty?: ReactNode;
+  /**
+   * Header labels wrap onto a second line instead of truncating (longer French headers over narrow figure columns).
+   * Default false: one line, with an ellipsis.
+   */
+  wrapHeaders?: boolean;
   className?: string;
 }
 
@@ -162,8 +177,8 @@ export function dataTableHideCss(tableId: string, limits: readonly (number | und
  * A read-only table: 40px rows, a sticky 36px header, cells that truncate, optional group headings with their
  * counts and pressable rows. Columns with `hideBelow` hide under that container width.
  */
-export function DataTable<R>({ columns, rows, groups, rowKey, onRowPress, rowLabel, label, empty, className }:
-  DataTableProps<R>) {
+export function DataTable<R>({ columns, rows, groups, rowKey, onRowPress, canPressRow, rowLabel, label, empty,
+  wrapHeaders = false, className }: DataTableProps<R>) {
   const t = useT();
   const locale = useToolkitLocale();
   const tableId = useStableId('nui-dtable');
@@ -219,6 +234,7 @@ export function DataTable<R>({ columns, rows, groups, rowKey, onRowPress, rowLab
     'data-mono': column.mono ? '' : undefined,
     'data-primary': index === primaryIndex ? '' : undefined,
     'data-hide-below': limits[index],
+    'data-wrap': column.wrap ? '' : undefined,
     style: typeof column.width === 'number' && column.width > 0
       ? { width: column.width, minWidth: column.width, maxWidth: column.width }
       : undefined,
@@ -226,18 +242,19 @@ export function DataTable<R>({ columns, rows, groups, rowKey, onRowPress, rowLab
 
   const renderRow = (row: R) => {
     const key = rowKey(row);
+    const press = onRowPress && (!canPressRow || canPressRow(row)) ? onRowPress : undefined;
     return (
-      <tr key={key} data-pressable={onRowPress ? '' : undefined}
-        onClick={onRowPress ? (event) => { if (!pressedControl(event.target, event.currentTarget)) onRowPress(row); } : undefined}>
+      <tr key={key} data-pressable={press ? '' : undefined}
+        onClick={press ? (event) => { if (!pressedControl(event.target, event.currentTarget)) press(row); } : undefined}>
         {columns.map((column, index) => {
           const content = column.cell(row);
           const props = cellProps(column, index);
           if (index !== primaryIndex) return <td key={column.id} {...props}>{content}</td>;
           return (
             <th key={column.id} scope="row" {...props}>
-              {onRowPress ? (
+              {press ? (
                 <button type="button" className="nui-dtable-pick" aria-label={rowLabel?.(row)}
-                  onClick={(event) => { event.stopPropagation(); onRowPress(row); }}>{content}</button>
+                  onClick={(event) => { event.stopPropagation(); press(row); }}>{content}</button>
               ) : content}
             </th>
           );
@@ -250,6 +267,7 @@ export function DataTable<R>({ columns, rows, groups, rowKey, onRowPress, rowLab
     <div ref={wrapRef} className={cx('nui-dtable-wrap', className)} data-notis-ui="">
       {hideCss || fitCss ? <style>{[hideCss, fitCss].filter(Boolean).join('\n')}</style> : null}
       <table ref={tableRef} className="nui-dtable" data-dtable={tableId} style={minStyle}
+        data-wrap-headers={wrapHeaders ? '' : undefined}
         aria-label={label !== undefined ? t(label) : undefined}>
         <thead>
           <tr>

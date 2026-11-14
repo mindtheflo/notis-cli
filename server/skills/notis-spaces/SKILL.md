@@ -196,6 +196,10 @@ tell them who gains or loses access and what happens to the data, using
 [Consequences](references/architecture.md#consequences-to-explain-before-acting).
 
 Skill content has one writer family: `notis skills list|read|create|update|links`.
+`skills update` takes the `target` and `version` exactly as `skills read` printed
+them, plus one of `skill_md` (replaces SKILL.md, keeps the other files) or
+`files` (every file of the Skill, SKILL.md included, as base64 by path), and
+optionally `name`, `description` or `links`.
 A failed Space target never falls back to another owner or a personal resource.
 Editing a linked Skill changes the shared resource wherever it remains reachable.
 Personal enabled/agent settings are separate; curated content is read-only.

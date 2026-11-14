@@ -28,12 +28,12 @@ const LONG_TABS: readonly TabItem<'shared' | 'archived' | 'drafts'>[] = [
 ];
 
 /** A strip the reviewer can press; the first strip of a state owns [ and ]. */
-function Live<V extends string>({ tabs, start, label, keys = true, children }: {
-  tabs: readonly TabItem<V>[]; start: V; label: Words; keys?: boolean; children?: (value: V) => ReactNode;
+function Live<V extends string>({ tabs, start, label, keys = true, wrap, children }: {
+  tabs: readonly TabItem<V>[]; start: V; label: Words; keys?: boolean; wrap?: boolean; children?: (value: V) => ReactNode;
 }) {
   const [value, setValue] = useState<V>(start);
   return (
-    <Tabs tabs={tabs} value={value} onChange={setValue} label={label} keys={keys} panelClassName="pt-4">
+    <Tabs tabs={tabs} value={value} onChange={setValue} label={label} keys={keys} wrap={wrap} panelClassName="pt-4">
       {children ? children(value) : undefined}
     </Tabs>
   );
@@ -143,6 +143,14 @@ export const specimen = defineSpecimen({
       width: 390,
       render: () => (
         <div><Live tabs={SKILL_TABS} start="community" label={SKILL_LABEL} /></div>
+      ),
+    },
+    {
+      id: 'narrow-wrap',
+      label: 'Narrow (390px) with wrap: the tabs that do not fit go on a next line, every tab in sight',
+      width: 390,
+      render: () => (
+        <div><Live tabs={SKILL_TABS} start="community" label={SKILL_LABEL} wrap /></div>
       ),
     },
     {

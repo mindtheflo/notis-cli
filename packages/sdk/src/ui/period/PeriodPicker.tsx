@@ -98,7 +98,7 @@ export function PeriodPicker({ value, onChange, compare = true, presets = PRESET
       const wide = pageWidth(barRef.current) >= PERIOD_PICKER_TWO_MONTHS_MIN;
       setTwo(wide);
       setMonth(startOfMonth(addMonths(range.to, wide ? -1 : 0)));
-      focusSoon(() => rangePanel.current, '[role="option"][aria-selected="true"]');
+      focusSoon(() => rangePanel.current, '[role="option"][tabindex="0"]');
     }
     setPop(open ? 'range' : null);
   };
@@ -158,11 +158,13 @@ export function PeriodPicker({ value, onChange, compare = true, presets = PRESET
         content={({ close }) => (
           <div ref={rangePanel} className="nui-pp-panel" data-one={custom && !two ? '' : undefined}>
             <div className="nui-pp-presets" role="listbox" aria-label={t(PERIOD_WORDS.range)} onKeyDown={onListKeyDown}>
-              {presets.map((preset) => {
+              {presets.map((preset, index) => {
                 const on = preset === value.preset;
+                // A period from the address that this picker does not list leaves the first option reachable.
+                const reachable = on || (index === 0 && !presets.includes(value.preset));
                 return (
                   <button key={preset} type="button" role="option" className="nui-pp-opt" data-pp-preset={preset}
-                    aria-selected={on} tabIndex={on ? 0 : -1} onClick={() => pickPreset(preset, close)}>
+                    aria-selected={on} tabIndex={reachable ? 0 : -1} onClick={() => pickPreset(preset, close)}>
                     <span className="nui-pp-opt-text">{t(PRESET_WORDS[preset])}</span>
                     {on && <CheckGlyph className="nui-pp-check" />}
                   </button>

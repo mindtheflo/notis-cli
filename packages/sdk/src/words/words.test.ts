@@ -302,3 +302,15 @@ test('unarchive reads Move to triage, never a Space\u2019s name; a Space names i
   assert.equal(own.icon, 'tray-arrow-up');
   assert.equal(typeof own.toast, 'function');
 });
+
+test('pluralWords: the singular or plural of each language, with the count written in its locale', async () => {
+  const { pluralWords, w } = await import('./index');
+  const forms = { one: w('{n} campaign', '{n} campagne'), other: w('{n} campaigns', '{n} campagnes') };
+  assert.deepEqual(pluralWords(1, forms), { en: '1 campaign', fr: '1 campagne' });
+  assert.deepEqual(pluralWords(0, forms), { en: '0 campaigns', fr: '0 campagne' }, 'French uses the singular for 0');
+  assert.deepEqual(pluralWords(1.5, forms), { en: '1.5 campaigns', fr: '1,5 campagne' });
+  assert.deepEqual(pluralWords(3, forms), { en: '3 campaigns', fr: '3 campagnes' });
+  assert.equal(pluralWords(1250, forms).fr, '1 250 campagnes', 'the French thousands space');
+  assert.deepEqual(pluralWords(2, { one: w('one left', 'il en reste un'), other: w('a few left', 'il en reste quelques-uns') }),
+    { en: 'a few left', fr: 'il en reste quelques-uns' }, 'forms without {n}');
+});

@@ -95,6 +95,19 @@ export const specimen = defineSpecimen({
       ),
     },
     {
+      id: 'tones',
+      label: 'Tones: a goal met, near, one category among several, over; a reached limit still turns the fill destructive',
+      render: () => (
+        <Stack>
+          <Meter label={{ en: 'Protein', fr: 'Protéines' }} value={128} max={140} tone="success" />
+          <Meter label={{ en: 'Calories', fr: 'Calories' }} value={1920} max={2200} tone="warning" />
+          <Meter label={{ en: 'Carbs', fr: 'Glucides' }} value={150} max={260} tone="info" />
+          <Meter label={{ en: 'Sugar', fr: 'Sucres' }} value={62} max={50} tone="danger" />
+          <Meter label={{ en: 'Fat', fr: 'Lipides' }} value={80} max={90} limit={75} tone="success" />
+        </Stack>
+      ),
+    },
+    {
       id: 'narrow',
       label: 'Narrow (390): long French labels truncate, the figure stays whole',
       width: 390,

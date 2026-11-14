@@ -169,3 +169,24 @@ test('a stat shows its value, the change and the previous value in each language
   const worse = metricView({ ...metric, higherIsBetter: false }, 'prev', 'en');
   assert.equal(worse.delta?.tone, 'destructive');
 });
+
+test('chartMin: 0 without values under zero, else 10% under the lowest', async () => {
+  const { chartMin } = await import('./chartData');
+  assert.equal(chartMin([3, null, 8]), 0);
+  assert.equal(chartMin([]), 0);
+  assert.equal(Math.round(chartMin([5, -200, -50, Number.NaN])), -220);
+});
+
+test('divergingScale: one round step on both sides of zero, evenly spaced however lopsided the values', async () => {
+  const { divergingScale } = await import('./chartData');
+  assert.deepEqual(divergingScale(-3.3, 1100, true), { low: -300, high: 1200, ticks: [-300, 0, 300, 600, 900, 1200] });
+  assert.deepEqual(divergingScale(-1100, 1100), { low: -1200, high: 1200, ticks: [-1200, -600, 0, 600, 1200] });
+  assert.deepEqual(divergingScale(-55, 0), { low: -60, high: 0, ticks: [-60, -40, -20, 0] });
+  for (const [min, max] of [[-0.4, 7.7], [-220, 950], [-12, 0.5]] as const) {
+    const { low, high, ticks } = divergingScale(min, max);
+    assert.ok(low <= min && high >= max && ticks.includes(0), `${min}..${max} covers the values with zero on a tick`);
+    const steps = ticks.slice(1).map((t, i) => Number((t - ticks[i]!).toPrecision(9)));
+    assert.equal(new Set(steps).size, 1, `${min}..${max} ticks are evenly spaced: ${ticks.join(', ')}`);
+    assert.ok(ticks.length <= 7, `${min}..${max} draws at most six steps`);
+  }
+});

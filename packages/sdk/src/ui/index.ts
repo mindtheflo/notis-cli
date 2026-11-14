@@ -23,7 +23,7 @@ export type { AdoptToolkitOptions, ToolkitCascade } from './styles';
 // A3: dates and charts (toolkit spec 2.11). periods' own range type is exported as PeriodRange, so DateRange stays
 // react-day-picker's (the type DayPicker's range mode selects).
 export {
-  COMPARES, DEFAULT_COMPARE, DEFAULT_PRESET, PRESETS, compareRange, customPeriod, dayCount, formatPeriodParam,
+  COMPARES, DEFAULT_COMPARE, DEFAULT_PRESET, EXTRA_PRESETS, PRESETS, compareRange, customPeriod, dayCount, formatPeriodParam,
   fromIsoDay, isCompareId, isPresetId, normalizePeriod, parsePeriodParam, periodRanges, presetRange, samePeriod, toIsoDay,
 } from './period/periods';
 export type { CompareId, DateRange as PeriodRange, Period, PresetId } from './period/periods';

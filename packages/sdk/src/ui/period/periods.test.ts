@@ -154,3 +154,36 @@ test('formatDuration: smallest minute rounds to the minute, zero reads 0 min and
   assert.equal(formatDuration(3_600_000 + 50_000, 'en', { smallest: 'minute', units: 3 }), nb('1 h | 1 min'));
   for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(formatDuration(bad, 'en'), '-');
 });
+
+test('last6Months and last12Months: this month and the 5 or 11 before it, binned and compared by month, opt-in beside the default presets', async () => {
+  const periods = await import('./periods');
+  const { binUnit } = await import('../charts/chartData');
+  const { PRESET_WORDS } = await import('./dateWords');
+  const now = new Date(2026, 10, 13, 15, 0);
+  const six = periods.presetRange('last6Months', now);
+  assert.equal(periods.toIsoDay(six.from), '2026-06-01');
+  assert.equal(periods.toIsoDay(six.to), '2026-11-13');
+  const twelve = periods.presetRange('last12Months', now);
+  assert.equal(periods.toIsoDay(twelve.from), '2025-12-01');
+  assert.equal(periods.toIsoDay(twelve.to), '2026-11-13');
+  assert.deepEqual([...periods.EXTRA_PRESETS], ['last6Months', 'last12Months']);
+  assert.equal(periods.PRESETS.includes('last6Months'), false, 'the default picker list is unchanged');
+  assert.equal(periods.isPresetId('last12Months'), true);
+  assert.deepEqual(periods.parsePeriodParam('last6Months~none'), { preset: 'last6Months', compare: 'none' });
+  assert.deepEqual(PRESET_WORDS.last6Months, { en: 'Last 6 months', fr: '6 derniers mois' });
+  assert.deepEqual(PRESET_WORDS.last12Months, { en: 'Last 12 months', fr: '12 derniers mois' });
+
+  assert.equal(binUnit(six), 'month', 'one bar per month, not 24 weeks');
+  assert.equal(binUnit(twelve), 'month');
+  assert.equal(binUnit(periods.presetRange('last90', now)), 'week', 'other ranges keep their bins');
+  assert.equal(binUnit(periods.presetRange('thisMonth', now)), 'day');
+  assert.equal(iso(periods.compareRange(six, 'prev')), '2025-12-01..2026-05-13', 'the 6 months before, month for month');
+  assert.equal(iso(periods.periodRanges({ preset: 'last12Months', compare: 'prev' }, now).compareRange), '2024-12-01..2025-11-13');
+  const monthEnd = periods.periodRanges({ preset: 'last6Months', compare: 'prev' }, new Date(2026, 10, 30, 12, 0));
+  assert.equal(iso(monthEnd.compareRange), '2025-12-01..2026-05-31', 'a range ending on a month end compares whole months');
+  const june = periods.periodRanges({ preset: 'thisYear', compare: 'prev' }, new Date(2026, 5, 13, 12, 0));
+  assert.equal(binUnit(june.range), 'month', 'a year to date from June is binned by month too');
+  assert.equal(iso(june.compareRange), '2025-07-01..2025-12-13', 'and compared month for month');
+  assert.equal(iso(periods.periodRanges({ preset: 'thisMonth', compare: 'prev' }, now).compareRange), '2026-10-19..2026-10-31',
+    'shorter ranges keep the same number of days just before');
+});

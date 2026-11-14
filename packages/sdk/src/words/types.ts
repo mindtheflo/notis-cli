@@ -48,6 +48,34 @@ export function fillWords(words: Words, vars: Readonly<Record<string, string | n
   return { en: interpolate(words.en, vars), fr: interpolate(words.fr, vars) };
 }
 
+const PLURAL_INTL = new Map<Locale, { rules: Intl.PluralRules; number: Intl.NumberFormat }>();
+function pluralIntl(locale: Locale) {
+  let intl = PLURAL_INTL.get(locale);
+  if (!intl) {
+    const tag = locale === 'fr' ? 'fr-FR' : 'en-US';
+    intl = { rules: new Intl.PluralRules(tag), number: new Intl.NumberFormat(tag) };
+    PLURAL_INTL.set(locale, intl);
+  }
+  return intl;
+}
+
+/**
+ * The words for a count, in the grammar of each language: English "1 campaign" / "2 campaigns", French "1 campagne" /
+ * "2 campagnes" (French also uses the singular for 0 and 1.5). `forms` holds the singular (`one`) and the plural
+ * (`other`) of each language; `{n}` in them is the count as written in that locale ("1,250" / "1 250").
+ * `pluralWords(3, { one: w('{n} campaign', '{n} campagne'), other: w('{n} campaigns', '{n} campagnes') })`.
+ */
+export function pluralWords(count: number, forms: { one: Words; other: Words }): Words {
+  const form = (locale: Locale) => {
+    const intl = pluralIntl(locale);
+    const rule = Number.isFinite(count) ? intl.rules.select(count) : 'other';
+    const words = rule === 'one' ? forms.one : forms.other;
+    const n = Number.isFinite(count) ? intl.number.format(count) : String(count);
+    return interpolate(locale === 'fr' ? words.fr : words.en, { n });
+  };
+  return { en: form('en'), fr: form('fr') };
+}
+
 /** Shorthand for a Words pair. */
 export function w(en: string, fr: string): Words {
   return { en, fr };

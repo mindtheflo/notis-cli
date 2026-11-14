@@ -694,3 +694,67 @@ test('DataTable: plain rows are not pressable, the primary never hides, no rows 
   assert.equal(typeof uiExports.Meter, 'function');
   assert.equal(typeof uiExports.formatDuration, 'function');
 });
+
+test('DataTable: canPressRow leaves a row with nowhere to go plain; a wrapping column and wrapping headers break onto lines', async () => {
+  const pressed: string[] = [];
+  await mount(
+    <DataTable
+      columns={[{ ...BOX_COLUMNS[1]!, wrap: true }, BOX_COLUMNS[2]!]}
+      rows={BOXES}
+      rowKey={(box) => box.id}
+      onRowPress={(box) => pressed.push(box.id)}
+      canPressRow={(box) => box.state === 'up'}
+      wrapHeaders
+    />,
+  );
+  const rows = [...doc.querySelectorAll('tbody tr')] as HTMLTableRowElement[];
+  assert.deepEqual(rows.map((row) => row.hasAttribute('data-pressable')), [true, true, false]);
+  assert.equal(rows[2]!.querySelector('.nui-dtable-pick'), null, 'no press button on a row that opens nothing');
+  assert.equal(rows[2]!.querySelector('th[scope="row"]')?.textContent, 'mac-mini', 'its primary text still shows');
+  await act(async () => { rows[2]!.querySelector('td')!.click(); });
+  await act(async () => { rows[0]!.querySelector('td')!.click(); });
+  assert.deepEqual(pressed, ['b1'], 'a press on the plain row does nothing');
+
+  assert.equal(doc.querySelector('.nui-dtable')?.hasAttribute('data-wrap-headers'), true);
+  assert.equal(doc.querySelector('thead th[data-ci="0"]')?.hasAttribute('data-wrap'), true, 'the header of a wrapping column wraps too');
+  assert.equal(rows[0]!.querySelector('[data-ci="0"]')?.hasAttribute('data-wrap'), true);
+  assert.equal(rows[0]!.querySelector('[data-ci="1"]')?.hasAttribute('data-wrap'), false);
+  assert.match(cssRule('.nui-dtable > * > :where(tr) > [data-wrap]') ?? '', /white-space: normal; overflow-wrap: break-word;/,
+    'words break only when one is longer than the column, so a wrapping column never shrinks to a letter');
+  assert.match(cssRule('.nui-dtable > tbody > :where(tr) > [data-wrap]:not([data-primary])') ?? '', /min-width: 10rem;/,
+    'a wrapping column beside the full-width primary keeps room for a few words');
+  assert.match(cssRule('.nui-dtable > tbody > :where(tr):has(> [data-wrap]) > :is(th, td)') ?? '',
+    /vertical-align: top; padding-top: 11px; padding-bottom: 11px;/, 'one line keeps the 40px row, every cell on the first line');
+  assert.match(cssRule('.nui-dtable[data-wrap-headers] > thead > tr > th, .nui-dtable > thead > tr > th[data-wrap]') ?? '',
+    /white-space: normal;/);
+  assert.match(cssRule('.nui-dtable[data-wrap-headers] > thead > tr > th, .nui-dtable > thead > tr:has(> [data-wrap]) > th') ?? '',
+    /vertical-align: bottom; padding-top: 9px; padding-bottom: 9px;/,
+    'one header line keeps the 36px header, and every header of that row sits on the same bottom line');
+
+  await mount(<DataTable columns={BOX_COLUMNS} rows={BOXES} rowKey={(box) => box.id} onRowPress={() => undefined} />);
+  assert.equal(doc.querySelectorAll('tr[data-pressable]').length, 3, 'without canPressRow every row is pressable');
+  assert.equal(doc.querySelector('.nui-dtable')?.hasAttribute('data-wrap-headers'), false, 'headers truncate by default');
+  assert.equal(doc.querySelector('[data-wrap]'), null, 'cells truncate by default');
+});
+
+test('Meter: tone colours the fill from the toolkit tones; a reached limit still turns it destructive', async () => {
+  await mount(
+    <>
+      <Meter label="Protein" value={128} max={140} tone="success" />
+      <Meter label="Fat" value={80} max={90} limit={75} tone="success" />
+      <Meter label="Seats" value={3} max={10} tone="default" />
+      <Meter label="Odd" value={3} max={10} tone={'purple' as never} />
+    </>,
+  );
+  const [protein, fat, seats, odd] = [...doc.querySelectorAll('[role="meter"]')] as HTMLElement[];
+  assert.equal(protein.getAttribute('data-tone'), 'success');
+  assert.equal(fat.getAttribute('data-tone'), 'success');
+  assert.equal(fat.hasAttribute('data-over'), true);
+  assert.equal(seats.hasAttribute('data-tone'), false, 'default is the neutral fill');
+  assert.equal(odd.hasAttribute('data-tone'), false, 'an unknown tone draws the neutral fill');
+  for (const tone of ['info', 'success', 'warning', 'danger']) {
+    assert.ok(cssRule(`.nui-meter[data-tone="${tone}"] .nui-meter-fill`), `a ${tone} fill rule`);
+  }
+  // The over-limit rule comes after every tone rule, so with the same weight it wins.
+  assert.ok(toolkitCss.indexOf('.nui-meter[data-over] .nui-meter-fill') > toolkitCss.indexOf('.nui-meter[data-tone="success"] .nui-meter-fill'));
+});

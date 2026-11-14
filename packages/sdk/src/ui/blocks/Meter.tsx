@@ -1,16 +1,20 @@
 /**
  * Meter: how full something is (memory, disk, seats, a quota), as a label and its figure over a thin track. Flat:
- * no border, no coloured text. The fill is neutral until it reaches the optional limit, then the whole fill turns
- * destructive (state as a full fill, never by text colour).
+ * no border, no coloured text. The fill is neutral (or the `tone` given) until it reaches the optional limit, then the
+ * whole fill turns destructive (state as a full fill, never by text colour).
  */
 
 import type { ReactNode } from 'react';
 import { isWords, pick, type Words } from '../../words/types';
 import { useToolkitLocale } from '../engine/hooks';
+import type { Tone } from '../list/Row';
 import { formatValue } from '../period/dateFormat';
 import { cx } from '../util';
 
 type Text = Words | string;
+
+/** The fill colour of a Meter: neutral grey by default, or one of the toolkit's tones (the same tones Badge and Row labels take). */
+export type MeterTone = Tone;
 
 export interface MeterProps {
   /** What is measured ("Memory"); also the meter's accessible name. */
@@ -32,8 +36,16 @@ export interface MeterProps {
   limitLabel?: Text;
   /** A muted line under the track on the left ("4 apps running"). */
   hint?: Text;
+  /**
+   * The fill's colour, from the toolkit tones (the Badge ones): `success` for a goal met, `warning` for a goal near,
+   * `info` for one category among several. Default 'default', the neutral grey. A reached `limit` still turns it
+   * destructive.
+   */
+  tone?: MeterTone;
   className?: string;
 }
+
+const TONES: readonly MeterTone[] = ['default', 'info', 'success', 'warning', 'danger'];
 
 /** `value / max` held between 0 and 1; 0 when either is not a finite number or `max` is not above 0. */
 function ratio(value: number, max: number): number {
@@ -45,7 +57,7 @@ function ratio(value: number, max: number): number {
  * A label and its figure ("Memory 8.2 / 36") over a 6px rounded track with a neutral fill. With `limit`, a tick
  * marks it and the fill turns destructive once the value reaches it (`data-over`). role="meter", named by the label.
  */
-export function Meter({ label, value, max, valueText, limit, limitLabel, hint, className }: MeterProps) {
+export function Meter({ label, value, max, valueText, limit, limitLabel, hint, tone, className }: MeterProps) {
   const locale = useToolkitLocale();
   const t = (words: Text) => pick(words, locale);
   const name = t(label);
@@ -62,6 +74,7 @@ export function Meter({ label, value, max, valueText, limit, limitLabel, hint, c
   const hasFoot = hint !== undefined || limitLabel !== undefined;
   return (
     <div className={cx('nui-meter', className)} data-notis-ui="" data-over={over ? '' : undefined}
+      data-tone={tone && tone !== 'default' && TONES.includes(tone) ? tone : undefined}
       role="meter" aria-label={name} aria-valuemin={0} aria-valuemax={safeMax} aria-valuenow={now} aria-valuetext={spoken}>
       <div className="nui-meter-head">
         <span className="nui-meter-label">{name}</span>

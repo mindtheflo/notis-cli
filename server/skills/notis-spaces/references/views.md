@@ -267,6 +267,12 @@ navigation and the toolkit pieces.
 - `shows` for native data is `{database, where, open?}`. `where` is the native filter
   grammar and is what `useShown` executes, not commentary beside a different query.
   `open` names a record param over the same database.
+- `in` works only on identity columns (a record's own key). For several values of
+  a select or status property, use `{or: [{field: {property: 'Stage'}, op: 'equals',
+  value: 'Lead'}, {field: {property: 'Stage'}, op: 'equals', value: 'Won'}]}`.
+- A `LOCAL_NOTIS_DATABASE_QUERY` read action's `request` may add `properties:
+  [{property: 'Name'}, ...]` (1 to 100) to return only those fields, and `mode:
+  'count'` to return a count instead of rows (`useNativeDocuments` reads rows).
 - A condition may add `when: 'late'`, naming a boolean param. It is included
   only when that setting is true; absent/false drops it before pagination.
   This also gates `is_empty` for unplanned tasks. `tasksViewFilter` pairs with

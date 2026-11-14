@@ -64,6 +64,33 @@ function Channels({ lang, kind = 'line' }: { lang: SpecimenLang; kind?: 'line' |
   );
 }
 
+/** Six months of spending against a budget: the bars over it in the danger tone, every month full colour. */
+const SPEND = [
+  { key: 'm1', label: { en: 'Jun', fr: 'juin' }, value: 2380 },
+  { key: 'm2', label: { en: 'Jul', fr: 'juil.' }, value: 2910 },
+  { key: 'm3', label: { en: 'Aug', fr: 'août' }, value: 2140 },
+  { key: 'm4', label: { en: 'Sep', fr: 'sept.' }, value: 3260 },
+  { key: 'm5', label: { en: 'Oct', fr: 'oct.' }, value: 2560 },
+  { key: 'm6', label: { en: 'Nov', fr: 'nov.' }, value: 1720 },
+] as const;
+const BUDGET = 2800;
+const SPENDING = { en: 'Spending', fr: 'Dépenses' } as const;
+
+/** The net change of a balance by month, above and below zero. */
+const NET = [
+  { key: 'n1', label: { en: 'Jun', fr: 'juin' }, value: 640 },
+  { key: 'n2', label: { en: 'Jul', fr: 'juil.' }, value: -320 },
+  { key: 'n3', label: { en: 'Aug', fr: 'août' }, value: 910 },
+  { key: 'n4', label: { en: 'Sep', fr: 'sept.' }, value: -1180 },
+  { key: 'n5', label: { en: 'Oct', fr: 'oct.' }, value: 220 },
+  { key: 'n6', label: { en: 'Nov', fr: 'nov.' }, value: 480 },
+] as const;
+const NET_CHANGE = { en: 'Net change', fr: 'Variation nette' } as const;
+
+function monthRows(rows: ReadonlyArray<{ key: string; label: { en: string; fr: string }; value: number }>, lang: SpecimenLang) {
+  return rows.map((row) => ({ key: row.key, label: row.label[lang], value: row.value }));
+}
+
 export const specimen = defineSpecimen({
   id: 'chart',
   name: 'Chart',
@@ -117,6 +144,27 @@ export const specimen = defineSpecimen({
       id: 'series-bars',
       label: 'Three series as bars over two weeks (only a single series dims past bars)',
       render: ({ lang }) => <Pad><Channels lang={lang} kind="bar" /></Pad>,
+    },
+    {
+      id: 'bar-colors',
+      label: 'Months against a budget: each bar coloured by its row (over budget in the danger tone), none dimmed (dim={false})',
+      render: ({ lang }) => (
+        <Pad>
+          <Chart kind="bar" data={monthRows(SPEND, lang)} series={{ key: 'value', label: SPENDING }} title={SPENDING}
+            dim={false} valueAxis locale={lang}
+            barColor={(row) => ((row as { value: number }).value > BUDGET ? 'hsl(var(--nui-tone-danger, var(--destructive)))' : undefined)} />
+        </Pad>
+      ),
+    },
+    {
+      id: 'diverging',
+      label: 'Values above and below zero: the scale reaches under zero, with a line at zero',
+      render: ({ lang }) => (
+        <Pad>
+          <Chart kind="bar" data={monthRows(NET, lang)} series={{ key: 'value', label: NET_CHANGE }} title={NET_CHANGE}
+            dim={false} valueAxis locale={lang} />
+        </Pad>
+      ),
     },
     {
       id: 'today-hours',

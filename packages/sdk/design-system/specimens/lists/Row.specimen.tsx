@@ -288,6 +288,28 @@ function labelledRow(ctx: Ctx) {
   };
 }
 
+/** A meal photo as a lead: a drawn plate, so the frame needs no network. */
+const MEAL_PHOTO = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="#e8dcc8"/><circle cx="20" cy="20" r="14" fill="#fff"/><circle cx="16" cy="18" r="5" fill="#7fb069"/><circle cx="24" cy="23" r="4" fill="#e4572e"/></svg>')}`;
+
+/** Leads larger than an icon (iconSize) and labels that hold while the meta truncates (keepLabels), at a narrow width. */
+function LeadsAndLabels({ ctx }: { ctx: Ctx }) {
+  const { t } = ctx;
+  const meta = t({ en: 'Link exchange with a design newsletter for founders', fr: 'Échange de liens avec une newsletter design pour fondateurs' });
+  const stage: RowLabel[] = [{ label: t({ en: 'Negotiation', fr: 'Négociation' }) }];
+  return (
+    <Gallery ctx={ctx} rowWidth={340} entries={[
+      [{ en: 'Icon from the set: fork-knife', fr: 'Icône du jeu : fork-knife' },
+        <Row icon={<Icon name="fork-knife" />} title={t({ en: 'Lunch', fr: 'Déjeuner' })} meta="640 kcal" />],
+      [{ en: 'iconSize 40: a photo lead', fr: 'iconSize 40 : une photo en tête' },
+        <Row icon={<img src={MEAL_PHOTO} alt="" />} iconSize={40} title={t({ en: 'Lunch', fr: 'Déjeuner' })} meta="640 kcal" />],
+      [{ en: 'Default: labels give way first', fr: 'Par défaut : les libellés cèdent d’abord' },
+        <Row title="Design Weekly" meta={meta} labels={stage} />],
+      [{ en: 'keepLabels: the meta truncates first', fr: 'keepLabels : la méta est coupée d’abord' },
+        <Row title="Design Weekly" meta={meta} labels={stage} keepLabels />],
+    ]} />
+  );
+}
+
 export const specimen = defineSpecimen({
   id: 'row',
   name: 'Row',
@@ -379,6 +401,11 @@ export const specimen = defineSpecimen({
       label: 'Phone width: compact times beside the avatar',
       width: 390,
       render: (ctx) => <NowTimes ctx={ctx} />,
+    },
+    {
+      id: 'leads-and-labels',
+      label: 'A picture lead (iconSize) and labels that hold while the meta truncates (keepLabels)',
+      render: (ctx) => <LeadsAndLabels ctx={ctx} />,
     },
     {
       id: 'compact',

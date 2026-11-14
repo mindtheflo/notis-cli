@@ -8,7 +8,7 @@
 import { addDays, addHours, differenceInCalendarDays, endOfDay, endOfHour, endOfMonth, startOfDay, startOfHour } from 'date-fns';
 import type { Locale } from '../../words/types';
 import { dateFormat, formatDateRange } from '../period/dateFormat';
-import { dayCount, type DateRange } from '../period/periods';
+import { dayCount, monthSpan, type DateRange } from '../period/periods';
 
 export type BinUnit = 'hour' | 'day' | 'week' | 'month';
 
@@ -36,8 +36,14 @@ export interface PeriodChartRow {
   compare: number | null;
 }
 
+/**
+ * The bin of a range: hours for a day, days up to a month, weeks up to about six months, then months. A range
+ * that starts on the 1st and spans six calendar months or more (last 6 months, a year to date from June) is
+ * binned by month, so each bar is a whole month (and Compare previous moves back by whole months).
+ */
 export function binUnit(range: DateRange): BinUnit {
   const n = dayCount(range);
+  if (monthSpan(range)) return 'month';
   return n <= 1 ? 'hour' : n <= 31 ? 'day' : n <= 186 ? 'week' : 'month';
 }
 
@@ -199,6 +205,15 @@ export function chartMax(values: ReadonlyArray<number | null | undefined>): numb
 }
 
 /**
+ * Bottom of the value axis: 0 when no value is under zero, else 10% under the lowest one (diverging bars, a balance).
+ */
+export function chartMin(values: ReadonlyArray<number | null | undefined>): number {
+  let min = 0;
+  for (const v of values) if (typeof v === 'number' && Number.isFinite(v) && v < min) min = v;
+  return min * 1.1;
+}
+
+/**
  * The top of a value axis drawn in quarters, raised from `max` so every quarter is a round number (110 gives 120:
  * 30, 60, 90, 120), never 27.5. With `integers` (counts) each quarter is a whole number too: 1.1 gives 4, never 1.2.
  * Exported for tests.
@@ -256,4 +271,22 @@ export function sparkPaths(
     }
   }
   return { line: lines.join(' '), area: areas.join(' ') };
+}
+
+/**
+ * The scale of values on both sides of zero: one round step for both sides, so zero sits on a gridline and the
+ * labels stay evenly spaced however lopsided the values are (-3 and 1000 give -250 to 1000 in steps of 250).
+ * `min` is under zero; `max` at or under zero ends the scale at zero. At most six steps: the step doubles past that.
+ */
+export function divergingScale(min: number, max: number, integers = false): { low: number; high: number; ticks: number[] } {
+  const top = Math.max(0, max);
+  let step = niceQuarterMax(Math.max(-min, top), integers) / 4;
+  const steps = (v: number) => Math.ceil(v / step - 1e-9);
+  if (steps(-min) + steps(top) > 6) step *= 2;
+  const round = (v: number) => Number(v.toPrecision(12));
+  const low = round(-steps(-min) * step);
+  const high = round(steps(top) * step);
+  const ticks: number[] = [];
+  for (let i = 0; low + i * step <= high + 1e-9 * step; i += 1) ticks.push(round(low + i * step));
+  return { low, high, ticks };
 }

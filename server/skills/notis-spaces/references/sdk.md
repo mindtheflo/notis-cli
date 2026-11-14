@@ -56,9 +56,13 @@ rather than from a copy.
   tool such as an editor or a `CloudComputerFrame` edge to edge at full height
   instead of the reading column), `onOpenChange(id, reason)` (`reason` is `user`,
   `auto` for a move the list makes itself, or `url`), `renderTile` (tiles), `look` (`two-tone` keeps
-  the list tinted) and `autoOpen` (opens the first item). It has no toolbar or
-  header slot. `Row` takes `wrap` (title lines) and `now` (a fixed clock for
-  relative times); a `Row` drawn on its own (a short "Needs action" list)
+  the list tinted) and `autoOpen` (opens the first item; leave it off when the
+  page has sections above the list, which the open reader would cover). It has
+  no toolbar or header slot. `Row` takes `wrap` (title lines), `now` (a fixed
+  clock for relative times), `iconSize` (a lead larger than the 20 px icon, such
+  as a 40 px photo: pass an `<img>` as `icon`) and `keepLabels` (labels that say
+  where the row stands, such as a stage, keep their width and the meta start
+  truncates first; by default the labels give way first). A `Row` drawn on its own (a short "Needs action" list)
   takes `onPress` and `pressLabel` and opens something on press, so never wrap
   a row in a button of your own. A `labels` entry with a tone draws as a small
   tinted pill. Drag to select is automatic on a list that selects several
@@ -91,7 +95,15 @@ rather than from a copy.
   `RenderChartData`, `Meter`, `DataTable`, `formatDuration`. `Chart` stacks
   bars or areas (`stacked`) and runs bars left to right (`horizontal`): each
   label on up to two lines before its bar in a measured axis, and its value after it; `labelFormat` gives that short
-  value ("1.2k") while `format` stays the exact tooltip and table text. Draw
+  value ("1.2k") while `format` stays the exact tooltip and table text.
+  One series of bars draws the bars other than the live one lighter until
+  hovered; `dim={false}` draws every bar full colour (months of a budget).
+  `barColor(row, series, index)` colours one bar by its row (a stage, over a
+  budget); never fake it with stacked series. Values under zero (no `domain`)
+  reach below zero with a line at zero (a balance, a net change); stacked
+  values under zero stack under the axis. Series take
+  `--chart-1` to `--chart-5` in order, then again: give a sixth series its own
+  `color`. Draw
   category bars this way rather than with your own recharts. For a chart of
   your own, `ChartContainer` takes `aspect` or `height`; `ChartTooltipContent`
   and `ChartLegend` also work outside it; `<Bar shape={barShape}
@@ -99,14 +111,24 @@ rather than from a copy.
   sparkline `null` is a gap. `domain={[min, max]}` fixes the value scale (a
   percentage on 0 to 100) and `valueAxis` draws it on the left through
   `labelFormat` (without a `domain` its top rises to a round quarter); x labels thin out with the room and never run off the edge. `PeriodPicker` without the `custom` preset offers
-  presets only. `Meter` is a labelled capacity bar (`label`, `value`, `max`,
-  `valueText`, `hint`); at or past `limit` (a tick named by `limitLabel`) it
-  turns destructive. Set `limit` only to a threshold the data has (a memory
+  presets only; `presets={[...PRESETS.slice(0, -1), ...EXTRA_PRESETS, 'custom']}`
+  adds Last 6 months and Last 12 months (this month and the 5 or 11 before it,
+  binned by month and compared with the same months before, like any range
+  from the 1st spanning six months or more).
+  `Meter` is a labelled capacity bar (`label`, `value`, `max`,
+  `valueText`, `hint`, `tone`: `success`, `warning`, `info` or `danger` colour
+  the fill, such as a goal met or near; `danger` looks like a reached limit, so
+  keep it for a value that is already bad); at or past `limit` (a tick named by
+  `limitLabel`) it turns destructive. Set `limit` only to a threshold the data has (a memory
   reserve, a quota), never to `max`: a full meter is not red by itself. `DataTable` is a read-only table with the `ChartTable`
   look for rows that are not figures: `columns` (`id`, `label`, `cell`, `align`, `width`,
-  `mono`, `primary`, `hideBelow`), `rows` or `groups` (`key`, `label`, `rows`),
+  `mono`, `primary`, `hideBelow`, `wrap`), `rows` or `groups` (`key`, `label`, `rows`),
   `rowKey`, and `onRowPress` with `rowLabel` to open a row (the primary cell
-  then sits inside the row's button: text and icons only, no link). The primary
+  then sits inside the row's button: text and icons only, no link);
+  `canPressRow(row)` leaves a row that opens nothing plain. Cells truncate: a
+  column with `wrap` (a question, a note) wraps and its rows grow, and
+  `wrapHeaders` puts long headers (French ones over narrow figure columns) on
+  two lines instead of an ellipsis. The primary
   column never gets under its `minWidth` (120 px by default): the last
   columns that do not fit hide on their own.
   `formatDuration(ms, locale, { units, smallest })` writes "1 h 31 min" (FR
@@ -148,7 +170,12 @@ rather than from a copy.
   page heading: the host top bar shows the title. One toggle is a `Button` with
   `pressed`; several with any number on (filters, chart series) are a
   `ToggleGroup`; tabs and filters over a whole list or section are pills
-  (`TabRow`); a `SegmentedControl` is only a mode switch inside a section.
+  (`TabRow`, which folds the pills that do not fit into More); a
+  `SegmentedControl` is only a mode switch inside a section. `Tabs` scroll
+  sideways on a phone; `wrap` puts the tabs that do not fit on a next line.
+  `Icon` draws a toolkit icon by name (`fork-knife`, `clock`, `star`...);
+  for any other, pass a `@phosphor-icons/react` element as the `icon` (the
+  template depends on it), never a second icon set.
   A `Notice` is read politely, danger too; pass `urgent` only for a problem the
   person must act on now (it becomes an alert that interrupts the screen reader).
 - **Fields**: `EditableFields` (a form; Save and Cancel show once something
@@ -273,6 +300,12 @@ A region that only shows on another tab or page is measured when the
 verification fixtures list that tab's params in `context.skeletonParams`. A Space
 with editor-only parts gets the skeleton of its public view, the one visitors
 see: an editors' page that loads differently keeps a plain loading state of its own.
+
+A PostHog read is a declared action on the connected PostHog server's EXEC
+tool (`LOCAL_MCP_..._EXEC` or `CUSTOM_..._EXEC`) with no `inputs` and exactly
+these `arguments`: `{project_id: <number>, query: 'SELECT ...', context: '<what
+it answers>', llm_model: '<model name>'}`. The query is one fixed SELECT (no
+`;`, at most 32 KB); Notis runs it read-only. Read it with `useActionQuery`.
 
 For another explicitly idempotent read use `useActionQuery`, or
 `useQuery(keyArray, readCallback, { readOnly: true })` with every input in the

@@ -76,6 +76,12 @@ export interface TabsProps<V extends string> {
   children?: ReactNode;
   /** Stable prefix for tab and panel ids. Default a generated one. */
   id?: string;
+  /**
+   * The tabs that do not fit wrap onto a next line instead of scrolling sideways (a phone page with five or six
+   * sections, every tab in sight). Default false: one line that scrolls. For a row over a list, TabRow folds the rest
+   * into a More menu instead.
+   */
+  wrap?: boolean;
   className?: string;
   panelClassName?: string;
 }
@@ -155,7 +161,7 @@ export function stepTab<V extends string>(tabs: readonly TabItem<V>[], from: V, 
 
 /** A strip of view pills whose choice switches the content below it, with its panel when `children` is given. */
 export function Tabs<V extends string>({
-  tabs, value, onChange, label, keys = true, activation = 'auto', children, id, className, panelClassName,
+  tabs, value, onChange, label, keys = true, activation = 'auto', children, id, wrap = false, className, panelClassName,
 }: TabsProps<V>) {
   const t = useT();
   const generated = useId();
@@ -225,7 +231,7 @@ export function Tabs<V extends string>({
   return (
     <>
       <div ref={stripRef} role="tablist" aria-orientation="horizontal" className={cx('nui-tabs', className)}
-        aria-label={t(label ?? TABS_WORDS.views)} onKeyDown={onKeyDown}>
+        data-wrap={wrap ? '' : undefined} aria-label={t(label ?? TABS_WORDS.views)} onKeyDown={onKeyDown}>
         {tabs.map((tab) => {
           const selected = tab.value === value;
           const ids = tabIds(prefix, tab.value);
