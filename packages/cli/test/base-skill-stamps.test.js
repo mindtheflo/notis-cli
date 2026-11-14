@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
-import { baseSkillStamp, stageBaseSkills } from '../scripts/base-skill-stamps.js';
+import { BASE_SKILL_STAMPS_FILE_ENV, baseSkillStamp, stageBaseSkills } from '../scripts/base-skill-stamps.js';
 import {
   BASE_SKILL_NAMES,
   BASE_SKILL_STAMP_FILE,
@@ -23,6 +23,8 @@ const isolation = await mkdtemp(join(tmpdir(), 'notis-stamp-gitconfig-'));
 writeFileSync(join(isolation, 'gitconfig'), '');
 process.env.GIT_CONFIG_GLOBAL = join(isolation, 'gitconfig');
 process.env.GIT_CONFIG_NOSYSTEM = '1';
+// The ship gate exports its stamps file to every job on a test fork; these tests read git themselves.
+delete process.env.NOTIS_BASE_SKILL_STAMPS_FILE;
 test.after(() => rm(isolation, { recursive: true, force: true }));
 
 function git(repo, args, time = T1) {
@@ -126,6 +128,53 @@ test('refuses a source folder without git history', async (t) => {
   assert.throws(
     () => baseSkillStamp({ repoRoot: folder, name: 'notis-spaces' }),
     /build from a git checkout/,
+  );
+});
+
+test('the ship gate\'s stamps file stands in for the git history of a checkout without .git', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'notis-stamp-file-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  for (const name of BASE_SKILL_NAMES) writeSkill(folder, name, `# ${name}\n`);
+  const commit = 'a'.repeat(40);
+  const file = join(folder, 'stamps.json');
+  const stamps = {
+    'notis-spaces': { schema: 1, stamp: T1, commit },
+    'notis-query': { schema: 1, stamp: T1 + 100, commit: null },
+    'notis-cli': { schema: 1, stamp: T1 + 200, commit },
+  };
+  writeFileSync(file, JSON.stringify({ schema: 1, stamps }));
+  const env = { [BASE_SKILL_STAMPS_FILE_ENV]: file };
+  assert.equal(BASE_SKILL_STAMPS_FILE_ENV, 'NOTIS_BASE_SKILL_STAMPS_FILE');
+
+  assert.deepEqual(baseSkillStamp({ repoRoot: folder, name: 'notis-query', env }), stamps['notis-query']);
+  const target = join(folder, 'out');
+  assert.deepEqual(stageBaseSkills({ repoRoot: folder, targetRoot: target, env }), stamps);
+  assert.equal(readBaseSkillStamp(join(target, 'notis-cli')), T1 + 200);
+  // Without the variable the same folder still refuses: only the gate's file replaces the history.
+  assert.throws(() => baseSkillStamp({ repoRoot: folder, name: 'notis-cli', env: {} }), /build from a git checkout/);
+});
+
+test('a stamps file missing a name or holding a bad stamp fails the build loudly', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'notis-stamp-file-bad-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const file = join(folder, 'stamps.json');
+  const env = { [BASE_SKILL_STAMPS_FILE_ENV]: file };
+  const cases = [
+    [{ schema: 1, stamps: { 'notis-cli': { schema: 1, stamp: T1, commit: null } } }, /has no stamp for notis-spaces/],
+    [{ schema: 1, stamps: { 'notis-spaces': { schema: 1, stamp: '1760000000', commit: null } } }, /invalid stamp for notis-spaces/],
+    [{ schema: 1, stamps: { 'notis-spaces': { schema: 1, stamp: T1, commit: 'HEAD' } } }, /invalid stamp for notis-spaces/],
+    [{ schema: 2, stamps: {} }, /is not \{ "schema": 1/],
+    [[], /is not \{ "schema": 1/],
+  ];
+  for (const [content, error] of cases) {
+    writeFileSync(file, JSON.stringify(content));
+    assert.throws(() => baseSkillStamp({ repoRoot: folder, name: 'notis-spaces', env }), error);
+  }
+  writeFileSync(file, 'not json');
+  assert.throws(() => baseSkillStamp({ repoRoot: folder, name: 'notis-spaces', env }), /not readable JSON/);
+  assert.throws(
+    () => baseSkillStamp({ repoRoot: folder, name: 'notis-spaces', env: { [BASE_SKILL_STAMPS_FILE_ENV]: join(folder, 'missing.json') } }),
+    /not readable JSON/,
   );
 });
 
