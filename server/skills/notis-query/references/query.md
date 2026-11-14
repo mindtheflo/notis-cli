@@ -20,9 +20,11 @@ The native query lives directly inside `input`, without another request/query wr
 ```
 
 Use the complete Space binding target returned by schema discovery. Every
-database lives in a Space: a bare `database_id` gets `resolved_target` from
-`LOCAL_NOTIS_DATABASE_GET_DATABASE`, and a bare-id query answers
-`database_in_spaces` with its links. Never remove its record context or substitute
+database lives in a Space: `LOCAL_NOTIS_DATABASE_GET_DATABASE` and a query with a
+bare `{"database_id": ...}` target run through your main view of it and return
+`resolved_target`; reuse that target next, and for every write (writes never take
+a bare ID). Without a main view the query answers `database_in_spaces` with its
+links. Never remove its record context or substitute
 another database/owner after a denial. `action_id`, when present, retains the
 saved action's narrower authority rather than granting direct Editor access.
 

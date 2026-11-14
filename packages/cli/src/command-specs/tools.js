@@ -764,6 +764,7 @@ export const toolsCommandSpecs = [
     },
     examples: [
       'notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments \'{"database_slug":"tasks","query":{}}\'',
+      'notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments \'{"protocol":1,"target":{"database_id":"<database id>"},"input":{"mode":"rows"}}\'',
       'notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --arguments \'{"database_slug":"tasks"}\'',
       'notis tools exec LOCAL_NOTIS_DATABASE_QUERY --get-schema',
       'notis tools exec LOCAL_NOTIS_DATABASE_QUERY --dry-run --arguments \'{"database_slug":"tasks","query":{}}\'',

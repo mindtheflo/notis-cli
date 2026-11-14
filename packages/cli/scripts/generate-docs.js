@@ -286,7 +286,10 @@ npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_
 npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_GET_DATABASE --arguments '{"database_slug":"tasks"}'
 npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --dry-run --arguments '{"database_slug":"tasks","query":{"page_size":10}}'
 npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"database_slug":"tasks","query":{"page_size":10}}'
+npx --package @notis_ai/cli@latest -- notis tools exec LOCAL_NOTIS_DATABASE_QUERY --arguments '{"protocol":1,"target":{"database_id":"<database id>"},"input":{"mode":"rows","page_size":10}}'
 \`\`\`
+
+A read by slug or bare \`database_id\` of a database used in Spaces runs through your main view of it and returns \`resolved_target\` (\`{space_id, binding}\`): reuse it for the next call and for every write, which never takes a bare ID.
 
 ## Supporting command
 

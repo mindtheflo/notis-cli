@@ -31,7 +31,10 @@ A failed target never falls back to a different authority.
 The protected owner and Editors of a Space and its ancestors can reach it.
 Moving a subtree changes who can reach every child/resource; report the actual
 access delta before moving. Removing an Editor or unlinking a resource revokes
-future reads, writes and memory access through that path.
+future reads, writes and memory access through that path. To see who a Space is
+shared with (owner, Editors and how each reaches it, team access, pending
+invitations), use `LOCAL_NOTIS_MANAGE_SPACE` `list_members`; it is read-only and
+refused inside Space views.
 
 A Site is a scoped standalone website, not an Editor membership. Record Sites
 stay pinned to their record, including views whose record param is not the
