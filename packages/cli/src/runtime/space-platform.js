@@ -8,6 +8,7 @@ import { viewManifestFields } from './space-view-manifest.js';
 import { editorsOnlySummary, manifestActions, manifestResources } from './space-audience.js';
 import { usageError } from './errors.js';
 import { assertSourceRoot } from './source-root.js';
+import { ensureSpaceDependencies } from './space-dependencies.js';
 
 const SPACE_ICON = /^(phosphor:[a-z0-9]+(-[a-z0-9]+)*|https:\/\/\S{1,2000})$/;
 
@@ -102,9 +103,12 @@ function finalizeSelectedArtifact(projectDir) {
  * dependencies; it is not another authoring project or dependency installation.
  * The existing pinned freeze/receipt code owns all staging writes and cleanup.
  */
-export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inherit', refreshSdk = true, runBuild, designBar = 'enforce', designLog = null } = {}) {
+export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inherit', refreshSdk = true, runBuild, designBar = 'enforce', designLog = null,
+  installDependencies = false, installLog } = {}) {
   projectDir = assertSourceRoot(projectDir);
   if (refreshSdk) syncSpaceSdk(projectDir);
+  // After the SDK sync, so the install follows the lock file that sync keeps in step with the SDK.
+  const installed = installDependencies ? ensureSpaceDependencies(projectDir, { log: installLog }) : null;
   const selection = await loadSelectedSpace(projectDir, selectedKey);
   const sourceFiles = collectSelectedSpaceSource(projectDir, selection);
   const sourceHash = appFilesDigest(sourceFiles);
@@ -122,7 +126,8 @@ export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inhe
     if (sourceHash !== appFilesDigest(collectSelectedSpaceSource(projectDir, current))) throw usageError('This Space source changed during the selected build. Build again.');
     release = prepareAppRelease(staging.projectDir);
     const close = release.close;
-    return { ...release, selectedKey, sourceHash, fixturePath: selection.fixturePath, close() { try { close(); } finally { staging.close(); } } };
+    return { ...release, selectedKey, sourceHash, fixturePath: selection.fixturePath, ...(installed ? { installed } : {}),
+      close() { try { close(); } finally { staging.close(); } } };
   } catch (error) {
     try { release?.close(); } finally { staging.close(); }
     throw error;
@@ -133,7 +138,7 @@ export async function buildSpaceArtifact(projectDir, selectedKey, options) {
   const release = await buildSpaceRelease(projectDir, selectedKey, options);
   try {
     const receiptPath = saveSelectedBuild(projectDir, selectedKey, release);
-    return { manifest: release.manifest, receiptPath, sourceHash: release.sourceHash };
+    return { manifest: release.manifest, receiptPath, sourceHash: release.sourceHash, ...(release.installed ? { installed_dependencies: release.installed } : {}) };
   } finally { release.close(); }
 }
 

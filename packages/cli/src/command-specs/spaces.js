@@ -978,8 +978,12 @@ export const spacesCommandSpecs = [
     backend_call: { type: 'local', name: 'space_build' },
     async handler(ctx) {
       const { directory, key } = await selected(ctx);
-      const result = await buildSpaceArtifact(directory, key, { stdio: ctx.output.isMachineMode() ? 'pipe' : 'inherit' });
-      return ctx.output.emitSuccess({ command: 'spaces build', data: result, humanSummary: `Built ${key}; no Space was published.` });
+      // A folder with no packages yet (a copy, a fresh clone) installs them once here, never asking for a separate npm ci.
+      const result = await buildSpaceArtifact(directory, key, { stdio: ctx.output.isMachineMode() ? 'pipe' : 'inherit', installDependencies: true,
+        installLog: message => ctx.output.emitProgress?.({ phase: 'install', message }) });
+      const installed = result.installed_dependencies;
+      return ctx.output.emitSuccess({ command: 'spaces build', data: result,
+        humanSummary: `${installed ? `Installed this Space's packages (${installed.command}, ${installed.seconds} s). ` : ''}Built ${key}; no Space was published.` });
     },
   },
   {
