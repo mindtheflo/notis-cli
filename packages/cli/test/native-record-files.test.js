@@ -32,3 +32,13 @@ test('oversized local file is rejected before transport', async t => {
   await assert.rejects(uploadNativeRecordFileWithCliRuntime({ ...options, request: async () => { calls++; } }), /up to 8 MB/);
   assert.equal(calls, 0);
 });
+test('env files are refused before their bytes are read or sent', async t => {
+  const options = await fixture(t); let calls = 0;
+  const request = async () => { calls++; };
+  // None of these paths exists: a refusal after open() would fail with ENOENT instead.
+  for (const filePath of ['/nowhere/.env', '/nowhere/server/.env', '/nowhere/prod.env', '/nowhere/.ENV.local', 'C:\\app\\.env']) {
+    await assert.rejects(uploadNativeRecordFileWithCliRuntime({ ...options, filePath, request }), /Env files .* never stored/);
+  }
+  await assert.rejects(uploadNativeRecordFileWithCliRuntime({ ...options, name: '.env.production', request }), /never stored/);
+  assert.equal(calls, 0);
+});

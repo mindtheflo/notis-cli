@@ -2,6 +2,7 @@ import { accessSync, constants as fsConstants, createReadStream, existsSync, rea
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { usageError } from '../runtime/errors.js';
+import { ENV_FILE_MESSAGE, isEnvFileName } from '../runtime/native-record-files.js';
 import {
   canPrompt,
   createStderrPrompter,
@@ -296,6 +297,7 @@ async function parseFileBindingSpec(spec, index) {
   if (!localPath) {
     throw usageError('--file local path is required');
   }
+  if (isEnvFileName(localPath)) throw usageError(ENV_FILE_MESSAGE);
   if (!existsSync(localPath)) {
     throw usageError(`File not found: ${localPath}`);
   }

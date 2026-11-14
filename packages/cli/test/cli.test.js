@@ -1636,6 +1636,21 @@ test('tools exec rejects missing --file local paths before transport', async () 
   assert.match(payload.error.message, /File not found/);
 });
 
+test('tools exec refuses an env file before reading or sending it', async () => {
+  for (const localPath of ['/tmp/notis-missing-dir/.env', '/tmp/notis-missing-dir/prod.env', '/tmp/notis-missing-dir/.ENV.local']) {
+    const result = await runCliAsync(
+      ['--json', '--api-base', 'http://127.0.0.1:9', 'tools', 'exec', 'composio-dropbox-upload_file',
+        '--arguments', '{}', '--file', `content=${localPath}`],
+      { NOTIS_JWT: makeJwt() },
+    );
+    assert.equal(result.status, 2);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.ok, false);
+    // The path does not exist: a check after reading would say "File not found".
+    assert.match(payload.error.message, /Env files .* never stored/);
+  }
+});
+
 test('tools exec-parallel rejects --file with a clear usage error', async () => {
   const uploadPath = join(mkdtempSync(join(tmpdir(), 'notis-cli-upload-')), 'invoice.pdf');
   writeFileSync(uploadPath, 'pdf-bytes');

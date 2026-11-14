@@ -6,6 +6,16 @@ import { usageError } from './errors.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+// Same rule as the server (server/lib/env_file_names.py): env files hold secrets and are never stored.
+export const ENV_FILE_MESSAGE = 'Env files (.env, .env.*, *.env) hold secrets such as API keys and are never stored. '
+  + 'Nothing was uploaded. Share the setting names without their values instead.';
+
+/** Whether a file name or path names a developer env file: server/lib/env_file_names.py's rule, kept the same. */
+export function isEnvFileName(value) {
+  const name = String(value || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop().trim().toLowerCase();
+  return /^\.env(?:[._-][\s\S]*|rc)?$/.test(name) || name.endsWith('.env');
+}
+
 const MIME = { '.html': 'text/html', '.htm': 'text/html', '.txt': 'text/plain', '.md': 'text/markdown',
   '.json': 'application/json', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 
@@ -17,6 +27,7 @@ export async function uploadNativeRecordFileWithCliRuntime({ runtime, target, re
     || !target || typeof target !== 'object' || Array.isArray(target) || !filePath) {
     throw usageError('Choose a local file, native target, record key, schema revision and stable request ID.');
   }
+  if (isEnvFileName(filePath) || isEnvFileName(name)) throw usageError(ENV_FILE_MESSAGE);
   const handle = await open(filePath, 'r');
   let data;
   try {
