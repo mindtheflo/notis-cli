@@ -1,35 +1,19 @@
 import type { CloudSkill, SkillWriteOutcome } from './types';
 
 interface WriteCloudSkillDependencies {
-  downloadSkillBundle: (bundleUrl: string) => Promise<Buffer>;
-  writeCloudSkillToDisk: (skill: CloudSkill, bundleBytes?: Buffer) => Promise<SkillWriteOutcome | boolean>;
+  writeCloudSkillToDisk: (skill: CloudSkill) => Promise<SkillWriteOutcome | boolean>;
   onWarning?: (message: string, error: unknown) => void;
 }
 
-export async function writeCloudSkillWithBundleFallback(
+/**
+ * Writes one pulled Skill from what the pull itself carries: its saved files
+ * (`bundle_files`) or, without them, its SKILL.md. Nothing is downloaded;
+ * `skill_source_url` only records where a Skill came from (SKL-059).
+ */
+export async function writeCloudSkill(
   skill: CloudSkill,
   dependencies: WriteCloudSkillDependencies,
 ): Promise<SkillWriteOutcome | boolean> {
-  if (skill.skill_source_url) {
-    try {
-      const bundleBytes = await dependencies.downloadSkillBundle(skill.skill_source_url);
-      const wroteBundleToDisk = await dependencies.writeCloudSkillToDisk(skill, bundleBytes);
-      if (wroteBundleToDisk) {
-        return wroteBundleToDisk;
-      }
-
-      dependencies.onWarning?.(
-        `Bundle sync for "${skill.name}" produced no local changes, falling back to SKILL.md payload.`,
-        new Error('Bundle write returned false'),
-      );
-    } catch (error) {
-      dependencies.onWarning?.(
-        `Failed to apply bundle sync for "${skill.name}", falling back to SKILL.md payload.`,
-        error,
-      );
-    }
-  }
-
   if (skill.bundle_hydration_failed) {
     dependencies.onWarning?.(
       `Skipping markdown fallback for synced skill "${skill.name}" because its stored bundle could not be hydrated by the server.`,

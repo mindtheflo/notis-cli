@@ -15,7 +15,6 @@ import { normalizeAgentTargets } from "./types";
 import { assertNativePull, checkedNativeReference, isNativeSkill, nativeState } from './native-identity';
 import { bindNativeFolders, hasNativeFolderHistory, nativeLinkRows, nativeLocalReady, pendingLegacyUpgrade, previousNativeState, retainMissingNativeState } from './native-plan';
 import {
-  downloadSkillBundle,
   fetchSyncSettings,
   pullSkills,
   pushChangedSkills,
@@ -39,7 +38,7 @@ import {
   type DeletedAgentSymlink,
 } from "./symlink-manager";
 import { getPushCandidates, selectCloudSkillsToApply } from "./sync-plan";
-import { writeCloudSkillWithBundleFallback } from "./write-cloud-skill";
+import { writeCloudSkill } from "./write-cloud-skill";
 export { fetchSyncSettings, pushChangedSkills } from './cloud-client';
 
 export interface RunSkillSyncResult {
@@ -115,7 +114,6 @@ interface RunSkillSyncDependencies {
   fetchSyncSettings: typeof fetchSyncSettings;
   pullSkills: typeof pullSkills;
   pushChangedSkills: typeof pushChangedSkills;
-  downloadSkillBundle: typeof downloadSkillBundle;
   gatherTopLevelLocalSkills: typeof gatherTopLevelLocalSkills;
   readLegacySyncState: typeof readLegacySyncState;
   readSyncState: typeof readSyncState;
@@ -134,7 +132,6 @@ const DEFAULT_RUN_SKILL_SYNC_DEPS: RunSkillSyncDependencies = {
   fetchSyncSettings,
   pullSkills,
   pushChangedSkills,
-  downloadSkillBundle,
   gatherTopLevelLocalSkills,
   readLegacySyncState,
   readSyncState,
@@ -239,7 +236,10 @@ function cloudContentHash(skill: SyncPullResponse['skills'][number]): string {
   return createHash('sha256').update(JSON.stringify({
     md: skill.skill_md,
     hash: skill.skill_folder_hash,
-    source: skill.skill_source_url,
+    // A recorded origin is provenance, never content (SKL-059): a URL hashes as null so
+    // it cannot force a rewrite, and an absent or null one hashes as before so stored
+    // hashes stay valid.
+    source: skill.skill_source_url ? null : skill.skill_source_url,
     files: skill.bundle_files?.slice().sort((a, b) => a.path.localeCompare(b.path)),
     hydrationFailed: skill.bundle_hydration_failed === true,
   })).digest('hex');
@@ -270,8 +270,8 @@ export function shouldWriteCloudSkill(
   if (previous?.folderHash === localSkill.folderHash
     && previous.cloudContentHash === cloudContentHash(cloudSkill)) return false;
 
-  // Without a stored content baseline (skills served through a signed source URL keep
-  // none, because that URL changes on every pull) the only other signal is
+  // Without a stored content baseline (a state file written by an older client for a
+  // Skill it fetched through a source URL keeps none) the only other signal is
   // `skill_folder_hash`, which the server does NOT always compute the way the local
   // folder hash is computed. A bundle-entry hash can never equal the hash of the
   // extracted directory, and comparing the two replaced the folder on every sync
@@ -379,7 +379,7 @@ function buildSyncState(
           agentTargets: normalizeAgentTargets(skill.agent_targets),
           verifiedAgentLinks: skill.status === "active" ? verifiedAgentLinks[skill.name] ?? {} : {},
           cloudUpdatedAt: skill.updated_at,
-          ...(!failedContentNames.has(skill.name) && !skill.skill_source_url
+          ...(!failedContentNames.has(skill.name)
             ? { cloudContentHash: cloudContentHash(skill) } : {}),
           ...(appliedCloudFolderHash !== undefined ? { appliedCloudFolderHash } : {}),
           ...(appliedFileList !== undefined ? { appliedFiles: appliedFileList } : {}),
@@ -512,7 +512,7 @@ async function writePulledSkillsToScopedMirror(
   syncPaths: ReturnType<typeof getSkillSyncPathsForUser>,
   deps: Pick<
     RunSkillSyncDependencies,
-    "downloadSkillBundle" | "writeCloudSkillToDisk"
+    "writeCloudSkillToDisk"
   >,
   failures: SkillSyncFailure[] = [],
   writtenSkillNames: Set<string> = new Set(),
@@ -539,10 +539,9 @@ async function writePulledSkillsToScopedMirror(
       continue;
     }
 
-    const outcome = await writeCloudSkillWithBundleFallback(cloudSkill, {
-      downloadSkillBundle: deps.downloadSkillBundle,
-      writeCloudSkillToDisk: (skill, bundleBytes) =>
-        deps.writeCloudSkillToDisk(skill, bundleBytes, syncPaths, {
+    const outcome = await writeCloudSkill(cloudSkill, {
+      writeCloudSkillToDisk: (skill) =>
+        deps.writeCloudSkillToDisk(skill, syncPaths, {
           // What the last write put there. Everything else in the folder was
           // produced locally and survives this one.
           previouslyApplied: previouslyAppliedFiles(skill, local, previousState),
@@ -558,7 +557,7 @@ async function writePulledSkillsToScopedMirror(
         appliedFilesByName[cloudSkill.name] = outcome.appliedFiles;
       }
     } else {
-      failures.push({ name: cloudSkill.name, error: "Skill content could not be downloaded or written; sync will retry" });
+      failures.push({ name: cloudSkill.name, error: "Skill content could not be written; sync will retry" });
     }
   }
 
@@ -589,7 +588,6 @@ export async function materializeCloudSkillsForLocalShell(
   jwt: string,
   dependencies: Partial<Pick<
     RunSkillSyncDependencies,
-    | "downloadSkillBundle"
     | "deleteLocalSkill"
     | "pullSkills"
     | "readSyncState"

@@ -953,54 +953,6 @@ async function createZipFromDirectory(directoryPath: string): Promise<string> {
   }
 }
 
-async function extractZipToDirectory(
-  zipPath: string,
-  destinationDir: string,
-): Promise<string[]> {
-  const extractRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "notis-skill-extract-"),
-  );
-
-  try {
-    if (process.platform === "win32") {
-      await execFileAsync("powershell.exe", [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractRoot.replace(/'/g, "''")}' -Force`,
-      ]);
-    } else {
-      await execFileAsync("unzip", ["-qq", zipPath, "-d", extractRoot]);
-    }
-
-    const extractedEntries = await fs.readdir(extractRoot, {
-      withFileTypes: true,
-    });
-    const extractedDirectory = extractedEntries.find((entry) =>
-      entry.isDirectory(),
-    );
-    const sourceDir = extractedDirectory
-      ? path.join(extractRoot, extractedDirectory.name)
-      : extractRoot;
-
-    await fs.rm(destinationDir, { recursive: true, force: true });
-    await fs.mkdir(path.dirname(destinationDir), { recursive: true });
-    await fs.cp(sourceDir, destinationDir, { recursive: true });
-    return await listRelativeFiles(destinationDir);
-  } finally {
-    await fs.rm(extractRoot, { recursive: true, force: true });
-  }
-}
-
-async function listRelativeFiles(dirPath: string): Promise<string[]> {
-  try {
-    const files = await listFilesRecursive(dirPath);
-    return files.map((filePath) => toPosixRelativePath(dirPath, filePath)).sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
-    throw error;
-  }
-}
-
 function toPosixRelativePath(rootDir: string, filePath: string): string {
   return path.relative(rootDir, filePath).split(path.sep).join("/");
 }
@@ -1178,14 +1130,12 @@ export async function captureNativeSkillFiles(skill: LocalSkill): Promise<Bundle
 
 export async function writeCloudSkillToDisk(
   skill: CloudSkill,
-  bundleBytes?: Buffer,
   paths: SkillSyncPaths = DEFAULT_SYNC_PATHS,
   options: { previouslyApplied?: readonly string[]; expectedFolderHash?: string; legacyBaseline?: boolean } = {},
 ): Promise<SkillWriteOutcome | false> {
   if (isNativeSkill(skill)) {
     assertNativePull({ skills: [{ ...skill, name: 'native-' + skill.id }], skill_sync_protocol: 2, sync_scope: skill.native_scope,
       sync_enabled: true, last_synced_at: null });
-    if (bundleBytes?.length) throw new Error('Native Skills require their verified complete file response.');
   }
   const skillDir = path.join(
     paths.skillsDir,
@@ -1195,23 +1145,6 @@ export async function writeCloudSkillToDisk(
     native: isNativeSkill(skill),
     // An unchanged legacy folder upgrading in place: shared files take the cloud version.
     legacyBaseline: isNativeSkill(skill) && options.legacyBaseline === true && options.expectedFolderHash !== undefined };
-
-  if (bundleBytes?.length) {
-    const bundlePath = path.join(
-      os.tmpdir(),
-      `notis-skill-download-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`,
-    );
-    try {
-      await fs.writeFile(bundlePath, bundleBytes);
-      let appliedFiles: string[] = [];
-      await replaceSkillDirectoryAtomically(skillDir, async (stagingDir) => {
-        appliedFiles = await extractZipToDirectory(bundlePath, stagingDir);
-      }, preserve);
-      return { written: true, appliedFiles };
-    } finally {
-      await fs.rm(bundlePath, { force: true });
-    }
-  }
 
   if (
     !skill.skill_md &&

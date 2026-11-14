@@ -149,16 +149,6 @@ export async function pushChangedSkills(
   return { skills: saved, ...(failed.length ? { failed } : {}) };
 }
 
-export async function downloadSkillBundle(bundleUrl: string): Promise<Buffer> {
-  const response = await fetch(bundleUrl, { signal: AbortSignal.timeout(90_000) });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`GET ${bundleUrl} → ${response.status}: ${text}`);
-  }
-
-  return Buffer.from(await response.arrayBuffer());
-}
-
 export async function updateAgentTargets(
   serverUrl: string,
   jwt: string,

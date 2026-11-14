@@ -85,6 +85,7 @@ export interface CloudSkill {
   skill_md: string | null;
   agent_targets?: Partial<AgentTargets> | null;
   skill_folder_hash?: string | null;
+  /** Where the Skill came from. Provenance only: sync never downloads it (SKL-059). */
   skill_source_url?: string | null;
   bundle_files?: BundleFile[] | null;
   bundle_hydration_failed?: boolean | null;
