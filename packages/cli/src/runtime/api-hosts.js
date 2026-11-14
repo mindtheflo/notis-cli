@@ -1,18 +1,35 @@
+import { CHANNEL_HOSTNAMES, CHANNEL_ORIGINS } from './api-hosts.generated.js';
+
+/**
+ * Retired API names the CLI keeps knowing after the server list drops them. A
+ * retired name stays listed after its domain is removed: profiles that stored
+ * it keep being recognised and renamed to the channel's current API (CLI-037),
+ * and sign-ins recorded on it are known to be spent (CLI-038, CLI-039).
+ */
+const CLI_RETIRED_API_HOSTS = {
+  nightly: ['api-beta.notis.ai'],
+};
+
 /**
  * The live Notis APIs, one row per release channel: the API's current name,
  * the names it answered on before (retired), and the channel's Portal.
  *
- * Every CLI list of live API hosts derives from this table. When a channel's
- * API moves to a new name, the new name becomes `current` and the old one
- * joins `retired`. A retired name stays listed after its domain is removed:
- * profiles that stored it keep being recognised and renamed to `current`
- * (CLI-037), and sign-ins recorded on it are known to be spent (CLI-038).
- * Mirrors server/lib/release_channels.py (CHANNEL_ORIGINS, _LEGACY_HOSTNAMES).
+ * Every CLI list of live API hosts derives from this table. The current and
+ * retired names come from api-hosts.generated.js, written by
+ * scripts/generate_channel_hosts.py from server/lib/release_channels.py
+ * (CHANNEL_ORIGINS, _LEGACY_HOSTNAMES): edit the server list and regenerate.
+ * CLI_RETIRED_API_HOSTS adds the retired names only the CLI still needs.
  */
-const CHANNEL_APIS = {
-  stable: { current: 'api.notis.ai', retired: [], portal: 'https://app.notis.ai' },
-  nightly: { current: 'api-nightly.notis.ai', retired: ['api-beta.notis.ai'], portal: 'https://app-nightly.notis.ai' },
-};
+const CHANNEL_APIS = channelApis(CHANNEL_HOSTNAMES, CHANNEL_ORIGINS);
+
+/** The CHANNEL_APIS rows of a generated host table, with the CLI's own retired names added. */
+export function channelApis(channelHostnames, channelOrigins) {
+  return Object.fromEntries(Object.entries(channelHostnames).map(([channel, surfaces]) => {
+    const [current, ...legacy] = surfaces.api;
+    const retired = [...new Set([...legacy, ...(CLI_RETIRED_API_HOSTS[channel] || [])])].filter(host => host !== current);
+    return [channel, { current, retired, portal: channelOrigins[channel].portal }];
+  }));
+}
 
 const HOST_ROWS = Object.entries(CHANNEL_APIS).flatMap(([channel, row]) => [
   { host: row.current, channel, current: true },

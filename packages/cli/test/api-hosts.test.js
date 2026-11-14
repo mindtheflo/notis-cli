@@ -2,10 +2,15 @@
 // hosts from it and keeps the results it had when each kept its own copy.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   LIVE_API_HOSTS,
   LIVE_API_ORIGINS,
+  channelApis,
   channelForApiHost,
   currentApiOrigin,
   isLiveApiOrigin,
@@ -16,6 +21,36 @@ import {
 import { channelFromApiBase } from '../src/runtime/channel.js';
 import { DEFAULT_API_BASE, NIGHTLY_API_BASE, isLiveApiBase } from '../src/runtime/profiles.js';
 import { portalOriginFor } from '../src/runtime/upsell.js';
+import { CHANNEL_HOSTNAMES, CHANNEL_ORIGINS } from '../src/runtime/api-hosts.generated.js';
+
+const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+// The public notis-cli mirror holds packages/cli without the generator or the server list.
+const inMonorepo = existsSync(join(repoRoot, 'scripts/generate_channel_hosts.py'));
+
+test('the generated API hosts are up to date with the server channel list', { skip: !inMonorepo && 'outside the monorepo' }, () => {
+  // api-hosts.generated.js is written from server/lib/release_channels.py; a stale file fails with the command to regenerate it.
+  let check = null;
+  for (const python of ['python3', 'python']) {
+    const run = spawnSync(python, ['scripts/generate_channel_hosts.py', '--check'], { cwd: repoRoot, encoding: 'utf8' });
+    // 9009: the Windows Store alias that stands in for a missing python3.
+    if (!run.error && run.status !== 9009) { check = run; break; }
+  }
+  assert.ok(check, 'python3 (or python) is needed to check the generated hosts');
+  assert.equal(check.status, 0, check.stderr || check.stdout);
+});
+
+test('api-beta stays a retired nightly API after the server list drops it (CLI-037, CLI-038)', () => {
+  const withoutBeta = {
+    ...CHANNEL_HOSTNAMES,
+    nightly: { ...CHANNEL_HOSTNAMES.nightly, api: ['api-nightly.notis.ai'] },
+  };
+  for (const hostnames of [CHANNEL_HOSTNAMES, withoutBeta]) {
+    assert.deepEqual(channelApis(hostnames, CHANNEL_ORIGINS), {
+      stable: { current: 'api.notis.ai', retired: [], portal: 'https://app.notis.ai' },
+      nightly: { current: 'api-nightly.notis.ai', retired: ['api-beta.notis.ai'], portal: 'https://app-nightly.notis.ai' },
+    });
+  }
+});
 
 test('the live API list keeps every host, its channel and its Portal', () => {
   assert.deepEqual(LIVE_API_HOSTS, ['api.notis.ai', 'api-nightly.notis.ai', 'api-beta.notis.ai']);
