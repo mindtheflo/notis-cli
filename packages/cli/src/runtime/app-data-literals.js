@@ -10,22 +10,19 @@ function isJsonParse(node) {
     && callee.property?.type === 'Identifier' && callee.property.name === 'parse';
 }
 
-function dataContext(ancestors) {
-  if (ancestors.some(node => node.type === 'JSXAttribute')) return false;
-  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
-    const node = ancestors[index];
-    if (node.type === 'JSXAttribute' || node.type === 'ImportDeclaration'
-      || node.type === 'ImportExpression' || node.type === 'TSImportType'
-      || node.type === 'ExportAllDeclaration' || node.type === 'ExportNamedDeclaration'
-      || node.type === 'NewExpression' || node.type === 'TaggedTemplateExpression'
-      || node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') return false;
-    if (node.type === 'CallExpression' || node.type === 'OptionalCallExpression') {
-      if (!isJsonParse(node)) return false;
-    }
-    if (['VariableDeclarator', 'ExportDefaultDeclaration', 'ReturnStatement'].includes(node.type)) return true;
-    if (node.type === 'ExpressionStatement') return false;
-  }
-  return false;
+const NOT_DATA = new Set(['JSXAttribute', 'ImportDeclaration', 'ImportExpression', 'TSImportType',
+  'ExportAllDeclaration', 'ExportNamedDeclaration', 'NewExpression', 'TaggedTemplateExpression',
+  'MemberExpression', 'OptionalMemberExpression']);
+const DATA = new Set(['VariableDeclarator', 'ExportDefaultDeclaration', 'ReturnStatement']);
+
+// What this ancestor says about a literal below it: true or false, or null to ask its parent.
+// The nearest ancestor that answers decides, as climbing from the literal would.
+function decides(node) {
+  if (NOT_DATA.has(node.type)) return false;
+  if ((node.type === 'CallExpression' || node.type === 'OptionalCallExpression') && !isJsonParse(node)) return false;
+  if (DATA.has(node.type)) return true;
+  if (node.type === 'ExpressionStatement') return false;
+  return null;
 }
 
 /**
@@ -48,13 +45,15 @@ export function maskSerializedJsonData(content, extension = '.js') {
     });
   } catch { return content; }
   const ranges = [];
-  const pending = [[ast, []]];
+  // Each node carries what its ancestors decided, so no literal looks back up the tree and no
+  // ancestor list is copied per node: deep data (objects nested a thousand levels) stays linear.
+  const pending = [[ast, false, null]];
   while (pending.length) {
-    const [node, ancestors] = pending.pop();
+    const [node, underAttribute, decided] = pending.pop();
     if (!node || typeof node !== 'object') continue;
     const literal = node.type === 'StringLiteral' ? node.value
       : node.type === 'TemplateLiteral' && node.expressions.length === 0 ? node.quasis[0]?.value.cooked : null;
-    if (typeof literal === 'string' && dataContext(ancestors)) {
+    if (typeof literal === 'string' && !underAttribute && decided === true) {
       try {
         const value = JSON.parse(literal);
         if (value !== null && typeof value === 'object') {
@@ -63,12 +62,13 @@ export function maskSerializedJsonData(content, extension = '.js') {
         }
       } catch { /* Ordinary/non-JSON strings keep their original checks. */ }
     }
-    const parents = [...ancestors, node];
+    const own = node.type ? decides(node) : null;
+    const below = [underAttribute || node.type === 'JSXAttribute', own ?? decided];
     for (const [key, value] of Object.entries(node)) {
       if (['loc', 'extra', 'tokens', 'comments', 'errors'].includes(key)) continue;
       if (Array.isArray(value)) {
-        for (const child of value) if (child?.type) pending.push([child, parents]);
-      } else if (value?.type) pending.push([value, parents]);
+        for (const child of value) if (child?.type) pending.push([child, ...below]);
+      } else if (value?.type) pending.push([value, ...below]);
     }
   }
   let cursor = 0;

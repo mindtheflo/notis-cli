@@ -20,3 +20,17 @@ test('masked Unicode data does not move a real design violation line',()=>{
  const source=`const title='😀';\nconst data=${data};\nconst Page=()=> <div className="bg-red-400"/>;\n`;
  assert.deepEqual(collectDesignViolationsForFile('app/page.tsx',source).map(row=>[row.ruleId,row.line]),[['no-palette-hue',3]]);
 });
+
+test('nested data is masked without climbing back up the tree',()=>{
+ // Babel's own recursion stops between 100 and 200 levels (then nothing is masked and every check runs).
+ const depth=100;
+ const data=JSON.stringify(JSON.stringify({after:'document.body #ff0000'}));
+ const source=`const t = ${"{ label: 'x', children: [".repeat(depth)}${data}${']}'.repeat(depth)};\nconst Page=()=> <div className="bg-red-400"/>;\n`;
+ const started=performance.now();
+ const masked=maskSerializedJsonData(source,'.tsx');
+ const design=collectDesignViolationsForFile('app/page.tsx',source);
+ assert.ok(performance.now()-started<10000);
+ assert.ok(!masked.includes('document.body'));
+ assert.equal(masked.length,source.length);
+ assert.deepEqual(design.map(row=>[row.ruleId,row.line]),[['no-palette-hue',2]]);
+});
