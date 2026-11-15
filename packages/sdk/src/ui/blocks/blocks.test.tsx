@@ -8,7 +8,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { KeyboardEngine, KeyboardEngineCore } from '../engine';
 import { StatusIcon, statusGroup } from '../list/Row';
 import * as uiExports from '../index';
-import { Badge, Button, Section, SegmentedControl, ToggleGroup } from './blocks';
+import { Badge, Button, FilterChip, Section, SegmentedControl, ToggleGroup } from './blocks';
 import { DataTable, autoFit, dataTableHideCss, type DataTableColumn } from './DataTable';
 import { InfoTip } from './InfoTip';
 import { Meter } from './Meter';
@@ -757,4 +757,21 @@ test('Meter: tone colours the fill from the toolkit tones; a reached limit still
   }
   // The over-limit rule comes after every tone rule, so with the same weight it wins.
   assert.ok(toolkitCss.indexOf('.nui-meter[data-over] .nui-meter-fill') > toolkitCss.indexOf('.nui-meter[data-tone="success"] .nui-meter-fill'));
+});
+
+test('FilterChip: a removable filter, its x named in English and French, clears without anything else', async () => {
+  let cleared = 0;
+  await mount(<FilterChip label="Podcasts" onClear={() => { cleared += 1; }} />);
+  const chip = doc.querySelector('.nui-filter-chip')!;
+  assert.equal(chip.querySelector('.nui-filter-chip-label')!.textContent, 'Podcasts');
+  const x = chip.querySelector('button.nui-filter-chip-x')!;
+  assert.equal(x.getAttribute('aria-label'), 'Clear the Podcasts filter');
+  await click(x);
+  assert.equal(cleared, 1);
+  await mount(<FilterChip label={{ en: 'Assigned to me', fr: 'Assignés à moi' }} onClear={() => {}} />, 'fr');
+  assert.equal(doc.querySelector('.nui-filter-chip-label')!.textContent, 'Assignés à moi');
+  assert.equal(doc.querySelector('.nui-filter-chip-x')!.getAttribute('aria-label'), 'Retirer le filtre Assignés à moi');
+  await mount(<FilterChip label="Podcasts" clearLabel="Show all initiatives" onClear={() => {}} />);
+  assert.equal(doc.querySelector('.nui-filter-chip-x')!.getAttribute('aria-label'), 'Show all initiatives');
+  assert.ok('FilterChip' in uiExports && 'FilterChip' in blockExports);
 });

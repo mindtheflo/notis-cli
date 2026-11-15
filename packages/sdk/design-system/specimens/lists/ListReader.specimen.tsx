@@ -131,6 +131,7 @@ const COPY = {
   viewDescription: { en: 'Every ticket of the Product Space, newest first.', fr: 'Tous les tickets du Space Produit, les plus récents d’abord.' },
   refreshView: { en: 'Refresh the tickets', fr: 'Actualiser les tickets' },
   synced: { en: 'Synced from Linear 2 min ago.', fr: 'Synchronisé depuis Linear il y a 2 min.' },
+  platformTeam: { en: 'Platform team', fr: 'Équipe Plateforme' },
   product: { en: 'Product', fr: 'Produit' },
   topBar: { en: 'Top bar title', fr: 'Titre de la barre du haut' },
   assign: { en: 'Assign', fr: 'Attribuer' },
@@ -547,6 +548,15 @@ export const specimen = defineSpecimen({
       height: TALL,
       render: (ctx) => (
         <TicketsDemo ctx={ctx} id="info-line" infoLine={<span className="text-xs text-muted-foreground">{ctx.t(COPY.synced)}</span>} />
+      ),
+    },
+    {
+      id: 'filters',
+      label: 'A filter from a link, as a chip in the info line',
+      height: TALL,
+      render: (ctx) => (
+        <TicketsDemo ctx={ctx} id="filters" filters={[{ id: 'team', label: COPY.platformTeam, onClear: () => {} }]}
+          infoLine={<span className="text-xs text-muted-foreground">{ctx.t(COPY.synced)}</span>} />
       ),
     },
     {

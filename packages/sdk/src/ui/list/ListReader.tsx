@@ -60,7 +60,7 @@ import {
   useActions, type ActionHandlers, type ActionOutcome, type ActionsController, type ResolvedAction,
 } from '../actions/useActions';
 import type { ToastOptions } from '../actions/useToast';
-import { Button, EmptyState } from '../blocks/blocks';
+import { Button, EmptyState, FilterChip, type FilterChipProps } from '../blocks/blocks';
 import { TabRow, type TabRowProps } from '../blocks/Tabs';
 import { Keycap } from '../keycap/Keycap';
 import { OpenAsMenu } from '../open/OpenAsMenu';
@@ -263,6 +263,11 @@ export interface ListReaderProps<T> {
   viewMenu?: ViewMenuProps;
   /** One 44px line under the toolbar (a sync state, a notice). */
   infoLine?: ReactNode;
+  /**
+   * The filters the view applies on top of its tabs ("Podcasts" from a link), each a chip with an x that clears it,
+   * at the start of the info line.
+   */
+  filters?: readonly (FilterChipProps & { id: string })[];
   /** The top bar search for this list. Leave out for a list with no search. */
   search?: ListSearchProps<T>;
   /**
@@ -749,7 +754,7 @@ export function ListReader<T>(props: ListReaderProps<T>) {
 
 function ListReaderInner<T>({
   getId = defaultGetId, row, reader, actions = [], handlers, openAs, density = 'comfortable', layout = 'list',
-  columns, groupBy, selectable, dragSelect = true, wrap = true, empty, title, tabs, toolbarActions, create, viewMenu, infoLine, search, footer,
+  columns, groupBy, selectable, dragSelect = true, wrap = true, empty, title, tabs, toolbarActions, create, viewMenu, infoLine, filters, search, footer,
   readerLabel, readerActions, crumbLabel = defaultCrumbLabel, crumbRecordKey, readerLayout = 'read', autoOpen: autoOpenProp = false, renderTile, tileVariant, look = 'plain',
   openParam = 'open', onOpen, itemHref, open: controlledOpen, onOpenChange, listId = 'list', label, className, openInUrl = true,
   selected: controlledSelected, onSelectedChange, afterAction = 'clear', draggable, onDragStart, loading = false,
@@ -1857,7 +1862,12 @@ function ListReaderInner<T>({
   const listNode = (
     <div ref={listRef} className="nui-lr-list" data-footer={footer ? '' : undefined}>
       {toolbarNode}
-      {infoLine !== undefined && infoLine !== null && <div className="nui-lr-info">{infoLine}</div>}
+      {(Boolean(filters?.length) || (infoLine !== undefined && infoLine !== null)) && (
+        <div className="nui-lr-info">
+          {filters?.map(({ id, ...filter }) => <FilterChip key={id} {...filter} />)}
+          {infoLine}
+        </div>
+      )}
       {showSkeleton ? (
         <ListSkeleton grouped={Boolean(groupBy)} />
       ) : items.length === 0 && !boardOn ? (

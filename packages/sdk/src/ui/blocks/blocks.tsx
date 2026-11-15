@@ -20,6 +20,7 @@ export const BLOCK_WORDS = Object.freeze({
   pagination: { en: 'Pages', fr: 'Pages' },
   emptyTitle: { en: 'Nothing here yet', fr: 'Rien ici pour l’instant' },
   emptyBody: { en: 'Items show up here as soon as there are some.', fr: 'Les éléments s’affichent ici dès qu’il y en a.' },
+  clearFilterNamed: { en: 'Clear the {name} filter', fr: 'Retirer le filtre {name}' },
 }) satisfies Readonly<Record<string, Words>>;
 
 // ---- Section ----
@@ -94,6 +95,38 @@ export function Badge({ tone = 'default', icon, children, className }: BadgeProp
     <span className={cx('nui-badge', className)} data-tone={tone === 'default' ? undefined : tone}>
       {icon !== undefined && renderIcon(icon)}
       {textOrNode(children, t)}
+    </span>
+  );
+}
+
+// ---- FilterChip ----
+
+export interface FilterChipProps {
+  /** What the list is narrowed to ("Podcasts", "Assigned to me"), shown on the chip. */
+  label: Text;
+  /** Removes the filter; the chip's x runs it. */
+  onClear(): void;
+  /** The x's accessible name. Default "Clear the {label} filter". */
+  clearLabel?: Text;
+  className?: string;
+}
+
+/**
+ * A filter the view applies, as a chip that ends in an x to clear it. `ListReader` draws its `filters` with it in the
+ * line under the toolbar; use it on its own above another view.
+ */
+export function FilterChip({ label, onClear, clearLabel, className }: FilterChipProps) {
+  const t = useT();
+  const text = t(label);
+  return (
+    <span className={cx('nui-filter-chip', className)} title={text}>
+      <span className="nui-filter-chip-label">{text}</span>
+      <button type="button" className="nui-filter-chip-x" onClick={onClear}
+        aria-label={t(clearLabel ?? fillWords(BLOCK_WORDS.clearFilterNamed, { name: text }))}>
+        <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+          <path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
     </span>
   );
 }

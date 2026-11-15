@@ -2548,6 +2548,18 @@ test('infoLine: a line under the toolbar, above the rows', async () => {
   assert.ok(q('.nui-lr-info #info'));
 });
 
+test('filters: chips at the start of the info line, each x clears its own filter', async () => {
+  const cleared: string[] = [];
+  await mount(list({ filters: [{ id: 'initiative', label: 'Podcasts', onClear: () => cleared.push('initiative') }],
+    infoLine: <span id="info">Synced 2m ago</span> }));
+  const info = q('.nui-lr-info')!;
+  assert.deepEqual([...info.children].map((el) => el.className || el.id), ['nui-filter-chip', 'info']);
+  await act(async () => { (info.querySelector('.nui-filter-chip-x') as HTMLElement).click(); });
+  assert.deepEqual(cleared, ['initiative']);
+  await mount(list({ filters: [] }));
+  assert.equal(q('.nui-lr-info'), null, 'no filter and no info line draw no line');
+});
+
 test('autoOpen: beside the list the first item opens; closed, the reader says how to pick one; one pane opens nothing', async () => {
   // One pane (a phone): the list shows and nothing opens, not even before the first measure.
   await withPanelsWidth(500, async () => { await mount(list({ autoOpen: true })); });

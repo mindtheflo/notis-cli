@@ -474,6 +474,10 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 @supports (animation-timeline: scroll()) { .nui-section[data-kind="bar"] .nui-section-tabs { animation: nui-bar-end-fade linear both; animation-timeline: scroll(self inline); } }
 .nui-section[data-kind="bar"] .nui-section-tabs > :not(.nui-tabrow) { flex-shrink: 0; }
 .nui-section[data-kind="bar"] .nui-section-tabs .nui-toggles { flex-wrap: nowrap; }
+.nui-filter-chip { display: inline-flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0; height: 24px; padding: 0 2px 0 8px; border-radius: 6px; background: hsl(var(--foreground) / .06); font-size: 12px; line-height: 16px; font-weight: 500; color: hsl(var(--foreground) / .8); white-space: nowrap; }
+.nui-filter-chip-label { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.nui-filter-chip-x { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.nui-filter-chip-x:hover { background: hsl(var(--foreground) / .08); color: hsl(var(--foreground)); }
 .nui-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 6px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground) / .75); }
 /* A toned Badge keeps its brighter tone text (Flo, 2026-11-12, design review 6754a636: keep the brighter badge text,
    never propose the darker light / lighter dark shades again). Same tints as a toned Row label. */

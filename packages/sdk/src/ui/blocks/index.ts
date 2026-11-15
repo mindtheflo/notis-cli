@@ -1,9 +1,9 @@
 export {
-  BLOCK_WORDS, Badge, Button, EmptyState, Metric, NativeSelect, Notice, Pagination, Section, SegmentedControl, Switch,
+  BLOCK_WORDS, Badge, Button, EmptyState, FilterChip, Metric, NativeSelect, Notice, Pagination, Section, SegmentedControl, Switch,
   ToggleGroup,
 } from './blocks';
 export type {
-  BadgeProps, ButtonProps, ButtonSize, ButtonVariant, EmptyStateProps, MetricProps, NativeSelectOption,
+  BadgeProps, ButtonProps, ButtonSize, ButtonVariant, EmptyStateProps, FilterChipProps, MetricProps, NativeSelectOption,
   NativeSelectProps, NoticeProps, PaginationProps, SectionKind, SectionProps, SegmentedControlProps, SegmentedOption,
   SwitchProps, ToggleGroupProps,
 } from './blocks';

@@ -49,7 +49,8 @@ rather than from a copy.
   `OpenAsMenu`, `Keycap`. `ListReader` draws the whole list chrome from props:
   `search` (the host top bar field), `tabs` (pills in one 44px row), `title`
   (a short status with its count at the start of that row, such as "23 to
-  triage"), `create` (the "+" at its end), `viewMenu`, `infoLine`,
+  triage"), `create` (the "+" at its end), `viewMenu`, `infoLine`, `filters` (removable
+  `FilterChip`s, each `{ id, label, onClear }`, at the start of the info line),
   `readerLabel` and `readerActions` (the reader bar), `crumbLabel` (the open
   item in the top bar crumb), `crumbRecordKey` (its record key when the items
   are records of the Space's `collection`), `readerLayout` (`'fill'` lays a
@@ -125,7 +126,7 @@ rather than from a copy.
   previews, a timer). The browser asks once to place windows on screens; the
   desktop app never asks. Leaving the view closes the audience window.
 - **Blocks**: `Section`, `Badge`, `Button`, `ToggleGroup`, `SegmentedControl`,
-  `NativeSelect`, `EmptyState`, `Notice`, `Metric`. A `Section`'s `kind`
+  `NativeSelect`, `EmptyState`, `Notice`, `Metric`, `FilterChip`. A `Section`'s `kind`
   is `bar` (period and filters), `stats`, `chart`, `data` (a table) or `form`,
   and its head takes `title`, `count`, `meta`, `tabs` and `actions`. There is no
   page heading: the host top bar shows the title. One toggle is a `Button` with
@@ -134,6 +135,8 @@ rather than from a copy.
   (`TabRow`, which folds the pills that do not fit into More); a
   `SegmentedControl` is only a mode switch inside a section. `Tabs` scroll
   sideways on a phone; `wrap` puts the tabs that do not fit on a next line.
+  A removable filter that is not a tab (a contact, a tag) is a `FilterChip`
+  (`label`, `onClear`); over a list, pass them as `ListReader`'s `filters`.
   `Icon` draws a toolkit icon by name (`fork-knife`, `clock`, `star`...);
   for any other, pass a `@phosphor-icons/react` element as the `icon` (the
   template depends on it), never a second icon set.
