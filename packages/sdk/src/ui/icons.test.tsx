@@ -41,6 +41,16 @@ test('the set draws open in a new place, send and filter (arrow-square-out, pape
   }
 });
 
+test('the set draws the names agents reach for first (check-circle, chart-line-up, sparkle, rocket-launch, chats, kanban)', () => {
+  for (const name of ['check-circle', 'chart-line-up', 'sparkle', 'rocket-launch', 'chats', 'kanban']) {
+    assert.ok(hasIcon(name), name);
+    assert.ok(ICON_NAMES.includes(name), name);
+    const markup = renderToStaticMarkup(<Icon name={name} />);
+    assert.match(markup, /^<svg class="nui-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">/, name);
+    assert.match(markup, /stroke="currentColor" stroke-width="1.5"/, `${name} is a 1.5 px line icon like the rest`);
+  }
+});
+
 test('ICON_NAMES lists every name the set draws, and only those', () => {
   assert.equal(new Set(ICON_NAMES).size, ICON_NAMES.length);
   for (const name of ICON_NAMES) assert.notEqual(renderToStaticMarkup(<Icon name={name} />), '', name);
