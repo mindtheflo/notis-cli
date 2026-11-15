@@ -137,9 +137,25 @@ rather than from a copy.
   sideways on a phone; `wrap` puts the tabs that do not fit on a next line.
   A removable filter that is not a tab (a contact, a tag) is a `FilterChip`
   (`label`, `onClear`); over a list, pass them as `ListReader`'s `filters`.
-  `Icon` draws a toolkit icon by name (`fork-knife`, `clock`, `star`...);
-  for any other, pass a `@phosphor-icons/react` element as the `icon` (the
-  template depends on it), never a second icon set.
+  `Icon` draws a toolkit icon by name, and every `icon` prop or field (a
+  `Button`, a reader action, a menu item) takes the same names.
+  `notis spaces build` refuses any other name written there as a string
+  and suggests the closest ones. The names: `archive`, `arrow-bend-up-right`, `arrow-clockwise`,
+  `arrow-counter-clockwise`, `arrow-left`, `arrow-square-out`,
+  `arrows-clockwise`, `arrows-left-right`, `arrows-out`, `caret-down`,
+  `caret-left`, `caret-right`, `caret-up`, `chat-circle-text`, `check`,
+  `check-circle-fill`, `circle`, `circle-dashed`, `circle-half`,
+  `circle-three-quarter`, `clipboard-text`, `clock`, `clock-countdown`,
+  `copy`, `corners-out`, `dots-three`, `download-simple`, `envelope-open`,
+  `envelope-simple`, `file`, `file-audio`, `file-image`, `file-text`,
+  `file-video`, `flask`, `fork-knife`, `funnel-simple`, `hourglass`, `info`,
+  `link`, `magnifying-glass-minus`, `magnifying-glass-plus`, `minus-circle`,
+  `paper-plane-right`, `paper-plane-tilt`, `paperclip`, `pause`,
+  `pencil-simple`, `play`, `plus`, `sidebar-simple`, `square-center`, `star`,
+  `star-fill`, `toggle-left`, `toggle-right`, `trash`, `tray-arrow-up`,
+  `user-plus`, `x`, `x-circle-fill`. For any other icon, pass a
+  `@phosphor-icons/react` element as the `icon` (the template depends on it),
+  never a second icon set.
   A `Notice` is read politely, danger too; pass `urgent` only for a problem the
   person must act on now (it becomes an alert that interrupts the screen reader).
 - **Fields**: `EditableFields` (a form; Save and Cancel show once something

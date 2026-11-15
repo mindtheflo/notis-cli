@@ -56,6 +56,7 @@ const SHAPES: Record<string, Shape> = {
   'check-circle-fill': <g><circle {...F} cx="8" cy="8" r="6.5" /><path d="M5 8.2l2 2 4-4" fill="none" stroke="hsl(var(--background))" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" /></g>,
   'minus-circle': <g {...S}><circle cx="8" cy="8" r="6" /><path d="M5.5 8h5" /></g>,
   'paper-plane-right': <path {...S} d="M2.5 2.8l11 5.2-11 5.2 1.8-5.2zM4.3 8h4.7" />,
+  'paper-plane-tilt': <path {...S} d="M2.3 6.7l11.2-4.2-4.2 11.2-2.2-4.8zM7.1 8.9l3.3-3.3" />,
   paperclip: <path {...S} d="M10.5 5l-4.6 4.6a1.1 1.1 0 001.6 1.6l5-5a2.3 2.3 0 00-3.2-3.2l-5 5a3.4 3.4 0 004.8 4.8L13 8.9" />,
   'clipboard-text': <g {...S}><path d="M10.5 3h2a.5.5 0 01.5.5v10a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-10a.5.5 0 01.5-.5h2" /><rect x="5.5" y="2" width="5" height="2.5" rx=".75" /><path d="M6 8h4M6 10.5h4" /></g>,
   'x-circle-fill': <g><circle {...F} cx="8" cy="8" r="6.5" /><path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" fill="none" stroke="hsl(var(--background))" strokeWidth={1.5} strokeLinecap="round" /></g>,
@@ -63,6 +64,8 @@ const SHAPES: Record<string, Shape> = {
   'magnifying-glass-minus': <path {...S} d="M7 12A5 5 0 107 2a5 5 0 000 10zM10.6 10.6L14 14M5 7h4" />,
   'download-simple': <path {...S} d="M8 2.5v7.5M4.5 6.5L8 10l3.5-3.5M2.5 10v3a.5.5 0 00.5.5h10a.5.5 0 00.5-.5v-3" />,
   info: <g {...S}><circle cx="8" cy="8" r="6.5" /><path d="M8 7.5V11M8 5.25v.01" /></g>,
+  'arrow-square-out': <path {...S} d="M12.5 9v3.5a.5.5 0 01-.5.5H3.5a.5.5 0 01-.5-.5V4a.5.5 0 01.5-.5H7M9.5 2.5h4v4M13.5 2.5L8 8" />,
+  'funnel-simple': <path {...S} d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" />,
   link: <path {...S} d="M6.8 9.2l2.4-2.4M7.6 4.6l1.2-1.2a2.8 2.8 0 014 4l-1.2 1.2M8.4 11.4l-1.2 1.2a2.8 2.8 0 01-4-4l1.2-1.2" />,
   file: <path {...S} d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" />,
   'file-image': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M3.5 12l3-3 2 2 1.5-1.5 2.5 2.5" /><circle cx="6.5" cy="6.75" r=".75" /></g>,
@@ -70,6 +73,13 @@ const SHAPES: Record<string, Shape> = {
   'file-audio': <g {...S}><path d="M9.5 2H4a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V5zM9.5 2v3h3" /><path d="M6 9.5v1.5h1.25L9 12.25v-4.5L7.25 9H6M10.5 8.5a1.8 1.8 0 010 2.5" /></g>,
   'fork-knife': <path {...S} d="M3.5 2v3.5a1.5 1.5 0 003 0V2M5 2v12M11.5 14V2c-1.4.9-2.2 3-2.2 6.5h2.2" />,
 };
+
+/**
+ * Every name the set draws, in the order above. `notis spaces build` refuses an `icon` or `<Icon name>` string that is
+ * not one of them; the CLI and the server read the same list from `server/config/notis_app_design_rules.json`, kept
+ * equal to this one by `icons.test.tsx`.
+ */
+export const ICON_NAMES: readonly string[] = Object.freeze(Object.keys(SHAPES));
 
 export function hasIcon(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(SHAPES, name);
@@ -81,7 +91,7 @@ const warned = new Set<string>();
 function warnUnknown(name: string): void {
   if (warned.has(name) || typeof console === 'undefined') return;
   warned.add(name);
-  console.warn(`[notis/ui] Unknown icon "${name}": it renders nothing. Use a name from the toolkit set (${Object.keys(SHAPES).length} icons, listed in the design system) or pass a Phosphor component.`);
+  console.warn(`[notis/ui] Unknown icon "${name}": it renders nothing. Use a name from the toolkit set (${ICON_NAMES.length} icons, listed in the design system) or pass a Phosphor component.`);
 }
 
 /** A built-in icon by name; an unknown name renders nothing and warns once. Decorative: the control carries the label. */

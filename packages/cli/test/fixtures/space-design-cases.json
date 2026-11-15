@@ -1,5 +1,5 @@
 {
-  "description": "Shared cases for the Space design profile. The CLI test (space-design-rules.test.js) and the server test (test_space_design_check.py) both run them, so the JS validator and its Python port stay in step. Each case proves one rule fires on its bad source and not on its good one; each clean source must pass the whole Space profile with no finding at all.",
+  "description": "Shared cases for the Space design profile. The CLI test (space-design-rules.test.js) and the server test (test_space_design_check.py) both run them, so the JS validator and its Python port stay in step. Each case proves one rule fires on its bad source and not on its good one; each clean source must pass the whole Space profile with no finding at all. icon_cases and icon_clean do the same for the unknown icon check (icons in the rules file): each bad source names its unknown icons by line, each good and clean source has none.",
   "cases": [
     {
       "rule": "space-no-global-key-listener",
@@ -272,6 +272,95 @@
       "name": "a centred column in CSS",
       "file": "app/globals.css",
       "source": ".page {\n  max-width: 40rem;\n  margin: 0 auto;\n  border: 1px solid hsl(var(--border));\n  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.1);\n  background: linear-gradient(hsl(var(--muted)), hsl(var(--background)));\n}"
+    }
+  ],
+  "icon_cases": [
+    {
+      "name": "a guessed name on a Button",
+      "file": "spaces/inbox/view.tsx",
+      "bad": "import { Button } from '@notis/sdk/ui';\nexport default () => <Button icon=\"paper-plane-tlt\">{copy.send}</Button>;",
+      "good": "import { Button } from '@notis/sdk/ui';\nexport default () => <Button icon=\"paper-plane-tilt\">{copy.send}</Button>;",
+      "unknown": [
+        [
+          2,
+          "paper-plane-tlt"
+        ]
+      ],
+      "suggestions": "paper-plane-tilt, paper-plane-right, caret-left"
+    },
+    {
+      "name": "a reader action field",
+      "file": "spaces/inbox/view.tsx",
+      "bad": "import { ListReader } from '@notis/sdk/ui';\nconst readerActions = [\n  { id: 'open', label: copy.open, icon: 'arrow-square-outside', run: open },\n];",
+      "good": "import { ListReader } from '@notis/sdk/ui';\nconst readerActions = [\n  { id: 'open', label: copy.open, icon: 'arrow-square-out', run: open },\n];",
+      "unknown": [
+        [
+          3,
+          "arrow-square-outside"
+        ]
+      ],
+      "suggestions": "arrow-square-out, arrow-clockwise, arrow-counter-clockwise"
+    },
+    {
+      "name": "a braced string and an Icon name",
+      "file": "components/filters.tsx",
+      "bad": "import { Button, Icon } from '@notis/sdk/ui';\nexport const F = () => <>\n  <Button icon={'funnel'} />\n  <Icon name=\"rocket\" className=\"size-4\" />\n</>;",
+      "good": "import { Button, Icon } from '@notis/sdk/ui';\nexport const F = () => <>\n  <Button icon={'funnel-simple'} />\n  <Icon name=\"star\" className=\"size-4\" />\n</>;",
+      "unknown": [
+        [
+          3,
+          "funnel"
+        ],
+        [
+          4,
+          "rocket"
+        ]
+      ],
+      "suggestions": "funnel-simple, file, flask"
+    },
+    {
+      "name": "an aliased or namespaced Icon, and a comparison inside an earlier prop",
+      "file": "spaces/board/view.tsx",
+      "bad": "import { Icon as Glyph } from '@notis/sdk/ui';\nimport * as UI from '@notis/sdk/ui';\nexport default ({ count }) => <>\n  <Glyph className={count > 0 ? 'size-4' : 'size-3'} name=\"rocket\" />\n  <UI.Icon name=\"rockt\" />\n</>;",
+      "good": "import { Icon as Glyph } from '@notis/sdk/ui';\nimport * as UI from '@notis/sdk/ui';\nexport default ({ count }) => <>\n  <Glyph className={count > 0 ? 'size-4' : 'size-3'} name=\"star\" />\n  <UI.Icon name=\"clock\" />\n</>;",
+      "unknown": [
+        [
+          4,
+          "rocket"
+        ],
+        [
+          5,
+          "rockt"
+        ]
+      ],
+      "suggestions": "clock, check, circle"
+    }
+  ],
+  "icon_clean": [
+    {
+      "name": "dynamic values, nodes, Phosphor stored names, URLs, words that are not a kebab-case name and comments",
+      "file": "spaces/inbox/view.tsx",
+      "source": "import { Button, Icon } from '@notis/sdk/ui';\nimport { Funnel } from '@phosphor-icons/react';\n// <Button icon=\"not-an-icon\" /> in a comment\nconst meta = { icon: 'phosphor:map-pin', cover: null };\nconst pill = { icon: 'https://example.com/a.png' };\nconst mark = { icon: 'Calendar Check' };\nconst built = { icon: 'arrow-' + direction };\nexport default ({ done, name }) => <>\n  <Button icon={done ? 'nope-a' : 'nope-b'} />\n  <Button icon={<Funnel size={16} />} />\n  <Button icon={`${name}`} />\n  <Icon name={name} />\n  <Button icon=\"\" />\n</>;"
+    },
+    {
+      "name": "a file that does not import the SDK",
+      "file": "components/ui/sizes.ts",
+      "source": "export const sizes = { default: 'h-9 px-4', icon: 'size-9' };"
+    },
+    {
+      "name": "the Space config, whose icon the deploy checks",
+      "file": "spaces/inbox/space.config.ts",
+      "source": "import { defineSpace } from '@notis/sdk/config';\nexport default defineSpace({ name: 'Inbox', icon: 'tray' });"
+    },
+    {
+      "name": "objects that are not toolkit items, example text in strings, a comparison, and a component of the Space's own named Icon",
+      "file": "components/action-button.tsx",
+      "source": "import { Button, useT } from '@notis/sdk/ui';\nconst styles = cva('btn', { variants: { size: { icon: 'size-9', default: 'h-9' } } });\nconst doc = `<Button icon=\"rocket\" />`;\nconst note = \"icon: 'rocket', label: 'x'\";\nconst actions = [{ id: 'mode', label: copy.mode, icon: 'grid' === mode ? 'check' : 'x' }];\nfunction Icon({ name }) { return <i className={name} />; }\nexport const A = () => <>\n  <Icon name=\"rocket\" />\n  <Button icon={styles({ size: 'icon' })} />\n  <p>Don't use <code>icon=\"rocket\"</code> here</p>\n</>;"
+    },
+    {
+      "name": "a ternary that hands back a variable named icon, sentences in JSX text, a less-than that is not a tag, and an import of a non-ASCII local name",
+      "file": "components/status.tsx",
+      "source": "import { Button } from '@notis/sdk/ui';\nimport { Icon as Icône } from '@notis/sdk/ui';\nconst o = { label: 'x', mode: hasIcon ? icon : 'none' };\nconst small = count <Button && ready;\nexport default function H() {\n  return <><p>Pick an icon: \"dashboard\", then a label: \"Home\"</p><Icône name=\"rockt\" /></>;\n}"
     }
   ]
 }

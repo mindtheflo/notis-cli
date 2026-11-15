@@ -341,7 +341,7 @@ export function loadDesignRules({ rulesPath = resolveDesignRulesPath(), profile 
     );
   }
   if (!payload) {
-    return { profile, include: [], exclude: [], extensions: DEFAULT_DESIGN_EXTENSIONS, rules: [], allowDirective: 'notis-design-allow', allowReasonMinLength: 12 };
+    return { profile, include: [], exclude: [], extensions: DEFAULT_DESIGN_EXTENSIONS, rules: [], icons: null, allowDirective: 'notis-design-allow', allowReasonMinLength: 12 };
   }
   const profiles = payload.profiles && typeof payload.profiles === 'object' && !Array.isArray(payload.profiles) ? payload.profiles : {};
   const selected = profile !== 'app' && profiles[profile] && typeof profiles[profile] === 'object' ? profiles[profile] : null;
@@ -355,6 +355,7 @@ export function loadDesignRules({ rulesPath = resolveDesignRulesPath(), profile 
     extensions: Array.isArray(payload.extensions) ? payload.extensions : DEFAULT_DESIGN_EXTENSIONS,
     allowDirective: typeof payload.allow_directive === 'string' ? payload.allow_directive : 'notis-design-allow',
     allowReasonMinLength: Number.isInteger(payload.allow_reason_min_length) ? payload.allow_reason_min_length : 12,
+    icons: loadIconCheck(payload.icons, profile),
     rules: (Array.isArray(payload.rules) ? payload.rules : [])
       .filter((rule) => !Array.isArray(rule.profiles) || rule.profiles.includes(profile))
       .map((rule) => ({
@@ -371,6 +372,243 @@ export function loadDesignRules({ rulesPath = resolveDesignRulesPath(), profile 
         exclude: Array.isArray(rule.exclude) ? rule.exclude : [],
       })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Icon names
+//
+// The toolkit's Icon draws a fixed set of names (`icons.names` in the rules
+// file, kept equal to the SDK's ICON_NAMES by packages/sdk/src/ui/icons.test.tsx)
+// and an unknown one draws nothing, so a guessed Phosphor name ships an empty
+// button. Only toolkit inputs are checked, and only when the whole value is one
+// kebab-case string literal:
+// - `name` on the SDK's Icon and `icon` on any other SDK component, the tag
+//   resolved through the file's @notis/sdk imports (aliases and namespaces);
+// - an `icon` field of an object that also has a `label` (reader actions,
+//   view menu items, tabs: the toolkit's labelled items).
+// Text inside strings and comments is never read. Mirrored by
+// _icon_candidates in server/lib/app_boundary_validator.py.
+// ---------------------------------------------------------------------------
+
+const ICON_NAME_SHAPE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const SDK_IMPORTS = /(?<![\w$.])import\s+([\w$\s{},*]+?)\s+from\s*(["'])@notis\/sdk(?:\/[^"'\s]*)?\2/g;
+const JSX_TAG = /<([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)(?=[\s/>])/g;
+const JSX_ATTRIBUTE = /(?<![\w$.-])(icon|name)\s*=\s*/g;
+const ICON_FIELD = /(?<![\w$.-])icon\s*:\s*/g;
+const LABEL_KEY = /(?<![\w$.-])label\s*[:,}]/g;
+// What a JSX opening tag holds at its own level besides strings and braced values.
+const TAG_TEXT = /[\w$\-:.=\t\n\v\f\r /]/;
+
+/** Local component names bound to @notis/sdk (local -> exported) and namespace names. Type-only imports bind nothing. */
+function sdkBindings(text) {
+  const components = new Map(), namespaces = new Set();
+  for (const match of text.matchAll(SDK_IMPORTS)) {
+    const clause = match[1].trim();
+    if (/^type\s/.test(clause)) continue;
+    const namespace = clause.match(/\*\s*as\s+([\w$]+)/);
+    if (namespace) namespaces.add(namespace[1]);
+    const named = clause.match(/\{([^}]*)\}/);
+    for (const part of named ? named[1].split(',') : []) {
+      const item = part.trim();
+      if (!item || /^type\s/.test(item)) continue;
+      const [exported, local = exported] = item.split(/\s+as\s+/).map((value) => value.trim());
+      components.set(local, exported);
+    }
+  }
+  return { components, namespaces };
+}
+
+/**
+ * One pass over comment-masked source: which characters sit inside a string, the innermost open
+ * brace around each character, and where each brace closes. A quote left open at the end of its
+ * line is JSX text (an apostrophe), not a string.
+ */
+function sourceShape(text) {
+  const length = text.length;
+  const inString = new Uint8Array(length), owner = new Int32Array(length).fill(-1), closes = new Map(), stack = [];
+  let index = 0;
+  while (index < length) {
+    const char = text[index];
+    const top = stack.length ? stack[stack.length - 1] : -1;
+    if (char === '"' || char === "'" || char === '`') {
+      let cursor = index + 1, closed = false;
+      while (cursor < length) {
+        const inner = text[cursor];
+        if (inner === '\\') { cursor += 2; continue; }
+        if (inner === char) { cursor += 1; closed = true; break; }
+        if (inner === '\n' && char !== '`') break;
+        cursor += 1;
+      }
+      if (closed) {
+        for (let at = index; at < cursor; at += 1) { inString[at] = 1; owner[at] = top; }
+        index = cursor;
+        continue;
+      }
+    }
+    owner[index] = top;
+    if (char === '{') stack.push(index);
+    else if (char === '}' && stack.length) closes.set(stack.pop(), index);
+    index += 1;
+  }
+  return { inString, owner, closes };
+}
+
+/** The literal at `at` when it is the whole value: 'x', "x", `x` (no ${}), or {'x'} in JSX. */
+function literalAt(text, shape, at, { braced = false } = {}) {
+  let start = at;
+  if (braced && text[at] === '{' && shape.closes.has(at)) {
+    const inner = text.slice(at + 1, shape.closes.get(at));
+    const match = inner.match(/^\s*(["'`])([^"'`\n\\$]*)\1\s*$/);
+    if (!match) return null;
+    start = at + 1 + inner.indexOf(match[1]);
+    return { name: match[2], index: start + 1 };
+  }
+  const match = text.slice(start).match(/^(["'`])([^"'`\n\\$]*)\1/);
+  return match ? { name: match[2], index: start + 1, end: start + match[0].length } : null;
+}
+
+/**
+ * Where a JSX opening tag ends: its `>` at the tag's own brace level, outside strings, jumping over
+ * braced values. Any other character at that level means this is not a tag (`a <B && c`): stop there.
+ */
+function tagEnd(text, shape, from) {
+  const level = shape.owner[from];
+  let index = from + 1;
+  while (index < text.length) {
+    const char = text[index];
+    if (shape.inString[index]) { index += 1; continue; }
+    if (char === '>') return index;
+    if (char === '{') {
+      if (!shape.closes.has(index)) return index;
+      index = shape.closes.get(index) + 1;
+      continue;
+    }
+    if (shape.owner[index] !== level || !TAG_TEXT.test(char)) return index;
+    index += 1;
+  }
+  return text.length;
+}
+
+/** True when the key at `at` sits where an object key does: right after `{` or `,`, outside strings. */
+function keyPosition(text, shape, at) {
+  let index = at - 1;
+  while (index >= 0 && ' \t\n\v\f\r'.includes(text[index])) index -= 1;
+  return index >= 0 && !shape.inString[index] && (text[index] === '{' || text[index] === ',');
+}
+
+/** `{ index, name }` for every literal handed to a toolkit icon input in this comment-masked file. */
+function iconCandidates(text) {
+  const { components, namespaces } = sdkBindings(text);
+  if (!components.size && !namespaces.size) return [];
+  const shape = sourceShape(text), found = [];
+  for (const match of text.matchAll(JSX_TAG)) {
+    if (shape.inString[match.index]) continue;
+    const [first, second] = match[1].split('.');
+    const exported = second === undefined ? components.get(first) : namespaces.has(first) ? second : undefined;
+    if (!exported) continue;
+    const wanted = exported === 'Icon' ? 'name' : 'icon';
+    const end = tagEnd(text, shape, match.index);
+    const level = shape.owner[match.index];
+    JSX_ATTRIBUTE.lastIndex = match.index + match[0].length;
+    let attribute;
+    while ((attribute = JSX_ATTRIBUTE.exec(text)) !== null && attribute.index < end) {
+      if (attribute[1] !== wanted || shape.inString[attribute.index] || shape.owner[attribute.index] !== level) continue;
+      const literal = literalAt(text, shape, attribute.index + attribute[0].length, { braced: true });
+      if (literal) found.push(literal);
+    }
+  }
+  for (const match of text.matchAll(ICON_FIELD)) {
+    if (shape.inString[match.index] || !keyPosition(text, shape, match.index)) continue;
+    const literal = literalAt(text, shape, match.index + match[0].length);
+    if (!literal || !/^\s*[,}]/.test(text.slice(literal.end))) continue;
+    const object = shape.owner[match.index];
+    if (object < 0 || !shape.closes.has(object)) continue;
+    const body = text.slice(object, shape.closes.get(object) + 1);
+    const labelled = [...body.matchAll(LABEL_KEY)].some((key) => !shape.inString[object + key.index]
+      && shape.owner[object + key.index] === object && keyPosition(text, shape, object + key.index));
+    if (labelled) found.push(literal);
+  }
+  return found;
+}
+
+function loadIconCheck(icons, profile) {
+  if (!icons || typeof icons !== 'object' || !Array.isArray(icons.names) || icons.names.length === 0) return null;
+  if (Array.isArray(icons.profiles) && !icons.profiles.includes(profile)) return null;
+  const names = icons.names.filter((name) => typeof name === 'string');
+  return {
+    id: typeof icons.id === 'string' ? icons.id : 'space-unknown-icon',
+    message: typeof icons.message === 'string' ? icons.message : 'Unknown icon "{name}". Closest names: {suggestions}.',
+    suggestions: Number.isInteger(icons.suggestions) && icons.suggestions > 0 ? icons.suggestions : 3,
+    exclude: Array.isArray(icons.exclude) ? icons.exclude : [],
+    names,
+    known: new Set(names),
+  };
+}
+
+function editDistance(a, b) {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+/**
+ * The names the refusal suggests: those sharing a word with the unknown name first ("funnel" finds
+ * funnel-simple), then by edit distance, ties by name.
+ */
+export function closestIconNames(name, names, count = 3) {
+  const words = new Set(name.split('-'));
+  return names
+    .map((candidate) => ({
+      candidate,
+      shared: candidate.split('-').some((word) => words.has(word)) ? 0 : 1,
+      distance: editDistance(name, candidate),
+    }))
+    .sort((left, right) => left.shared - right.shared || left.distance - right.distance
+      || (left.candidate < right.candidate ? -1 : left.candidate > right.candidate ? 1 : 0))
+    .slice(0, count)
+    .map((entry) => entry.candidate);
+}
+
+function iconViolations(normalized, content, checked, lines, config) {
+  const icons = config.icons;
+  if (!icons || matchesAny(normalized, icons.exclude)) return [];
+  const found = new Map(), suggestions = new Map(), lineStarts = [0];
+  for (let cursor = 0; cursor < content.length; cursor += 1) if (content.charCodeAt(cursor) === 10) lineStarts.push(cursor + 1);
+  const lineAt = (index) => {
+    let low = 0, high = lineStarts.length - 1;
+    while (low < high) { const middle = (low + high + 1) >> 1; if (lineStarts[middle] <= index) low = middle; else high = middle - 1; }
+    return low + 1;
+  };
+  for (const { index, name } of iconCandidates(checked)) {
+    if (!ICON_NAME_SHAPE.test(name) || icons.known.has(name)) continue;
+    const line = lineAt(index);
+    const key = `${line}:${name}`;
+    if (!found.has(key)) found.set(key, { line, name });
+  }
+  return [...found.values()].sort((left, right) => left.line - right.line).map(({ line, name }) => {
+    const message = icons.message
+      .replace('{name}', name)
+      .replace('{suggestions}', suggestions.get(name) ?? suggestions.set(name, closestIconNames(name, icons.names, icons.suggestions).join(', ')).get(name));
+    const reason = findAllowDirective(lines, line, icons.id, config.allowDirective);
+    const allowed = reason !== null && reason.length >= config.allowReasonMinLength;
+    return {
+      file: normalized,
+      line,
+      ruleId: icons.id,
+      severity: allowed ? 'warn' : 'error',
+      message: reason !== null && !allowed
+        ? `${message} (a notis-design-allow directive needs a reason of at least ${config.allowReasonMinLength} characters)`
+        : message,
+      allowed,
+      reason: allowed ? reason : null,
+    };
+  });
 }
 
 function getCompiledDesignRules(profile = 'app') {
@@ -452,6 +690,7 @@ export function collectDesignViolationsForFile(relPath, content, config = getCom
       });
     }
   }
+  if (extension !== '.css') violations.push(...iconViolations(normalized, content, checked, lines, config));
   return violations;
 }
 

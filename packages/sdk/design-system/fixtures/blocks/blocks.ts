@@ -92,16 +92,3 @@ export const WEEK_METRICS = {
   credits: { label: c('Credits used', 'Crédits utilisés'), current: 3480, previous: 2950 },
   failures: { label: c('Failed runs', 'Exécutions en échec'), current: 3, previous: 7 },
 } as const;
-
-/**
- * Every icon name the toolkit draws, in the order of `packages/sdk/src/ui/icons.tsx`. The toolkit does not export
- * its list, so this one is kept by hand; the Icon specimen flags a name `hasIcon` no longer knows.
- */
-export const ICON_NAMES = [
-  'arrow-left', 'x', 'caret-up', 'caret-down', 'caret-right', 'caret-left', 'arrows-out', 'dots-three',
-  'sidebar-simple', 'square-center', 'corners-out', 'check', 'archive', 'tray-arrow-up', 'star', 'clock',
-  'arrow-bend-up-right', 'user-plus', 'envelope-open', 'envelope-simple', 'trash', 'circle-half',
-  'circle-three-quarter', 'pause', 'play', 'toggle-right', 'toggle-left', 'hourglass', 'arrow-counter-clockwise',
-  'arrow-clockwise', 'arrows-clockwise', 'plus', 'circle-dashed', 'circle', 'clock-countdown', 'check-circle-fill',
-  'minus-circle', 'x-circle-fill',
-] as const;

@@ -105,6 +105,33 @@ test('a Space build rejects selected source CSS that escapes the view surface an
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('spaces build refuses an unknown toolkit icon name with its file, line and the closest names, and saves nothing', () => {
+  const root = fixture();
+  const home = mkdtempSync(join(tmpdir(), 'notis-space-build-home-'));
+  try {
+    writeFileSync(join(root, 'spaces/board/view.tsx'), `import './view.css';
+import { Button } from '@notis/sdk/ui';
+export default function View() {
+  return <Button icon="paper-plane-tlt">{null}</Button>;
+}
+`);
+    const result = spawnSync(process.execPath, [join(cliRoot, 'bin/notis.js'), 'spaces', 'build', root, '--space', 'board', '--json'], {
+      cwd: root,
+      env: { PATH: process.env.PATH, HOME: home, NODE_ENV: 'test', NOTIS_TEST_DISABLE_WORKTREE_ROUTING: '1' },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0, result.stdout);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.ok, false);
+    assert.match(envelope.error.message, /spaces\/board\/view\.tsx:4 \[space-unknown-icon\] error: Unknown icon "paper-plane-tlt"/);
+    assert.match(envelope.error.message, /Closest names: paper-plane-tilt, paper-plane-right, caret-left\./);
+    assert.ok(!existsSync(join(root, '.notis/output/manifest.json')), 'nothing was built');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('a Space build rejects bundle JS that reaches for the portal runtime global and saves nothing', async () => {
   const root = fixture({ js: 'const runtime = window.__NOTIS_RUNTIME__; export default function SpaceView() { return runtime ? null : null; }' });
   try {

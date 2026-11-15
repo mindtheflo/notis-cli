@@ -1,7 +1,6 @@
 import { defineSpecimen } from '../../specimen';
-import { Badge, Button, Icon, hasIcon } from '../../../src/ui/index';
+import { Badge, Button, ICON_NAMES, Icon } from '../../../src/ui/index';
 import { w } from '../../../src/words/index';
-import { ICON_NAMES } from '../../fixtures/blocks/blocks';
 
 const SIZES = [12, 16, 20, 24, 32] as const;
 const COLOURS = [
@@ -22,14 +21,13 @@ export const specimen = defineSpecimen({
   states: [
     {
       id: 'all',
-      label: 'Every icon, by name',
-      render: ({ t }) => (
+      label: 'Every icon, by name (ICON_NAMES): a name outside this set fails notis spaces build',
+      render: () => (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2">
           {ICON_NAMES.map((name) => (
             <div key={name} className="flex min-w-0 flex-col items-center gap-2 rounded-md bg-muted/50 px-2 py-3">
               <span className="text-xl leading-none"><Icon name={name} /></span>
               <code className="w-full break-all text-center font-mono text-[11px] text-muted-foreground">{name}</code>
-              {!hasIcon(name) && <Badge tone="danger">{t({ en: 'Missing', fr: 'Manquante' })}</Badge>}
             </div>
           ))}
         </div>

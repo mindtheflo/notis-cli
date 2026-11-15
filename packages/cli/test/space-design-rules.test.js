@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  closestIconNames,
   collectDesignViolationsForFile,
   collectSourceDesignViolations,
   loadDesignRules,
@@ -17,7 +18,7 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const rulesPath = resolve(testDir, '../../../server/config/notis_app_design_rules.json');
 const rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
 // Shared with server/tests/test_space_design_check.py so both validators stay in step.
-const { cases, clean } = JSON.parse(readFileSync(join(testDir, 'fixtures/space-design-cases.json'), 'utf-8'));
+const { cases, clean, icon_cases: iconCases, icon_clean: iconClean } = JSON.parse(readFileSync(join(testDir, 'fixtures/space-design-cases.json'), 'utf-8'));
 const space = loadDesignRules({ rulesPath, profile: 'space' });
 const app = loadDesignRules({ rulesPath, profile: 'app' });
 const ruleIds = (file, content, config = space) => new Set(collectDesignViolationsForFile(file, content, config).map((v) => v.ruleId));
@@ -42,6 +43,40 @@ for (const item of clean) {
     assert.deepEqual(collectDesignViolationsForFile(item.file, item.source, space).map((v) => v.ruleId), []);
   });
 }
+
+const iconFindings = (file, source, config = space) => collectDesignViolationsForFile(file, source, config)
+  .filter((v) => v.ruleId === 'space-unknown-icon');
+
+for (const item of iconCases) {
+  test(`an unknown icon name is refused with its line and the closest names: ${item.name}`, () => {
+    const found = iconFindings(item.file, item.bad);
+    assert.deepEqual(found.map((v) => [v.line, v.message.match(/Unknown icon "([^"]+)"/)[1]]), item.unknown);
+    for (const v of found) assert.equal(v.severity, 'error');
+    assert.match(found[0].message, new RegExp(`Closest names: ${item.suggestions}\\.`));
+    assert.deepEqual(iconFindings(item.file, item.good), [], item.good);
+    assert.deepEqual(iconFindings(item.file, item.bad, app), [], 'the App profile does not run the icon check');
+  });
+}
+
+for (const item of iconClean) {
+  test(`the icon check leaves this alone: ${item.name}`, () => {
+    assert.deepEqual(iconFindings(item.file, item.source), []);
+  });
+}
+
+test('the icon check reads its names from the rules file, and spaces build refuses with the file and line', () => {
+  assert.deepEqual(space.icons.names, rules.icons.names);
+  for (const name of ['arrow-square-out', 'paper-plane-tilt', 'funnel-simple', 'paper-plane-right']) {
+    assert.ok(space.icons.known.has(name), name);
+  }
+  assert.deepEqual(closestIconNames('funnel', rules.icons.names), ['funnel-simple', 'file', 'flask']);
+  const files = { 'spaces/inbox/view.tsx': Buffer.from(iconCases[0].bad).toString('base64') };
+  assert.throws(() => validateSourceDesign(files, { encoding: 'base64' }),
+    /Space violates the Notis Spaces design bar \(1 issue\)[\s\S]*spaces\/inbox\/view\.tsx:2 \[space-unknown-icon\] error: Unknown icon "paper-plane-tlt"/);
+  const allowed = "import { Button } from '@notis/sdk/ui';\n// notis-design-allow: space-unknown-icon the host maps this name itself\n"
+    + 'export default () => <Button icon="rocket" />;';
+  assert.deepEqual(iconFindings('spaces/inbox/view.tsx', allowed).map((v) => [v.allowed, v.severity]), [[true, 'warn']]);
+});
 
 test('the Space profile scans spaces and lib but not tests, fixtures or the vendored SDK', () => {
   const bad = 'export const x = () => <main className="h-screen" />;';
