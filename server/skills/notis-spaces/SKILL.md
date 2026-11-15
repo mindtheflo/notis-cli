@@ -90,6 +90,7 @@ user asked, and quote their words in `user_words`. The CLI equivalents are
 | Build or change a Space | [View authoring](references/views.md), [Design](references/design.md), then [Delivery](references/release.md); list filters (`in` for several options): [Params and declared lists](references/views.md#params-and-declared-lists) |
 | Verification fixtures, one view in several states (`contexts`) | [Fixtures](references/fixtures.md): one verify draws every state in English and French |
 | Read a saved view, chart, report or HTML page | [Read and render](references/reading.md) |
+| Check a view in a browser with `agent-browser` (open it, click, compare 390 and 1440 px) | The notis-browser-control skill (hosted guide: `notis://docs/notis-browser-control`): which runtime, the profile, the saved state |
 | Save or revise a Notes report or interactive report | [Reports](references/reports.md) |
 | Choose a memory policy | [Memory](references/memory.md) |
 | Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md); rows and counts (`useNativeDocuments`, `useNativeCount`): [Records and declared reads](references/sdk.md#records-and-declared-reads) |
@@ -175,7 +176,9 @@ stops receiving that piece's fixes.
    read ([Fixtures](references/fixtures.md)). Look at EN and FR at 390 and 1440 px; fix failed reads, clipping, wrong
    data and state transitions before release.
 5. Deploy within the user's authorization. Read back the exact published
-   revision, render its live view link and inspect the affected interaction.
+   revision, render its live view link and inspect the affected interaction
+   (in a browser: the notis-browser-control skill, hosted guide
+   `notis://docs/notis-browser-control`).
    A successful local build is not proof of deployment or live data.
 6. Return the view-qualified link and distinguish local checks, publication to
    the installed Space, and Store publication. Reconcile uncertain outcomes with

@@ -58,7 +58,9 @@ cite the returned current link, not the historical memory URL or index excerpt.
 ## Browser interaction when rendering is insufficient
 
 Use an available isolated browser session for hover details, pagination, input
-changes or installed-host behavior. Reading does not authorize regenerating a
+changes or installed-host behavior. Drive it as the notis-browser-control skill
+says (hosted guide: `notis://docs/notis-browser-control`): which runtime, the
+profile and the saved state. Reading does not authorize regenerating a
 historical report, modifying data, enabling sharing or deploying source.
 
 If sign-in is needed, discover `LOCAL_NOTIS_GET_PORTAL_URL`, inspect its schema

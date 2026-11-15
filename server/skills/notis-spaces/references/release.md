@@ -28,7 +28,9 @@ Ordinary data and resource edits apply immediately; only source needs a release.
    action/list/body/record fixtures. A denied read, write-on-load or failed width
    is a failure, not a passing empty page. Inspect both locales and intended states.
    Missing browser tooling blocks release: install `agent-browser` and make it
-   available on PATH.
+   available on PATH. To drive it (check a live view, open a menu, compare
+   widths), follow the notis-browser-control skill (hosted guide:
+   `notis://docs/notis-browser-control`).
 4. **Publish source.** Deploy the frozen, verified snapshot, not edits made after
    verification: `spaces deploy <dir> --request-id <stable-id>`. Or `spaces preview` seals a candidate, and
    `spaces promote <release-id> <dir>` publishes that exact candidate. Preview
