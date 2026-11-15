@@ -315,6 +315,25 @@ test('fixtures may declare up to four named contexts; each render opens with the
   assert.deepEqual(fixtureContexts(single), [{ name: 'default', params: { period: 'week' }, open: false }]);
 });
 
+test('the views a fixture context lists are verified as states of their own, after its own params', async () => {
+  const release = fixture();
+  release.sourceFiles['cases.json'] = encode({ actions: {}, context: { params: { reply: 'row-1' }, now: '2026-09-20T12:00:00Z',
+    views: [{}, { reply: 'row-1' }, { initiative: 'link-exchange' }] } });
+  assert.deepEqual(fixtureContexts(release), [{ name: 'default', params: { reply: 'row-1' }, open: false },
+    { name: 'view-1', params: {}, open: false }, { name: 'view-3', params: { initiative: 'link-exchange' }, open: false }],
+    'a view equal to an earlier state is drawn once');
+  const third = await createSpaceFixtureBroker({ release, capabilities: capabilities(), width: 390, context: 'view-3' }).snapshot();
+  assert.deepEqual(third.params, { initiative: 'link-exchange' });
+  assert.equal(third.fixed_clock, '2026-09-20T12:00:00Z', 'a view keeps the context now');
+  assert.equal(Object.hasOwn(third.descriptor.context, 'views'), false);
+  const engineWith = value => { const copy = fixture(); copy.sourceFiles['cases.json'] = encode({ actions: {}, context: value }); return createSpaceFixtureEngine(copy); };
+  assert.throws(() => engineWith({ views: { period: 'week' } }), /views must be a list of view params/);
+  assert.throws(() => engineWith({ views: [{ period: ['week'] }] }), /view 1 params must be an object/);
+  // The same link written another way is one state; past 3 others, the deck alone draws the rest.
+  const many = engineWith({ views: [{ a: '1', b: 2 }, { b: '2', a: 1 }, { a: '2' }, { a: '3' }, { a: '4' }] });
+  assert.deepEqual(many.contexts.map(entry => entry.name), ['default', 'view-1', 'view-3', 'view-4']);
+});
+
 test('fixture contexts are checked: one of context or contexts, safe unique names, string params and a real now', () => {
   const engineWith = value => { const release = fixture(); release.sourceFiles['cases.json'] = encode({ actions: {}, ...value }); return createSpaceFixtureEngine(release); };
   assert.throws(() => engineWith({ context: {}, contexts: [{ name: 'a' }] }), /either context or contexts, not both/);

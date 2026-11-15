@@ -74,12 +74,31 @@ function checkContextFields(value,where) {
 /**
  * The states verify opens the view in: `contexts` (1 to 4 named ones, each with optional params, now and locale), or
  * the one `context`, named default. Each entry keeps the object the view receives as its runtime context.
+ * `context.views`, the further params the Spaces review deck draws (portal/scripts/spaces-boundary), are states too:
+ * the first 3 that open another link than the context (key order, text or number, and a declared default do not
+ * count) follow default, each named view-<place in the list>, with the context's now and locale. The deck draws them all.
  */
-function fixtureContexts(fixtures) {
+function fixtureContexts(fixtures,declared={}) {
   if(fixtures.contexts===undefined) {
     const value=fixtures.context || {};
     checkContextFields(value,'The fixture context');
-    return [{name:'default',context:value}];
+    if(value.views===undefined) return [{name:'default',context:value}];
+    if(!Array.isArray(value.views) || value.views.some(item=>!object(item))) {
+      throw usageError('The fixture context views must be a list of view params, such as [{"period": "week"}].');
+    }
+    const {views,...base}=value;
+    // One link is one view, as the deck reads it: a declared default is left out of the link and 10 is "10".
+    const link=params=>JSON.stringify(Object.entries(params || {})
+      .filter(([name,item])=>!(object(declared[name]) && Object.hasOwn(declared[name],'default') && String(declared[name].default)===String(item)))
+      .map(([name,item])=>[name,String(item)]).sort(([a],[b])=>a<b ? -1 : a>b ? 1 : 0));
+    const seen=new Set([link(base.params)]),extra=[];
+    views.forEach((params,index)=>{
+      checkContextFields({params},`The fixture context view ${index+1}`);
+      if(seen.has(link(params)) || extra.length>=FIXTURE_CONTEXTS_MAX-1) return;
+      seen.add(link(params));
+      extra.push({name:`view-${index+1}`,context:{...base,params}});
+    });
+    return [{name:'default',context:base},...extra];
   }
   if(fixtures.context!==undefined) throw usageError('Verification fixtures declare either context or contexts, not both. Move context into contexts as one named entry.');
   const list=fixtures.contexts;
@@ -164,7 +183,7 @@ export function createSpaceFixtureEngine(release) {
   }
   if(!object(fixtures) || Object.keys(fixtures).some(key=>!['actions','context','contexts','documentBodies','viewerReads','shown','recordViews','images'].includes(key)) || !object(fixtures.actions)
     || (fixtures.context!==undefined && !object(fixtures.context))) throw usageError('Verification fixtures declare actions and optional synthetic context.');
-  const contexts=fixtureContexts(fixtures);
+  const contexts=fixtureContexts(fixtures,release.manifest.params || {});
   const images=new Map(fixtureImageEntries(fixtures,release.fixturePath).map(entry=>{
     const encoded=release.sourceFiles[entry.path];
     if(typeof encoded!=='string') throw usageError(`Fixture image ${entry.path} for ${entry.url} is missing from the Space folder.`);

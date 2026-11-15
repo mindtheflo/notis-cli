@@ -29,7 +29,9 @@ When a view reads a record view its fixtures lack, verify names the view, the re
 the record key and the missing field, and prints a valid entry to copy.
 `context` sets how verify opens the view: `params` (the opening view params,
 a flat object of text, numbers or true/false), `now` (an ISO time that pins the clock, so a view showing
-how old its data is can be checked with a later `now`) and `skeletonParams`
+how old its data is can be checked with a later `now`), `views` (other params,
+each a state of its own with the same `now`, named `view-<place in the list>`;
+verify checks the first 3 that open another link, the review deck draws all) and `skeletonParams`
 (other params whose loading skeletons are measured too). Verify always draws
 the view in English and in French, so `locale` no longer changes the
 screenshots (still accepted). To check several states in one run, declare
@@ -41,7 +43,7 @@ and languages (`.notis/view-<key>.<name>-<width>-<locale>.png`), measures the
 loading skeleton of each, and for one whose params open a list item (`open`)
 also saves the reader while the item loads
 (`.notis/pending-<key>.<name>.reader-<width>-<locale>.png`); with one context
-the names leave out `.<name>`, and a `context` whose params open an item gets the
+and no `views` the names leave out `.<name>`, and a `context` whose params open an item gets the
 reader screenshot too. The `shown`, `actions` and other cases are shared by
 every context.
 A photo or cover shows in verify when `images` maps the exact URL a fixture
