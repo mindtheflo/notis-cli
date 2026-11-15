@@ -404,6 +404,60 @@ function refreshPulledSdk(projectDir) {
     warnings: messages.filter((message) => warning.test(message)).map((message) => message.replace(warning, '')) };
 }
 
+function pageNumber(value, { flag, fallback, minimum, maximum }) {
+  if (value === undefined) return fallback;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < minimum || number > maximum) {
+    throw usageError(`Pass ${flag} as a whole number from ${minimum} to ${maximum}.`);
+  }
+  return number;
+}
+
+/** One line per record: a tab or line break in a title would split the tab-separated output. */
+const flatTitle = title => title.replace(/[\t\r\n]+/g, ' ');
+
+/**
+ * The records of one database linked into a Space, through its link like any native read: the alias
+ * resolves among the links the caller can see, and the server's native query decides what they may open.
+ * A direct query on a link is an editor read; anyone else reads through the Space's declared actions.
+ */
+async function listSpaceRecords(ctx) {
+  const limit = pageNumber(ctx.options.limit, { flag: '--limit', fallback: 20, minimum: 1, maximum: 100 });
+  const offset = pageNumber(ctx.options.offset, { flag: '--offset', fallback: 0, minimum: 0, maximum: 1_000_000 });
+  const spaceId = ctx.args.spaceId, wanted = ctx.args.binding;
+  const query = new URLSearchParams({ space_id: spaceId });
+  const links = (await httpRequest({ runtime: ctx.runtime, method: 'GET', path: `/portal_spaces/space-links?${query}`,
+    spacesProtocol: true })).payload?.links;
+  const link = (Array.isArray(links) ? links : []).find(entry => entry?.kind === 'database'
+    && (entry.binding_id === wanted || entry.alias === wanted));
+  if (!link) {
+    throw usageError(`This Space has no database link "${wanted}" you can open. List its links with notis spaces links list ${spaceId}.`);
+  }
+  const target = { space_id: spaceId, binding: link.binding_id, ...(ctx.options.record ? { document_id: ctx.options.record } : {}) };
+  // Oldest first, then by key, so --offset pages never skip or repeat a record.
+  const sorts = [{ field: { column: 'created_at' }, direction: 'asc' }, { field: { column: 'record_key' }, direction: 'asc' }];
+  let result;
+  try {
+    result = await httpRequest({ runtime: ctx.runtime, method: 'POST', path: '/portal_spaces/data', spacesProtocol: true,
+      body: { operation: 'query', target, input: { mode: 'rows', sorts, page_size: limit, offset, include_content: false } } });
+  } catch (error) {
+    if (error instanceof CliError && error.details?.error === 'action_required') {
+      throw new CliError({ code: error.code, message: 'Only an editor of this Space can list a linked database\'s records; anyone else reads them through the Space\'s declared actions.',
+        exitCode: error.exitCode, details: error.details });
+    }
+    throw error;
+  }
+  const answer = result.payload || {};
+  const records = (Array.isArray(answer.rows) ? answer.rows : []).map(row => ({ record_key: row.record_key,
+    title: typeof row.title === 'string' ? row.title : '' }));
+  const data = { space_id: spaceId, alias: link.alias, target, records, has_more: Boolean(answer.has_more),
+    next_offset: answer.next_offset ?? null, schema_revision: answer.schema_revision ?? null };
+  const lines = records.map(record => `${record.record_key}\t${flatTitle(record.title)}`);
+  if (data.has_more && data.next_offset !== null) lines.push(`More records: --offset ${data.next_offset}`);
+  return ctx.output.emitSuccess({ command: ctx.spec.command_path.join(' '), data,
+    humanSummary: lines.length ? lines.join('\n') : 'No records.', meta: { mutating: false, request_id: result.requestId } });
+}
+
 const idArgument = { token: '<space-id>', key: 'spaceId', description: 'Exact existing Space ID.' };
 const recordOption = { flags: '--record <record-key>', description: 'Fixed record context, when this is a record-scoped Space.' };
 const requestOption = { flags: '--request-id <key>', description: 'Stable intent key. Reuse after timeouts or lost replies.' };
@@ -603,6 +657,19 @@ export const spacesCommandSpecs = [
     handler(ctx) {
       return remote(ctx, 'space-links', { method: 'GET', query: { space_id: ctx.args.spaceId } });
     },
+  },
+  {
+    command_path: ['spaces', 'records'],
+    summary: 'List the records of one database linked into a Space you edit: record key and title, oldest first, one page at a time.',
+    when_to_use: 'Find the record keys and titles of a linked database, for example to write fixtures or link to one record. Editors only; anyone else reads through the Space\'s declared actions.',
+    args_schema: { arguments: [idArgument, { token: '<binding>', key: 'binding',
+      description: 'Database link alias or binding ID from spaces links list.' }], options: [
+      { flags: '--limit <number>', description: 'Records per page, 1 to 100; defaults to 20.' },
+      { flags: '--offset <number>', description: 'Zero-based start; pass next_offset from the previous page.' }, recordOption] },
+    examples: ['notis spaces records <space-id> tasks --limit 20'],
+    mutates: false, idempotent: true, require_auth: true,
+    backend_call: { type: 'http', path: '/portal_spaces/data' },
+    handler: listSpaceRecords,
   },
   {
     command_path: ['spaces', 'links', 'remove'],

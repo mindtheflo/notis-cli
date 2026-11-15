@@ -181,6 +181,20 @@ When to use: Find a link binding and its revision before removing it, including 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces links list <space-id>`
 
+### `npx --package @notis_ai/cli@latest -- notis spaces records <space-id> <binding>`
+
+List the records of one database linked into a Space you edit: record key and title, oldest first, one page at a time.
+
+When to use: Find the record keys and titles of a linked database, for example to write fixtures or link to one record. Editors only; anyone else reads through the Space's declared actions.
+
+Options:
+- `--limit <number>` — Records per page, 1 to 100; defaults to 20.
+- `--offset <number>` — Zero-based start; pass next_offset from the previous page.
+- `--record <record-key>` — Fixed record context, when this is a record-scoped Space.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis spaces records <space-id> tasks --limit 20`
+
 ### `npx --package @notis_ai/cli@latest -- notis spaces links remove <space-id> <binding-id>`
 
 Remove one database, Skill or automation link from a Space by its binding.
