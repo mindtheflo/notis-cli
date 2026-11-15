@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {maskSerializedJsonData} from '../src/runtime/app-data-literals.js';
+import {maskSerializedJsonData,maskSerializedJsonDataOrNull} from '../src/runtime/app-data-literals.js';
 import {collectArtifactBoundaryViolations,collectDesignViolationsForFile} from '../src/runtime/app-boundary-validator.js';
 const cases=JSON.parse(readFileSync(new URL('./fixtures/app-serialized-data.json',import.meta.url),'utf8'));
 for(const fixture of cases)test(`serialized data boundary: ${fixture.name}`,()=>{
@@ -22,7 +22,7 @@ test('masked Unicode data does not move a real design violation line',()=>{
 });
 
 test('nested data is masked without climbing back up the tree',()=>{
- // Babel's own recursion stops between 100 and 200 levels (then nothing is masked and every check runs).
+ // Babel's own recursion stops between 100 and 200 levels; deeper files are left to the server (next test).
  const depth=100;
  const data=JSON.stringify(JSON.stringify({after:'document.body #ff0000'}));
  const source=`const t = ${"{ label: 'x', children: [".repeat(depth)}${data}${']}'.repeat(depth)};\nconst Page=()=> <div className="bg-red-400"/>;\n`;
@@ -33,4 +33,17 @@ test('nested data is masked without climbing back up the tree',()=>{
  assert.ok(!masked.includes('document.body'));
  assert.equal(masked.length,source.length);
  assert.deepEqual(design.map(row=>[row.ruleId,row.line]),[['no-palette-hue',2]]);
+});
+
+test('a file nested too deep for the parser is left to the server check, with one note naming it',()=>{
+ const depth=1500;
+ const data=JSON.stringify(JSON.stringify({after:'#ff0000 bg-red-400'}));
+ const source=`const t = ${"{ label: 'x', children: [".repeat(depth)}${data}${']}'.repeat(depth)};\nconst Page=()=> <div className="bg-red-400"/>;\n`;
+ assert.equal(maskSerializedJsonDataOrNull(source,'.tsx'),null,'the parser runs out of stack');
+ assert.equal(maskSerializedJsonData(source,'.tsx'),source,'the boundary check still reads it unmasked');
+ const design=collectDesignViolationsForFile('app/page.tsx',source);
+ assert.deepEqual(design.map(row=>[row.file,row.ruleId,row.severity,row.allowed]),[['app/page.tsx','too-deep','info',false]],
+  'no false positive from deep data, and nothing blocks');
+ assert.match(design[0].message,/the server checks this file when you deploy/);
+ assert.equal(maskSerializedJsonDataOrNull('const broken = {','.tsx'),'const broken = {','a syntax error keeps the checks, as before');
 });

@@ -3,7 +3,7 @@ import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { usageError } from './errors.js';
-import { maskSerializedJsonData } from './app-data-literals.js';
+import { maskSerializedJsonData, maskSerializedJsonDataOrNull } from './app-data-literals.js';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
@@ -649,7 +649,13 @@ export function collectDesignViolationsForFile(relPath, content, config = getCom
   // directive; comments are masked after, for matching only, so a real
   // directive comment is still read from `lines`.
   const unserialized = ['.js', '.jsx', '.ts', '.tsx'].includes(extension)
-    ? maskSerializedJsonData(content, extension) : content;
+    ? maskSerializedJsonDataOrNull(content, extension) : content;
+  // Too deep to parse here: checked unmasked, data deep in it would read as code. The server checks it when the
+  // Space is released, at any depth, so this file is left to it.
+  if (unserialized === null) {
+    return [{ file: normalized, line: 1, ruleId: 'too-deep', severity: 'info', allowed: false, reason: null,
+      message: 'nested too deep to check here; the server checks this file when you deploy' }];
+  }
   const checked = maskComments(unserialized, extension);
   const lines = unserialized.split('\n');
   const violations = [];

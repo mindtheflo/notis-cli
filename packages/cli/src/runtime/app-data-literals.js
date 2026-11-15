@@ -34,6 +34,15 @@ function decides(node) {
  * Source/archive bytes are never rewritten; offsets and line breaks survive.
  */
 export function maskSerializedJsonData(content, extension = '.js') {
+  return maskSerializedJsonDataOrNull(content, extension) ?? content;
+}
+
+/**
+ * The same mask, or null when the file nests too deep for the parser (Babel
+ * runs out of stack at about 200 levels): the caller then leaves the file to
+ * the server's check, which reads any depth.
+ */
+export function maskSerializedJsonDataOrNull(content, extension = '.js') {
   let ast;
   try {
     babelParse ||= require('@babel/parser').parse;
@@ -43,7 +52,7 @@ export function maskSerializedJsonData(content, extension = '.js') {
       plugins: [...(['.ts', '.tsx'].includes(extension) ? ['typescript'] : []),
         ...(extension !== '.ts' ? ['jsx'] : [])],
     });
-  } catch { return content; }
+  } catch (error) { return error instanceof RangeError ? null : content; }
   const ranges = [];
   // Each node carries what its ancestors decided, so no literal looks back up the tree and no
   // ancestor list is copied per node: deep data (objects nested a thousand levels) stays linear.
