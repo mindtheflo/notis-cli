@@ -280,7 +280,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 @media (hover: none) { .nui-lr-check[data-state="none"] { visibility: hidden; } }
 [data-touch] .nui-lr-check[data-state="none"] { visibility: hidden; }
 .nui-lr-tools { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; }
-.nui-lr-info { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px 6px 16px; box-sizing: border-box; font-size: 13px; line-height: 18px; color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .03); }
+.nui-lr-info { display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; gap: 6px 8px; min-height: 44px; padding: 6px 12px 6px 16px; box-sizing: border-box; font-size: 13px; line-height: 18px; color: hsl(var(--muted-foreground)); background: hsl(var(--foreground) / .03); }
 .nui-lr-sub-label { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
 .nui-lr-sub-label > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nui-lr-view-note { margin: 4px 0 0; padding: 8px 10px 6px; max-width: 240px; font-size: 12px; line-height: 16px; color: hsl(var(--muted-foreground)); text-wrap: pretty; }

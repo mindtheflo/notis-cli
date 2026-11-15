@@ -265,7 +265,7 @@ export interface ListReaderProps<T> {
   infoLine?: ReactNode;
   /**
    * The filters the view applies on top of its tabs ("Podcasts" from a link), each a chip with an x that clears it,
-   * at the start of the info line.
+   * at the start of the info line. Chips that do not fit wrap onto another line; a cleared chip gives focus to the list.
    */
   filters?: readonly (FilterChipProps & { id: string })[];
   /** The top bar search for this list. Leave out for a list with no search. */
@@ -1050,6 +1050,33 @@ function ListReaderInner<T>({
     rowEl.focus({ preventScroll: true });
     rowEl.scrollIntoView?.({ block: 'nearest' });
   }, [cursor]);
+
+  // ---- filters: a chip's x that clears its filter gives focus to the list, not to the page ----
+  // The chip goes away with its filter, now or once the page has updated, and focus would fall to the page; it goes
+  // to the list's cursor row instead. Focus the person moved elsewhere meanwhile stays there.
+  const infoRef = useRef<HTMLDivElement | null>(null);
+  const refocusAfterClear = useRef(false);
+  const clearFilter = useCallback((onClear: () => void) => () => {
+    refocusAfterClear.current = true;
+    onClear();
+  }, []);
+  useEffect(() => {
+    if (!refocusAfterClear.current) return;
+    const { active, body } = focusOf(rootRef.current);
+    if (active && active !== body) {
+      if (!containsComposed(infoRef.current, active)) refocusAfterClear.current = false;
+      return;
+    }
+    // A list that reloads without the filter has no rows yet: its first rows take focus once they come. A list left
+    // empty stops waiting, so rows that arrive much later never take focus from the page.
+    const row = scrollRef.current?.querySelector<HTMLElement>(`[${ROW_ID_ATTRIBUTE}][tabindex="0"]`);
+    if (!row) {
+      if (!loading) refocusAfterClear.current = false;
+      return;
+    }
+    refocusAfterClear.current = false;
+    row.focus({ preventScroll: true });
+  });
 
   // A section to show in the reader: set by apiRef.open(id, { section }), cleared once another item opens (or none),
   // so stepping back to the item later starts at its top.
@@ -1863,8 +1890,8 @@ function ListReaderInner<T>({
     <div ref={listRef} className="nui-lr-list" data-footer={footer ? '' : undefined}>
       {toolbarNode}
       {(Boolean(filters?.length) || (infoLine !== undefined && infoLine !== null)) && (
-        <div className="nui-lr-info">
-          {filters?.map(({ id, ...filter }) => <FilterChip key={id} {...filter} />)}
+        <div ref={infoRef} className="nui-lr-info">
+          {filters?.map(({ id, onClear, ...filter }) => <FilterChip key={id} {...filter} onClear={clearFilter(onClear)} />)}
           {infoLine}
         </div>
       )}

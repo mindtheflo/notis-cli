@@ -2560,6 +2560,61 @@ test('filters: chips at the start of the info line, each x clears its own filter
   assert.equal(q('.nui-lr-info'), null, 'no filter and no info line draw no line');
 });
 
+test('filters: chips wrap onto another line, and the x that clears one gives focus to the list', async () => {
+  assert.match(cssRule('.nui-lr-info') ?? '', /flex-wrap: wrap;/, 'chips that do not fit wrap instead of shrinking');
+  let later: (() => void) | null = null;
+  const NONE: Ticket[] = [];
+  function Filtered({ deferred, reload, empty }: { deferred?: boolean; reload?: boolean; empty?: boolean }) {
+    const [on, setOn] = useState(true);
+    const [loading, setLoading] = useState(false);
+    const [rows, setRows] = useState(TICKETS);
+    const clear = () => {
+      if (deferred) later = () => setOn(false);
+      else if (empty) { setOn(false); setRows(NONE); later = () => setRows(TICKETS); }
+      else { setOn(false); if (reload) { setLoading(true); later = () => setLoading(false); } }
+    };
+    return list({ loading, items: loading ? NONE : rows, filters: on ? [{ id: 'initiative', label: 'Podcasts', onClear: clear }] : [] });
+  }
+  const focused = () => doc.activeElement?.getAttribute('data-nui-item') ?? doc.activeElement?.className ?? null;
+  await mount(<Filtered />);
+  let x = q('.nui-filter-chip-x')!;
+  x.focus();
+  await act(async () => { x.click(); });
+  assert.equal(q('.nui-filter-chip'), null);
+  assert.equal(focused(), 'a', 'the cursor row takes focus, not the page');
+  // A page that drops the filter later (after a navigation): the x keeps focus until its chip goes.
+  await mount(<Filtered deferred />);
+  x = q('.nui-filter-chip-x')!;
+  x.focus();
+  await act(async () => { x.click(); });
+  assert.equal(doc.activeElement, x);
+  await act(async () => { later!(); });
+  assert.equal(focused(), 'a');
+  // A list that reloads without the filter: its first row takes focus once it is back.
+  await mount(<Filtered reload />);
+  x = q('.nui-filter-chip-x')!;
+  x.focus();
+  await act(async () => { x.click(); });
+  assert.ok(q('.nui-row-skel'), 'loading: no rows yet');
+  await act(async () => { later!(); });
+  assert.equal(focused(), 'a');
+  // A list the clear leaves empty stops waiting: rows that come much later do not take focus from the page.
+  await mount(<Filtered empty />);
+  x = q('.nui-filter-chip-x')!;
+  x.focus();
+  await act(async () => { x.click(); });
+  await act(async () => { later!(); });
+  assert.notEqual(focused(), 'a', 'rows that arrive later leave focus where it is');
+  // Focus the person moved somewhere else before the chip went stays there.
+  await mount(<><input id="field" /><Filtered deferred /></>);
+  x = q('.nui-filter-chip-x')!;
+  x.focus();
+  await act(async () => { x.click(); });
+  q('#field')!.focus();
+  await act(async () => { later!(); });
+  assert.equal(doc.activeElement, q('#field'));
+});
+
 test('autoOpen: beside the list the first item opens; closed, the reader says how to pick one; one pane opens nothing', async () => {
   // One pane (a phone): the list shows and nothing opens, not even before the first measure.
   await withPanelsWidth(500, async () => { await mount(list({ autoOpen: true })); });

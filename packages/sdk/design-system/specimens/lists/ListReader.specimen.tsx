@@ -132,6 +132,8 @@ const COPY = {
   refreshView: { en: 'Refresh the tickets', fr: 'Actualiser les tickets' },
   synced: { en: 'Synced from Linear 2 min ago.', fr: 'Synchronisé depuis Linear il y a 2 min.' },
   platformTeam: { en: 'Platform team', fr: 'Équipe Plateforme' },
+  assignedToMe: { en: 'Assigned to me', fr: 'Assignés à moi' },
+  dueThisWeek: { en: 'Due this week', fr: 'À rendre cette semaine' },
   product: { en: 'Product', fr: 'Produit' },
   topBar: { en: 'Top bar title', fr: 'Titre de la barre du haut' },
   assign: { en: 'Assign', fr: 'Attribuer' },
@@ -556,6 +558,16 @@ export const specimen = defineSpecimen({
       height: TALL,
       render: (ctx) => (
         <TicketsDemo ctx={ctx} id="filters" filters={[{ id: 'team', label: COPY.platformTeam, onClear: () => {} }]}
+          infoLine={<span className="text-xs text-muted-foreground">{ctx.t(COPY.synced)}</span>} />
+      ),
+    },
+    {
+      id: 'filters-wrap',
+      label: 'Three filters: the chips that do not fit wrap onto a second line',
+      height: TALL,
+      render: (ctx) => (
+        <TicketsDemo ctx={ctx} id="filters-wrap" filters={[{ id: 'team', label: COPY.platformTeam, onClear: () => {} },
+          { id: 'owner', label: COPY.assignedToMe, onClear: () => {} }, { id: 'due', label: COPY.dueThisWeek, onClear: () => {} }]}
           infoLine={<span className="text-xs text-muted-foreground">{ctx.t(COPY.synced)}</span>} />
       ),
     },
