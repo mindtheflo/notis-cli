@@ -1,88 +1,47 @@
 /**
- * Comment threads on a Space database (pure; no React). The table shape is the Notis Slides Comments table:
+ * Comment threads of a Space (pure; no React). Comments live in the Space's one comment store, read and written
+ * through the host (`runtime.spaceComments`, contract: `SpaceCommentRow`). `commentFromRow` reads a store row as the
+ * `CommentRecord` the pane renders:
  *
- * | Column      | Type                 | Meaning                                                               |
- * | ----------- | -------------------- | --------------------------------------------------------------------- |
- * | Body        | title                | The comment text.                                                     |
- * | Deck        | relation             | The scope the comment belongs to (a deck, a page, a review).          |
- * | Slide       | relation             | The anchor record it is on (a slide, a section). Empty: on the scope. |
- * | Thread      | text                 | Empty on a thread's first comment; the root's record key on a reply.  |
- * | Author      | select               | Who wrote it (Flo, Claude, Notis, or any name).                       |
- * | X, Y        | number               | The pin, 0 to 1 across and down the anchor. Empty: on the whole anchor. |
- * | W, H        | number               | A zone from the pin, 0 to 1 of the anchor's width and height. Empty: a point. |
- * | Status      | select               | Open, Resolved or Deleted (a delete keeps the row for the digest).    |
- * | Needs       | select               | none, check, choice or input: what the author asks of the reader.     |
- * | Options     | text                 | The choices of a choice ask, separated by `|` or new lines.          |
- * | Answer      | text                 | The reader's answer to the ask.                                       |
- * | Answered at | date                 | When the answer was given.                                            |
- * | Change      | select               | The last change made here: created, replied, answered, resolved, reopened, deleted. |
- * | Changed at  | date                 | When that change was made; the digest lists changes after the checkpoint. |
- * | Example     | checkbox             | A sample comment shown with an Example badge.                         |
- * | Attachments | files                | Pictures and files the author shows with the comment (optional).      |
- * | Edited at   | date                 | When the author last edited the text (optional): the card says edited. |
- * | Answer to   | text                 | On a reply that answers an ask: the ask's record key (optional).      |
- * | Time        | number               | Seconds into a recording, for comments in time mode (opt-in, `time`). |
+ * | Store field       | CommentRecord      | Meaning                                                             |
+ * | ----------------- | ------------------ | ------------------------------------------------------------------- |
+ * | id                | id, recordKey      | The comment.                                                        |
+ * | page_key          | scopeIds           | The page (record) it belongs to; empty on the Space home.           |
+ * | anchor_keys       | anchorIds          | The records it is on (a slide, a section; several for items).       |
+ * | thread_root_id    | thread             | Empty on a thread's first comment; the root's id on a reply.        |
+ * | status            | status             | open, archived, deleted read as Open, Resolved (shown Done), Deleted. |
+ * | x, y, w, h        | x, y, w, h         | A pin (x, y) or a zone (w, h too), 0 to 1 of the anchor.            |
+ * | time_start        | time               | Seconds into a recording (time mode).                               |
+ * | field, quote, ... | passage            | The words a text comment sits on.                                   |
  *
- * Every column name can be renamed with `CommentColumns`; the defaults are the Slides names, so a Space that copies
- * the Slides table needs no mapping and no migration. Zones are opt-in: a table that adds W and H number columns
- * passes `{ w: 'W', h: 'H' }`. Without them (`w` and `h` null, the default) a drag on the anchor places a pin where it
- * started, and nothing writes a column the table does not have. Attachments are shown when the table has the files
- * column; the pane also lets people attach pictures and files to a new comment or a reply when the host can upload
- * them (`runtime.spaceFiles`). A table without the column shows none and takes text only. Edited at is written only
- * when the table has it (the edit itself always saves); Time is opt-in like zones (`{ time: 'Time' }`), and without it
- * a time-mode comment starts its text with the moment ("0:24 ..."). Answer to is written only when the table has it:
- * the reply that shows the answer to an agent's input ask names that ask, so the server sends it to the asking agent
- * only and counts it as the answer, not a new reply; without the column the reply is an ordinary reply.
- *
- * Status `Resolved` is shown as Done (archived, SPC-124); `Deleted` keeps the row: a deleted first comment hides its
- * whole thread, a deleted later one reads "Comment deleted" in place (SPC-127).
+ * `Resolved` is shown as Done (archived, SPC-124); `Deleted` keeps the row: a deleted first comment hides its whole
+ * thread, a deleted later one reads "Comment deleted" in place (SPC-127).
  */
 
-export type CommentRow = Record<string, unknown>;
+import type { SpaceCommentRow, SpaceCommentStatus } from '../../space';
+
 export type CommentNeeds = 'none' | 'check' | 'choice' | 'input';
 export type CommentStatus = 'Open' | 'Resolved' | 'Deleted';
 export type CommentChange = 'created' | 'replied' | 'answered' | 'resolved' | 'reopened' | 'deleted';
 
-/** Column names of the Comments table. `scope` or `anchor` set to null: the table has no such column. */
+/**
+ * What a new comment points at (SPC-118): words of the text, a point or a box on an anchor, some items (records or
+ * rows), a moment of a recording, or the whole page (no anchor).
+ */
+export type CommentMode = 'text' | 'point' | 'box' | 'items' | 'time' | 'page';
+
+/** The words a text comment sits on; `field` names the field of the page they are in, when one does. */
+export interface CommentPassage { quote: string; prefix: string; suffix: string; field?: string | null }
+
+/**
+ * @deprecated Comments live in the Space's comment store: there are no columns to name. Kept so older Spaces that
+ * pass `columns` still compile; it is ignored.
+ */
 export interface CommentColumns {
-  body: string;
-  scope: string | null;
-  anchor: string | null;
-  thread: string;
-  author: string;
-  x: string;
-  y: string;
-  /** The zone's width and height. Null: the table has no zone columns, and comments are points only. */
-  w: string | null;
-  h: string | null;
-  status: string;
-  needs: string;
-  options: string;
-  answer: string;
-  answeredAt: string;
-  change: string;
-  changedAt: string;
-  example: string;
-  /** The files column read for pictures and files shown with a comment. Null: the table has none. */
-  attachments: string | null;
-  /** When the author last edited the text. Written only when the table has it. */
-  editedAt: string | null;
-  /** Seconds into a recording (time mode). Null: the table has none, and the moment starts the text. */
-  time: string | null;
-  /** On a reply that answers an ask, the ask's record key. Written only when the table has it. */
-  answerTo: string | null;
-}
-
-export const COMMENT_COLUMNS: Readonly<CommentColumns> = Object.freeze({
-  body: 'Body', scope: 'Deck', anchor: 'Slide', thread: 'Thread', author: 'Author', x: 'X', y: 'Y', w: null, h: null,
-  status: 'Status',
-  needs: 'Needs', options: 'Options', answer: 'Answer', answeredAt: 'Answered at', change: 'Change',
-  changedAt: 'Changed at', example: 'Example', attachments: 'Attachments', editedAt: 'Edited at', time: null,
-  answerTo: 'Answer to',
-});
-
-export function commentColumns(columns?: Partial<CommentColumns>): CommentColumns {
-  return { ...COMMENT_COLUMNS, ...(columns ?? {}) };
+  body: string; scope: string | null; anchor: string | null; thread: string; author: string; x: string; y: string;
+  w: string | null; h: string | null; status: string; needs: string; options: string; answer: string; answeredAt: string;
+  change: string; changedAt: string; example: string; attachments: string | null; editedAt: string | null;
+  time: string | null; answerTo: string | null;
 }
 
 export interface CommentRecord {
@@ -108,6 +67,12 @@ export interface CommentRecord {
    */
   createdByYou?: boolean | null;
   createdBy?: string | null;
+  /** What the comment points at (its mode in the store). */
+  mode?: CommentMode;
+  /** The words a text comment sits on; null for other modes. */
+  passage?: CommentPassage | null;
+  /** The view slug it was written on. */
+  view?: string | null;
 }
 
 /**
@@ -171,72 +136,20 @@ export interface CommentScope { id: string; recordKey: string; name: string; che
 export interface CommentThread { root: CommentRecord; replies: CommentRecord[]; anchor: CommentAnchor | undefined }
 
 // ---------------------------------------------------------------------------
-// Reading rows (native typed envelopes, or plain values from fixtures and older hosts)
+// Reading store rows
 // ---------------------------------------------------------------------------
 
-function asObject(value: unknown): CommentRow | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as CommentRow : null;
-}
+type Loose = Record<string, unknown>;
 
-function richText(parts: unknown[]): string {
-  return parts.map(part => {
-    const item = asObject(part);
-    if (!item) return typeof part === 'string' ? part : '';
-    const text = asObject(item.text);
-    if (text && typeof text.content === 'string') return text.content;
-    return typeof item.plain_text === 'string' ? item.plain_text : '';
-  }).join('');
-}
-
-function envelope(value: unknown): unknown {
-  const item = asObject(value);
-  if (!item || typeof item.type !== 'string') return value;
-  return item[item.type];
-}
-
-function property(row: CommentRow, name: string | null): unknown {
-  if (!name) return undefined;
-  const properties = asObject(row.properties);
-  return envelope(properties ? properties[name] : undefined);
-}
-
-function textOf(row: CommentRow, name: string | null): string {
-  const value = property(row, name);
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return richText(value);
-  const item = asObject(value);
-  if (item && typeof item.name === 'string') return item.name;
-  if (item && typeof item.start === 'string') return item.start;
-  return '';
-}
-
-/** The text of one column of a comment row (text, select, number or date), '' when empty or missing. */
-export function commentText(row: CommentRow, name: string | null): string {
-  return textOf(row, name);
-}
-
-function numberOf(row: CommentRow, name: string | null): number | null {
-  const value = property(row, name);
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
-  return null;
-}
-
-function dateOf(row: CommentRow, name: string): string | null {
-  const value = property(row, name);
-  if (typeof value === 'string') return value || null;
-  const item = asObject(value);
-  return item && typeof item.start === 'string' ? item.start : null;
-}
-
-function relationOf(row: CommentRow, name: string | null): string[] {
-  const value = property(row, name);
-  if (!Array.isArray(value)) return typeof value === 'string' && value ? [value] : [];
-  return value.map(item => typeof item === 'string' ? item : String(asObject(item)?.id ?? '')).filter(Boolean);
+function asObject(value: unknown): Loose | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Loose : null;
 }
 
 function str(value: unknown): string { return typeof value === 'string' ? value : ''; }
+
+function num(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
 
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i;
 const INLINE_IMAGE = /^data:image\/(png|jpeg|gif|webp|avif|svg\+xml)[;,]/;
@@ -258,12 +171,7 @@ function pathOf(url: string): string {
   try { return new URL(url, 'https://notis.invalid').pathname; } catch { return url; }
 }
 
-/** The files of a files column: `{ name, url }`, `{ name, file: { url } }`, `{ name, external: { url } }` or a URL. */
-function attachmentsOf(row: CommentRow, name: string | null): CommentAttachment[] {
-  return commentAttachmentList(property(row, name));
-}
-
-/** A files value (`{ name, url }` items, the other shapes above, or URLs) as the pictures and files a comment shows. */
+/** A files value (`{ name, url }` items, `{ name, file: { url } }`, `{ name, external: { url } }` or URLs) as the pictures and files a comment shows. */
 export function commentAttachmentList(value: unknown): CommentAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap<CommentAttachment>(item => {
@@ -323,70 +231,64 @@ export function commentBodyParts(body: string): CommentBodyPart[] {
 }
 
 const NEEDS: CommentNeeds[] = ['none', 'check', 'choice', 'input'];
-const STATUSES: CommentStatus[] = ['Open', 'Resolved', 'Deleted'];
 const CHANGES: CommentChange[] = ['created', 'replied', 'answered', 'resolved', 'reopened', 'deleted'];
+const MODES: CommentMode[] = ['text', 'point', 'box', 'items', 'time', 'page'];
 
-function oneOf<T extends string>(value: string, allowed: T[], fallback: T): T {
-  return (allowed as string[]).includes(value) ? value as T : fallback;
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return (allowed as readonly unknown[]).includes(value) ? value as T : fallback;
+}
+
+/** The store's status as the pane names it: open, archived, deleted read as Open, Resolved (shown Done), Deleted. */
+export function commentStatusOf(status: SpaceCommentStatus | string | null | undefined): CommentStatus {
+  return status === 'archived' ? 'Resolved' : status === 'deleted' ? 'Deleted' : 'Open';
+}
+
+/** The pane's status as the store names it. */
+export function storeStatusOf(status: CommentStatus): SpaceCommentStatus {
+  return status === 'Resolved' ? 'archived' : status === 'Deleted' ? 'deleted' : 'open';
 }
 
 /**
- * Whether the rows show the files column: true or false from the first row that carries properties, null when no row
- * does (an empty table). A list row carries every property of its database by name, filled or empty.
+ * One store row (`SpaceCommentRow`) as the comment the pane renders. An agent's comment reads as the agent (its stamped
+ * name); a person's as the name the server set for them. A store `change` of `edited` reads as the comment's own
+ * change (created or replied) with `editedAt`, so Copy changes reports it as an edit.
  */
-export function commentRowsHaveColumn(rows: readonly CommentRow[], name: string | null): boolean | null {
-  if (!name) return false;
-  for (const row of rows) {
-    const properties = asObject(row.properties);
-    if (properties) return Object.hasOwn(properties, name);
-  }
-  return null;
-}
-
-/**
- * One Comments row as a comment. A row an agent wrote always reads as that agent (its Author, else the stamped agent
- * name), whatever `authors` holds. A row the server says a person created (`created_by_you` or `created_by`) reads as
- * its Author, the name the server set for that person, so a Space member reads as themselves. Any other row outside
- * `authors` (when given), or with no Author, reads as `fallbackAuthor`.
- */
-export function readCommentRow(row: CommentRow, options: {
-  columns?: Partial<CommentColumns>; authors?: readonly string[]; fallbackAuthor?: string;
-} = {}): CommentRecord {
-  const c = commentColumns(options.columns);
-  const change = textOf(row, c.change);
-  const author = textOf(row, c.author);
-  const fallbackAuthor = options.fallbackAuthor ?? 'Notis';
-  const value = property(row, c.example);
-  const agent = agentOf((row as Record<string, unknown>).agent);
-  // The server owns a person's Author (their account name) and says who created the row: a member is never Notis.
-  const person = !agent && (typeof row.created_by_you === 'boolean' || Boolean(str(row.created_by)));
+export function commentFromRow(input: SpaceCommentRow | Readonly<Record<string, unknown>>): CommentRecord {
+  const row = input as Loose;
+  const id = str(row.id);
+  const thread = str(row.thread_root_id).trim();
+  const authorOf = asObject(row.author);
+  const agent = agentOf(row.agent);
+  const editedAt = str(row.edited_at) || null;
+  const change: CommentChange | null = row.change === 'edited' ? (thread ? 'replied' : 'created')
+    : (CHANGES as readonly unknown[]).includes(row.change) ? row.change as CommentChange : null;
+  const mode = oneOf(row.mode, MODES, 'page');
+  const quote = str(row.quote);
+  const pageKey = str(row.page_key);
+  const anchorKeys = Array.isArray(row.anchor_keys) ? row.anchor_keys.filter((key): key is string => typeof key === 'string' && Boolean(key)) : [];
+  const status = commentStatusOf(str(row.status));
   return {
-    id: str(row.id), recordKey: str(row.record_key), revision: typeof row.revision === 'number' ? row.revision : 1,
-    body: str(row.title) || textOf(row, c.body), scopeIds: relationOf(row, c.scope), anchorIds: relationOf(row, c.anchor),
-    thread: textOf(row, c.thread).trim(),
-    author: agent ? (author.trim() || agent.name)
-      : person && author.trim() ? author
-      : options.authors ? (options.authors.includes(author) ? author : fallbackAuthor) : (author || fallbackAuthor),
-    x: numberOf(row, c.x), y: numberOf(row, c.y), w: numberOf(row, c.w), h: numberOf(row, c.h), status: oneOf(textOf(row, c.status), STATUSES, 'Open'),
-    needs: oneOf(textOf(row, c.needs), NEEDS, 'none'),
-    options: textOf(row, c.options).split(/[|\r\n]+/).map(option => option.trim()).filter(Boolean),
-    answer: textOf(row, c.answer), answeredAt: dateOf(row, c.answeredAt),
-    change: CHANGES.includes(change as CommentChange) ? change as CommentChange : null, changedAt: dateOf(row, c.changedAt),
-    example: value === true || value === 'true', createdAt: str(row.created_at) || null,
-    attachments: attachmentsOf(row, c.attachments),
-    editedAt: c.editedAt ? dateOf(row, c.editedAt) : null,
-    time: numberOf(row, c.time),
-    answerTo: c.answerTo ? textOf(row, c.answerTo).trim() || null : null,
+    id, recordKey: id, revision: typeof row.revision === 'number' ? row.revision : 1,
+    body: str(row.body),
+    scopeIds: pageKey ? [pageKey] : [], anchorIds: anchorKeys, thread,
+    author: agent ? (agent.name || str(authorOf?.name)) : str(authorOf?.name).trim() || 'Notis',
+    x: num(row.x), y: num(row.y), w: num(row.w), h: num(row.h), status,
+    needs: oneOf(row.needs, NEEDS, 'none'),
+    options: Array.isArray(row.options) ? row.options.filter((item): item is string => typeof item === 'string')
+      .map(option => option.trim()).filter(Boolean) : [],
+    answer: str(row.answer), answeredAt: str(row.answered_at) || null,
+    change, changedAt: str(row.changed_at) || null,
+    example: row.example === true, createdAt: str(row.created_at) || null,
+    attachments: status === 'Deleted' ? [] : commentAttachmentList(row.attachments),
+    editedAt, time: num(row.time_start), answerTo: str(row.answer_to).trim() || null,
     agent,
-    createdByYou: typeof row.created_by_you === 'boolean' ? row.created_by_you : null,
-    createdBy: str(row.created_by) || null,
+    createdByYou: typeof authorOf?.you === 'boolean' ? authorOf.you : null,
+    createdBy: str(authorOf?.user_id) || null,
+    mode,
+    passage: mode === 'text' && quote.trim()
+      ? { quote, prefix: str(row.prefix), suffix: str(row.suffix), field: str(row.field) || null } : null,
+    view: str(row.view) || null,
   };
-}
-
-/** The rows of a list answer (`{ rows }`), skipping anything that is not an object. */
-export function commentRowsOf(value: unknown): CommentRow[] {
-  const rows = asObject(value)?.rows;
-  return Array.isArray(rows) ? rows.filter((row): row is CommentRow => Boolean(asObject(row))) : [];
 }
 
 /** Time in ms; a date without an offset is read as UTC so ordering stays stable. */
@@ -404,6 +306,21 @@ export function inCommentScope(comment: CommentRecord, scope: Pick<CommentScope,
 
 export function commentAnchorOf(comment: CommentRecord, anchors: readonly CommentAnchor[]): CommentAnchor | undefined {
   return anchors.find(anchor => comment.anchorIds.includes(anchor.id) || comment.anchorIds.includes(anchor.recordKey));
+}
+
+/** Every anchor the comment is on, in anchor order (an items comment is on several). */
+export function commentAnchorsOf(comment: CommentRecord, anchors: readonly CommentAnchor[]): CommentAnchor[] {
+  return anchors.filter(anchor => comment.anchorIds.includes(anchor.id) || comment.anchorIds.includes(anchor.recordKey));
+}
+
+/**
+ * True when a comment on `anchorIds` shows under the anchor `key`: an items comment shows under each of its items
+ * (SPC-463). A null key is the comments on no anchor.
+ */
+export function isCommentOnAnchor(anchorIds: readonly string[], key: string | null | undefined,
+  anchors: readonly CommentAnchor[]): boolean {
+  const on = anchors.filter(anchor => anchorIds.includes(anchor.id) || anchorIds.includes(anchor.recordKey));
+  return key == null ? !on.length : on.some(anchor => anchor.recordKey === key);
 }
 
 /**
@@ -531,10 +448,11 @@ export interface CommentDigestOptions {
   scopeNoun?: string;
   /** What an anchor is called ("Slide"): "Slide 3" and "Unknown slide". */
   anchorNoun?: string;
-  /** The table agents insert replies into. Default "Comments". */
+  /** @deprecated Agents reply through the comment tool, not into a table: ignored. */
   table?: string;
   /** The reader whose answers and status changes the digest reports. Default "Flo". */
   me?: string;
+  /** @deprecated Comments have no columns any more: ignored. */
   columns?: Partial<CommentColumns>;
 }
 
@@ -545,6 +463,8 @@ export function isCommentZone(comment: Pick<CommentRecord, 'x' | 'y' | 'w' | 'h'
 }
 
 function pinText(comment: CommentRecord | undefined, anchorNoun: string): string {
+  if (comment?.passage) return `on the words ${quote(comment.passage.quote)}`;
+  if (comment?.time != null) return `at ${formatCommentTime(comment.time)}`;
   if (!comment || comment.x == null || comment.y == null) return `on the whole ${anchorNoun.toLowerCase()}, no pin`;
   const at = `x ${comment.x.toFixed(2)}, y ${comment.y.toFixed(2)}`;
   return isCommentZone(comment) ? `zone at ${at}, ${comment.w!.toFixed(2)} wide by ${comment.h!.toFixed(2)} high` : `pin at ${at}`;
@@ -578,13 +498,11 @@ export function commentDigest(input: {
   const scopeNoun = options.scopeNoun ?? 'Deck';
   const anchorNoun = options.anchorNoun ?? 'Slide';
   const me = options.me ?? 'Flo';
-  const c = commentColumns(options.columns);
   const byKey = new Map(comments.map(comment => [comment.recordKey, comment]));
-  const same = [c.scope, c.anchor].filter(Boolean).join(' and ');
   const lines = [
     `# ${heading}: ${scope?.name ?? scopeNoun}`,
     `Changes since ${scope?.checkpoint ?? 'the start'} (copied ${nowIso}). ${scopeNoun} record ${scope?.recordKey ?? ''}.`,
-    `Reply by inserting a ${options.table ?? 'Comments'} row with ${same ? `the same ${same} and ` : ''}${c.thread} set to the thread record.`,
+    'Reply with LOCAL_NOTIS_SPACE_COMMENT_THREADS (operation reply, comment_id set to the thread id).',
     '',
   ];
   for (const comment of changes) {

@@ -29,16 +29,17 @@ Text a person writes and reviews:
   cannot show as blocks are kept as written). In a form with its own Save, pass
   `onChange` and change `resourceKey` after Cancel or a save so the editor
   reopens on the value.
-- Comments on selected words of a text property (a Markdown body, a subject)
-  come from `@notis/sdk/ui`: `usePassageComments` with `CommentableText` around
-  an input or textarea, `CommentableRichText` around the `MarkdownEditor` or
+- Selected words on any Space page already offer Cite and Comment: you add
+  nothing. To tie passage comments to a text property (a Markdown body, a
+  subject) so they are highlighted where the view draws it, use
+  `usePassageComments` from `@notis/sdk/ui` with `CommentableText` around an
+  input or textarea, `CommentableRichText` around the `MarkdownEditor` or
   rendered Markdown, and `<PassageCommentPane comments={comments} />` mounted
-  once anywhere in the view (it draws in the host Comments panel, never in a
-  `SidePane`). The Comments database needs Field, Quote, Prefix and Suffix
-  columns; a thread whose words are gone reads Passage changed and stays open.
-  It lists newest first; pass `order="reading"` to list the text's threads in
-  reading order. Do not build your own highlights. Pins on a page use
-  `useComments` with `CommentPane` (see [Comments](#comments)).
+  once anywhere in the view (it draws in the host Comments panel). A thread
+  whose words are gone reads Passage changed and stays open. Pass
+  `order="reading"` to list the text's threads in reading order. Do not build
+  your own highlights. Pins on a page use `useComments` with `CommentPane`
+  (see [Comments](#comments)).
 
 ## Toolkit pieces
 
@@ -109,8 +110,9 @@ rather than from a copy.
   button, `viewerActions` adds viewer buttons (class `nui-viewer-btn`) and
   `onNotice` hears copy and download results. Use `ImageViewer` alone for a
   picture that opens full screen. Do not build your own lightbox.
-- **Comments**: `useComments` with `CommentPane` and `CommentPins` give comment
-  threads on a Comments database; see [Comments](#comments).
+- **Comments**: `useComments` with `CommentPane` and `CommentPins` add pins,
+  zones, items and moments to the comments every Space page has; see
+  [Comments](#comments).
 - **Presenting on a second screen**: `useAudienceScreen({ onAction, onClose,
   title })` works like PowerPoint. `secondScreen` says whether another screen
   is connected; call `open(anchor)` from the Present press itself. It answers
@@ -245,72 +247,93 @@ with `key` the ISO day, plus `value` and the day's `rows`), `title`, `legend`,
 
 ## Comments
 
-`useComments` with `CommentPane` and `CommentPins` give comment
-threads on a Comments database (pins, zones, replies, asks, Archive, Delete,
-Edit, Copy changes). The pane draws in the host Comments panel beside the
-chat, not where it is mounted: mount `<CommentPane controller={comments} />`
-once anywhere in the view and never wrap it in `SidePane` (a `SidePane` given
-a comment pane shows its page alone). While comments are off for the viewer,
-or on a Site, a link or a preview, the pane, pins and tool bar render nothing:
-never build a fallback comment list. The host owns archive (Status
-`Resolved`, shown Done), delete with Undo, editing your own comment, the
-Open/Done/All filter, the Goes to line and To chip that name the thread a
-comment goes to, `comment=` links and push; the server checks who may change
-a comment and writes `Author` itself (the person's name, or the agent's on
-an agent's comment, adding the select choice when it is missing), so never
-set `Author` from the view or let people pick it. On someone else's comment
-people only archive, reopen, delete (with edit rights) or answer it: every
-other column is its author's, and agents change only what they wrote. Every
-Comments table is followed for waiting comments and push, with or without
-`agents`, and a person's comments, replies and answers go to the thread they
-name even in a Space that declares no `agents`: an answer, or a reply in a
-thread an agent started, goes back to that agent's own thread and subagent,
-and editing a comment wakes an agent only when it replied after the comment.
-A reply under a deleted comment is refused (`comment_not_found`). Every
-comment written through the Notis CLI needs the writing agent's band name
-(`NOTIS_AGENT_NAME` or `--agent-name`, such as `fred-and-the-machine`; the
-rule and the id the CLI keeps per name are in the notis-cli skill): the
-comment is then that agent's, signed "Fred And The Machine", and never wakes
-it. Without a name it is refused (`agent_name_required`), even for a person
-typing the CLI, and a view never writes comments with a Cloud Computer
-credential. The Notis assistant never writes comments itself
-(`orchestrator_comments_refused`): it starts a sub-agent for comment work,
-which signs with its own band name. On a host without the Comments panel a
-comment is signed with the viewer's first name; when the Comments
-database's Author is a choice list, give it a `Person` option, which signs
-anyone it does not name (without it the comment saves with no author). Pass
-`me` only to sign with a fixed name. For comments on a whole record with
-nothing to pin on, pass no `anchors` and `columns.anchor: null`: the pane
-offers New comment itself.
+Every Space page has comments: Notis stores them itself, one store for all
+Spaces, and lists them in the host Comments panel beside the chat. Never
+create, bind or declare a Comments database, never add comment columns, and
+never write comment rows with native writes or `useNativeMutation`. Selected
+words on any page offer Cite and Comment without any code. Comments exist on
+Space pages only (Notes pages included). While comments are off for the
+viewer, or on a Site, a link or a preview, every comment piece renders
+nothing: never build a fallback comment list or your own comment box.
 
-Options:
+Add comment code only when comments should sit on something more than words
+of the page: `useComments` with `CommentPane`, `CommentPins` and
+`CommentToolBar`.
+
+```tsx
+const comments = useComments({
+  anchors: slides.map(s => ({ id: s.id, recordKey: s.recordKey, order: s.order, title: s.title })),
+  anchorKey: slide?.recordKey ?? null,
+  words: { anchorLabel: { en: 'Slide {n}', fr: 'Diapo {n}' } }, // names "New comment on Slide 2"
+});
+// <CommentPins controller={comments} anchorKey={slide.recordKey} /> over the stage
+// <CommentToolBar controller={comments} />  <CommentPane controller={comments} />
+```
+
+- `useComments` takes no database. `scope` is the page (record) the comments
+  belong to; leave it out to use the record the page has open (a record page,
+  or the record a declared record param such as `page` names, the `main` one
+  first), or the Space home. `list`, `database`, `columns`, `me`, `authors` and `fallbackAuthor`
+  are deprecated: accepted and ignored. Drop them when you touch a view.
+- Mount `<CommentPane controller={comments} />` once anywhere in the view: it
+  draws in the host panel, not where it is mounted.
+- The host and the server own the rest: who wrote a comment (never set an
+  author or let people pick one), archive (shown Done) and delete with Undo,
+  editing your own comment, the Open/Done/All filter, the Goes to line and To
+  chip that name the thread a comment goes to, attachments (pictures and
+  files on every comment, nothing to add), `comment=` links, waiting counts
+  and push. On someone else's comment people only archive, reopen, delete
+  (with edit rights) or answer it.
+- `modes`: any of `text`, `point`, `box`, `items`, `time`, `page` (listed in
+  that order). Default: `point` and `box` when there are anchors, `items`
+  when you pass `onStartItems`, `time` when you pass `currentTime`, and
+  `page`. `<CommentToolBar controller={comments} />` puts one button per mode
+  on the page, toggled with C (`toggleKey`, or `pinned` to keep it shown);
+  Escape cancels a mode; on a phone it draws above the card in the layer root,
+  so a parent's hidden overflow never clips it. `onStartItems()`: show your own
+  picker, then call `comments.startItems(anchors)`; the comment names its
+  items and shows under each of them. `currentTime()`: the recording's moment in
+  seconds.
 - `order` on the pane: `'newest'` (default), `'oldest'`, `'anchor'` or a
   comparator. `groupBy`: a function returning `{ key, label }` per thread,
-  or false. A controller with no `scope` (the Space home) groups by page,
-  named by `scopeNames` on `useComments`; a scoped one is flat.
-- `modes` on `useComments`: any of `text`, `point`, `box`, `items`, `time`,
-  `page` (listed in that order). Default: `point` (plus `box` with zone
-  columns) when there are anchors, `items` when you pass `onStartItems`,
-  `time` when you pass `currentTime`, and `page`. The pane's New comment
-  button lists them; `<CommentToolBar controller={comments} />` puts one
-  button per mode on the page, toggled with C (`toggleKey`, or `pinned` to
-  keep it shown), and Escape cancels a mode.
-- `onStartItems()`: show your own picker (checkboxes, a selection), then call
-  `comments.startItems(anchors)`. `currentTime()`: the recording's moment in
-  seconds; name a Time column with `columns: { time: 'Time' }` to store it.
+  or false. A controller on the Space home groups by page, named by
+  `scopeNames`; a scoped one is flat.
 - `focusKey` defaults to the `comment` view param, so a link with
-  `comment=<root key>` opens that thread; null turns it off. Give the table
-  an `Edited at` date column so edited comments say edited, and an
-  `Answer to` text column so an answer to an agent's question reaches only
-  the agent that asked (the server adds it to an existing table on the first
-  answer, so there is nothing to do by hand).
+  `comment=<root id>` opens that thread; null turns it off.
 
-To let people attach pictures and files to a comment or a reply
-(paste, drop or the paperclip), give the Comments database a files column
-named `Attachments` (or pass `columns.attachments`); there is nothing to add
-in the view. Without the column the pane takes text only. Files open from
-the rows for an hour, for whoever may read the row; an agent downloads one
-from the `url` its query returns, or queries again for a fresh one.
+### Agents and comments
+
+Space agents wake on comments with `on: 'comments'` in the Space source; it
+needs no resource and takes no `columns`:
+
+```ts
+agents: [{ id: 'editor', on: 'comments', event: 'created', thread: 'best_match',
+           runtime: 'notis', skill: 'address-feedback', wake: 'all' }]
+```
+
+`event` is `created` (default) or `changed`, `wake` is `all` or `sent` (only
+replies to and answers of the agent's own comments), `thread` is `best_match`
+or `space`, `runtime` is `notis` or `cloud_computer`, `skill` names a linked
+Skill. `on: { database: <alias> }` stays for agents that watch a real
+database. An older Space whose `on: { database: 'comments' }` points at its
+old Comments database keeps waking for now; write `on: 'comments'` when you
+next change it, and leave the old comments binding and its database alone:
+Notis copies their comments into its store and detaches them itself.
+
+Agents read and write comments only with `LOCAL_NOTIS_SPACE_COMMENT_THREADS`
+(`protocol` 2; operations `list`, `thread`, `comment`, `reply`, `edit`, `delete`,
+`restore`, `answer`, `links`, `link`, `unlink`, `waiting`, `best_match`,
+`viewer`, `page_link`; parameters `space`, `page` (a record key, `home` or
+`all`), `view`, `anchor`, `comment_id`, `body`, `needs`, `options`,
+`answer_to`, `answer`, `files`). Never query or upsert comments through a
+database tool. Agents never archive: that is the people's. An agent's
+comment is signed with its band name and never wakes it; the Notis
+assistant never writes comments itself (`orchestrator_comments_refused`)
+and starts a sub-agent for comment work. Through the Notis CLI, every
+comment needs the writing agent's band name (`NOTIS_AGENT_NAME` or
+`--agent-name`, such as `fred-and-the-machine`; see the notis-cli skill),
+or it is refused (`agent_name_required`). A comment's files open from the
+`url` its read returns, for an hour; read it again for a fresh one.
 
 ## Records and declared reads
 
@@ -491,9 +514,10 @@ extracts tables, lists, controls and visible document/HTML content automatically
   `DocumentPage` breadcrumb moves into the top bar on wide
   screens and stays in the page only on narrow ones, so never draw your own
   title or breadcrumb row. Do not duplicate host chrome.
-- `useActiveResource` publishes the current resource; `useAgentContext`,
-  `NotisSelectionBoundary`, `NotisCommentBoundary` and `NotisCommentBox` support
-  explicit reference context. [Context sharing](context.md) owns the contract.
+- `useActiveResource` publishes the current resource; `useAgentContext` and
+  `NotisSelectionBoundary` support explicit reference context
+  (`NotisCommentBoundary` and `NotisCommentBox` are deprecated and do nothing).
+  [Context sharing](context.md) owns the contract.
 - `Dialog` supplies a themed modal with focus handling; while it is open, only
   its own keys and Escape work. For a confirmation (delete, discard), pass
   `nativeOnTouch` and mark the buttons `data-dialog-confirm` and

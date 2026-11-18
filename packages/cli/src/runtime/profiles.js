@@ -14,6 +14,7 @@ import { getAuthRecovery, quoteShellArgument } from './auth-recovery.js';
 import { channelFromProfile, cliCommandForChannel, pinnedReleaseChannel } from './channel.js';
 import { resolveRetryEnabled } from './retry.js';
 import { readAgentIdentity } from './agent-identity.js';
+import { selectAgentCredential } from './agent-credential.js';
 import {
   LIVE_API_HOSTS,
   currentApiOrigin,
@@ -864,6 +865,7 @@ export function resolveRuntimeProfile(
   const oauthJwt = profile.oauth_access_token;
   let jwt;
   let credentialKind;
+  let agentEnvJwt = null;
 
   // A dev credential is a real Supabase token for the worktree's test user. It
   // is only ever spendable against the loopback backend that minted it, so a
@@ -890,6 +892,17 @@ export function resolveRuntimeProfile(
   } else if (envJwt) {
     jwt = envJwt;
     credentialKind = 'env';
+    // A Cloud Computer command's credential naming its agent: the newest unexpired of it and its renewal
+    // (agent-credential.js). Any other environment token is used as is.
+    try {
+      const selected = selectAgentCredential(envJwt, { configFile: resolveConfigFile() });
+      if (selected) {
+        jwt = selected.jwt;
+        agentEnvJwt = envJwt;
+      }
+    } catch {
+      // An unreadable cache leaves the environment token in use.
+    }
   } else if (
     oauthJwt
     && !credentialIsExpired({ credentialKind: 'oauth', jwt: oauthJwt }, profile)
@@ -997,6 +1010,8 @@ export function resolveRuntimeProfile(
     jwt,
     credentialKind,
     credentialSource: credentialKind,
+    // The NOTIS_JWT of a managed agent credential, set only when `jwt` may be renewed (agent-credential.js).
+    agentEnvJwt,
     oauthAccessToken: profile.oauth_access_token,
     oauthRefreshToken: profile.oauth_refresh_token,
     oauthAccessExpiresAt: profile.oauth_access_expires_at,

@@ -41,7 +41,9 @@ export type { SpaceViewerReadFamily, SpaceViewerReadOperation, SpaceViewerReadIn
 export type { SpaceAgentDeclaration, SpaceItemThread, SpaceAgentQueue, SpaceAgentsStatus, SpaceThreadsTransport,
   SpaceThreadItemText, SpaceThreadItemCondition, SpaceThreadItemState, SpaceThreadItemConfirm, SpaceThreadItemAction,
   SpaceThreadItemKind, SpaceThreadItem, SpaceThreadItemRun, SpaceThreadItemTransport,
-  SpaceCommentSource, SpaceCommentsTransport, SpaceCommentViewer, SpaceCommentThreadRef, SpaceCommentThreadPick } from './space';
+  SpaceCommentSource, SpaceCommentsTransport, SpaceCommentViewer, SpaceCommentThreadRef, SpaceCommentThreadPick,
+  SpaceCommentAnchor, SpaceCommentAttachment, SpaceCommentChange, SpaceCommentFile, SpaceCommentInsert, SpaceCommentMode,
+  SpaceCommentNeeds, SpaceCommentPage, SpaceCommentPageKey, SpaceCommentReply, SpaceCommentRow, SpaceCommentStatus } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
 export { spaceAudience, spaceMarksEditorsOnly, publicSpaceDescriptor, withoutEditorColumns } from './space';
 export type { SpaceAudience, SpaceEditorsOnly, SpaceResourceColumns, EditorOnlyColumns, AudienceRow } from './space';
@@ -234,7 +236,8 @@ export { isInteractionElementVisible } from './interactions/visibility';
 
 export type { AgentContextContent, AgentContextItem, ContextAttachment } from './agentContext';
 export { useAgentContext } from './hooks/useAgentContext';
-export { NotisCommentBoundary, NotisCommentBox } from './components/NotisCommentBoundary';
-export type { NotisCommentBoundaryProps, NotisCommentBoxProps } from './components/NotisCommentBoundary';
+// Deprecated stand-ins: comments live in the host Comments panel; Cite and Comment come with every Space page.
+export { NotisCommentBoundary, NotisCommentBox } from './compat/comments';
+export type { NotisCommentBoundaryProps, NotisCommentBoxProps } from './compat/comments';
 export { VIEW_PERIODS, isViewDate, isViewPeriod, resolveViewPeriod } from './viewPeriod';
 export { journalViewParams, tasksViewParams, tasksViewFilter } from './standardViewParams';

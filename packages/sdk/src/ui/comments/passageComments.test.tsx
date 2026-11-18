@@ -7,13 +7,16 @@ import { createRoot, type Root } from 'react-dom/client';
 import { KeyboardEngine, KeyboardEngineCore } from '../engine';
 import { NotisProvider } from '../../provider';
 import type { NotisRuntime } from '../../runtime';
-import type { SpaceCommentsTransport, SpaceFileUploadInput, SpaceFilesTransport } from '../../space';
+import type { SpaceCommentRow, SpaceCommentsTransport } from '../../space';
 import { w } from '../../words';
 import {
-  CommentableRichText, CommentableText, PASSAGE_COLUMNS, PassageCommentPane, locatePassage, markdownReadableText,
+  CommentableRichText, CommentableText, PassageCommentPane, commentFromRow, locatePassage, markdownReadableText,
   passageAt, passageOffset, passageProperties, readPassage, usePassageComments, type PassageCommentController,
   type PassageField,
 } from '.';
+import {
+  commentRow, memoryCommentStore, type MemoryCommentOp, type MemoryCommentStore,
+} from '../../../design-system/runtime/memoryComments';
 import { clearCommentDrafts, commentDraftKey, readCommentDraft, writeCommentDraft } from './commentDrafts';
 import { clearCommentRoutingCache } from './useCommentRouting';
 
@@ -65,76 +68,72 @@ test('Markdown: a passage is found in the words a reader sees; edited away it is
   assert.ok(early < late, 'offsets follow reading order');
 });
 
-const text = (value: string) => ({ type: 'rich_text', rich_text: [{ text: { content: value } }] });
-const select = (value: string) => ({ type: 'select', select: { name: value } });
-
 const FIELDS: PassageField[] = [
-  { key: 'subjectEn', label: w('Subject', 'Objet'), group: 'EN', values: { Field: 'Subject', Language: 'EN' } },
-  { key: 'bodyEn', label: w('Body', 'Corps'), group: 'EN', markdown: true, values: { Field: 'Body', Language: 'EN' } },
-  { key: 'subjectFr', label: w('Subject', 'Objet'), group: 'FR', values: { Field: 'Subject', Language: 'FR' } },
-  { key: 'bodyFr', label: w('Body', 'Corps'), group: 'FR', markdown: true, values: { Field: 'Body', Language: 'FR' } },
+  { key: 'subjectEn', label: w('Subject', 'Objet'), group: 'EN' },
+  { key: 'bodyEn', label: w('Body', 'Corps'), group: 'EN', markdown: true },
+  { key: 'subjectFr', label: w('Subject', 'Objet'), group: 'FR' },
+  { key: 'bodyFr', label: w('Body', 'Corps'), group: 'FR', markdown: true },
 ];
 
-test('readPassage and passageProperties: a field named by several columns, and undeclared fields ignored', () => {
-  const properties = passageProperties({ field: 'bodyFr', quote: 'quelques mots', prefix: 'avec ', suffix: '' }, FIELDS[3]!);
-  assert.deepEqual(properties, { Field: 'Body', Language: 'FR', Quote: 'quelques mots', Prefix: 'avec ', Suffix: null });
-  const row = { record_key: 'c1', properties: {
-    Field: select('Body'), Language: select('FR'), Quote: text('quelques mots'), Prefix: text('avec '), Suffix: text(''),
-  } };
-  assert.deepEqual(readPassage(row, FIELDS), { field: 'bodyFr', quote: 'quelques mots', prefix: 'avec ', suffix: '' });
-  assert.equal(readPassage({ properties: { Field: select('Footer'), Language: select('FR'), Quote: text('x') } }, FIELDS), null);
-  assert.equal(readPassage({ properties: { Field: select('Body'), Language: select('FR') } }, FIELDS), null, 'no quote: not a passage');
-  const simple: PassageField[] = [{ key: 'Body', label: w('Body', 'Corps') }];
-  assert.deepEqual(passageProperties({ field: 'Body', quote: 'q', prefix: '', suffix: 's' }, simple[0]!),
-    { [PASSAGE_COLUMNS.field]: 'Body', Quote: 'q', Prefix: null, Suffix: 's' });
+test('A text comment names its field by key in the store; the old passage helpers are inert stand-ins', () => {
+  const comment = commentFromRow(commentRow({ id: 'c1', page_key: 'ik1', mode: 'text', field: 'bodyFr', quote: 'quelques mots',
+    prefix: 'avec ', suffix: '' }));
+  assert.deepEqual(comment.passage, { field: 'bodyFr', quote: 'quelques mots', prefix: 'avec ', suffix: '' });
+  assert.equal(commentFromRow(commentRow({ id: 'c2', mode: 'text', field: 'bodyFr', quote: '  ' })).passage, null,
+    'no quote: not a passage');
+  assert.equal(commentFromRow(commentRow({ id: 'c3', mode: 'page', quote: 'x' })).passage, null, 'only text mode has one');
+  assert.equal(readPassage({ properties: {} }, FIELDS), null);
+  assert.deepEqual(passageProperties({ field: 'bodyFr', quote: 'q', prefix: '', suffix: '' }, FIELDS[3]!), {});
 });
 
 // ---------------------------------------------------------------------------
 // Components
 // ---------------------------------------------------------------------------
 
-function row(key: string, fields: { body: string; field: string; lang: string; quote: string; prefix?: string; suffix?: string;
-  status?: string; thread?: string }): Record<string, unknown> {
-  return {
-    id: `id-${key}`, record_key: key, revision: 1, title: fields.body, created_at: '2026-11-01T10:00:00.000Z',
-    properties: {
-      Issue: { type: 'relation', relation: [{ id: 'issue-1' }] }, Author: select('Flo'), Status: select(fields.status ?? 'Open'),
-      Needs: select('none'), Thread: text(fields.thread ?? ''), Field: select(fields.field), Language: select(fields.lang),
-      Quote: text(fields.quote), Prefix: text(fields.prefix ?? ''), Suffix: text(fields.suffix ?? ''),
-      Example: { type: 'checkbox', checkbox: false },
-    },
-  };
+/** The page the passage comments sit on (the record `ik1`). */
+const PAGE = 'ik1';
+
+function row(key: string, fields: { body: string; field: string; quote: string; prefix?: string; suffix?: string;
+  status?: SpaceCommentRow['status']; thread?: string; page?: string; createdAt?: string }): SpaceCommentRow {
+  const createdAt = fields.createdAt ?? '2026-11-01T10:00:00.000Z';
+  return commentRow({
+    id: key, page_key: fields.page ?? PAGE, thread_root_id: fields.thread ?? null, mode: 'text', field: fields.field,
+    quote: fields.quote, prefix: fields.prefix ?? '', suffix: fields.suffix ?? '', body: fields.body,
+    status: fields.status ?? 'open', created_at: createdAt, changed_at: createdAt,
+  });
 }
 
 const ROWS = [
-  row('c1', { body: 'Shorter?', field: 'Body', lang: 'EN', quote: 'three new things' }),
-  row('c2', { body: 'Typo', field: 'Subject', lang: 'EN', quote: 'Notis Hub' }),
-  row('c3', { body: 'Old wording', field: 'Body', lang: 'EN', quote: 'words that were removed' }),
-  row('c4', { body: 'Plutôt ça', field: 'Body', lang: 'FR', quote: 'trois nouveautés' }),
+  row('c1', { body: 'Shorter?', field: 'bodyEn', quote: 'three new things' }),
+  row('c2', { body: 'Typo', field: 'subjectEn', quote: 'Notis Hub' }),
+  row('c3', { body: 'Old wording', field: 'bodyEn', quote: 'words that were removed' }),
+  row('c4', { body: 'Plutôt ça', field: 'bodyFr', quote: 'trois nouveautés' }),
 ];
 
-interface Call { action: string; request: Record<string, unknown> }
+/** One write the pane sent to the comment store. */
+interface Call { op: MemoryCommentOp; input: Record<string, unknown> }
+
+const STORES = new WeakMap<object, MemoryCommentStore>();
+const storeOf = (runtime: NotisRuntime) => STORES.get(runtime)!;
+const writes = (calls: Call[], op: MemoryCommentOp) => calls.filter(call => call.op === op).map(call => call.input);
 
 let cacheCounter = 0;
-function fakeRuntime(rows: Record<string, unknown>[], calls: Call[],
-  options: { params?: Record<string, string>; comments?: Partial<SpaceCommentsTransport> } = {}) {
-  return {
+/** A Space runtime whose comments live in an in-memory store seeded with `rows`; every write lands in `calls`. */
+function fakeRuntime(rows: readonly SpaceCommentRow[], calls: Call[],
+  options: { params?: Record<string, string>; comments?: Partial<SpaceCommentsTransport>; upload?: boolean } = {}) {
+  const viewer = options.comments && 'viewer' in options.comments ? options.comments.viewer ?? null : undefined;
+  const store = memoryCommentStore({ rows: rows.map(item => ({ ...item })), calls, upload: options.upload === true, viewer });
+  const runtime = {
     commentsExtra: options.comments,
+    commentsStore: store,
     resource: { kind: 'space', id: 's1', revision: 1 },
-    space: {
-      id: 's1', revision: 1, cacheScope: `passages-${cacheCounter += 1}`,
-      actions: { 'comments.insert': { readOnly: false }, 'comments.update': { readOnly: false } },
-      shows: { comments: { database: 'comments' } },
-      bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
-    },
+    space: { id: 's1', revision: 1, cacheScope: `passages-${cacheCounter += 1}` },
     context: { params: options.params ?? {}, locale: 'en', viewerName: 'Flo' },
-    shown: async () => ({ rows, schema_revision: 3 }),
-    callAction: async (action: string, input: { request: Record<string, unknown> }) => {
-      calls.push({ action, request: input.request });
-      return { record_key: 'new-1', revision: 2 };
-    },
-    subscribeDatabase: () => () => {},
+    // Comments never go through Space actions: any call here is a mistake.
+    callAction: async (action: string) => { throw new Error(`No Space action may run for comments (${action}).`); },
   } as unknown as NotisRuntime;
+  STORES.set(runtime, store);
+  return runtime;
 }
 
 let root: Root | null = null;
@@ -155,9 +154,7 @@ function Harness({ rich, record }: { rich?: ReactNode; record?: { id: string; re
   showGroup = setGroup;
   current = usePassageComments({
     fields: FIELDS, values: VALUES, group,
-    scope: { id: record?.id ?? 'issue-1', recordKey: record?.recordKey ?? 'ik1', name: '10.26', checkpoint: null },
-    columns: { scope: 'Issue', anchor: null },
-    authors: ['Flo', 'Claude', 'Notis'],
+    scope: { id: record?.id ?? 'issue-1', recordKey: record?.recordKey ?? PAGE, name: '10.26', checkpoint: null },
   });
   return (
     <div>
@@ -175,21 +172,28 @@ async function settle() {
   for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
 }
 
-/** The host Comments panel the panes draw in (`runtime.spaceComments`), unless the runtime says comments are off. */
+/** The host Comments panel the panes draw in (`runtime.spaceComments`), over the runtime's memory store. */
+const PANELS = new WeakMap<object, NotisRuntime>();
 function withHostPanel(runtime: NotisRuntime): NotisRuntime {
   if ('spaceComments' in runtime) return runtime;
-  const extra = (runtime as unknown as { commentsExtra?: Partial<SpaceCommentsTransport> }).commentsExtra;
-  return {
+  const known = PANELS.get(runtime);
+  if (known) return known;
+  const { commentsExtra: extra, commentsStore: store } = runtime as unknown as {
+    commentsExtra?: Partial<SpaceCommentsTransport>; commentsStore: MemoryCommentStore };
+  const panel = {
     ...runtime,
     spaceComments: {
-      viewer: { name: 'Flo', canEditSpace: true },
+      ...store.transport,
       attach(source) {
         source.show(doc.getElementById('panel'));
         return () => source.show(null);
       },
       ...extra,
-    },
+    } as SpaceCommentsTransport,
   } as NotisRuntime;
+  PANELS.set(runtime, panel);
+  STORES.set(panel, store);
+  return panel;
 }
 
 let engine = new KeyboardEngineCore();
@@ -248,7 +252,8 @@ test('PassageCommentPane: quotes of the group on screen in reading order, Passag
 
 test('CommentableText: a selection offers Comment; the new comment saves its field, quote and surrounding words', async () => {
   const calls: Call[] = [];
-  await mount(<Harness />, fakeRuntime(ROWS, calls));
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness />, runtime);
   const field = doc.querySelector('textarea[aria-label="English subject"]') as HTMLTextAreaElement;
   assert.ok(doc.querySelector('.nui-passage-text-field[data-state="open"]'), 'tinted while it holds an open thread');
   assert.ok(button('Open the comments on this field'));
@@ -263,16 +268,16 @@ test('CommentableText: a selection offers Comment; the new comment saves its fie
   const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!;
   await act(async () => { setter.call(box, 'Say launched'); box.dispatchEvent(new dom.window.Event('input', { bubbles: true })); });
   await fire(box, new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  assert.equal(calls.length, 1);
-  const input = calls[0]!.request as { properties: Record<string, unknown>; columns: Record<string, unknown> };
-  assert.equal(calls[0]!.action, 'comments.insert');
-  assert.equal(input.columns.title, 'Say launched');
-  assert.deepEqual({ ...input.properties, 'Changed at': 'x' }, {
-    Field: 'Subject', Language: 'EN', Quote: 'is live', Prefix: 'Notis Hub ', Suffix: null,
-    Author: 'Flo', Status: 'Open', Needs: 'none', Example: false, Change: 'created', 'Changed at': 'x', Issue: ['issue-1'],
+  assert.deepEqual(calls.map(call => call.op), ['insert']);
+  const { request_id: requestId, ...input } = calls[0]!.input;
+  assert.equal(typeof requestId, 'string');
+  assert.deepEqual(input, {
+    page_key: PAGE, view: null, mode: 'text', anchor_keys: [], field: 'subjectEn', quote: 'is live', prefix: 'Notis Hub ',
+    suffix: '', body: 'Say launched',
   });
   assert.equal(current!.draft, null);
-  assert.equal(current!.controller.threadKey, 'new-1', 'the new thread is selected');
+  const created = storeOf(runtime).rows.at(-1)!;
+  assert.equal(current!.controller.threadKey, created.id, 'the new thread is selected');
 });
 
 test('CommentableRichText: a selection in the text offers Comment until typed over; what it shows decides Text changed', async () => {
@@ -300,13 +305,53 @@ test('CommentableRichText: a selection in the text offers Comment until typed ov
   assert.equal(current!.isChanged('c3'), true);
 });
 
+test('CommentableRichText: the Comment button goes with its selection, and comes back once a new one is read (MGR-386, SPC-470)', async () => {
+  await mount(<Harness rich={<div>Hi there, this week brings three new things.</div>} />, fakeRuntime(ROWS, []));
+  const text = doc.querySelector('.nui-passage-rich-text > div')!;
+  const textNode = text.firstChild as Text;
+  const selection = dom.window.getSelection()!;
+  const select = (words: string) => {
+    const start = textNode.data.indexOf(words);
+    const range = doc.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + words.length);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+  const selectionChanged = () => fire(doc as unknown as Element, new dom.window.Event('selectionchange'));
+  const label = 'Comment on the selected text';
+  select('this week');
+  await fire(text, new dom.window.MouseEvent('mouseup', { bubbles: true }));
+  assert.ok(button(label));
+  await selectionChanged();
+  assert.ok(button(label), 'a late change event for the same selection keeps the button');
+  // A click away (or Cite) clears the selection: the button goes at once, with no mouse up on the text.
+  selection.removeAllRanges();
+  await selectionChanged();
+  assert.equal(button(label), undefined, 'a cleared selection drops Comment');
+  assert.equal(doc.querySelector('.nui-passage-pick'), null);
+  select('this week');
+  await fire(text, new dom.window.MouseEvent('mouseup', { bubbles: true }));
+  assert.ok(button(label));
+  // Another selection (Shift+click further on) hides it until that one is read.
+  select('three new things');
+  await selectionChanged();
+  assert.equal(button(label), undefined, 'a selection that changed drops the old button');
+  await fire(text, new dom.window.MouseEvent('mouseup', { bubbles: true }));
+  const comment = button(label);
+  assert.ok(comment, 'the new selection offers Comment again');
+  await fire(comment!, new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(current!.draft?.quote, 'three new things', 'Comment still quotes the words selected now');
+  assert.equal(button(label), undefined);
+});
+
 test('Opening a thread from its quote selects it and shows its group', async () => {
   const opened: string[] = [];
   function Opener() {
     const [group, setGroup] = useState<string>('EN');
     current = usePassageComments({
-      fields: FIELDS, values: VALUES, group, columns: { scope: 'Issue', anchor: null },
-      scope: { id: 'issue-1', recordKey: 'ik1', name: '10.26', checkpoint: null },
+      fields: FIELDS, values: VALUES, group,
+      scope: { id: 'issue-1', recordKey: PAGE, name: '10.26', checkpoint: null },
       onOpen: (thread, passage, from) => {
         opened.push(`${thread.root.recordKey}:${from}`);
         const next = passage ? current!.field(passage.field)?.group : undefined;
@@ -330,13 +375,13 @@ test('Opening a thread from its quote selects it and shows its group', async () 
 
 test('PassageCommentPane: newest first by default, New comment on words or the whole page, archive with Undo', async () => {
   const rows = [
-    { ...row('n1', { body: 'Older', field: 'Body', lang: 'EN', quote: 'three new things' }), created_at: '2026-11-01T09:00:00.000Z' },
-    { ...row('n2', { body: 'Newer', field: 'Subject', lang: 'EN', quote: 'Notis Hub' }), created_at: '2026-11-02T09:00:00.000Z' },
+    row('n1', { body: 'Older', field: 'bodyEn', quote: 'three new things', createdAt: '2026-11-01T09:00:00.000Z' }),
+    row('n2', { body: 'Newer', field: 'subjectEn', quote: 'Notis Hub', createdAt: '2026-11-02T09:00:00.000Z' }),
   ];
   const calls: Call[] = [];
   function Plain() {
-    current = usePassageComments({ fields: FIELDS, values: VALUES, group: 'EN', columns: { scope: 'Issue', anchor: null },
-      scope: { id: 'issue-1', recordKey: 'ik1', name: '10.26', checkpoint: null } });
+    current = usePassageComments({ fields: FIELDS, values: VALUES, group: 'EN',
+      scope: { id: 'issue-1', recordKey: PAGE, name: '10.26', checkpoint: null } });
     return <PassageCommentPane comments={current} />;
   }
   await mount(<Plain />, fakeRuntime(rows, calls));
@@ -354,15 +399,17 @@ test('PassageCommentPane: newest first by default, New comment on words or the w
   const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!;
   await act(async () => { setter.call(box, 'Whole issue: too long'); box.dispatchEvent(new dom.window.Event('input', { bubbles: true })); });
   await fire(box, new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  const insert = calls.at(-1)!.request as { properties: Record<string, unknown> };
-  assert.deepEqual(insert.properties.Issue, ['issue-1']);
-  assert.equal(insert.properties.Quote, undefined, 'a comment on the whole page has no passage');
+  const insert = calls.at(-1)!;
+  assert.equal(insert.op, 'insert');
+  assert.equal(insert.input.page_key, PAGE);
+  assert.equal(insert.input.mode, 'page');
+  assert.equal(insert.input.quote, undefined, 'a comment on the whole page has no passage');
 
   await fire(doc.querySelector('[data-thread="n2"] button[aria-label^="Archive the comment thread: "]')!, new dom.window.MouseEvent('click', { bubbles: true }));
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Status, 'Resolved');
+  assert.deepEqual(calls.at(-1), { op: 'archive', input: { root_id: 'n2' } });
   assert.deepEqual(quotes(), ['three new things']);
   await fire(doc.body, new dom.window.KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true }));
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Status, 'Open', 'Z undoes');
+  assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'n2' } }, 'Z undoes');
   assert.deepEqual(quotes(), ['Notis Hub', 'three new things']);
 });
 
@@ -373,7 +420,8 @@ test('PassageCommentBox: the To chip names the best match and the saved comment 
     link: async input => { linked.push(input); return null; },
   };
   const calls: Call[] = [];
-  await mount(<Harness />, fakeRuntime(ROWS, calls, { comments }));
+  const runtime = fakeRuntime(ROWS, calls, { comments });
+  await mount(<Harness />, runtime);
   await act(async () => { current!.startDraft({ field: 'subjectEn', quote: 'is live', prefix: 'Notis Hub ', suffix: '' }); });
   await settle();
   assert.match(doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!.textContent!, /To Newsletter/);
@@ -381,23 +429,12 @@ test('PassageCommentBox: the To chip names the best match and the saved comment 
   const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!;
   await act(async () => { setter.call(box, 'Say launched'); box.dispatchEvent(new dom.window.Event('input', { bubbles: true })); });
   await fire(box, new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  assert.deepEqual(linked, [{ database: 'comments', rootKey: 'new-1', pick: { threadId: 't-best', title: 'Newsletter' } }]);
+  assert.deepEqual(linked, [{ rootId: storeOf(runtime).rows.at(-1)!.id, pick: { threadId: 't-best', title: 'Newsletter' } }]);
 });
 
 test('PassageCommentBox: pictures and files attach by paste, drop or the paperclip and are saved with the comment (SPC-131)', async () => {
-  const uploads: SpaceFileUploadInput[] = [];
-  const files: SpaceFilesTransport = {
-    async check() { return { available: true, maxBytes: 8 * 1024 * 1024, extensions: ['png', 'pdf'] }; },
-    async upload(input) {
-      uploads.push(input);
-      const name = input.name ?? 'file';
-      return { file: { name, url: `https://files.example/${name}` }, previewUrl: null, sizeBytes: input.file.size,
-        contentType: input.file.type, sha256: 'a'.repeat(64), requestId: 'r' };
-    },
-  };
-  const rows = ROWS.map(item => ({ ...item, properties: { ...(item.properties as object), Attachments: { type: 'files', files: [] } } }));
   const calls: Call[] = [];
-  await mount(<Harness />, { ...fakeRuntime(rows, calls), spaceFiles: files } as NotisRuntime);
+  await mount(<Harness />, fakeRuntime(ROWS, calls, { upload: true }));
   await act(async () => { current!.startDraft({ field: 'subjectEn', quote: 'is live', prefix: 'Notis Hub ', suffix: '' }); });
   await settle();
   const box = doc.querySelector('.nui-comment-new-box')!;
@@ -420,17 +457,14 @@ test('PassageCommentBox: pictures and files attach by paste, drop or the papercl
   Object.defineProperty(input, 'files', { value: [new File([new Uint8Array([1])], 'notes.txt', { type: 'text/plain' })], configurable: true });
   await fire(input, new dom.window.Event('change', { bubbles: true }));
   assert.deepEqual([...box.querySelectorAll('.nui-comment-file-name')].map(el => el.textContent), ['shot.png', 'brief.pdf', 'notes.txt']);
-  assert.equal(uploads.length, 3);
-  // Files alone are enough to send; they are saved in the Attachments column with the passage.
+  assert.equal(writes(calls, 'upload').length, 3);
+  // Files alone are enough to send; they are saved with the comment and its passage.
   assert.equal(send().disabled, false);
   await fire(send(), new dom.window.MouseEvent('click', { bubbles: true }));
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  const properties = (insert.request.values as Record<string, unknown> | undefined)?.properties
-    ?? insert.request.properties as Record<string, unknown>;
-  assert.deepEqual((properties as Record<string, unknown>).Attachments, [
-    { name: 'shot.png', url: 'https://files.example/shot.png' }, { name: 'brief.pdf', url: 'https://files.example/brief.pdf' },
-    { name: 'notes.txt', url: 'https://files.example/notes.txt' }]);
-  assert.equal((properties as Record<string, unknown>).Quote, 'is live');
+  const [insert] = writes(calls, 'insert') as Array<{ attachments: Array<{ name: string; path: string }>; quote: string }>;
+  assert.deepEqual(insert!.attachments.map(file => [file.name, file.path]), [
+    ['shot.png', 'comments/shot.png'], ['brief.pdf', 'comments/brief.pdf'], ['notes.txt', 'comments/notes.txt']]);
+  assert.equal(insert!.quote, 'is live');
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'the box closes once saved');
 });
 
@@ -489,7 +523,8 @@ test('A passage comment waits for the viewer, is written as the viewer, and canc
     bestMatch: async () => null,
     pickThread: async () => ({ threadId: 't-9', title: 'Copy pass' }),
   };
-  await mount(<Harness />, fakeRuntime(ROWS, named, { comments }));
+  const runtime = fakeRuntime(ROWS, named, { comments });
+  await mount(<Harness />, runtime);
   await act(async () => { current!.startDraft({ field: 'subjectEn', quote: 'is live', prefix: 'Notis Hub ', suffix: '' }); });
   await settle();
   await fire(doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!, new dom.window.MouseEvent('click', { bubbles: true }));
@@ -501,16 +536,17 @@ test('A passage comment waits for the viewer, is written as the viewer, and canc
   const next = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await typeIn(next, 'Say launched');
   await fire(next, new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  const insert = named.find(call => call.action === 'comments.insert')!;
-  assert.equal((insert.request.properties as Record<string, unknown>).Author, 'Ana');
+  const [insert] = writes(named, 'insert');
+  assert.equal('author' in insert!, false, 'the server signs the comment, the pane names no author');
+  assert.equal(storeOf(runtime).rows.at(-1)!.author.name, 'Ana');
 });
 
 test('Record A to B while mounted: each record keeps its own passage draft, never the other one\'s quote', async () => {
   await mount(<Harness />, fakeRuntime(ROWS, []));
   const scopeA = current!.controller.draftScope;
-  assert.equal(scopeA, 's1|comments|comments|issue-1|ik1');
+  assert.equal(scopeA, 's1|comments|issue-1|ik1');
   const keyA = commentDraftKey(scopeA, 'passage');
-  const keyB = commentDraftKey('s1|comments|comments|issue-2|ik2', 'passage');
+  const keyB = commentDraftKey('s1|comments|issue-2|ik2', 'passage');
   const onA = { field: 'subjectEn', quote: 'is live', prefix: 'Notis Hub ', suffix: '' };
   const onB = { field: 'bodyEn', quote: 'this week', prefix: 'Hi there, ', suffix: ' brings' };
   // B has a comment left being written on its own passage.
@@ -520,7 +556,7 @@ test('Record A to B while mounted: each record keeps its own passage draft, neve
   await typeIn(doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement, 'On A');
 
   await rerender(<Harness record={{ id: 'issue-2', recordKey: 'ik2' }} />, fakeRuntime(ROWS, []));
-  assert.equal(current!.controller.draftScope, 's1|comments|comments|issue-2|ik2');
+  assert.equal(current!.controller.draftScope, 's1|comments|issue-2|ik2');
   assert.deepEqual(current!.draft, onB, 'B shows its own passage');
   // The box keeps its attached files with the draft too (none here).
   const textAndPlace = (key: string | null) => { const { files = [], ...rest } = readCommentDraft(key) ?? {}; return { ...rest, files: files.length }; };
@@ -533,7 +569,7 @@ test('Record A to B while mounted: each record keeps its own passage draft, neve
   // A record with nothing left being written shows no passage draft, and none is saved under its key.
   await rerender(<Harness record={{ id: 'issue-3', recordKey: 'ik3' }} />, fakeRuntime(ROWS, []));
   assert.equal(current!.draft, null);
-  assert.equal(readCommentDraft(commentDraftKey('s1|comments|comments|issue-3|ik3', 'passage')), undefined);
+  assert.equal(readCommentDraft(commentDraftKey('s1|comments|issue-3|ik3', 'passage')), undefined);
 });
 
 test('A thread picked with the To chip on record A never links record B\'s new comment', async () => {
@@ -559,7 +595,7 @@ test('A thread picked with the To chip on record A never links record B\'s new c
   const box = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await typeIn(box, 'On B');
   await fire(box, new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  assert.deepEqual(linked, [{ database: 'comments', rootKey: 'new-1', pick: { threadId: 't-best', title: 'Newsletter' } }],
+  assert.deepEqual(linked, [{ rootId: storeOf(runtime).rows.at(-1)!.id, pick: { threadId: 't-best', title: 'Newsletter' } }],
     'B\'s comment goes to its best match, not A\'s pick');
 
   await rerender(<Harness />, runtime);
@@ -718,7 +754,7 @@ test('The passage pane scrolls its own list, with the toast under it', async () 
 
 test('Text highlights: an archived thread keeps none unless Done or All shows, and the draft keeps its words lit', async () => {
   await withRangeBoxes(async () => {
-    const rows = [...ROWS, row('c5', { body: 'Settled', field: 'Body', lang: 'EN', quote: 'this week', status: 'Resolved' })];
+    const rows = [...ROWS, row('c5', { body: 'Settled', field: 'bodyEn', quote: 'this week', status: 'archived' })];
     await mount(<Harness rich={RICH} />, fakeRuntime(rows, []));
     assert.ok(doc.querySelector('.nui-passage-mark[data-passage="c1"]'), 'an open thread is highlighted');
     assert.equal(doc.querySelector('.nui-passage-mark[data-passage="c5"]'), null, 'an archived one is not');
@@ -772,18 +808,13 @@ test('revealRequest: a highlight or a field count on the page reveals, a quote i
 
 test('An agent question in a reply shows its answer controls in the passage pane', async () => {
   const calls: Call[] = [];
-  const ask = row('q1', { body: 'Which tone?', field: 'Body', lang: 'EN', quote: 'three new things', thread: 'c1' });
-  const props = ask.properties as Record<string, unknown>;
-  props.Author = select('Claude');
-  props.Needs = select('choice');
-  props.Options = text('Warm | Plain');
-  ask.created_at = '2026-11-01T11:00:00.000Z';
+  const ask = { ...row('q1', { body: 'Which tone?', field: 'bodyEn', quote: 'three new things', thread: 'c1',
+    createdAt: '2026-11-01T11:00:00.000Z' }), needs: 'choice' as const, options: ['Warm', 'Plain'],
+  author: { user_id: 'user-flo', name: 'Flo', you: false }, agent: { name: 'Claude', thread_id: null, row_id: null } };
   await mount(<Harness />, fakeRuntime([...ROWS, ask], calls));
   const controls = doc.querySelector('[data-comment-thread="c1"] [data-ask="q1"]');
   assert.ok(controls, 'the ask shows under the reply');
   await fire([...controls!.querySelectorAll('button')].find(el => el.textContent === 'Plain')!,
     new dom.window.MouseEvent('click', { bubbles: true }));
-  const update = calls.find(call => call.action === 'comments.update')!;
-  assert.equal(update.request.record_key, 'q1');
-  assert.equal((update.request.properties as Record<string, unknown>).Answer, 'Plain');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q1', answer: 'Plain' } });
 });

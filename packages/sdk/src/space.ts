@@ -34,19 +34,25 @@ export const SPACE_VIEWER_READ_OPERATIONS: Readonly<Record<SpaceViewerReadOperat
 export type SpaceCloudComputerLevel = 'read' | 'shell';
 
 /**
- * One agent a Space's database changes wake, declared in `defineSpace({ agents })`.
+ * One agent a Space wakes, declared in `defineSpace({ agents })`.
+ * `on: 'comments'`: the comments of this Space (a person's new comment, reply, answer or edit). `on: { database }`:
+ * changes to one of its databases. `event` narrows to new items (`created`) or changes (`changed`).
  * `thread`: `best_match` (the person's thread linked to the item, else a new one linked to it) or `space`
  * (one thread per Space and person). `runtime`: hosted (`notis`) or a coding agent on the person's Cloud
  * Computer. `wake: 'sent'` wakes only for replies to and answers on the agent's own comments.
- * `columns` renames the comment columns read (defaults: Thread, Deck, Answer, Author).
  */
 export interface SpaceAgentDeclaration {
   id: string;
-  on: { database: string; event?: 'created' | 'changed' };
+  on: 'comments' | { database: string; event?: 'created' | 'changed' };
+  event?: 'created' | 'changed';
   thread?: 'best_match' | 'space';
   runtime?: 'notis' | 'cloud_computer';
   skill?: string;
   wake?: 'all' | 'sent';
+  /**
+   * @deprecated Comments live in the Space's comment store, not in a database: comment agents (`on: 'comments'`) read
+   * no columns. Kept for database agents of older Spaces.
+   */
   columns?: { thread?: string; scope?: string; answer?: string; author?: string };
 }
 /** The thread an item (a record, or the Space itself) continues, from the Space's thread rule. */
@@ -59,17 +65,14 @@ export interface SpaceItemThread {
 }
 /** One Space agent's latest wake-up for the viewer (`useAgentQueue`). */
 export interface SpaceAgentQueue {
-  status: 'idle' | 'queued' | 'working' | 'waiting' | 'failed' | 'done';
+  status: 'idle' | 'queued' | 'working' | 'failed' | 'done';
   thread_id: string | null;
-  /** Items waiting in the quiet window or held for approval. */
+  /** Items waiting in the quiet window. */
   pending: number;
-  /** True until the viewer allows this exact version's agents to wake their threads. */
-  approval_required: boolean;
   updated_at: string | null;
 }
 export interface SpaceAgentsStatus {
   declared: string[];
-  approved: boolean;
   queue?: SpaceAgentQueue;
 }
 /** Space-only transport of the thread resolver and the agents' queue. */
@@ -78,7 +81,6 @@ export interface SpaceThreadsTransport {
   /** Open a thread in the host's side chat, optionally with an unsent draft. */
   open(threadId: string, options?: { draft?: string }): Promise<boolean>;
   agentStatus(agentId: string, scope?: string): Promise<SpaceAgentsStatus>;
-  approveAgents(): Promise<{ approved: boolean; released: number }>;
 }
 
 /** Words shown to people: one string, or one per language (`en` required). */
@@ -229,25 +231,199 @@ export interface SpaceCommentSource {
    * the toolkit styles), or null when the panel is closed, shows Chat or shows another source.
    */
   show(target: HTMLElement | null): void;
+  /**
+   * Starts a new comment on `anchor` in this source's own new comment box (a text selection's Comment, through
+   * `startComment`). True when the source took it; false leaves it to the host's own composer.
+   */
+  start?(anchor: SpaceCommentAnchor): boolean;
 }
+
+/** What a comment points at (SPC-118): words of the text, a point or a box, items, a moment, or the whole page. */
+export type SpaceCommentMode = 'text' | 'point' | 'box' | 'items' | 'time' | 'page';
+/** A comment's state in the store: `archived` is shown as Done; `deleted` keeps the row for its "Comment deleted" line. */
+export type SpaceCommentStatus = 'open' | 'archived' | 'deleted';
+/** What an agent's comment asks of the reader. */
+export type SpaceCommentNeeds = 'none' | 'check' | 'choice' | 'input';
+/** The last change made to a comment, for Copy changes. */
+export type SpaceCommentChange = 'created' | 'replied' | 'answered' | 'resolved' | 'reopened' | 'deleted' | 'edited';
+
 /**
- * Space-only host Comments panel: the comment threads of the page sit in the host's right panel, beside the chat,
- * instead of a pane inside the Space. Absent while comments are off for the viewer, on Sites, links, previews and
- * older hosts: a Space then shows no comments at all (no pane, no pins, no highlights).
+ * Where a comment sits, in the store's own words (snake_case, as `portal_comments` takes it). `anchor_keys`: the
+ * record keys the comment is on (one for a point, a box or a whole anchor; 1..n for items). `x`, `y`, `w`, `h`: 0 to
+ * 1 of the anchor's size (a point has no `w`/`h`). `time_start`/`time_end`: seconds into a recording. Text mode keeps
+ * the quoted words (`quote`, at most 1000 characters, white space collapsed) with up to 40 characters before
+ * (`prefix`) and after (`suffix`) to find them again, and `field` when the words are in one named field of the page.
+ */
+export interface SpaceCommentAnchor {
+  mode: SpaceCommentMode;
+  anchor_keys?: readonly string[];
+  x?: number | null; y?: number | null; w?: number | null; h?: number | null;
+  time_start?: number | null; time_end?: number | null;
+  field?: string | null; quote?: string | null; prefix?: string | null; suffix?: string | null;
+}
+
+/**
+ * A file shown with a comment. `url` is signed on each read (it expires: read the comments again for a new one); null
+ * when the server could not sign it (the file is not shown until a later read signs it).
+ */
+export interface SpaceCommentAttachment { name: string; url: string | null; type?: string | null; size?: number | null; path?: string | null }
+
+/**
+ * A file uploaded for a comment not sent yet: pass it in `attachments` of an insert or a reply (the store keeps
+ * `path`, `name`, `type` and `size`). `url` is null when the server could not sign it.
+ */
+export interface SpaceCommentFile { path: string; name: string; type: string; size: number; url: string | null; previewUrl?: string | null }
+
+/**
+ * One comment as the store returns it (the `portal_comments` wire row). `thread_root_id` is null on a thread's first
+ * comment. `page_key` is the page (record) it belongs to; null: the Space home. A deleted comment has an empty `body`
+ * and no attachments. `author.you` is true for the signed-in viewer's own comments; `agent` is the stamp of the agent
+ * that wrote it (its `thread_id` only for the agent's owner), null for a person's comment.
+ */
+export interface SpaceCommentRow {
+  id: string;
+  space_id: string;
+  view: string | null;
+  page_key: string | null;
+  thread_root_id: string | null;
+  mode: SpaceCommentMode;
+  anchor_keys: string[];
+  x: number | null; y: number | null; w: number | null; h: number | null;
+  time_start: number | null; time_end: number | null;
+  field: string | null; quote: string | null; prefix: string | null; suffix: string | null;
+  body: string;
+  status: SpaceCommentStatus;
+  needs: SpaceCommentNeeds;
+  options: string[];
+  answer: string | null;
+  answered_at: string | null;
+  answer_to: string | null;
+  change: SpaceCommentChange | null;
+  attachments: SpaceCommentAttachment[];
+  author: { user_id: string; name: string; you: boolean };
+  agent: { name: string; id?: string | null; thread_id?: string | null; row_id?: string | null;
+    runtime?: Record<string, string | null> | null } | null;
+  example: boolean;
+  revision: number;
+  created_at: string;
+  changed_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+}
+
+/**
+ * Which comments a read covers: one page by its record key, `null` for the Space home (comments on no page), or
+ * `'all'` for every comment of the Space.
+ */
+export type SpaceCommentPageKey = string | null | 'all';
+
+/** The page the host shows: its record (null on the Space home), the view slug, and its name when known. */
+export interface SpaceCommentPage { recordKey: string | null; view?: string | null; name?: string | null }
+
+/** A new thread's first comment. `request_id` makes a retry return the same comment; `id` (a uuid) is optional. */
+export interface SpaceCommentInsert extends SpaceCommentAnchor {
+  page_key: string | null;
+  view?: string | null;
+  body: string;
+  needs?: SpaceCommentNeeds;
+  options?: readonly string[];
+  attachments?: readonly SpaceCommentFile[];
+  id?: string;
+  request_id: string;
+}
+
+/**
+ * A reply. `answer_to` names the input ask it answers. An archived thread comes back when the reply waits for someone.
+ * `needs` and `options` make the reply a question, as on a first comment.
+ */
+export interface SpaceCommentReply {
+  root_id: string;
+  body: string;
+  answer_to?: string | null;
+  needs?: SpaceCommentNeeds;
+  options?: readonly string[];
+  attachments?: readonly SpaceCommentFile[];
+  id?: string;
+  request_id: string;
+}
+
+/**
+ * Space-only host Comments panel and comment store: the comment threads of the page sit in the host's right panel,
+ * beside the chat, instead of a pane inside the Space, and every read and write goes through the host to the Space's
+ * one comment store (`portal_comments`). Absent while comments are off for the viewer (`unified_comments`), on Sites,
+ * links, previews and older hosts: a Space then shows no comments at all (no pane, no pins, no highlights, no Comment
+ * on a selection; Cite stays).
+ *
+ * Every write resolves with the stored row (the server stamps author, dates, `change` and `revision`) or rejects with
+ * an Error whose `code` is the server's (`feature_disabled`, `revision_conflict`, `comment_not_found`, ...).
  */
 export interface SpaceCommentsTransport {
   /** Lists a source in the Comments panel until the returned call-back runs. */
   attach(source: SpaceCommentSource): () => void;
   /**
-   * The signed-in viewer: their name (the Author they write as; the server stamps it too) and whether they may edit
+   * The signed-in viewer: their name (the author they write as; the server stamps it) and whether they may edit
    * the Space. Undefined while it is not known yet: comments cannot be sent until it is.
    */
   viewer?: SpaceCommentViewer;
   /**
-   * The manager threads each comment thread is linked to (1..n, SPC-113), by root record key, for the comment database
-   * alias. The first one is where a reply goes ("Goes to"). A root missing from the answer has no link yet.
+   * The page the host shows (its record key, view and name): `useComments` and the passage highlights read its
+   * comments by default. Absent: the Space home.
    */
-  links?(input: { database: string; rootKeys: readonly string[] }): Promise<Record<string, SpaceCommentThreadRef[]>>;
+  page?: SpaceCommentPage | null;
+  /**
+   * The comments of a page (`page`: its record key, null for the Space home, 'all' for the whole Space), deleted ones
+   * included (they keep their "Comment deleted" line), with the store's revision. The host may answer from its own
+   * copy of the store. The SDK never passes `since_revision` and reads every answer as the whole page: a host that
+   * asks the server for changes only merges them into its copy and answers with the whole page.
+   */
+  list(input: { page: SpaceCommentPageKey; since_revision?: number }): Promise<{ comments: SpaceCommentRow[]; revision: number }>;
+  /**
+   * Calls `listener` whenever the comments of `page` may have changed (a write here or elsewhere, the window coming
+   * back into focus, the host's poll): the reader lists them again. Returns the call-back that stops it.
+   */
+  subscribe(input: { page: SpaceCommentPageKey }, listener: () => void): () => void;
+  /** Starts a thread. */
+  insert(input: SpaceCommentInsert): Promise<SpaceCommentRow>;
+  /** Replies in a thread. */
+  reply(input: SpaceCommentReply): Promise<SpaceCommentRow>;
+  /** Saves new text for the viewer's own comment (the server marks it edited). */
+  edit(input: { id: string; body: string }): Promise<SpaceCommentRow>;
+  /** Archives a thread (Done): people only, on its first comment. */
+  archive(input: { root_id: string }): Promise<SpaceCommentRow>;
+  /** Brings an archived thread back to open. */
+  unarchive(input: { root_id: string }): Promise<SpaceCommentRow>;
+  /** Deletes one comment (status deleted, kept for its line and the Bin). A first comment deletes its whole thread. */
+  remove(input: { id: string }): Promise<SpaceCommentRow>;
+  /** Brings a deleted comment back (Undo, the Bin). */
+  restore(input: { id: string }): Promise<SpaceCommentRow>;
+  /** Answers a check, choice or input ask. */
+  answer(input: { id: string; answer: string }): Promise<SpaceCommentRow>;
+  /**
+   * Uploads one picture or file for a comment not sent yet (signed-in people only; never on a Site, a link or a
+   * preview). Throws a `SpaceFileError` with a code the pane words. Absent: comments take text only.
+   */
+  upload?(input: { file: Blob; name?: string; requestId?: string; onProgress?(sent: number, total: number): void;
+    signal?: AbortSignal }): Promise<SpaceCommentFile>;
+  /** The largest file `upload` takes, in bytes. Default `SPACE_FILE_MAX_BYTES`. */
+  maxFileBytes?: number;
+  /**
+   * Opens the host's new comment on `anchor` (Comment on a text selection): the Comments panel opens with the
+   * comment's place shown in its box. The host first offers it to the source it shows (`SpaceCommentSource.start`).
+   * `page_key` and `view` default to the page the host shows.
+   */
+  startComment?(anchor: SpaceCommentAnchor & { page_key?: string | null; view?: string | null }): void;
+  /** Opens the Comments panel on one thread (a highlight clicked on the page), by any comment id of it. */
+  revealComment?(id: string): void;
+  /**
+   * The text comments of the page whose words the highlights could not find any more ("Passage changed": the
+   * thread stays open with its old quote). Called again whenever that set changes.
+   */
+  passagesChanged?(input: { page: string | null; ids: readonly string[] }): void;
+  /**
+   * The manager threads each comment thread is linked to (1..n, SPC-113), by root comment id. The first one is where
+   * a reply goes ("Goes to"). A root missing from the answer has no link yet.
+   */
+  links?(input: { rootIds: readonly string[] }): Promise<Record<string, SpaceCommentThreadRef[]>>;
   /** The best-match thread for a new comment on this page (THR-024), the one the chat suggests; null starts a new one. */
   bestMatch?(input: { recordKey?: string | null }): Promise<SpaceCommentThreadRef | null>;
   /**
@@ -259,17 +435,16 @@ export interface SpaceCommentsTransport {
    * Links a comment thread to a manager thread: after its first comment is saved (the To chip's thread), on Change, or
    * when a reply @-mentions another thread (`primary: false` adds it). Resolves with the thread replies now go to.
    */
-  link?(input: { database: string; rootKey: string; pick: SpaceCommentThreadPick; primary?: boolean }): Promise<SpaceCommentThreadRef | null>;
+  link?(input: { rootId: string; pick: SpaceCommentThreadPick; primary?: boolean }): Promise<SpaceCommentThreadRef | null>;
   /** Opens a manager thread in the chat (the panel switches to Chat). */
   openThread?(threadId: string): void;
   /**
-   * The link that opens this Space page with one comment thread revealed (`comment=<root key>`, the link a push or a
-   * chat pill opens), as a full address another person can open: Copy link on a thread card copies it. Null when the
-   * page has no shareable address. Without it the pane copies the page's own address with that param. `database` is
-   * the comments database (its alias): the host may answer later (a promise) with the thread's own page in the link,
-   * wherever the pane is (the Space home, another page).
+   * The link that opens the Space page of one comment thread with it revealed (`comment=<root id>`, the link a push
+   * or a chat pill opens), as a full address another person can open: Copy link on a thread card copies it. The host
+   * may answer later (a promise). Null when there is no shareable address; without it the pane copies the page's own
+   * address with that param.
    */
-  commentLink?(input: { rootKey: string; database?: string }): string | null | Promise<string | null>;
+  commentLink?(input: { rootId: string }): string | null | Promise<string | null>;
   /**
    * Shows the page under the Comments panel (SPC-132): called when a point, box, items or time mode starts on a narrow
    * screen (under 768px wide), where the full-screen panel covers the page. The host closes its full-screen panel; the
@@ -280,7 +455,8 @@ export interface SpaceCommentsTransport {
 }
 /**
  * The viewer as comments see them. `id` (their user id), when the host gives it, tells their comments by the row's
- * creator (`created_by`) instead of the Author name, so a renamed person keeps Edit and Delete on their comments.
+ * author (`author.user_id`) when a row does not say `author.you`, so a renamed person keeps Edit and Delete. The host
+ * maps the server's `viewer` answer (`{ user_id, name, can_edit_space }`) to this shape.
  */
 export interface SpaceCommentViewer { name: string; canEditSpace: boolean; id?: string | null }
 /**
@@ -294,6 +470,11 @@ export interface SpaceCommentThreadRef {
   harness?: string | null;
   status?: string | null;
   subagent?: string | null;
+  /**
+   * Not a link: the thread a plain reply wakes ahead of the links. `started`: the agent that wrote the first comment
+   * (its thread wins over every link while available); `replied`: with no link, the agent that replied last.
+   */
+  via?: 'started' | 'replied';
 }
 export type SpaceCommentThreadPick = SpaceCommentThreadRef | { newThread: string };
 /**
@@ -748,9 +929,10 @@ export interface SpaceDefinition {
    */
   cloudComputer?: SpaceCloudComputerLevel | SpaceCloudComputerDeclaration;
   /**
-   * Agents this Space's database changes wake. A person's new comment, reply or answer wakes their own
-   * thread for the item (or, for a reply to an agent's comment, that agent's thread) after a quiet
-   * moment, once that person allowed this Space's agents. Agents' own writes never wake anything.
+   * Agents this Space wakes: `on: 'comments'` for its comments, `on: { database }` for a database's changes. A
+   * person's new comment, reply, answer or edit wakes their own thread for the item (or, for a reply to an agent's
+   * comment, that agent's thread) after a quiet moment, with no approval first. Agents' own writes never wake
+   * anything.
    */
   agents?: SpaceAgentDeclaration[];
   /**

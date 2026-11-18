@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 
 import { KeyboardEngine, KeyboardEngineCore } from '../engine';
+import { markHostPane } from '../comments/hostComments';
 import { SidePane, clampSidePaneWidth, type SidePaneProps } from './SidePane';
 
 /**
@@ -146,4 +147,18 @@ test('a page or pane that cannot scroll lets the wheel reach the page, with defa
     assert.match(split, /overflow-y: auto;/);
     assert.doesNotMatch(split, /overscroll-behavior/);
   } finally { await h.cleanup(); }
+});
+
+test('a comment pane passed as the pane leaves the page the whole row and stays mounted', async () => {
+  let mounted = 0;
+  const HostPane = markHostPane(function HostPane() { mounted += 1; return null; });
+  const h = await harness({ pane: <HostPane /> });
+  try {
+    assert.ok(h.q('.nui-side-pane-main > #page'));
+    assert.equal(h.q('.nui-side-pane-aside'), null);
+    assert.equal(h.q('.nui-side-pane-handle'), null);
+    assert.ok(mounted > 0);
+  } finally {
+    await h.cleanup();
+  }
 });

@@ -6,22 +6,23 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { KeyboardEngine, KeyboardEngineCore } from '../engine';
-import { createQueryClient } from '../../queryCache';
 import { NotisProvider } from '../../provider';
+import { createQueryClient } from '../../queryCache';
 import type { NotisRuntime } from '../../runtime';
 import {
-  COMMENT_COLUMNS, CommentPane, CommentPins, applyCommentPatches, commentAttachmentFor, commentBodyParts, commentChangesSince,
-  commentAuthorCandidates, commentDigest, commentRelativeTime, commentThreads, isCommentZone, isRefusedChoice, readCommentRow, useComments,
+  COMMENT_COLUMNS, CommentPane, CommentPins, applyCommentPatches, commentAnchorOfDraft, commentAttachmentFor, commentBodyParts,
+  commentChangesSince, commentDigest, commentDraftOfAnchor, commentFromRow, commentRelativeTime, commentStatusOf, commentThreads,
+  isCommentZone, storeStatusOf, useComments,
   type CommentAnchor, type CommentController, type CommentPaneProps, type CommentRecord,
   type UseCommentsOptions,
 } from '.';
 import * as ui from '..';
 import {
-  SpaceFileError, type SpaceCommentsTransport, type SpaceCommentThreadRef, type SpaceFileUploadInput,
-  type SpaceFilesTransport,
+  SpaceFileError, type SpaceCommentRow, type SpaceCommentsTransport, type SpaceCommentThreadRef, type SpaceCommentViewer,
 } from '../../space';
 import { clearCommentDrafts } from './commentDrafts';
 import { clearCommentRoutingCache } from './useCommentRouting';
+import { commentRow, memoryCommentStore, type MemoryCommentOp, type MemoryCommentStore } from '../../../design-system/runtime/memoryComments';
 
 const doc = dom.window.document;
 const proto = dom.window.HTMLDialogElement?.prototype as (HTMLDialogElement & { showModal?: () => void }) | undefined;
@@ -32,7 +33,7 @@ if (proto && typeof proto.showModal !== 'function') {
 Object.defineProperty(globalThis, 'HTMLTextAreaElement', { configurable: true, writable: true, value: dom.window.HTMLTextAreaElement });
 
 // ---------------------------------------------------------------------------
-// Fixtures: rows shaped like the Slides Comments table (native typed envelopes)
+// Fixtures: rows as the Space's comment store returns them (portal_comments wire rows)
 // ---------------------------------------------------------------------------
 
 const ANCHORS: CommentAnchor[] = [
@@ -40,36 +41,34 @@ const ANCHORS: CommentAnchor[] = [
   { id: 'slide-2', recordKey: 'sk2', order: 2, title: 'Plan' },
 ];
 
+/** The page (deck) the fixture comments are on. */
+const PAGE = 'dk1';
+
+/** The pane's status words as the store's. */
+const STORE_STATUS: Record<string, SpaceCommentRow['status']> = { Open: 'open', Resolved: 'archived', Deleted: 'deleted' };
+
 function row(key: string, fields: {
   body: string; author?: string; slide?: string; thread?: string; x?: number; y?: number; w?: number; h?: number;
-  status?: string; needs?: string;
-  options?: string; answer?: string; change?: string; changedAt?: string; createdAt?: string; revision?: number;
-  files?: unknown[];
-}): Record<string, unknown> {
-  const text = (value: string) => ({ type: 'rich_text', rich_text: [{ text: { content: value } }] });
-  const select = (value: string) => ({ type: 'select', select: { name: value } });
-  const properties: Record<string, unknown> = {
-    Deck: { type: 'relation', relation: [{ id: 'deck-1' }] },
-    Author: select(fields.author ?? 'Flo'),
-    Status: select(fields.status ?? 'Open'),
-    Needs: select(fields.needs ?? 'none'),
-    Thread: text(fields.thread ?? ''),
-    Options: text(fields.options ?? ''),
-    Answer: text(fields.answer ?? ''),
-    Example: { type: 'checkbox', checkbox: false },
-  };
-  if (fields.slide) properties.Slide = { type: 'relation', relation: [{ id: fields.slide }] };
-  if (fields.x != null) properties.X = { type: 'number', number: fields.x };
-  if (fields.y != null) properties.Y = { type: 'number', number: fields.y };
-  if (fields.w != null) properties.W = { type: 'number', number: fields.w };
-  if (fields.h != null) properties.H = { type: 'number', number: fields.h };
-  if (fields.files) properties.Attachments = { type: 'files', files: fields.files };
-  if (fields.change) properties.Change = select(fields.change);
-  if (fields.changedAt) properties['Changed at'] = { type: 'date', date: { start: fields.changedAt } };
-  return {
-    id: `id-${key}`, record_key: key, revision: fields.revision ?? 1, title: fields.body,
-    created_at: fields.createdAt ?? '2026-10-20T10:00:00.000Z', properties,
-  };
+  status?: string; needs?: SpaceCommentRow['needs'];
+  options?: string; answer?: string; change?: SpaceCommentRow['change']; changedAt?: string; createdAt?: string; revision?: number;
+  files?: SpaceCommentRow['attachments']; page?: string | null; agent?: SpaceCommentRow['agent']; answerTo?: string;
+  editedAt?: string; you?: boolean;
+}): SpaceCommentRow {
+  const author = fields.author ?? 'Flo';
+  const status = STORE_STATUS[fields.status ?? 'Open'] ?? 'open';
+  const createdAt = fields.createdAt ?? '2026-10-20T10:00:00.000Z';
+  return commentRow({
+    id: key, page_key: fields.page === undefined ? PAGE : fields.page, thread_root_id: fields.thread ?? null,
+    mode: fields.w != null ? 'box' : fields.x != null ? 'point' : 'page', anchor_keys: fields.slide ? [fields.slide] : [],
+    x: fields.x ?? null, y: fields.y ?? null, w: fields.w ?? null, h: fields.h ?? null,
+    body: status === 'deleted' ? '' : fields.body, status, needs: fields.needs ?? 'none',
+    options: (fields.options ?? '').split(/\s*\|\s*/).map(option => option.trim()).filter(Boolean),
+    answer: fields.answer || null, answer_to: fields.answerTo ?? null,
+    change: fields.change ?? null, changed_at: fields.changedAt ?? createdAt, created_at: createdAt,
+    edited_at: fields.editedAt ?? null, deleted_at: status === 'deleted' ? createdAt : null,
+    attachments: fields.files ?? [], revision: fields.revision ?? 1, agent: fields.agent ?? null,
+    author: { user_id: author === 'Flo' ? 'user-flo' : `user-${author.toLowerCase()}`, name: author, you: fields.you ?? author === 'Flo' },
+  });
 }
 
 const ROWS = [
@@ -84,13 +83,13 @@ const ROWS = [
   row('c5', { body: 'Gone', slide: 'slide-2', status: 'Deleted' }),
 ];
 
-const comments = () => ROWS.map(item => readCommentRow(item, { authors: ['Flo', 'Claude', 'Notis'] }));
+const comments = () => ROWS.map(item => commentFromRow(item));
 
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
 
-test('Comments columns: the Slides Comments table, unchanged', () => {
+test('Deprecated stand-in: COMMENT_COLUMNS keeps the retired table\'s names, and nothing reads them', () => {
   assert.deepEqual({ ...COMMENT_COLUMNS }, {
     body: 'Body', scope: 'Deck', anchor: 'Slide', thread: 'Thread', author: 'Author', x: 'X', y: 'Y', w: null, h: null,
     status: 'Status',
@@ -98,54 +97,91 @@ test('Comments columns: the Slides Comments table, unchanged', () => {
     changedAt: 'Changed at', example: 'Example', attachments: 'Attachments', editedAt: 'Edited at', time: null,
     answerTo: 'Answer to',
   });
+  assert.equal(ui.readCommentRow(ROWS[0]), null);
+  assert.deepEqual(ui.commentAuthorCandidates(['Flo']), []);
+  assert.equal(ui.isRefusedChoice(new Error('x')), false);
 });
 
-test('readCommentRow reads typed envelopes, options and an unknown author', () => {
+test('commentFromRow reads a store row: page, anchors, place, options and the author the server names', () => {
   const [first, second, third] = comments();
   assert.equal(first!.body, 'Tighten the title');
-  assert.deepEqual(first!.scopeIds, ['deck-1']);
+  assert.equal(first!.recordKey, 'c1');
+  assert.deepEqual(first!.scopeIds, [PAGE]);
   assert.deepEqual(first!.anchorIds, ['slide-1']);
   assert.equal(first!.x, 0.25);
+  assert.equal(first!.mode, 'point');
   assert.equal(first!.change, 'created');
+  assert.equal(first!.createdByYou, true);
   assert.equal(second!.needs, 'check');
+  assert.equal(second!.author, 'Claude');
+  assert.equal(second!.createdByYou, false);
   assert.deepEqual(third!.options, ['Bar', 'Line']);
-  const lines = readCommentRow(row('o', { body: 'Which?', author: 'Claude', needs: 'choice', options: 'Blue\n Green \r\n\n| Red |' }));
-  assert.deepEqual(lines.options, ['Blue', 'Green', 'Red'], 'options split on new lines and bars, trimmed, empties dropped');
-  const stranger = readCommentRow(row('z', { body: 'Hi', author: 'Mallory' }), { authors: ['Flo'], fallbackAuthor: 'Notis' });
-  assert.equal(stranger.author, 'Notis');
+  const unnamed = commentFromRow({ ...row('u', { body: 'Hi' }), author: { user_id: 'u-x', name: '', you: false } });
+  assert.equal(unnamed.author, 'Notis', 'no name at all: Notis');
+  const home = commentFromRow(row('h', { body: 'Hi', page: null }));
+  assert.deepEqual(home.scopeIds, [], 'a comment on the Space home is on no page');
 });
 
-test('readCommentRow: a row an agent wrote shows the agent, never the fallback, whatever the authors list holds', () => {
-  const authors = { authors: ['Flo', 'Claude', 'Notis'], fallbackAuthor: 'Notis' };
-  const signed = readCommentRow({ ...row('s1', { body: 'Done', author: 'fred-and-the-machine' }),
-    agent: { name: 'fred-and-the-machine' } } as never, authors);
+test('commentFromRow: a row an agent wrote shows the agent\'s stamped name, its thread and what it ran on', () => {
+  const signed = commentFromRow(row('s1', { body: 'Done', agent: { name: 'fred-and-the-machine', thread_id: 'thread-1',
+    runtime: { provider: 'codex', label: 'Codex', model: null, intelligence: 'high', effort: null, speed: null } } }));
   assert.equal(signed.author, 'fred-and-the-machine');
+  assert.equal(signed.agent?.threadId, 'thread-1');
+  assert.equal(signed.agent?.runtime?.provider, 'codex');
   assert.equal(ui.agentDisplayName(signed.author), 'Fred And The Machine');
-  const unsigned = readCommentRow({ ...row('s2', { body: 'Done', author: '' }), agent: { name: 'cadets-of-the-sky' } } as never, authors);
-  assert.equal(unsigned.author, 'cadets-of-the-sky', 'no Author: the stamped agent name');
-  const person = readCommentRow(row('s3', { body: 'Hi', author: 'Mallory' }), authors);
-  assert.equal(person.author, 'Notis', 'a person outside the list still reads as the fallback');
+  const person = commentFromRow(row('s3', { body: 'Hi', author: 'Mallory' }));
+  assert.equal(person.author, 'Mallory', 'a person reads as the name the server set, never a fallback');
+  assert.equal(person.agent, null);
 });
 
-test('C2: a Space member reads as their own name, never Notis, when the Space lists its authors', () => {
-  const authors = { authors: ['Flo', 'Claude', 'Notis'], fallbackAuthor: 'Notis' };
-  // The server says who created the row (created_by_you for the viewer, or created_by) and owns its Author.
-  const member = readCommentRow({ ...row('m1', { body: 'Hi', author: 'Alexandre' }), created_by_you: false }, authors);
-  assert.equal(member.author, 'Alexandre');
-  const byId = readCommentRow({ ...row('m2', { body: 'Hi', author: 'Camille' }), created_by: 'u-camille' }, authors);
-  assert.equal(byId.author, 'Camille');
-  const unnamed = readCommentRow({ ...row('m3', { body: 'Hi', author: '' }), created_by_you: false }, authors);
-  assert.equal(unnamed.author, 'Notis', 'no Author at all: the fallback');
-  const legacy = readCommentRow(row('m4', { body: 'Hi', author: 'Mallory' }), authors);
-  assert.equal(legacy.author, 'Notis', 'a row that names no creator keeps the authors list');
+test('Status: the store\'s open, archived and deleted read as Open, Resolved and Deleted, and back', () => {
+  assert.equal(commentStatusOf('open'), 'Open');
+  assert.equal(commentStatusOf('archived'), 'Resolved');
+  assert.equal(commentStatusOf('deleted'), 'Deleted');
+  assert.equal(commentStatusOf('something else'), 'Open');
+  assert.equal(storeStatusOf('Open'), 'open');
+  assert.equal(storeStatusOf('Resolved'), 'archived');
+  assert.equal(storeStatusOf('Deleted'), 'deleted');
+  const deleted = commentFromRow(row('d', { body: 'x', status: 'Deleted', files: [{ name: 'a.png', url: 'https://files.example/a.png' }] }));
+  assert.equal(deleted.status, 'Deleted');
+  assert.deepEqual(deleted.attachments, [], 'a deleted comment shows no files');
 });
 
-test('readCommentRow reads the ask a reply answers from Answer to', () => {
-  const reply = row('a1', { body: 'Shorter', thread: 'i1' });
-  (reply.properties as Record<string, unknown>)['Answer to'] = { type: 'rich_text', rich_text: [{ text: { content: 'i1' } }] };
-  assert.equal(readCommentRow(reply).answerTo, 'i1');
-  assert.equal(readCommentRow(row('a2', { body: 'Plain', thread: 'i1' })).answerTo, null);
-  assert.equal(readCommentRow(reply, { columns: { answerTo: null } }).answerTo, null, 'no column: nothing read');
+test('commentFromRow reads the ask a reply answers, an edit, and the text a comment quotes', () => {
+  assert.equal(commentFromRow(row('a1', { body: 'Shorter', thread: 'i1', answerTo: 'i1' })).answerTo, 'i1');
+  assert.equal(commentFromRow(row('a2', { body: 'Plain', thread: 'i1' })).answerTo, null);
+  const edited = commentFromRow({ ...row('e1', { body: 'Fixed', editedAt: '2026-10-21T10:00:00.000Z' }), change: 'edited' });
+  assert.equal(edited.change, 'created', 'an edit reads as the comment\'s own change, with its edit time');
+  assert.equal(edited.editedAt, '2026-10-21T10:00:00.000Z');
+  const text = commentFromRow({ ...row('t1', { body: 'Why?' }), mode: 'text', quote: 'the words', prefix: 'before ', suffix: ' after',
+    field: 'body', view: 'issue' });
+  assert.deepEqual(text.passage, { quote: 'the words', prefix: 'before ', suffix: ' after', field: 'body' });
+  assert.equal(text.view, 'issue');
+  assert.equal(commentFromRow({ ...row('t2', { body: 'Why?' }), mode: 'text', quote: '  ' }).passage, null);
+});
+
+test('Anchors: every comment mode reads to the store\'s place and back', () => {
+  const words = { quote: 'the words', prefix: 'before ', suffix: ' after', field: null };
+  const none = { w: null, h: null };
+  const cases: Array<[NonNullable<Parameters<typeof commentAnchorOfDraft>[0]>, Record<string, unknown>]> = [
+    [{ anchorKey: 'sk1', x: null, y: null, ...none, text: words }, { mode: 'text', quote: 'the words', prefix: 'before ', suffix: ' after' }],
+    [{ anchorKey: 'sk1', x: 0.123456, y: 0.5, ...none }, { mode: 'point', anchor_keys: ['sk1'], x: 0.1235, y: 0.5 }],
+    [{ anchorKey: 'sk1', x: 0.1, y: 0.2, w: 0.3, h: 0.25 }, { mode: 'box', anchor_keys: ['sk1'], x: 0.1, y: 0.2, w: 0.3, h: 0.25 }],
+    [{ anchorKey: null, x: null, y: null, ...none, items: ANCHORS }, { mode: 'items', anchor_keys: ['sk1', 'sk2'] }],
+    [{ anchorKey: 'sk1', x: null, y: null, ...none, time: 12.5 }, { mode: 'time', time_start: 12.5 }],
+    [{ anchorKey: 'sk1', x: null, y: null, ...none }, { mode: 'page', anchor_keys: ['sk1'] }],
+    [{ anchorKey: null, x: null, y: null, ...none }, { mode: 'page', anchor_keys: [] }],
+  ];
+  for (const [pin, expected] of cases) {
+    const anchor = commentAnchorOfDraft(pin);
+    for (const [name, value] of Object.entries(expected)) {
+      assert.deepEqual((anchor as unknown as Record<string, unknown>)[name], value, `${expected.mode}: ${name}`);
+    }
+    const back = commentDraftOfAnchor(anchor, ANCHORS);
+    assert.ok(back, `${expected.mode}: a draft from the store place`);
+  }
+  const field = commentAnchorOfDraft({ anchorKey: null, x: null, y: null, w: null, h: null, text: { ...words, field: 'bodyEn' } });
+  assert.equal(field.field, 'bodyEn', 'words in a named field keep the field');
 });
 
 test('commentThreads: anchor order, replies under their root, deleted replies kept for their line', () => {
@@ -173,7 +209,7 @@ test('commentDigest: heading, reply instructions and one line per change', () =>
   });
   const lines = text.split('\n');
   assert.equal(lines[0], '# Slide comments: Q4 review');
-  assert.match(lines[2]!, /with the same Deck and Slide and Thread set to the thread record/);
+  assert.match(lines[2]!, /operation reply, comment_id set to the thread id/);
   assert.match(text, /- Slide 1 "Intro", pin at x 0\.25, y 0\.50: Flo commented "Tighten the title"; status Open \(thread c1\)/);
   assert.match(text, /- Slide 2 "Plan", on the whole slide, no pin: Flo resolved Flo: "Old note"; status Resolved \(thread c4\)/);
   const empty = commentDigest({ scope: null, comments: [], anchors: [], changes: [], nowIso: 'x' }, { heading: 'Review', table: 'Notes' });
@@ -181,15 +217,12 @@ test('commentDigest: heading, reply instructions and one line per change', () =>
   assert.match(empty, /- No changes\./);
 });
 
-test('Zones: read only through zone columns, and the digest says where the zone is', () => {
-  const zoned = row('z1', { body: 'This block', slide: 'slide-1', x: 0.1, y: 0.2, w: 0.3, h: 0.25, change: 'created',
-    changedAt: '2026-10-21T09:00:00.000Z' });
-  const plain = readCommentRow(zoned);
-  assert.equal(plain.w, null, 'without zone columns a comment is a pin');
-  assert.equal(isCommentZone(plain), false);
-  const zone = readCommentRow(zoned, { columns: { ...COMMENT_COLUMNS, w: 'W', h: 'H' } });
+test('Zones: a box is read as a zone, and the digest says where the zone is', () => {
+  const zone = commentFromRow(row('z1', { body: 'This block', slide: 'slide-1', x: 0.1, y: 0.2, w: 0.3, h: 0.25, change: 'created',
+    changedAt: '2026-10-21T09:00:00.000Z' }));
   assert.equal(zone.w, 0.3);
   assert.equal(isCommentZone(zone), true);
+  assert.equal(isCommentZone(commentFromRow(ROWS[0]!)), false, 'a point is a pin');
   const text = commentDigest({ scope: null, comments: [zone], anchors: ANCHORS, changes: [zone], nowIso: 'x' });
   assert.match(text, /- Slide 1 "Intro", zone at x 0\.10, y 0\.20, 0\.30 wide by 0\.25 high: Flo commented "This block"/);
 });
@@ -212,9 +245,9 @@ test('commentRelativeTime speaks English and French', () => {
 });
 
 test('@notis/sdk/ui exports the pane and its pieces', () => {
-  for (const name of ['CommentPane', 'CommentPins', 'CommentThreadCard', 'NewCommentBox', 'CommentAvatar', 'useComments',
-    'commentDigest', 'COMMENT_COLUMNS', 'COMMENT_WORDS', 'CommentToolBar', 'useCommentRouting', 'useCommentFocusParam',
-    'COMMENT_FOCUS_PARAM']) {
+  for (const name of ['CommentPane', 'CommentPins', 'useComments', 'commentFromRow', 'commentAnchorOfDraft',
+    'commentDigest', 'COMMENT_WORDS', 'CommentToolBar', 'useCommentRouting', 'useCommentFocusParam',
+    'COMMENT_FOCUS_PARAM', 'CommentThreadCard', 'NewCommentBox', 'CommentAvatar', 'COMMENT_COLUMNS']) {
     assert.ok(name in ui, `${name} is exported`);
   }
 });
@@ -223,38 +256,37 @@ test('@notis/sdk/ui exports the pane and its pieces', () => {
 // Components
 // ---------------------------------------------------------------------------
 
-interface Call { action: string; request: Record<string, unknown> }
+/** One write the pane sent to the comment store. */
+interface Call { op: MemoryCommentOp; input: Record<string, unknown> }
+
+/** The memory store behind each fake runtime, to read its rows or make it fail. */
+const STORES = new WeakMap<object, MemoryCommentStore>();
+const storeOf = (runtime: NotisRuntime) => STORES.get(runtime)!;
 
 let cacheCounter = 0;
-function fakeRuntime(rows: Record<string, unknown>[], calls: Call[],
-  options: { fail?: boolean; locale?: 'en' | 'fr'; propertyNames?: string[]; params?: Record<string, string>;
-    comments?: Partial<SpaceCommentsTransport>; viewerName?: string | null;
-    /** Authors the Author choice list refuses, as the database does for a missing option. */
-    refusedAuthors?: string[] } = {}) {
-  let next = 100;
-  return {
+/**
+ * A Space runtime whose comments live in an in-memory store seeded with `rows`; every write the pane sends lands in
+ * `calls`. The viewer is Flo with Space edit rights unless `viewerName` or `comments.viewer` says otherwise.
+ */
+function fakeRuntime(rows: readonly SpaceCommentRow[], calls: Call[],
+  options: { fail?: boolean; locale?: 'en' | 'fr'; params?: Record<string, string>;
+    comments?: Partial<SpaceCommentsTransport>; viewerName?: string | null; upload?: boolean } = {}) {
+  const viewer: SpaceCommentViewer | null = options.viewerName === null ? null
+    : { id: 'user-flo', name: options.viewerName ?? 'Flo', canEditSpace: true };
+  const store = memoryCommentStore({ rows: rows.map(item => ({ ...item })), calls, failing: options.fail, viewer,
+    upload: options.upload === true });
+  const runtime = {
     commentsExtra: options.comments,
+    commentsStore: store,
     resource: { kind: 'space', id: 's1', revision: 1 },
-    space: {
-      id: 's1', revision: 1, cacheScope: `comments-${cacheCounter += 1}`,
-      actions: { 'comments.insert': { readOnly: false }, 'comments.update': { readOnly: false } },
-      shows: { comments: { database: 'comments' } },
-      bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
-    },
+    space: { id: 's1', revision: 1, cacheScope: `comments-${cacheCounter += 1}` },
+    // Comments never go through Space actions: any call here is a mistake.
+    callAction: async (action: string) => { throw new Error(`No Space action may run for comments (${action}).`); },
     context: { params: options.params ?? {}, locale: options.locale ?? 'en',
       viewerName: options.viewerName === undefined ? 'Flo' : options.viewerName },
-    shown: async () => ({ rows, schema_revision: 7, ...(options.propertyNames ? { property_names: options.propertyNames } : {}) }),
-    callAction: async (action: string, input: { request: Record<string, unknown> }) => {
-      calls.push({ action, request: input.request });
-      if (options.fail) throw new Error('nope');
-      const author = (input.request.properties as Record<string, unknown> | undefined)?.Author;
-      if (typeof author === 'string' && options.refusedAuthors?.includes(author)) {
-        throw new Error('This choice is missing or ambiguous. Use an existing option ID.');
-      }
-      return { record_key: `new-${next += 1}`, revision: 2 };
-    },
-    subscribeDatabase: () => () => {},
   } as unknown as NotisRuntime;
+  STORES.set(runtime, store);
+  return runtime;
 }
 
 let root: Root | null = null;
@@ -280,20 +312,27 @@ function Harness(props: UseCommentsOptions & { pins?: boolean } & Pick<CommentPa
  * The host Comments panel the panes draw in (`runtime.spaceComments`), unless the runtime says comments are off. The
  * viewer is Flo, with Space edit rights, unless the runtime's `commentsExtra` says otherwise.
  */
+const PANELS = new WeakMap<object, NotisRuntime>();
 function withHostPanel(runtime: NotisRuntime): NotisRuntime {
   if ('spaceComments' in runtime) return runtime;
-  const extra = (runtime as unknown as { commentsExtra?: Partial<SpaceCommentsTransport> }).commentsExtra;
-  return {
+  const known = PANELS.get(runtime);
+  if (known) return known;
+  const { commentsExtra: extra, commentsStore: store } = runtime as unknown as {
+    commentsExtra?: Partial<SpaceCommentsTransport>; commentsStore?: MemoryCommentStore };
+  const panel = {
     ...runtime,
     spaceComments: {
-      viewer: { name: 'Flo', canEditSpace: true },
+      ...(store ? store.transport : { list: async () => ({ comments: [], revision: 0 }), subscribe: () => () => {} }),
       attach(source) {
         source.show(doc.getElementById('panel'));
         return () => source.show(null);
       },
       ...extra,
-    },
+    } as SpaceCommentsTransport,
   } as NotisRuntime;
+  PANELS.set(runtime, panel);
+  if (store) STORES.set(panel, store);
+  return panel;
 }
 
 let engine = new KeyboardEngineCore();
@@ -370,9 +409,10 @@ const filterCounts = async () => {
   return counts;
 };
 const toastUndo = () => doc.querySelector('.nui-toast-btn') as HTMLButtonElement | null;
-const status = (call: Call | undefined) => (call?.request.properties as Record<string, unknown> | undefined)?.Status;
-const scope = { id: 'deck-1', recordKey: 'dk1', name: 'Q4 review', checkpoint: '2026-10-20T00:00:00.000Z' };
-const base: UseCommentsOptions = { scope, anchors: ANCHORS, anchorKey: 'sk1', authors: ['Flo', 'Claude', 'Notis'] };
+/** The writes of one kind. */
+const writes = (calls: Call[], op: MemoryCommentOp) => calls.filter(call => call.op === op);
+const scope = { id: 'deck-1', recordKey: PAGE, name: 'Q4 review', checkpoint: '2026-10-20T00:00:00.000Z' };
+const base: UseCommentsOptions = { scope, anchors: ANCHORS, anchorKey: 'sk1' };
 
 test('CommentPane: threads of this anchor, pins, replies and the asks', async () => {
   const calls: Call[] = [];
@@ -386,11 +426,9 @@ test('CommentPane: threads of this anchor, pins, replies and the asks', async ()
   assert.equal(doc.querySelectorAll('.nui-comment-reply').length, 1);
   assert.ok(doc.querySelector('[data-thread="c2"] .nui-comment-new'), 'Claude comment after the checkpoint is new');
   assert.ok(!doc.querySelector('[data-thread="c1"] > header .nui-comment-new'), 'my own comment is never new');
-  // The check ask answers through an update.
+  // The check ask answers through the store's answer.
   await click(button('Looks good')!);
-  assert.equal(calls.at(-1)!.action, 'comments.update');
-  assert.equal(calls.at(-1)!.request.record_key, 'c2');
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'Looks good');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'c2', answer: 'Looks good' } });
   assert.match(doc.querySelector('[data-thread="c2"] .nui-comment-answer')!.textContent!, /Looks good, sent to the agent/);
   assert.equal(doc.querySelector('[data-thread="c2"] > header .nui-comment-new'), null, 'an answered ask is no longer new');
   assert.equal(doc.querySelector('[data-thread="c2"] .nui-comment-ask-label')!.textContent,
@@ -414,7 +452,8 @@ test('CommentPane: filters (this item, all; the Open, Done and All menu with cou
 
 test('CommentPane: a reply sends on Enter, Shift+Enter keeps writing, and an archived thread stays archived', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} anchorKey="sk2" />, fakeRuntime(ROWS, calls));
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness {...base} anchorKey="sk2" />, runtime);
   await pickFilter('done');
   const field = doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement;
   assert.equal(field.getAttribute('aria-label'), 'Reply');
@@ -422,56 +461,22 @@ test('CommentPane: a reply sends on Enter, Shift+Enter keeps writing, and an arc
   await key(field, 'Enter', { shift: true });
   assert.equal(calls.length, 0);
   await key(field, 'Enter');
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  assert.deepEqual(insert.request.columns, { title: 'Not quite' });
-  const props = insert.request.properties as Record<string, unknown>;
-  assert.equal(props.Thread, 'c4');
-  assert.deepEqual(props.Deck, ['deck-1']);
-  assert.deepEqual(props.Slide, ['slide-2']);
-  assert.equal(props.Change, 'replied');
-  assert.equal(calls.find(call => call.action === 'comments.update'), undefined,
+  const [reply] = writes(calls, 'reply');
+  assert.equal(reply!.input.root_id, 'c4');
+  assert.equal(reply!.input.body, 'Not quite');
+  assert.equal(typeof reply!.input.request_id, 'string', 'a request id makes a retried send land once');
+  assert.equal(writes(calls, 'unarchive').length, 0,
     'a reply never reopens: the server brings a thread back only when a reply waits for someone (SPC-125)');
-});
-
-test('A Comments database without the optional columns still takes replies, answers and status changes', async () => {
-  // The list answer names its columns: Needs, Options, Answered at, Change, Changed at and Example are missing.
-  const propertyNames = ['Body', 'Deck', 'Slide', 'Thread', 'Author', 'X', 'Y', 'Status', 'Answer'];
-  const calls: Call[] = [];
-  await mount(<Harness {...base} anchorKey="sk2" />, fakeRuntime(ROWS, calls, { propertyNames }));
-  await pickFilter('done');
-  const field = doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement;
-  await type(field, 'Again please');
-  await key(field, 'Enter');
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  assert.deepEqual(Object.keys(insert.request.properties as object).sort(), ['Author', 'Deck', 'Slide', 'Status', 'Thread']);
-  await click(doc.querySelector('[data-thread="c4"] button[aria-label^="Unarchive the comment thread: "]')!);
-  const reopen = calls.find(call => call.action === 'comments.update')!;
-  assert.deepEqual(reopen.request.properties, { Status: 'Open' }, 'Change and Changed at are left out');
-  assert.equal(reopen.request.expected_revision, 1);
-  assert.doesNotMatch(doc.body.textContent!, /Could not save that change/);
-
-  // Without a Thread column a reply is refused instead of being saved as a new thread.
-  const noThread: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, noThread, { propertyNames: propertyNames.filter(name => name !== 'Thread') }));
-  const reply = doc.querySelector('[data-thread="c1"] textarea') as HTMLTextAreaElement;
-  await type(reply, 'Hello');
-  await key(reply, 'Enter');
-  assert.equal(noThread.filter(call => call.action === 'comments.insert').length, 0);
-  assert.match(doc.body.textContent!, /Could not save that change/);
-
-  // An older host that names no columns: every column is sent, as before.
-  const older: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, older));
-  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Archive the comment thread: "]')!);
-  assert.deepEqual(Object.keys(older.at(-1)!.request.properties as object).sort(), ['Change', 'Changed at', 'Status']);
+  const stored = storeOf(runtime).rows.find(item => item.thread_root_id === 'c4')!;
+  assert.equal(stored.body, 'Not quite');
+  assert.equal(stored.page_key, PAGE, 'the reply is on its thread\'s page');
 });
 
 test('CommentPane: Archive with Undo and Z, E and Shift+E, and a failed write rolls back', async () => {
   const calls: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Archive the comment thread: "]')!);
-  assert.equal(status(calls.at(-1)), 'Resolved', 'archive writes Resolved, shown as Done');
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Change, 'resolved');
+  assert.deepEqual(calls.at(-1), { op: 'archive', input: { root_id: 'c1' } }, 'archive, shown as Done');
   assert.deepEqual(cards(), ['c2'], 'the archived thread leaves the open list');
   assert.match(doc.body.textContent!, /Comment thread archived/);
   assert.ok(toastUndo(), 'an Undo toast is offered');
@@ -481,22 +486,20 @@ test('CommentPane: Archive with Undo and Z, E and Shift+E, and a failed write ro
   assert.equal(named(toastUndo()!), 'Undo');
   assert.equal(toastUndo()!.getAttribute('aria-keyshortcuts'), 'z');
   await key(doc.body, 'z');
-  assert.equal(status(calls.at(-1)), 'Open', 'Z undoes the archive');
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Change, 'created', 'Change goes back as it was');
+  assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'c1' } }, 'Z undoes the archive');
   assert.deepEqual(cards(), ['c2', 'c1']);
 
   // E archives the focused thread; Shift+E brings it back.
   const card = doc.querySelector('[data-thread="c2"]') as HTMLElement;
   card.focus();
   await key(card, 'e');
-  assert.equal(calls.at(-1)!.request.record_key, 'c2');
-  assert.equal(status(calls.at(-1)), 'Resolved');
+  assert.deepEqual(calls.at(-1), { op: 'archive', input: { root_id: 'c2' } });
   await pickFilter('done');
   const archived = doc.querySelector('[data-thread="c2"]') as HTMLElement;
   assert.match(archived.textContent!, /Done/, 'an archived thread reads Done');
   archived.focus();
   await key(archived, 'E', { shift: true });
-  assert.equal(status(calls.at(-1)), 'Open');
+  assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'c2' } });
   const before = calls.length;
   // The keeper held focus in the pane when the card left the Done list; focus leaves the pane now.
   (doc.activeElement as HTMLElement | null)?.blur();
@@ -510,25 +513,26 @@ test('CommentPane: Archive with Undo and Z, E and Shift+E, and a failed write ro
   assert.match(doc.body.textContent!, /Could not save that change/);
 });
 
-test('Undo of an archive or a delete writes an empty Change and Changed at back as empty', async () => {
+test('Undo of an archive unarchives, Undo of a delete restores, each on the comment it changed only', async () => {
   const calls: Call[] = [];
-  // c2 was never changed: its Change and Changed at are empty.
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
-  const props = (call: Call | undefined) => call!.request.properties as Record<string, unknown>;
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness {...base} />, runtime);
   await click(doc.querySelector('[data-thread="c2"] button[aria-label^="Archive the comment thread: "]')!);
-  assert.equal(props(calls.at(-1)).Change, 'resolved');
+  assert.deepEqual(calls.at(-1), { op: 'archive', input: { root_id: 'c2' } });
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c2')!.status, 'archived');
   await click(toastUndo()!);
-  assert.equal(status(calls.at(-1)), 'Open', 'Undo reopens the thread');
-  assert.ok('Change' in props(calls.at(-1)), 'Undo writes Change, not leaves "resolved" behind');
-  assert.equal(props(calls.at(-1)).Change, null);
-  assert.equal(props(calls.at(-1))['Changed at'], null, 'and the archive time goes too');
+  assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'c2' } }, 'Undo brings the thread back');
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c2')!.status, 'open');
 
-  await click(doc.querySelector('[data-thread="c2"] button[aria-label^="Delete the comment thread: "]')!);
-  assert.equal(props(calls.at(-1)).Change, 'deleted');
+  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
+  assert.deepEqual(calls.at(-1), { op: 'remove', input: { id: 'c1' } }, 'one delete, on the first comment alone');
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'r1')!.status, 'open', 'its reply is left to the server');
+  assert.deepEqual(cards(), ['c2'], 'the thread leaves the list');
   await click(toastUndo()!);
-  assert.equal(status(calls.at(-1)), 'Open', 'Undo brings the thread back');
-  assert.equal(props(calls.at(-1)).Change, null, 'Undo of a delete writes the empty Change back');
-  assert.equal(props(calls.at(-1))['Changed at'], null);
+  assert.deepEqual(calls.at(-1), { op: 'restore', input: { id: 'c1' } }, 'Undo restores it');
+  assert.deepEqual(cards(), ['c2', 'c1']);
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c1')!.body, 'Tighten the title');
+  assert.deepEqual(calls.map(call => call.op), ['archive', 'unarchive', 'remove', 'restore'], 'nothing else was written');
 });
 
 test('Delete at once with Undo: the first comment deletes the thread, a later one leaves a line', async () => {
@@ -538,22 +542,21 @@ test('Delete at once with Undo: the first comment deletes the thread, a later on
   // A reply: only that comment, with a "Comment deleted" line in its place.
   await click(doc.querySelector('[data-comment="r1"] button[aria-label^="Delete "][aria-label*="reply: "]')!);
   assert.equal(doc.querySelector('dialog[open]'), null, 'no confirmation dialog');
-  assert.equal(calls.at(-1)!.request.record_key, 'r1');
-  assert.equal(status(calls.at(-1)), 'Deleted');
+  assert.deepEqual(calls.at(-1), { op: 'remove', input: { id: 'r1' } });
   assert.match(doc.querySelector('[data-thread="c1"] .nui-comment-deleted')!.textContent!, /Comment deleted/);
   await key(doc.body, 'z');
-  assert.equal(status(calls.at(-1)), 'Open', 'Z brings the reply back');
+  assert.deepEqual(calls.at(-1), { op: 'restore', input: { id: 'r1' } }, 'Z brings the reply back');
   assert.equal(doc.querySelector('.nui-comment-deleted'), null);
 
-  // The first comment: the whole thread, every reply too.
+  // The first comment: the whole thread goes with it, in one delete (the server keeps the replies for the Bin).
   calls.length = 0;
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
-  assert.deepEqual(calls.map(call => [call.request.record_key, status(call)]).sort(), [['c1', 'Deleted'], ['r1', 'Deleted']]);
+  assert.deepEqual(calls, [{ op: 'remove', input: { id: 'c1' } }]);
   assert.deepEqual(cards(), ['c2']);
   assert.match(doc.body.textContent!, /Comment thread deleted/);
   await click(toastUndo()!);
   assert.deepEqual(cards(), ['c2', 'c1'], 'Undo brings the thread back');
-  assert.deepEqual(calls.slice(2).map(call => status(call)), ['Open', 'Open']);
+  assert.deepEqual(calls.slice(1), [{ op: 'restore', input: { id: 'c1' } }]);
 });
 
 test('Delete rights: your own comments; a whole thread or someone else\'s needs Space edit rights; no viewer, no Delete', async () => {
@@ -583,61 +586,44 @@ test('Delete rights: your own comments; a whole thread or someone else\'s needs 
   assert.equal(doc.querySelectorAll('button[aria-label^="Delete"], button[aria-label^="Edit"]').length, 0, 'no viewer, no Delete or Edit');
 });
 
-test('Your comments are told by who created them, not the Author name: a renamed person keeps Edit and Delete', async () => {
+test('Your comments are told by the store (author.you), not the name: a renamed person keeps Edit and Delete', async () => {
   const at = (hour: number) => `2026-10-21T${String(hour).padStart(2, '0')}:00:00.000Z`;
   const rows = [
-    // Written as "Florian" before the rename; the server says the viewer created it.
-    { ...row('a1', { body: 'Before the rename', author: 'Florian', slide: 'slide-1', createdAt: at(8) }), created_by_you: true },
-    // Another person also named Flo: the name matches, the creator does not.
-    { ...row('a2', { body: 'Another Flo', slide: 'slide-1', createdAt: at(9) }), created_by_you: false },
-    // Creator ids against the viewer's id.
-    { ...row('b1', { body: 'Mine by id', author: 'Florian', slide: 'slide-1', createdAt: at(10) }), created_by: 'u-flo' },
-    { ...row('b2', { body: 'Theirs by id', slide: 'slide-1', createdAt: at(11) }), created_by: 'u-other' },
-    // No creator on the row: the Author name still decides.
-    row('c1', { body: 'Older host', slide: 'slide-1', createdAt: at(12) }),
+    // Written as "Florian" before the rename; the store says the viewer wrote it.
+    row('a1', { body: 'Before the rename', author: 'Florian', slide: 'slide-1', createdAt: at(8), you: true }),
+    // Another person also named Flo: the name matches, the writer does not.
+    row('a2', { body: 'Another Flo', slide: 'slide-1', createdAt: at(9), you: false }),
   ];
-  const viewer = { name: 'Flo', canEditSpace: false, id: 'u-flo' };
-  await mount(<Harness {...base} authors={['Flo', 'Florian', 'Claude', 'Notis']} />, fakeRuntime(rows, [], { comments: { viewer } }));
+  const viewer = { name: 'Flo', canEditSpace: false, id: 'user-flo' };
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer } }));
   const edit = (key: string) => Boolean(doc.querySelector(`[data-thread="${key}"] button[aria-label^="Edit "]`));
   const del = (key: string) => Boolean(doc.querySelector(`[data-thread="${key}"] button[aria-label^="Delete the comment thread: "]`));
-  assert.ok(edit('a1') && del('a1'), 'the server says you created it: Edit and Delete, whatever the old Author name');
-  assert.equal(edit('a2'), false, 'the same name is not enough when the server says someone else created it');
+  assert.ok(edit('a1') && del('a1'), 'the store says you wrote it: Edit and Delete, whatever the old name');
+  assert.equal(edit('a2'), false, 'the same name is not enough when the store says someone else wrote it');
   assert.equal(del('a2'), false);
-  assert.ok(edit('b1') && del('b1'), 'your creator id');
-  assert.equal(edit('b2'), false, 'another creator id, even under your name');
-  assert.ok(edit('c1'), 'a row without its creator falls back to the Author name');
 });
 
-test('Edit your own comment in place: it saves the text, writes Edited at when the table has it, and reads edited', async () => {
+test('Edit your own comment in place: it saves the text through the store and reads edited', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness {...base} />, runtime);
   assert.equal(doc.querySelector('[data-comment="r1"] button[aria-label^="Edit your reply: "]'), null, 'Claude\'s reply is not yours');
   await click(doc.querySelector('[data-thread="c1"] > header button[aria-label^="Edit your comment: "]')!);
   const field = doc.querySelector('[data-thread="c1"] .nui-comment-edit textarea') as HTMLTextAreaElement;
   assert.equal(field.value, 'Tighten the title');
   await type(field, 'Tighten the title, please');
   await key(field, 'Enter');
-  const update = calls.at(-1)!;
-  assert.equal(update.request.record_key, 'c1');
-  assert.deepEqual(update.request.columns, { title: 'Tighten the title, please' });
-  const props = update.request.properties as Record<string, unknown>;
-  assert.deepEqual(Object.keys(props).sort(), ['Change', 'Changed at'],
-    'no Edited at column in these rows: the text, and Change and Changed at so Copy changes carries the edit');
-  assert.equal(props.Change, 'created', 'a root keeps its change kind');
-  assert.ok(Date.parse(String(props['Changed at'])) > Date.parse('2026-10-22T00:00:00.000Z'));
+  assert.deepEqual(calls.at(-1), { op: 'edit', input: { id: 'c1', body: 'Tighten the title, please' } });
   assert.equal(doc.querySelector('[data-thread="c1"] .nui-comment-edit'), null);
   assert.match(doc.querySelector('[data-thread="c1"] .nui-comment-body')!.textContent!, /Tighten the title, please/);
   assert.equal(doc.querySelector('[data-thread="c1"] > header .nui-comment-edited')!.textContent, 'edited');
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c1')!.body, 'Tighten the title, please');
 
-  const named: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, named, {
-    propertyNames: ['Body', 'Deck', 'Slide', 'Thread', 'Author', 'X', 'Y', 'Status', 'Edited at'],
-  }));
   await click(doc.querySelector('[data-thread="c1"] > header button[aria-label^="Edit your comment: "]')!);
   const again = doc.querySelector('[data-thread="c1"] .nui-comment-edit textarea') as HTMLTextAreaElement;
   await type(again, 'Shorter title');
   await click(button('Save')!);
-  assert.deepEqual(Object.keys(named.at(-1)!.request.properties as object), ['Edited at']);
+  assert.deepEqual(calls.at(-1), { op: 'edit', input: { id: 'c1', body: 'Shorter title' } }, 'Save sends it too');
 });
 
 test('Owning thread: the linked thread once at the top of the card (Thread), else Goes to the best match; Change picks another and links it; the title opens it', async () => {
@@ -645,10 +631,10 @@ test('Owning thread: the linked thread once at the top of the card (Thread), els
   const opened: string[] = [];
   const picks: unknown[] = [];
   const comments: Partial<SpaceCommentsTransport> = {
-    links: async ({ rootKeys }) => Object.fromEntries(rootKeys.filter(key => key === 'c1')
+    links: async ({ rootIds }) => Object.fromEntries(rootIds.filter(key => key === 'c1')
       .map(key => [key, [{ threadId: 't-1', title: 'Deck polish', harness: 'claude' }]])),
     bestMatch: async () => ({ threadId: 't-best', title: 'Q4 deck' }),
-    pickThread: async input => { picks.push(input.current); return { threadId: 't-2', title: 'Chart work' }; },
+    pickThread: async input => { picks.push(input.current ?? null); return { threadId: 't-2', title: 'Chart work' }; },
     link: async input => { linked.push(input); return { threadId: 't-2', title: 'Chart work' }; },
     openThread: threadId => { opened.push(threadId); },
   };
@@ -665,7 +651,7 @@ test('Owning thread: the linked thread once at the top of the card (Thread), els
   assert.deepEqual(opened, ['t-1']);
   await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
   assert.deepEqual(picks, ['t-1']);
-  assert.deepEqual(linked, [{ database: 'comments', rootKey: 'c1', pick: { threadId: 't-2', title: 'Chart work' }, primary: true }]);
+  assert.deepEqual(linked, [{ rootId: 'c1', pick: { threadId: 't-2', title: 'Chart work' }, primary: true }]);
   assert.match(line().textContent!, /Thread Chart work/);
 
   // A pick the host could not link says so instead of silently staying on the old thread.
@@ -755,10 +741,10 @@ test('agentDisplayName reads a band name with spaces and capitals, and leaves an
   for (const name of ['Flo', 'Notis', 'claude', 'Jean-Pierre', 'a--b', '-lead', 'trail-', 'UPPER-case']) {
     assert.equal(ui.agentDisplayName(name), name, name);
   }
-  const read = readCommentRow({ ...row('a1', { body: 'Hi', author: 'fred-and-the-machine' }),
-    agent: { name: 'fred-and-the-machine', runtime: { provider: 'kimi', label: '', model: null, intelligence: 'low', speed: 'flex' } } } as never);
+  const read = commentFromRow({ ...row('a1', { body: 'Hi', author: 'fred-and-the-machine' }),
+    agent: { name: 'fred-and-the-machine', runtime: { provider: 'kimi', label: '', model: null, intelligence: 'low', speed: 'flex' } } });
   assert.deepEqual(read.agent!.runtime, { provider: 'kimi', label: null, model: null, intelligence: 'low', effort: null, speed: 'flex' });
-  const none = readCommentRow({ ...row('a2', { body: 'Hi' }), agent: { name: 'x-y', runtime: { provider: '' } } } as never);
+  const none = commentFromRow({ ...row('a2', { body: 'Hi' }), agent: { name: 'x-y', runtime: { provider: '' } } });
   assert.equal('runtime' in none.agent!, false, 'an empty runtime reads as none');
 });
 
@@ -771,7 +757,8 @@ test('New comment: a To chip names the best match, @ or the chip picks another, 
     pickThread: async () => pick as never,
     link: async input => { linked.push(input as never); return null; },
   };
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls, { comments }));
+  const runtime = fakeRuntime(ROWS, calls, { comments });
+  await mount(<Harness {...base} />, runtime);
   await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
   await settle();
   const chip = () => doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!;
@@ -786,8 +773,9 @@ test('New comment: a To chip names the best match, @ or the chip picks another, 
   assert.match(chip().textContent!, /To a new Codex thread/);
   await type(field, 'Bigger chart');
   await key(field, 'Enter');
-  assert.equal(calls.filter(call => call.action === 'comments.insert').length, 1);
-  assert.deepEqual(linked, [{ database: 'comments', rootKey: 'new-101', pick: { newThread: 'codex' } }]);
+  assert.equal(writes(calls, 'insert').length, 1);
+  assert.deepEqual(linked, [{ rootId: storeOf(runtime).rows.at(-1)!.id, pick: { newThread: 'codex' } }],
+    'the new comment\'s stored id is linked');
 
   // No pick: the best match.
   linked.length = 0;
@@ -805,19 +793,17 @@ test('New comment: a To chip names the best match, @ or the chip picks another, 
 });
 
 test('The Space home (no scope) groups threads by page; a scoped pane lists them flat', async () => {
-  const project = (id: string) => ({ Deck: { type: 'relation', relation: [{ id }] } });
   const rows = [
-    { ...row('g1', { body: 'On deck one', createdAt: '2026-10-21T09:00:00.000Z' }) },
-    { ...row('g2', { body: 'On deck two', createdAt: '2026-10-21T12:00:00.000Z' }) },
-    { ...row('g3', { body: 'Deck one again', createdAt: '2026-10-21T10:00:00.000Z' }) },
+    row('g1', { body: 'On deck one', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('g2', { body: 'On deck two', createdAt: '2026-10-21T12:00:00.000Z', page: 'deck-2' }),
+    row('g3', { body: 'Deck one again', createdAt: '2026-10-21T10:00:00.000Z' }),
   ];
-  (rows[1]!.properties as Record<string, unknown>).Deck = project('deck-2').Deck;
-  await mount(<Harness authors={['Flo']} pins={false} scopeNames={{ 'deck-2': 'Launch deck' }} />, fakeRuntime(rows, []));
+  await mount(<Harness pins={false} scopeNames={{ 'deck-2': 'Launch deck' }} />, fakeRuntime(rows, []));
   assert.equal(controller!.wholeSpace, true);
   assert.deepEqual([...doc.querySelectorAll('.nui-comment-group')].map(el => el.textContent), ['Launch deck', 'Page 1']);
   assert.deepEqual(cards(), ['g2', 'g3', 'g1'], 'newest first inside the groups, groups in order of their newest');
 
-  await mount(<Harness authors={['Flo']} pins={false} groupBy={false} order="oldest" />, fakeRuntime(rows, []));
+  await mount(<Harness pins={false} groupBy={false} order="oldest" />, fakeRuntime(rows, []));
   assert.equal(doc.querySelectorAll('.nui-comment-group').length, 0, 'groupBy false: flat');
   assert.deepEqual(cards(), ['g1', 'g3', 'g2']);
 
@@ -860,7 +846,7 @@ test('Archiving the linked thread: the host clearing the link keeps the page, th
   assert.equal(controller!.threadKey, 'c1');
   const pane = doc.querySelector('.nui-comment-pane');
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Archive the comment thread: "]')!);
-  assert.equal(status(calls.at(-1)), 'Resolved');
+  assert.deepEqual(calls.at(-1), { op: 'archive', input: { root_id: 'c1' } });
   assert.deepEqual(cards(), ['c2']);
   assert.ok(toastUndo(), 'an Undo toast is offered');
   // The Portal takes `comment` out of the address in place: the same page, its runtime with new params.
@@ -869,7 +855,7 @@ test('Archiving the linked thread: the host clearing the link keeps the page, th
   assert.deepEqual(cards(), ['c2'], 'the archived thread stays out of the list');
   assert.ok(toastUndo(), 'the Undo toast is still there');
   await click(toastUndo()!);
-  assert.equal(status(calls.at(-1)), 'Open', 'and its Undo still works');
+  assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'c1' } }, 'and its Undo still works');
   assert.deepEqual(cards(), ['c2', 'c1']);
 });
 
@@ -936,8 +922,7 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
   const calls: Call[] = [];
   let itemsAsked = 0;
   function ModesHarness() {
-    controller = useComments({ ...base, onStartItems: () => { itemsAsked += 1; }, currentTime: () => 84.5,
-      columns: { time: 'Time' } });
+    controller = useComments({ ...base, onStartItems: () => { itemsAsked += 1; }, currentTime: () => 84.5 });
     return (
       <div>
         <ui.CommentToolBar controller={controller} />
@@ -945,13 +930,11 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
       </div>
     );
   }
-  await mount(<ModesHarness />, fakeRuntime(ROWS, calls, {
-    propertyNames: ['Body', 'Deck', 'Slide', 'Thread', 'Author', 'X', 'Y', 'Status', 'Time'],
-  }));
-  assert.deepEqual(controller!.modes, ['point', 'items', 'time', 'page']);
+  await mount(<ModesHarness />, fakeRuntime(ROWS, calls));
+  assert.deepEqual(controller!.modes, ['point', 'box', 'items', 'time', 'page'], 'a box needs no column any more');
   await click(doc.querySelector('.nui-comment-new-btn')!);
   assert.deepEqual([...doc.querySelectorAll('[role^="menuitem"]')].map(el => el.textContent),
-    ['On a point', 'On items', 'At this moment', 'On the whole page']);
+    ['On a point', 'On a box', 'On items', 'At this moment', 'On the whole page']);
   await key(doc.activeElement ?? doc.body, 'Escape');
 
   assert.equal(doc.querySelector('.nui-comment-toolbar'), null);
@@ -975,21 +958,26 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
   let field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Same fix on both');
   await key(field, 'Enter');
-  assert.deepEqual((calls.at(-1)!.request.properties as Record<string, unknown>).Slide, ['slide-1', 'slide-2']);
+  assert.equal(calls.at(-1)!.op, 'insert');
+  assert.equal(calls.at(-1)!.input.mode, 'items');
+  assert.deepEqual(calls.at(-1)!.input.anchor_keys, ['sk1', 'sk2'], 'the items by record key');
+  assert.equal(calls.at(-1)!.input.page_key, PAGE);
 
   await click(doc.querySelector('.nui-comment-toolbar [data-mode="time"]')!);
   assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment at 1:24');
   field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Cut here');
   await key(field, 'Enter');
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Time, 84.5);
+  assert.equal(calls.at(-1)!.input.mode, 'time');
+  assert.equal(calls.at(-1)!.input.time_start, 84.5);
 
   await click(doc.querySelector('.nui-comment-toolbar [data-mode="page"]')!);
   assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on the whole page');
   field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Overall too long');
   await key(field, 'Enter');
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Slide, undefined, 'no anchor');
+  assert.equal(calls.at(-1)!.input.mode, 'page');
+  assert.deepEqual(calls.at(-1)!.input.anchor_keys, [], 'no anchor');
   assert.equal(controller!.filter, 'all', 'a whole-page comment shows under All');
 
   await key(doc.body, 'c');
@@ -1015,9 +1003,80 @@ test('A new comment changes the list filters only when they would hide it', asyn
   assert.equal(controller!.filter, 'all');
 });
 
+test('An items comment shows right after sending, under each of its items, and names them (SPC-463)', async () => {
+  const calls: Call[] = [];
+  const tasks: CommentAnchor[] = [
+    { id: 't1', recordKey: 'tk1', order: 1, title: 'Write the brief' },
+    { id: 't2', recordKey: 'tk2', order: 2, title: 'Book the room' },
+    { id: 't3', recordKey: 'tk3', order: 3, title: '' },
+    { id: 't4', recordKey: 'tk4', order: 4, title: 'Send the invites to every speaker and their assistants' },
+    { id: 't5', recordKey: 'tk5', order: 5, title: 'Print' },
+  ];
+  const words = { anchorLabel: { en: 'Task {n}', fr: 'Tâche {n}' } };
+  const options: UseCommentsOptions = { scope, anchors: tasks, anchorKey: 'tk3', words, onStartItems: () => {} };
+  await mount(<Harness {...options} />, fakeRuntime([], calls));
+  assert.equal(controller!.filter, 'anchor');
+  // Picked items that include the task shown keep This item; the draft names them, titles first, else the label.
+  await act(async () => { controller!.startItems([tasks[1]!, tasks[2]!, tasks[0]!]); });
+  await settle();
+  assert.equal(controller!.filter, 'anchor', 'the task shown is one of the items: This item lists the comment');
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on 3 items', 'SPC-338 heading kept');
+  assert.equal(doc.querySelector('.nui-comment-new-items')!.textContent, 'Book the room, Task 3, Write the brief');
+  let field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, 'Same owner for these');
+  await key(field, 'Enter');
+  assert.deepEqual(calls.at(-1)!.input.anchor_keys, ['tk2', 'tk3', 'tk1']);
+  const sent = String(doc.querySelector('.nui-comment-card')!.getAttribute('data-thread'));
+  assert.deepEqual(cards(), [sent], 'the new thread shows under This item at once');
+  const meta = doc.querySelector(`[data-thread="${sent}"] .nui-comment-meta`)?.textContent
+    ?? doc.querySelector(`[data-thread="${sent}"]`)!.textContent!;
+  assert.match(meta, /Write the brief, Book the room, Task 3/, 'the thread names its items, in item order');
+  assert.doesNotMatch(meta, /3 items/);
+  for (const key of ['tk1', 'tk2', 'tk3']) {
+    assert.equal(controller!.threadsOn(key).length, 1, `listed under ${key}`);
+  }
+  assert.equal(controller!.threadsOn('tk4').length, 0);
+  assert.equal(controller!.threadsOn(null).length, 0, 'not a comment on no item');
+
+  // Items that leave out the task shown: This item would hide the comment, so the list widens to every item.
+  await act(async () => { controller!.startItems([tasks[0]!, tasks[1]!, tasks[3]!, tasks[4]!]); });
+  await settle();
+  assert.equal(controller!.filter, 'all', 'the task shown is not one of the items');
+  assert.equal(doc.querySelector('.nui-comment-new-items')!.textContent,
+    'Write the brief, Book the room, Send the invites to every speak… +1', 'three names, long ones cut, then +N');
+  field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, 'Later');
+  await key(field, 'Enter');
+  assert.equal(cards().length, 2, 'both threads show under All items');
+});
+
+test('Anchor words use the Space\'s own anchor label, in English and French; an old {n} override still reads (SPC-462)', async () => {
+  const words = { anchorLabel: { en: 'Slide {n}', fr: 'Diapo {n}' } };
+  await mount(<Harness {...base} words={words} />, fakeRuntime(ROWS, []));
+  assert.ok(button('Comment on all of Slide 1'), 'the whole-item button names the slide');
+  await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+  await settle();
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on Slide 1');
+  await act(async () => { controller!.cancelPin(); });
+  await click(button('Comment on all of Slide 1')!);
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on all of Slide 1');
+
+  await mount(<Harness {...base} words={words} />, fakeRuntime(ROWS, [], { locale: 'fr' }), 'fr');
+  assert.ok(button('Commenter Diapo 1 en entier'));
+  await click(button('Commenter Diapo 1 en entier')!);
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'Nouveau commentaire sur Diapo 1 en entier');
+
+  const old = { ...words, newCommentOn: { en: 'New note on slide {n}', fr: 'Nouvelle note sur la diapo {n}' } };
+  await mount(<Harness {...base} words={old} />, fakeRuntime(ROWS, []));
+  await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+  await settle();
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New note on slide 1', 'an override with {n} keeps working');
+});
+
 test('Add comment mode: Escape leaves it; a pin opens the new comment box, Escape drops it, Enter sends', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness {...base} />, runtime);
   await act(async () => { controller!.setCommenting(true); });
   assert.equal(controller!.commenting, true);
   await key(doc.body, 'Escape');
@@ -1028,7 +1087,7 @@ test('Add comment mode: Escape leaves it; a pin opens the new comment box, Escap
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   assert.ok(field);
   assert.equal(doc.activeElement, field, 'the new comment box takes focus');
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on item 1');
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on Item 1');
   assert.ok(doc.querySelector('.nui-comment-pin[data-draft]'));
   await key(field, 'Escape');
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'Escape in an empty box drops it');
@@ -1038,14 +1097,17 @@ test('Add comment mode: Escape leaves it; a pin opens the new comment box, Escap
   const next = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(next, 'Make it bigger');
   await key(next, 'Enter');
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  const props = insert.request.properties as Record<string, unknown>;
-  assert.equal(props.X, 0.4);
-  assert.equal(props.Y, 0.3);
-  assert.equal(props.Change, 'created');
-  assert.equal(props.Thread, undefined, 'a root has no Thread');
+  const [insert] = writes(calls, 'insert');
+  assert.equal(insert!.input.mode, 'point');
+  assert.deepEqual(insert!.input.anchor_keys, ['sk1']);
+  assert.equal(insert!.input.x, 0.4);
+  assert.equal(insert!.input.y, 0.3);
+  assert.equal(insert!.input.page_key, PAGE);
+  assert.equal(insert!.input.body, 'Make it bigger');
   assert.equal(doc.querySelector('.nui-comment-new-box'), null);
-  assert.equal(controller!.threadKey, 'new-101', 'the new thread is selected');
+  const stored = storeOf(runtime).rows.at(-1)!;
+  assert.equal(stored.thread_root_id, null, 'a first comment');
+  assert.equal(controller!.threadKey, stored.id, 'the new thread is selected');
 });
 
 test('Thread cards select with Enter, and a pin selects its thread', async () => {
@@ -1086,7 +1148,7 @@ test('Copy link: a card copies the link that reveals its thread, from the host o
   });
   const asked: string[] = [];
   const comments: Partial<SpaceCommentsTransport> = {
-    commentLink: ({ rootKey }) => { asked.push(rootKey); return `https://app.notis.ai/spaces/s1?page=dk1&comment=${rootKey}`; },
+    commentLink: ({ rootId: rootKey }) => { asked.push(rootKey); return `https://app.notis.ai/spaces/s1?page=dk1&comment=${rootKey}`; },
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
   const copy = () => doc.querySelector('[data-thread="c1"] button[aria-label^="Copy the link to the comment thread"]') as HTMLButtonElement;
@@ -1121,7 +1183,7 @@ test('Copy link: a link the host works out later (the thread on its own page) is
   Object.defineProperty(dom.window.navigator, 'clipboard', {
     configurable: true, value: { writeText: async (text: string) => { written.push(text); } },
   });
-  const asked: Array<{ rootKey: string; database?: string }> = [];
+  const asked: Array<{ rootId: string }> = [];
   let page: string | null = 'https://app.notis.ai/view-s1?page=dk1&comment=c1';
   const comments: Partial<SpaceCommentsTransport> = {
     commentLink: input => { asked.push(input); return Promise.resolve(page); },
@@ -1130,8 +1192,8 @@ test('Copy link: a link the host works out later (the thread on its own page) is
   const copy = () => doc.querySelector('[data-thread="c1"] button[aria-label^="Copy the link to the comment thread"]') as HTMLButtonElement;
   await click(copy());
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-  // The host is told which comments database the thread is in, so it can name the thread's page.
-  assert.deepEqual(asked, [{ rootKey: 'c1', database: 'comments' }]);
+  // The host finds the thread's page from the comment itself.
+  assert.deepEqual(asked, [{ rootId: 'c1' }]);
   assert.deepEqual(written, ['https://app.notis.ai/view-s1?page=dk1&comment=c1']);
   assert.match(doc.querySelector('.nui-toast')!.textContent!, /Link copied/);
 
@@ -1192,11 +1254,9 @@ async function drag(x0: number, y0: number, x1: number, y1: number) {
   await settle();
 }
 
-const zoneColumns = { w: 'W', h: 'H' };
-
-test('Zones: a press and drag marks a zone in the selection blue, and sends W and H', async () => {
+test('Zones: a press and drag marks a zone in the selection blue, and sends a box', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} columns={zoneColumns} />, fakeRuntime(ROWS, calls));
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
   assert.equal(doc.querySelector('.nui-comment-capture'), null, 'nothing covers the anchor outside Add comment mode');
   await act(async () => { controller!.setCommenting(true); });
   await settle();
@@ -1211,30 +1271,24 @@ test('Zones: a press and drag marks a zone in the selection blue, and sends W an
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'This whole block');
   await key(field, 'Enter');
-  const props = calls.find(call => call.action === 'comments.insert')!.request.properties as Record<string, unknown>;
-  assert.deepEqual([props.X, props.Y, props.W, props.H], [0.25, 0.3, 0.5, 0.5]);
+  const [insert] = writes(calls, 'insert');
+  assert.equal(insert!.input.mode, 'box');
+  assert.deepEqual([insert!.input.x, insert!.input.y, insert!.input.w, insert!.input.h], [0.25, 0.3, 0.5, 0.5]);
 });
 
-test('Zones: a click or a tiny move drops a pin, and a table without zone columns always gets a pin', async () => {
+test('Zones: a click or a tiny move drops a pin', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} columns={zoneColumns} />, fakeRuntime(ROWS, calls));
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
   await act(async () => { controller!.setCommenting(true); });
   await settle();
   await drag(100, 50, 102, 51);
   assert.deepEqual(controller!.draftPin, { anchorKey: 'sk1', x: 0.5, y: 0.5, w: null, h: null });
   assert.equal(doc.querySelector('.nui-comment-zone[data-draft]'), null);
-
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
-  await act(async () => { controller!.setCommenting(true); });
-  await settle();
-  assert.match(doc.querySelector('.nui-comment-hint')!.textContent!, /Click where the comment goes/);
-  await drag(40, 20, 160, 90);
-  assert.deepEqual(controller!.draftPin, { anchorKey: 'sk1', x: 0.2, y: 0.2, w: null, h: null }, 'the pin goes where the press started');
 });
 
 test('Zones: a saved zone draws its rectangle beside its numbered pin', async () => {
   const rows = [row('z1', { body: 'This block', slide: 'slide-1', x: 0.1, y: 0.2, w: 0.3, h: 0.25 })];
-  await mount(<Harness {...base} columns={zoneColumns} />, fakeRuntime(rows, []));
+  await mount(<Harness {...base} />, fakeRuntime(rows, []));
   const zone = doc.querySelector('.nui-comment-zone:not([data-draft])') as HTMLElement;
   assert.equal(zone.style.width, '30%');
   assert.equal(doc.querySelector('.nui-comment-pin')!.getAttribute('aria-label'), 'Flo, on a zone: This block');
@@ -1243,100 +1297,74 @@ test('Zones: a saved zone draws its rectangle beside its numbered pin', async ()
 test('Comment on the whole item: no pin, its own heading, and no X or Y', async () => {
   const calls: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
-  await click(button('Comment on all of item 1')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on all of item 1');
+  await click(button('Comment on all of Item 1')!);
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on all of Item 1');
   assert.equal(doc.querySelector('.nui-comment-pin[data-draft]'), null);
-  assert.equal(button('Comment on all of item 1'), undefined, 'the button gives way to the new comment box');
+  assert.equal(button('Comment on all of Item 1'), undefined, 'the button gives way to the new comment box');
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Too many words on this slide');
   await key(field, 'Enter');
-  const props = calls.find(call => call.action === 'comments.insert')!.request.properties as Record<string, unknown>;
-  assert.equal(props.X, undefined);
-  assert.equal(props.Y, undefined);
-  assert.deepEqual(props.Slide, ['slide-1']);
+  const [insert] = writes(calls, 'insert');
+  assert.equal(insert!.input.mode, 'page');
+  assert.equal(insert!.input.x ?? null, null);
+  assert.equal(insert!.input.y ?? null, null);
+  assert.deepEqual(insert!.input.anchor_keys, ['sk1'], 'on the whole slide');
 });
 
 test('Comments on a whole record (no anchors): the pane starts one itself', async () => {
   const calls: Call[] = [];
   const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
-  await mount(<Harness scope={project} columns={{ scope: 'Project', anchor: null }} pins={false} />,
-    fakeRuntime([], calls));
+  await mount(<Harness scope={project} pins={false} />, fakeRuntime([], calls));
   await click(button('New comment')!);
   assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment');
   assert.equal(doc.querySelectorAll('.nui-comment-new-box').length, 1, 'the header button opens one new comment box');
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Cut the first hello');
   await key(field, 'Enter');
-  const request = calls.find(call => call.action === 'comments.insert')!.request;
-  assert.deepEqual(request.columns, { title: 'Cut the first hello' });
-  const props = request.properties as Record<string, unknown>;
-  assert.deepEqual(props.Project, ['project-1']);
-  assert.equal(props.Slide, undefined);
+  const [insert] = writes(calls, 'insert');
+  assert.equal(insert!.input.body, 'Cut the first hello');
+  assert.equal(insert!.input.page_key, 'pk1', 'on the record\'s page');
+  assert.equal(insert!.input.mode, 'page');
+  assert.deepEqual(insert!.input.anchor_keys, []);
 });
 
-// Without the host Comments panel (a host that predates it) the controller signs with the viewer's first name from the
-// host context, then "Person", then no author (SPC-267). Under the panel the panel's viewer signs (tested below).
-async function newWholeComment(runtime: NotisRuntime, body: string) {
-  const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
-  await mount(<Harness scope={project} columns={{ scope: 'Project', anchor: null }} pins={false} />,
-    { ...runtime, spaceComments: undefined } as NotisRuntime);
-  await sendWholeComment(body);
-}
+// The server signs every comment with the signed-in viewer: the pane sends no author, and shows the viewer's name on
+// the comment while it is saved.
 async function sendWholeComment(body: string) {
   await act(async () => { controller!.placePin(null, null, null); });
   await act(async () => { await controller!.sendNew(body); });
 }
-const authorsSent = (calls: Call[]) => calls.filter(call => call.action === 'comments.insert')
-  .map(call => (call.request.properties as Record<string, unknown>).Author ?? null);
 
-test('Comments are signed with the viewer\'s first name, never someone else\'s', async () => {
-  const calls: Call[] = [];
-  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie' }), 'Looks good');
-  assert.deepEqual(authorsSent(calls), ['Marie']);
-  assert.equal(controller!.me, 'Marie');
-});
-
-test('An Author choice list without the viewer\'s name signs the comment Person, then remembers it', async () => {
-  const calls: Call[] = [];
-  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie', refusedAuthors: ['Marie'] }), 'First');
-  assert.deepEqual(authorsSent(calls), ['Marie', 'Person']);
-  assert.equal(controller!.me, 'Person');
-  await sendWholeComment('Second');
-  assert.deepEqual(authorsSent(calls), ['Marie', 'Person', 'Person'], 'the next comment goes straight to the accepted author');
-});
-
-test('Under the host Comments panel the panel\'s viewer signs, never the context name or Person', async () => {
+test('The server signs: no author is sent, the panel\'s viewer shows, never the context name', async () => {
   const calls: Call[] = [];
   const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
-  await mount(<Harness scope={project} columns={{ scope: 'Project', anchor: null }} pins={false} />,
-    fakeRuntime([], calls, { viewerName: 'Marie', comments: { viewer: { name: 'Ana', canEditSpace: true } } }));
-  await sendWholeComment('Hi');
-  assert.deepEqual(authorsSent(calls), ['Ana']);
+  const runtime = fakeRuntime([], calls, { viewerName: 'Marie', comments: { viewer: { name: 'Ana', canEditSpace: true, id: 'u-ana' } } });
+  await mount(<Harness scope={project} pins={false} />, runtime);
   assert.equal(controller!.me, 'Ana');
+  await sendWholeComment('Hi');
+  const [insert] = writes(calls, 'insert');
+  assert.equal(insert!.input.body, 'Hi');
+  assert.equal('author' in insert!.input, false, 'the pane names no author');
+  assert.deepEqual(Object.keys(insert!.input).filter(name => /author|name/i.test(name)), []);
 });
 
-test('Without Person in the choice list the comment is saved with no author, and a visitor is never Flo', async () => {
+test('No viewer known yet: nothing is sent under any name', async () => {
   const calls: Call[] = [];
-  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie', refusedAuthors: ['Marie', 'Person'] }), 'Hi');
-  assert.deepEqual(authorsSent(calls), ['Marie', 'Person', null]);
-  const visitor: Call[] = [];
-  await newWholeComment(fakeRuntime([], visitor, { viewerName: null }), 'Hello');
-  assert.deepEqual(authorsSent(visitor), ['Person']);
+  const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
+  await mount(<Harness scope={project} pins={false} />, fakeRuntime([], calls, { viewerName: null }));
+  await sendWholeComment('Hello');
+  assert.deepEqual(calls, []);
 });
 
-test('Another failure is not taken for a refused name: no retry under another author', async () => {
+test('A failed send is not retried under another name, and keeps nothing half saved', async () => {
   const calls: Call[] = [];
-  await newWholeComment(fakeRuntime([], calls, { viewerName: 'Marie', fail: true }), 'Hi');
-  assert.deepEqual(authorsSent(calls), ['Marie']);
-});
-
-test('commentAuthorCandidates: a fixed name alone, else the viewer then Person within the known authors', () => {
-  assert.deepEqual(commentAuthorCandidates('Ada', 'Marie'), ['Ada']);
-  assert.deepEqual(commentAuthorCandidates(undefined, 'Marie'), ['Marie', 'Person']);
-  assert.deepEqual(commentAuthorCandidates(undefined, 'Marie', ['Flo', 'Person']), ['Person']);
-  assert.deepEqual(commentAuthorCandidates(undefined, null, ['Flo']), []);
-  assert.equal(isRefusedChoice(new Error('This choice is missing or ambiguous. Use an existing option ID.')), true);
-  assert.equal(isRefusedChoice(new Error('Network down')), false);
+  const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
+  const runtime = fakeRuntime([], calls, { fail: true });
+  await mount(<Harness scope={project} pins={false} />, runtime);
+  await sendWholeComment('Hi');
+  assert.equal(writes(calls, 'insert').length, 1);
+  assert.deepEqual(storeOf(runtime).rows, []);
+  assert.deepEqual(cards(), [], 'the draft card leaves once the send failed');
 });
 
 // ---------------------------------------------------------------------------
@@ -1346,24 +1374,21 @@ test('commentAuthorCandidates: a fixed name alone, else the viewer then Person w
 const BEFORE = 'https://files.example/native-record-files/v1/a/file.png';
 const AFTER = 'https://files.example/native-record-files/v1/b/file.png';
 
-test('Attachments: read from the files column, pictures told from files, unsafe links dropped', () => {
-  const comment = readCommentRow(row('a1', { body: 'Keep it?', files: [
-    { name: 'Before.png', url: BEFORE },
-    { name: 'After.png', file: { url: AFTER } },
-    { name: 'Notes.pdf', external: { url: 'https://files.example/notes.pdf' } },
-    'https://files.example/raw/shot.webp',
+test('Attachments: read from the store row, pictures told from files, unsafe links dropped', () => {
+  const comment = commentFromRow(row('a1', { body: 'Keep it?', files: [
+    { name: 'Before.png', url: BEFORE, type: 'image/png' },
+    { name: 'After.png', url: AFTER },
+    { name: 'Notes.pdf', url: 'https://files.example/notes.pdf', type: 'application/pdf' },
     { name: 'Bad', url: 'javascript:alert(1)' },
     { name: 'Also bad', url: '//evil.example/x.png' },
   ] }));
   assert.deepEqual(comment.attachments.map(item => [item.label, item.image]),
-    [['Before', true], ['After', true], ['Notes', false], ['shot', true]]);
+    [['Before', true], ['After', true], ['Notes', false]]);
   assert.equal(comment.attachments[1]!.url, AFTER);
-  assert.deepEqual(readCommentRow(row('a2', { body: 'x' })).attachments, [], 'a table without the column shows none');
-  assert.deepEqual(readCommentRow(row('a3', { body: 'x', files: [{ name: 'A.png', url: BEFORE }] }),
-    { columns: { attachments: null } }).attachments, []);
+  assert.deepEqual(commentFromRow(row('a2', { body: 'x' })).attachments, [], 'no files, none shown');
   assert.equal(commentAttachmentFor(' before ', comment.attachments)?.url, BEFORE, 'an option names its picture, any case');
   assert.equal(commentAttachmentFor('Notes', comment.attachments), undefined, 'only pictures answer an option');
-  const inline = readCommentRow(row('a4', { body: 'x', files: [{ name: 'Chart', url: 'data:image/svg+xml;utf8,%3Csvg%2F%3E' },
+  const inline = commentFromRow(row('a4', { body: 'x', files: [{ name: 'Chart', url: 'data:image/svg+xml;utf8,%3Csvg%2F%3E' },
     { name: 'Page', url: 'data:text/html,<script>1</script>' }] })).attachments;
   assert.deepEqual(inline.map(item => [item.label, item.image]), [['Chart', true]], 'an inline picture shows, other data does not');
 });
@@ -1421,7 +1446,7 @@ test('CommentPane: a choice is answered from under its picture or its larger vie
   await click(button('Open B larger')!);
   assert.equal(doc.querySelector('.nui-viewer img')!.getAttribute('src'), AFTER);
   await click([...doc.querySelectorAll('.nui-viewer-bar button')].find(el => el.textContent === 'B')!);
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'B');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'p2', answer: 'B' } });
   assert.equal(doc.querySelector('.nui-viewer'), null, 'answering closes the viewer');
   const chosen = doc.querySelector('.nui-comment-figure[data-chosen]')!;
   assert.equal(chosen.querySelector('img')!.getAttribute('src'), AFTER);
@@ -1432,17 +1457,17 @@ test('CommentPane: a choice is answered from under its picture or its larger vie
     options: 'A | B', files: [{ name: 'A.png', url: BEFORE }, { name: 'B.png', url: AFTER }] })], calls));
   assert.equal(doc.querySelector('.nui-comment-choices'), null, 'no empty row when every option has its picture');
   await click([...doc.querySelectorAll('.nui-comment-figure button.nui-btn')].find(el => el.textContent === 'A')!);
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'A');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'p3', answer: 'A' } });
 });
 
 test('CommentPane: a check offers the labels its author gave, and Looks good or Undo without them', async () => {
   const calls: Call[] = [];
   const rows = [row('k1', { body: 'Keep the spacing fix?', author: 'Codex', slide: 'slide-1', needs: 'check',
     options: 'Approve exact change | Hold' })];
-  await mount(<Harness {...base} authors={undefined} />, fakeRuntime(rows, calls));
+  await mount(<Harness {...base} />, fakeRuntime(rows, calls));
   assert.deepEqual([...doc.querySelectorAll('.nui-comment-choices button')].map(el => el.textContent), ['Approve exact change', 'Hold']);
   await click(button('Hold')!);
-  assert.equal((calls.at(-1)!.request.properties as Record<string, unknown>).Answer, 'Hold');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'k1', answer: 'Hold' } });
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
   assert.deepEqual([...doc.querySelectorAll('[data-thread="c2"] .nui-comment-choices button')].map(el => el.textContent),
     ['Looks good', 'Undo']);
@@ -1468,18 +1493,16 @@ test('Replies show their pictures and links too, and French words', async () => 
 const SIGNED = 'https://db.example.supabase.co/storage/v1/object/sign/app-code/native-files/v1/x/y/file.png?token=t';
 const STORED = 'https://db.example.supabase.co/storage/v1/object/authenticated/app-code/native-files/v1/x/y/file.png';
 
-interface FakeFiles extends SpaceFilesTransport { uploads: SpaceFileUploadInput[]; checks: string[][] }
+/** The host's comment file upload (`spaceComments.upload`), with every upload it was asked for. */
+interface FakeFiles {
+  uploads: Array<{ file: Blob; name?: string }>;
+  upload: NonNullable<SpaceCommentsTransport['upload']>;
+}
 
-function fakeFiles(behaviour: { fail?: SpaceFileError; failOnce?: SpaceFileError; checkFail?: SpaceFileError; hold?: boolean } = {}): FakeFiles {
-  const uploads: SpaceFileUploadInput[] = [];
-  const checks: string[][] = [];
+function fakeFiles(behaviour: { fail?: SpaceFileError; failOnce?: SpaceFileError; hold?: boolean } = {}): FakeFiles {
+  const uploads: FakeFiles['uploads'] = [];
   return {
-    uploads, checks,
-    async check(database, column) {
-      checks.push([database, column]);
-      if (behaviour.checkFail) throw behaviour.checkFail;
-      return { available: true, maxBytes: 8 * 1024 * 1024, extensions: ['png', 'pdf'] };
-    },
+    uploads,
     async upload(input) {
       uploads.push(input);
       input.onProgress?.(0, input.file.size);
@@ -1487,17 +1510,19 @@ function fakeFiles(behaviour: { fail?: SpaceFileError; failOnce?: SpaceFileError
       if (behaviour.fail) throw behaviour.fail;
       if (behaviour.failOnce && uploads.length === 1) throw behaviour.failOnce;
       const name = input.name ?? 'file';
-      return { file: { name, url: STORED.replace('file.png', `file.${name.split('.').pop()}`) }, previewUrl: SIGNED,
-        sizeBytes: input.file.size, contentType: input.file.type, sha256: 'a'.repeat(64), requestId: 'r' };
+      const path = `comments/${name}`;
+      return { path, name, url: STORED.replace('file.png', `file.${name.split('.').pop()}`), previewUrl: SIGNED,
+        size: input.file.size, type: input.file.type };
     },
   };
 }
 
-/** Rows of a Comments table that has the Attachments files column. */
-const FILE_ROWS = ROWS.map(item => ({ ...item, properties: { ...(item.properties as object), Attachments: { type: 'files', files: [] } } }));
-
-function withFiles(runtime: NotisRuntime, files: SpaceFilesTransport | undefined): NotisRuntime {
-  return { ...runtime, spaceFiles: files } as NotisRuntime;
+/** The runtime with the host's comment upload (none: comments take text only). */
+function withFiles(runtime: NotisRuntime, files: FakeFiles | undefined): NotisRuntime {
+  const extra = (runtime as unknown as { commentsExtra?: Partial<SpaceCommentsTransport> }).commentsExtra;
+  const next = { ...runtime, commentsExtra: { ...extra, ...(files ? { upload: files.upload, maxFileBytes: 8 * 1024 * 1024 } : {}) } } as NotisRuntime;
+  STORES.set(next, storeOf(runtime));
+  return next;
 }
 
 const picture = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'image.png', { type: 'image/png' });
@@ -1535,7 +1560,7 @@ async function openNewBox() {
 test('Drafts outlive the pane: a new comment with its picture, a reply and an answer come back after the page leaves', async () => {
   const calls: Call[] = [];
   const files = fakeFiles();
-  const rows = [...FILE_ROWS, row('ask', { body: 'Which label?', author: 'Claude', slide: 'slide-1', thread: 'c1', needs: 'input',
+  const rows = [...ROWS, row('ask', { body: 'Which label?', author: 'Claude', slide: 'slide-1', thread: 'c1', needs: 'input',
     createdAt: '2026-10-21T11:00:00.000Z' })];
   const runtime = withFiles(fakeRuntime(rows, calls), files);
   await mount(<Harness {...base} />, runtime);
@@ -1552,7 +1577,7 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'the page is gone');
   await rerender(<Harness {...base} />, runtime);
   assert.equal((doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement).value, 'Half a new comment');
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on item 1', 'its pin came back too');
+  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on Item 1', 'its pin came back too');
   const chip = doc.querySelector('.nui-comment-new-box .nui-comment-file')!;
   assert.equal(chip.getAttribute('data-state'), 'ready', 'the uploaded picture is still attached');
   assert.equal(files.uploads.length, 1, 'and not uploaded again');
@@ -1567,7 +1592,8 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   await rerender(<Harness {...base} />, runtime);
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'a cancelled new comment stays gone');
   assert.equal(reply().value, '', 'a sent reply is not brought back');
-  assert.equal(answer().value, 'Half an answer');
+  assert.equal(answer(), null, 'the reply answered the thread\'s open ask (answer_to): its own field is gone');
+  assert.equal(writes(calls, 'reply')[0]!.input.answer_to, 'ask');
   await act(async () => { controller!.placePin('sk1', 0.2, 0.2); });
   assert.equal((doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement).value, '', 'a new comment starts empty');
   assert.equal(doc.querySelector('.nui-comment-new-box .nui-comment-file'), null);
@@ -1575,7 +1601,7 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
 
 test('Drafts on two pages keep their own files when the mounted box moves from one page to the other', async () => {
   const files = fakeFiles();
-  const runtime = withFiles(fakeRuntime(FILE_ROWS, []), files);
+  const runtime = withFiles(fakeRuntime(ROWS, []), files);
   const pageA = base;
   const pageB = { ...base, scope: { ...scope, id: 'deck-2', recordKey: 'dk2' } };
   const chipNames = () => [...doc.querySelectorAll('.nui-comment-new-box .nui-comment-file-name')].map(el => el.textContent);
@@ -1601,15 +1627,12 @@ test('Drafts on two pages keep their own files when the mounted box moves from o
 test('Attach: a pasted picture uploads at once, shows as a chip and is saved in Attachments with the comment', async () => {
   const calls: Call[] = [];
   const files = fakeFiles();
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls), files));
-  assert.equal(controller!.attach, 'on', 'the rows show the column: no check request');
-  assert.equal(files.checks.length, 0);
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, calls), files));
+  assert.equal(controller!.attach, 'on', 'the host uploads comment files');
   const field = await openNewBox();
   const event = await paste(field, [picture()]);
   assert.equal(event.defaultPrevented, true, 'a pasted picture is not pasted as text');
   assert.equal(files.uploads.length, 1);
-  assert.equal(files.uploads[0]!.database, 'comments');
-  assert.equal(files.uploads[0]!.column, 'Attachments');
   assert.match(files.uploads[0]!.name!, /^pasted-.*\.png$/, 'a pasted "image.png" gets a dated name');
   const chip = doc.querySelector('.nui-comment-new-box .nui-comment-file')!;
   assert.equal(chip.getAttribute('data-state'), 'ready');
@@ -1617,30 +1640,35 @@ test('Attach: a pasted picture uploads at once, shows as a chip and is saved in 
   assert.ok(button(`Remove ${files.uploads[0]!.name}`), 'each chip has its remove control');
   await type(field, 'Like this');
   await key(field, 'Enter');
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  const props = insert.request.properties as Record<string, unknown>;
-  assert.deepEqual(props.Attachments, [{ name: files.uploads[0]!.name, url: STORED }]);
-  assert.deepEqual(insert.request.columns, { title: 'Like this' });
+  const [insert] = writes(calls, 'insert');
+  const name = files.uploads[0]!.name!;
+  assert.deepEqual(insert!.input.attachments, [{ path: `comments/${name}`, name, type: 'image/png', size: 4, url: STORED }]);
+  assert.equal(insert!.input.body, 'Like this');
   assert.equal(doc.querySelector('.nui-comment-new-box'), null);
 });
 
 test('Attach: a picture alone can be sent, and the sent draft shows it before the rows come back', async () => {
   const calls: Call[] = [];
   const files = fakeFiles();
-  const runtime = withFiles(fakeRuntime(FILE_ROWS, calls), files);
+  const runtime = withFiles(fakeRuntime(ROWS, calls), files);
   await mount(<Harness {...base} />, runtime);
   const field = await openNewBox();
   await paste(field, [picture()]);
+  const held = storeOf(runtime).hold('insert');
   await click(button('Send')!);
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  assert.deepEqual(insert.request.columns, { title: '' });
+  const [insert] = writes(calls, 'insert');
+  assert.equal(insert!.input.body, '');
+  assert.equal((insert!.input.attachments as unknown[]).length, 1);
   assert.equal(doc.querySelector('.nui-comment-thumb img')!.getAttribute('src'), SIGNED, 'the draft shows the signed preview');
+  held.release();
+  await settle();
+  assert.equal(doc.querySelector('.nui-comment-thumb img')!.getAttribute('src'), STORED, 'then the stored comment');
 });
 
 test('Attach: files dropped on a reply and picked with the paperclip upload and go with the reply', async () => {
   const calls: Call[] = [];
   const files = fakeFiles();
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls), files));
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, calls), files));
   const box = doc.querySelector('[data-thread="c1"] .nui-comment-compose-box')!;
   await drop(box, [pdf()]);
   assert.equal(files.uploads.length, 1);
@@ -1658,16 +1686,16 @@ test('Attach: files dropped on a reply and picked with the paperclip upload and 
   const field = box.querySelector('textarea') as HTMLTextAreaElement;
   await type(field, 'The brief');
   await key(field, 'Enter');
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  assert.deepEqual((insert.request.properties as Record<string, unknown>).Attachments,
-    [{ name: 'brief.pdf', url: STORED.replace('file.png', 'file.pdf') }]);
-  assert.equal((insert.request.properties as Record<string, unknown>).Thread, 'c1');
+  const [reply] = writes(calls, 'reply');
+  assert.deepEqual(reply!.input.attachments, [{ path: 'comments/brief.pdf', name: 'brief.pdf', type: 'application/pdf', size: 4,
+    url: STORED.replace('file.png', 'file.pdf') }]);
+  assert.equal(reply!.input.root_id, 'c1');
 });
 
 test('Attach: a failed upload keeps the text and the chip, says why in EN and FR, and holds Send until it is retried or removed', async () => {
   const calls: Call[] = [];
   const failing = fakeFiles({ fail: new SpaceFileError('too big', 'space_file_too_large', 413) });
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls), failing));
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, calls), failing));
   const field = await openNewBox();
   await type(field, 'Keep me');
   await paste(field, [pdf()]);
@@ -1682,7 +1710,7 @@ test('Attach: a failed upload keeps the text and the chip, says why in EN and FR
   assert.equal(calls.length, 0);
 
   const lost = fakeFiles({ failOnce: new SpaceFileError('offline', 'space_file_offline') });
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, []), lost));
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, []), lost));
   const again = await openNewBox();
   await paste(again, [pdf()]);
   assert.equal(doc.querySelector('.nui-comment-file')!.getAttribute('data-state'), 'failed');
@@ -1691,7 +1719,7 @@ test('Attach: a failed upload keeps the text and the chip, says why in EN and FR
   assert.equal(doc.querySelector('.nui-comment-file')!.getAttribute('data-state'), 'ready', 'a lost upload goes through on Try again');
   assert.equal(lost.uploads.length, 2);
 
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, [], { locale: 'fr' }), fakeFiles({
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, [], { locale: 'fr' }), fakeFiles({
     fail: new SpaceFileError('nope', 'space_file_type_unsupported', 415) })), 'fr');
   const champ = await openNewBox();
   await paste(champ, [pdf()]);
@@ -1700,20 +1728,58 @@ test('Attach: a failed upload keeps the text and the chip, says why in EN and FR
 
 test('Attach: a save that fails after the upload keeps the text and the files for another try', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, calls, { fail: true }), fakeFiles()));
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, calls, { fail: true }), fakeFiles()));
   const field = await openNewBox();
   await type(field, 'Try me');
   await paste(field, [pdf()]);
   await key(field, 'Enter');
-  assert.ok(calls.find(call => call.action === 'comments.insert'));
+  assert.equal(writes(calls, 'insert').length, 1);
   assert.match(doc.body.textContent!, /Could not save that change/);
   const kept = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   assert.equal(kept.value, 'Try me');
   assert.equal(doc.querySelectorAll('.nui-comment-new-box .nui-comment-file[data-state="ready"]').length, 1);
 });
 
+test('Send empties the box at once: the text never shows twice while the store answers (SPC-037)', async () => {
+  const calls: Call[] = [];
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness {...base} anchorKey="sk2" />, runtime);
+  const insert = storeOf(runtime).hold('insert');
+  const field = await openNewBox();
+  await type(field, 'Bigger title');
+  await key(field, 'Enter');
+  assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'the box goes while the new comment is saved');
+  await act(async () => { insert.release(); });
+  await settle();
+  assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'and stays gone once it is saved');
+  assert.equal(storeOf(runtime).rows.filter(item => item.body === 'Bigger title').length, 1);
+
+  await pickFilter('done');
+  const reply = storeOf(runtime).hold('reply');
+  const replyField = doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement;
+  await type(replyField, 'Not quite');
+  await key(replyField, 'Enter');
+  assert.equal((doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement).value, '',
+    'the reply box empties while the reply is saved');
+  await act(async () => { reply.release(); });
+  await settle();
+  assert.equal((doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement).value, '');
+});
+
+test('A reply that fails to save comes back in its box', async () => {
+  const runtime = fakeRuntime(ROWS, []);
+  await mount(<Harness {...base} anchorKey="sk2" />, runtime);
+  await pickFilter('done');
+  storeOf(runtime).fail('reply');
+  const field = doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement;
+  await type(field, 'Not quite');
+  await key(field, 'Enter');
+  await settle();
+  assert.equal((doc.querySelector('[data-thread="c4"] textarea') as HTMLTextAreaElement).value, 'Not quite');
+});
+
 test('Attach: Send waits while a file uploads', async () => {
-  await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, []), fakeFiles({ hold: true })));
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, []), fakeFiles({ hold: true })));
   const field = await openNewBox();
   await type(field, 'Wait');
   await paste(field, [pdf()]);
@@ -1722,68 +1788,41 @@ test('Attach: Send waits while a file uploads', async () => {
   assert.equal(button('Send')!.disabled, true);
 });
 
-test('Attach: text only without the Attachments column, without a host transport, and after a refused check', async () => {
-  const warnings: unknown[][] = [];
-  const warn = console.warn;
-  console.warn = (...args: unknown[]) => { warnings.push(args); };
-  try {
-    const files = fakeFiles();
-    await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, []), files));
-    assert.equal(controller!.attach, 'off', 'the rows show no Attachments column');
-    assert.equal(button('Attach pictures or files'), undefined);
-    assert.ok(warnings.some(args => /no files column named "Attachments"/.test(String(args[0]))), 'the developer is told');
-    const field = await openNewBox();
-    const event = await paste(field, [picture()]);
-    assert.equal(event.defaultPrevented, false, 'a text-only pane leaves the paste to the browser');
-    assert.equal(files.uploads.length, 0);
+test('Attach: text only without the host\'s upload (a Site, a preview or an older host)', async () => {
+  await mount(<Harness {...base} />, withFiles(fakeRuntime(ROWS, []), undefined));
+  assert.equal(controller!.attach, 'off', 'nothing to upload with');
+  assert.equal(button('Attach pictures or files'), undefined);
+  const field = await openNewBox();
+  const event = await paste(field, [picture()]);
+  assert.equal(event.defaultPrevented, false, 'a text-only pane leaves the paste to the browser');
+  assert.equal(button('Attach pictures or files'), undefined);
 
-    await mount(<Harness {...base} />, withFiles(fakeRuntime(FILE_ROWS, []), undefined));
-    assert.equal(controller!.attach, 'off', 'a Site, a preview or an older host uploads nothing');
-    assert.equal(button('Attach pictures or files'), undefined);
-
-    const refused = fakeFiles({ checkFail: new SpaceFileError('no column', 'space_file_column_missing', 409) });
-    await mount(<Harness {...base} />, withFiles(fakeRuntime([], []), refused));
-    assert.deepEqual(refused.checks, [['comments', 'Attachments']], 'an empty table asks the host once');
-    assert.equal(controller!.attach, 'off');
-
-    const empty = fakeFiles();
-    await mount(<Harness {...base} />, withFiles(fakeRuntime([], []), empty));
-    assert.equal(controller!.attach, 'on');
-    assert.ok(button('Attach pictures or files') === undefined, 'no box is open yet');
-    await openNewBox();
-    assert.ok(button('Attach pictures or files'));
-  } finally {
-    console.warn = warn;
-  }
+  const files = fakeFiles();
+  await mount(<Harness {...base} />, withFiles(fakeRuntime([], []), files));
+  assert.equal(controller!.attach, 'on', 'with the upload, an empty Space takes files too');
+  assert.ok(button('Attach pictures or files') === undefined, 'no box is open yet');
+  await openNewBox();
+  assert.ok(button('Attach pictures or files'));
 });
 
 test('Attach: an expired picture address reads the comments again, at most twice a minute', async () => {
-  let reads = 0;
   const runtime = withFiles(fakeRuntime([row('e1', { body: 'Look', slide: 'slide-1', files: [{ name: 'a.png', url: SIGNED }] })], []), fakeFiles());
-  const shown = runtime.shown!.bind(runtime);
-  (runtime as { shown: typeof shown }).shown = async (...args: Parameters<typeof shown>) => { reads += 1; return shown(...args); };
   await mount(<Harness {...base} />, runtime);
-  const before = reads;
+  const before = storeOf(runtime).reads();
   const img = doc.querySelector('.nui-comment-thumb img')!;
   await act(async () => { img.dispatchEvent(new dom.window.Event('error')); });
   await settle();
   await act(async () => { img.dispatchEvent(new dom.window.Event('error')); });
   await settle();
-  assert.equal(reads - before, 1);
+  assert.equal(storeOf(runtime).reads() - before, 1);
 });
 
-test('The pane draws in the host Comments panel, and a SidePane given it shows its page alone', async () => {
-  function InSidePane(props: UseCommentsOptions) {
-    controller = useComments(props);
-    return <ui.SidePane pane={<CommentPane controller={controller} />}><p className="page">Slide</p></ui.SidePane>;
-  }
-  await mount(<InSidePane {...base} />, fakeRuntime(ROWS, []));
+test('The pane draws in the host Comments panel, never inside the Space', async () => {
+  await mount(<Harness {...base} pins={false} />, fakeRuntime(ROWS, []));
   const panel = doc.getElementById('panel')!;
   const app = doc.getElementById('app')!;
   assert.ok(panel.querySelector('.nui-comment-pane'), 'the threads sit in the host panel');
-  assert.equal(app.querySelector('.nui-comment-pane'), null, 'nothing of the pane inside the Space');
-  assert.equal(app.querySelector('.nui-side-pane-aside'), null, 'no empty column beside the page');
-  assert.ok(app.querySelector('.nui-side-pane-main .page'));
+  assert.equal(app.querySelector('.nui-comment-pane') === null, true, 'nothing of the pane inside the Space');
 });
 
 test('Comments off for the viewer (no host panel): no pane, no pins, no Comment button', async () => {
@@ -1799,7 +1838,6 @@ test('Comments off for the viewer (no host panel): no pane, no pins, no Comment 
 // ---------------------------------------------------------------------------
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const props = (call: Call | undefined) => (call?.request.properties ?? {}) as Record<string, unknown>;
 const pinTexts = () => [...doc.querySelectorAll('.nui-comment-pin:not([data-draft])')].map(pin => pin.textContent);
 
 test('Author is the signed-in viewer under the host: Send waits until the viewer is known, never a fallback name', async () => {
@@ -1812,7 +1850,7 @@ test('Author is the signed-in viewer under the host: Send waits until the viewer
   await type(field, 'Hello');
   assert.equal(button('Send')!.disabled, true, 'Send stays off while the viewer is unknown');
   await key(field, 'Enter');
-  assert.equal(calls.filter(call => call.action === 'comments.insert').length, 0, 'nothing is sent as Flo');
+  assert.equal(writes(calls, 'insert').length, 0, 'nothing is sent as Flo');
 
   const named: Call[] = [];
   await mount(<Harness {...base} me="Flo" />, fakeRuntime(ROWS, named, { comments: { viewer: { name: 'Ana', canEditSpace: true } } }));
@@ -1823,7 +1861,9 @@ test('Author is the signed-in viewer under the host: Send waits until the viewer
   const next = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(next, 'Hello');
   await key(next, 'Enter');
-  assert.equal(props(named.find(call => call.action === 'comments.insert')).Author, 'Ana', 'the viewer, not the me option');
+  const [insert] = writes(named, 'insert');
+  assert.ok(insert, 'sent once the viewer is known');
+  assert.equal('author' in insert!.input, false, 'the server signs it with the viewer, never the me option');
 });
 
 test('Goes to: a failed links read is tried again, and a late answer is kept after the host hands a new transport', async () => {
@@ -1910,6 +1950,91 @@ test('Goes to: names nothing while it loads, and a page shown again names its th
   assert.ok(line('c1').hasAttribute('data-loading'), 'another viewer reads their own');
 });
 
+test('Goes to: a failed best match names nothing and the To chip asks to choose, never "a new thread" (SPC-467)', async () => {
+  let fail = true;
+  const comments: Partial<SpaceCommentsTransport> = {
+    links: async () => ({ c1: [{ threadId: 't-1', title: 'Deck polish' }] }),
+    bestMatch: async () => { if (fail) throw new Error('57014'); return { threadId: 't-best', title: 'Q4 deck' }; },
+    pickThread: async () => null,
+    link: async () => null,
+  };
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
+    await settle();
+    const line = (key: string) => doc.querySelector(`[data-thread="${key}"] [data-part="goes-to"]`);
+    assert.match(line('c1')!.textContent!, /^Thread Deck polish/, 'a linked thread still names its link');
+    assert.equal(line('c2'), null, 'no link and no best match read: no line, never "a new thread"');
+    assert.equal(controller!.routing.lost?.('c2'), true);
+    await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+    await settle();
+    const chip = doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!;
+    assert.match(chip.textContent!, /^Choose a thread$/, 'the chip offers the picker without naming a thread');
+    await act(async () => { controller!.cancelPin(); });
+  } finally {
+    console.warn = warn;
+  }
+  // The page shown again: the best match answers this time and is named.
+  fail = false;
+  await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
+  await settle();
+  assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /^Goes to Q4 deck/);
+});
+
+test('Goes to: links that keep failing name nothing once given up, never "a new thread" (SPC-467)', async () => {
+  const comments: Partial<SpaceCommentsTransport> = {
+    links: async () => { tries += 1; throw new Error('57014'); },
+    bestMatch: async () => null,
+  };
+  let tries = 0;
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
+    // Tried 4 times (1.5 s, 3 s and 6 s apart), then given up.
+    for (let i = 0; i < 12; i += 1) await act(async () => { await sleep(1_000); });
+    assert.equal(tries, 4);
+    await settle();
+    assert.equal(doc.querySelector('[data-thread="c1"] [data-part="goes-to"]'), null);
+    assert.equal(controller!.routing.lost?.('c1'), true);
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test('Goes to: the agent thread a reply wakes is named ahead of the links, but it is no link (SPC-467)', async () => {
+  const linked: unknown[] = [];
+  const picks: Array<string | null> = [];
+  const comments: Partial<SpaceCommentsTransport> = {
+    links: async () => ({
+      c1: [{ threadId: 't-agent', title: 'Desk work', subagent: 'desk', via: 'replied' }],
+      c2: [{ threadId: 't-start', title: 'Agent work', via: 'started' }, { threadId: 't-1', title: 'Deck polish' }],
+    }),
+    bestMatch: async () => ({ threadId: 't-best', title: 'Q4 deck' }),
+    pickThread: async input => { picks.push(input.current ?? null); return { threadId: 't-2', title: 'Chart work' }; },
+    link: async input => { linked.push(input); return { threadId: 't-2', title: 'Chart work' }; },
+  };
+  await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
+  await settle();
+  const line = (key: string) => doc.querySelector(`[data-thread="${key}"] [data-part="goes-to"]`)!;
+  assert.match(line('c1').textContent!, /^Goes to Desk work/, 'the replying agent\'s thread, not the best match');
+  assert.deepEqual(controller!.routing.linksOf('c1'), [], 'it is no link');
+  assert.match(line('c2').textContent!, /^Goes to Agent work/, 'the first comment\'s agent wins over the link');
+  assert.deepEqual(controller!.routing.linksOf('c2').map(ref => ref.threadId), ['t-1']);
+  // Change on c1 links a thread: a link beats the agent that only replied.
+  await click(line('c1').querySelector('.nui-comment-goes-change')!);
+  await settle();
+  assert.deepEqual(picks, [null], 'the picker marks no link as current');
+  assert.match(line('c1').textContent!, /^Thread Chart work/);
+  // Change on c2: the first comment's agent still takes replies.
+  await click(line('c2').querySelector('.nui-comment-goes-change')!);
+  await settle();
+  assert.deepEqual(picks, [null, 't-1']);
+  assert.match(line('c2').textContent!, /^Goes to Agent work/);
+  assert.deepEqual(controller!.routing.linksOf('c2').map(ref => ref.threadId), ['t-2', 't-1']);
+});
+
 test('Goes to: a pending thread reads "a new <harness> thread" and opens nothing', async () => {
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => ({ c1: [{ threadId: null, title: '', harness: 'claude', status: 'pending' }] }),
@@ -1931,10 +2056,25 @@ test('Older Spaces keep working: deleting, cancelDelete, confirmDelete and the r
   const reply = controller!.threads.find(thread => thread.root.recordKey === 'c1')!.replies[0]!;
   await act(async () => { legacy.confirmDelete(reply); });
   await settle();
-  assert.equal(calls.at(-1)!.request.record_key, 'r1');
-  assert.equal(status(calls.at(-1)), 'Deleted', 'confirmDelete deletes at once');
+  assert.deepEqual(calls.at(-1), { op: 'remove', input: { id: 'r1' } }, 'confirmDelete deletes at once');
   await act(async () => { controller!.setStatusFilter('resolved'); });
   assert.equal(controller!.statusFilter, 'done');
+});
+
+test('A Space built for the Comments database still works: useComments({ database: \'comments\' }) reads and writes the store', async () => {
+  const calls: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
+  const today = controller!.threads.map(thread => thread.root.recordKey);
+  const old = { ...base, database: 'comments', list: 'comments', me: 'Flo', authors: ['Flo', 'Notis'], fallbackAuthor: 'Notis',
+    columns: { scope: 'Deck', anchor: 'Slide' }, pageSize: 50 } as UseCommentsOptions;
+  const runtime = fakeRuntime(ROWS, calls);
+  await mount(<Harness {...old} />, runtime);
+  assert.deepEqual(controller!.threads.map(thread => thread.root.recordKey), today, 'the same threads, from the store');
+  assert.ok(storeOf(withHostPanel(runtime)).reads() > 0, 'read through the comment store');
+  const c2 = controller!.threads.find(thread => thread.root.recordKey === 'c2')!.root;
+  await act(async () => { controller!.actions.archive(c2); });
+  await settle();
+  assert.deepEqual(calls, [{ op: 'archive', input: { root_id: 'c2' } }], 'written to the store, never as a Space action');
 });
 
 test('On a touch screen a delete\'s Undo toast stays 8 seconds, or until dismissed; desktop keeps 6 seconds', async () => {
@@ -1971,50 +2111,30 @@ test('On a touch screen a delete\'s Undo toast stays 8 seconds, or until dismiss
   }
 });
 
-test('Deleting a thread where one row fails: one outcome, and Undo still brings back what was deleted', async () => {
+test('A delete the store refuses: the thread comes back, the pane says so, and nothing is restored', async () => {
   const calls: Call[] = [];
-  const plain = fakeRuntime(ROWS, calls);
-  const runtime = {
-    ...plain,
-    callAction: async (action: string, input: { request: Record<string, unknown> }) => {
-      if (input.request.record_key === 'r1' && status({ action, request: input.request }) === 'Deleted') {
-        calls.push({ action, request: input.request });
-        throw new Error('nope');
-      }
-      return (plain.callAction as (a: string, i: unknown) => Promise<unknown>)(action, input);
-    },
-  } as unknown as NotisRuntime;
+  const runtime = fakeRuntime(ROWS, calls);
   await mount(<Harness {...base} />, runtime);
+  storeOf(runtime).fail('remove', 'comment_forbidden');
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
-  assert.match(doc.body.textContent!, /Some comments could not be deleted/);
-  assert.ok(toastUndo(), 'Undo stays for the rows that were deleted');
-  const before = calls.length;
-  await click(toastUndo()!);
-  assert.deepEqual(calls.slice(before).map(call => [call.request.record_key, status(call)]), [['c1', 'Open']],
-    'only the deleted root comes back');
+  await settle();
+  assert.deepEqual(cards(), ['c2', 'c1'], 'the thread is back');
+  assert.match(doc.body.textContent!, /Could not save that change/);
+  assert.deepEqual(calls.map(call => call.op), ['remove'], 'one delete, nothing to restore');
 });
 
-test('Undo right after a write waits for it and sends its revision; Z still undoes after the card left', async () => {
+test('Undo right after a write waits for it; Z still undoes after the card left', async () => {
   const calls: Call[] = [];
-  const plain = fakeRuntime(ROWS, calls);
-  const waiting: Array<() => void> = [];
-  let hold = true;
-  const runtime = {
-    ...plain,
-    callAction: async (action: string, input: unknown) => {
-      if (hold) await new Promise<void>(resolve => waiting.push(resolve));
-      return (plain.callAction as (a: string, i: unknown) => Promise<unknown>)(action, input);
-    },
-  } as unknown as NotisRuntime;
+  const runtime = fakeRuntime(ROWS, calls);
   await mount(<Harness {...base} />, runtime);
+  const held = storeOf(runtime).hold('archive');
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Archive the comment thread: "]')!);
   await click(toastUndo()!);
-  assert.equal(waiting.length, 1, 'the Undo waits for the archive to be saved');
-  hold = false;
-  await act(async () => { waiting.shift()!(); });
+  assert.deepEqual(calls.map(call => call.op), ['archive'], 'the Undo waits for the archive to be saved');
+  await act(async () => { held.release(); });
   await settle();
-  assert.deepEqual(calls.map(call => [status(call), call.request.expected_revision]), [['Resolved', 1], ['Open', 2]],
-    'the Undo sends the revision the archive returned');
+  assert.deepEqual(calls.map(call => call.op), ['archive', 'unarchive'], 'then it is sent');
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c1')!.status, 'open');
 
   const later: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime(ROWS, later));
@@ -2023,9 +2143,7 @@ test('Undo right after a write waits for it and sends its revision; Z still undo
   await key(first, 'e');
   assert.equal(doc.activeElement?.getAttribute('data-thread'), 'c1', 'focus moves to the card now in its place');
   await key(doc.activeElement!, 'z');
-  assert.equal(later.at(-1)!.request.record_key, 'c2');
-  assert.equal(status(later.at(-1)), 'Open', 'Z undoes');
-  assert.equal(later.at(-1)!.request.expected_revision, 2);
+  assert.deepEqual(later.at(-1), { op: 'unarchive', input: { root_id: 'c2' } }, 'Z undoes');
 });
 
 test('The To chip: "To a new thread" without a best match, clickable at any time; cancel forgets the pick; Esc puts @ back', async () => {
@@ -2137,6 +2255,89 @@ test('At 390 px the point tool bar sits above the card, which moves down to make
     'the card moves down by the room the bar measured');
   assert.match(block('(hover: none), (max-width: 767px)'), /\.nui-comment-hint-cancel \{ display: none; \}/,
     'Esc cancels is hidden on narrow screens too, not only on touch ones');
+  assert.match(phone, /\.nui-comment-toolbar\[data-place="overlay"\]\[data-lifted\] \{ position: fixed; bottom: auto; \}/,
+    'the lifted bar is fixed where the script puts it');
+  assert.match(phone, /:has\(> \.nui-comment-toolbar-slot\[data-place="overlay"\]\) \{ margin-top: var\(--nui-comment-toolbar-room, 46px\); \}/,
+    'the card keeps its room for the lifted bar too');
+});
+
+test('At 390 px the overlay tool bar draws in the layer root, so a card that clips its overflow never hides it (SPC-464)', async () => {
+  const win = dom.window as unknown as { matchMedia?: (query: string) => unknown };
+  const before = win.matchMedia;
+  win.matchMedia = query => ({ matches: query === '(max-width: 480px)', media: query, addEventListener() {}, removeEventListener() {} });
+  const rect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    const box = rect.call(this);
+    if (this.classList.contains('nui-comment-toolbar')) {
+      return { x: 0, y: 0, top: 0, left: 0, right: 200, bottom: 37.5, width: 200, height: 37.5, toJSON: () => ({}) } as DOMRect;
+    }
+    if (this.classList.contains('card')) {
+      return { x: 16, y: 120, top: 120, left: 16, right: 374, bottom: 520, width: 358, height: 400, toJSON: () => ({}) } as DOMRect;
+    }
+    return box;
+  };
+  function Clipped() {
+    controller = useComments({ ...base, modes: ['point'] });
+    return (
+      <div>
+        <div className="card" style={{ position: 'relative', overflow: 'hidden' }}>
+          <CommentPins controller={controller} />
+          <ui.CommentToolBar controller={controller} />
+        </div>
+        <CommentPane controller={controller} />
+      </div>
+    );
+  }
+  try {
+    await mount(<Clipped />, fakeRuntime(ROWS, []));
+    await key(doc.body, 'c');
+    await act(async () => { controller!.startMode('point'); });
+    await settle();
+    const card = doc.querySelector('.card') as HTMLElement;
+    const bar = doc.querySelector('.nui-comment-toolbar') as HTMLElement;
+    assert.ok(bar, 'the bar shows');
+    assert.equal(card.contains(bar), false, 'the bar is not inside the card that clips');
+    assert.equal(bar.parentElement, doc.body, 'it draws in the layer root (the page body outside a shadow root)');
+    assert.ok(bar.hasAttribute('data-lifted'));
+    assert.equal(bar.getAttribute('data-place'), 'overlay');
+    assert.ok(card.querySelector(':scope > .nui-comment-toolbar-slot[data-place="overlay"]'), 'an empty slot keeps the card\'s room');
+    assert.equal(card.style.getPropertyValue('--nui-comment-toolbar-room'), '46px', 'the card still moves down by the bar\'s room');
+    assert.equal(bar.style.top, '74.5px', '8 px above the card\'s top edge');
+    assert.equal(bar.style.left, '16px', 'from the card\'s left edge');
+    assert.equal(bar.style.maxWidth, '358px', 'never wider than the card');
+    assert.notEqual(bar.style.visibility, 'hidden', 'nothing covers the card: the bar shows');
+    // A host sheet (the Comments panel on a phone) opens over the card: the bar hides instead of floating over it.
+    const sheet = doc.createElement('aside');
+    doc.body.appendChild(sheet);
+    const docWithHit = doc as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const hadHit = Object.prototype.hasOwnProperty.call(docWithHit, 'elementFromPoint');
+    let hit: Element = card;
+    docWithHit.elementFromPoint = () => hit;
+    try {
+      hit = sheet;
+      await act(async () => { dom.window.dispatchEvent(new dom.window.Event('resize')); });
+      assert.equal(bar.style.visibility, 'hidden', 'covered by the host sheet: hidden');
+      assert.equal(bar.style.top, '74.5px', 'it keeps its place');
+      hit = card.querySelector('.nui-comment-toolbar-slot') ?? card;
+      await act(async () => { dom.window.dispatchEvent(new dom.window.Event('resize')); });
+      assert.notEqual(bar.style.visibility, 'hidden', 'the sheet closed: the bar shows again');
+    } finally {
+      if (hadHit) docWithHit.elementFromPoint = undefined; else delete docWithHit.elementFromPoint;
+      sheet.remove();
+    }
+    // Its keys work as before: Escape cancels the mode, then closes the bar; C shows it again.
+    await key(doc.body, 'Escape');
+    assert.equal(controller!.commentMode, null);
+    await key(doc.body, 'Escape');
+    assert.equal(doc.querySelector('.nui-comment-toolbar'), null);
+    assert.equal(card.querySelector('.nui-comment-toolbar-slot'), null, 'the slot goes with the bar');
+    assert.equal(card.style.getPropertyValue('--nui-comment-toolbar-room'), '', 'and so does the room');
+    await key(doc.body, 'c');
+    assert.ok(doc.querySelector('.nui-comment-toolbar[data-lifted]'), 'C shows it again in the layer root');
+  } finally {
+    dom.window.HTMLElement.prototype.getBoundingClientRect = rect;
+    win.matchMedia = before;
+  }
 });
 
 test('Scope chips count the threads of the status filter, and the scope reads All items', async () => {
@@ -2177,79 +2378,64 @@ test('On a phone, starting a mode that points at the page asks the host to show 
   }
 });
 
-test('An input ask is answered from its own field, and the answer goes back as a reply', async () => {
+test('An input ask is answered from its own field, and the answer goes back as one reply naming its ask', async () => {
   const calls: Call[] = [];
   const rows = [row('i1', { body: 'Which title do you want?', author: 'Claude', slide: 'slide-1', needs: 'input',
     createdAt: '2026-10-21T09:00:00.000Z' })];
-  await mount(<Harness {...base} />, fakeRuntime(rows, calls));
+  const runtime = fakeRuntime(rows, calls);
+  await mount(<Harness {...base} />, runtime);
   const field = doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement;
   assert.ok(field, 'the answer field shows in the card');
   await type(field, 'Shorter');
   await click(button('Send the answer')!);
-  const insert = calls.find(call => call.action === 'comments.insert')!;
-  assert.equal(props(insert).Thread, 'i1');
-  assert.equal(props(calls.find(call => call.action === 'comments.update')).Answer, 'Shorter');
+  assert.deepEqual(calls.map(call => call.op), ['reply'], 'one write: the server records the ask\'s answer from answer_to');
+  assert.equal(calls[0]!.input.root_id, 'i1');
+  assert.equal(calls[0]!.input.answer_to, 'i1');
+  assert.equal(calls[0]!.input.body, 'Shorter');
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'i1')!.answer, 'Shorter');
+  assert.equal(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]'), null, 'the ask reads answered');
 });
 
-test('C1: the reply that shows an input answer always names its ask in Answer to; the server adds a missing column', async () => {
+test('C1: the reply that shows an input answer always names its ask in answer_to; a plain reply names none', async () => {
+  const calls: Call[] = [];
   const rows = [row('i1', { body: 'Which title do you want?', author: 'Claude', slide: 'slide-1', needs: 'input',
     createdAt: '2026-10-21T09:00:00.000Z' })];
-  const names = ['Body', 'Deck', 'Slide', 'Thread', 'Author', 'Status', 'Needs', 'Options', 'Answer', 'Answered at',
-    'Change', 'Changed at', 'Example'];
-  const answer = async (propertyNames: string[] | undefined, columns?: Record<string, string>) => {
-    const calls: Call[] = [];
-    await mount(<Harness {...base} {...(columns ? { columns } : {})} />,
-      fakeRuntime(rows, calls, propertyNames ? { propertyNames } : {}));
-    await type(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement, 'Shorter');
-    await click(button('Send the answer')!);
-    return props(calls.find(call => call.action === 'comments.insert'));
-  };
-  const named = await answer([...names, 'Answer to']);
-  assert.equal(named['Answer to'], 'i1', 'the server routes it to the asker and counts it as the answer, not a reply');
-  assert.equal(named.Thread, 'i1');
-  assert.equal((await answer(names))['Answer to'], 'i1', 'a table without the column yet: sent, the server adds it');
-  assert.equal((await answer(undefined))['Answer to'], 'i1', 'columns not known: sent too');
-  const renamed = await answer(names, { answerTo: 'Réponse à' });
-  assert.equal('Réponse à' in renamed || 'Answer to' in renamed, false, 'a renamed column is sent only once it exists');
-  assert.equal((await answer([...names, 'Réponse à'], { answerTo: 'Réponse à' }))['Réponse à'], 'i1');
-  // A plain reply (no ask open) names nothing.
-  const calls: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime([row('p1', { body: 'Tighten', slide: 'slide-1' })], calls,
-    { propertyNames: [...names, 'Answer to'] }));
+  await mount(<Harness {...base} />, fakeRuntime(rows, calls));
+  await type(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement, 'Shorter');
+  await click(button('Send the answer')!);
+  assert.equal(writes(calls, 'reply')[0]!.input.answer_to, 'i1', 'the server routes it to the asker and counts it as the answer');
+  const plain: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime([row('p1', { body: 'Tighten', slide: 'slide-1' })], plain));
   const thread = controller!.threads.find(item => item.root.recordKey === 'p1')!;
   await act(async () => { await controller!.actions.reply(thread, 'Done'); });
-  assert.equal('Answer to' in props(calls.find(call => call.action === 'comments.insert')), false);
+  assert.equal('answer_to' in writes(plain, 'reply')[0]!.input, false);
 });
 
 test('C1: an input ask reads answered below from the reply naming it, whatever its words', async () => {
-  const reply = row('a1', { body: 'Something longer than the answer', slide: 'slide-1', thread: 'i1',
-    createdAt: '2026-10-21T10:00:00.000Z' });
-  (reply.properties as Record<string, unknown>)['Answer to'] = { type: 'rich_text', rich_text: [{ text: { content: 'i1' } }] };
   const rows = [row('i1', { body: 'Which title?', author: 'Claude', slide: 'slide-1', needs: 'input', answer: 'Short',
-    createdAt: '2026-10-21T09:00:00.000Z' }), reply];
+    createdAt: '2026-10-21T09:00:00.000Z' }),
+  row('a1', { body: 'Something longer than the answer', slide: 'slide-1', thread: 'i1', answerTo: 'i1',
+    createdAt: '2026-10-21T10:00:00.000Z' })];
   await mount(<Harness {...base} />, fakeRuntime(rows, []));
   assert.equal(doc.querySelector('[data-thread="i1"] .nui-comment-answer')!.textContent, 'Answered below, sent to the agent');
 });
 
 test('C4: the pane shows it is loading until the first read settles, never No comments for a moment', async () => {
-  let release: () => void = () => {};
-  const held = new Promise<void>(resolve => { release = resolve; });
-  const runtime = fakeRuntime([], []) as unknown as { shown: () => Promise<unknown> };
-  const read = runtime.shown;
-  runtime.shown = async () => { await held; return read(); };
-  await mount(<Harness {...base} />, runtime as unknown as NotisRuntime);
+  const runtime = fakeRuntime([], []);
+  const held = storeOf(runtime).hold('list');
+  await mount(<Harness {...base} />, runtime);
   const loading = doc.querySelector('.nui-comment-loading[role="status"][aria-busy="true"]');
   assert.ok(loading, 'placeholders while the first read runs');
   assert.match(loading!.textContent!, /Loading comments/);
   assert.equal(doc.querySelector('.nui-comment-empty'), null, 'no empty state before the read settles');
-  await act(async () => { release(); });
+  await act(async () => { held.release(); });
   await settle();
   assert.equal(doc.querySelector('.nui-comment-loading'), null);
   assert.match(doc.querySelector('.nui-comment-empty')!.textContent!, /No comments here yet/);
-  // A page still opening in a new tab (its list not readable yet) is loading too, in French as well.
-  const opening = fakeRuntime([], [], { locale: 'fr' }) as unknown as { space: { shows: Record<string, unknown> } };
-  opening.space.shows = {};
-  await mount(<Harness {...base} />, opening as unknown as NotisRuntime, 'fr');
+  // French as well.
+  const french = fakeRuntime([], [], { locale: 'fr' });
+  storeOf(french).hold('list');
+  await mount(<Harness {...base} />, french, 'fr');
   assert.match(doc.querySelector('.nui-comment-loading')!.textContent!, /Chargement des commentaires/);
   assert.equal(doc.querySelector('.nui-comment-empty'), null);
 });
@@ -2262,27 +2448,22 @@ test('C2: another member\'s comment in the pane is signed with their name, not N
   assert.doesNotMatch(card.textContent!, /Notis/);
 });
 
-test('B4: an input answer is saved before the reply that shows it, so the server sends that reply to the asker only', async () => {
+test('B4: an input answer shows on its ask at once, while the one reply naming it is saved', async () => {
   const calls: Call[] = [];
   const rows = [row('i1', { body: 'Which title do you want?', author: 'Claude', slide: 'slide-1', needs: 'input',
     createdAt: '2026-10-21T09:00:00.000Z' })];
-  const runtime = fakeRuntime(rows, calls) as unknown as { callAction(action: string, input: unknown): Promise<unknown> };
-  const plain = runtime.callAction;
-  let release: () => void = () => {};
-  const held = new Promise<void>(resolve => { release = resolve; });
-  runtime.callAction = async (action, input) => {
-    const answer = await plain(action, input);
-    if (action === 'comments.update') await held;
-    return answer;
-  };
-  await mount(<Harness {...base} />, runtime as unknown as NotisRuntime);
+  const runtime = fakeRuntime(rows, calls);
+  await mount(<Harness {...base} />, runtime);
+  const held = storeOf(runtime).hold('reply');
   await type(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement, 'Shorter');
   await click(button('Send the answer')!);
   await settle();
-  assert.deepEqual(calls.map(call => call.action), ['comments.update'], 'the reply waits for the Answer to be saved');
-  await act(async () => { release(); });
+  assert.deepEqual(calls.map(call => call.op), ['reply'], 'no separate answer write');
+  assert.match(doc.querySelector('[data-thread="i1"] .nui-comment-answer')!.textContent!, /Shorter|Answered below/,
+    'the ask reads answered while the reply is saved');
+  await act(async () => { held.release(); });
   await settle();
-  assert.deepEqual(calls.map(call => call.action), ['comments.update', 'comments.insert'], 'then one reply is posted');
+  assert.deepEqual(calls.map(call => call.op), ['reply']);
 });
 
 test('A reply of yours marks the agent replies before it in that thread seen; a later one stays new', async () => {
@@ -2338,7 +2519,7 @@ test('The host hears of thread and draft changes, not of every pointer move', as
       return () => { off(); source.show(null); };
     },
   };
-  await mount(<Harness {...base} columns={zoneColumns} />, fakeRuntime(ROWS, [], { comments }));
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
   await act(async () => { controller!.setCommenting(true); });
   await settle();
   const layer = doc.querySelector('.nui-comment-capture') as HTMLElement;
@@ -2599,33 +2780,24 @@ test('Focus moving between thread cards moves the selected pin with it', async (
 
 test('An Undo queued behind a write keeps its fields shown when that write comes back', async () => {
   const calls: Call[] = [];
-  let rows = ROWS;
-  const plain = fakeRuntime([], calls);
-  const waiting: Array<() => void> = [];
-  const runtime = {
-    ...plain,
-    shown: async () => ({ rows, schema_revision: 7 }),
-    callAction: async (action: string, input: { request: Record<string, unknown> }) => {
-      await new Promise<void>(resolve => waiting.push(resolve));
-      return (plain.callAction as (a: string, i: unknown) => Promise<unknown>)(action, input);
-    },
-  } as unknown as NotisRuntime;
+  const runtime = fakeRuntime(ROWS, calls);
   await mount(<Harness {...base} />, runtime);
+  const archive = storeOf(runtime).hold('archive');
+  const unarchive = storeOf(runtime).hold('unarchive');
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Archive the comment thread: "]')!);
   assert.equal(doc.querySelector('[data-thread="c1"]'), null, 'archived at once');
   await click(toastUndo()!);
   assert.ok(doc.querySelector('[data-thread="c1"]'), 'Undo shows it again at once');
   // The archive is saved and the list reads the row archived at its new revision, while the Undo still waits.
-  rows = ROWS.map(item => item.record_key === 'c1'
-    ? row('c1', { body: 'Tighten the title', slide: 'slide-1', x: 0.25, y: 0.5, status: 'Resolved', revision: 2,
-      createdAt: '2026-10-21T09:00:00.000Z' }) : item);
-  await act(async () => { waiting.shift()!(); });
+  await act(async () => { archive.release(); });
   await settle();
-  assert.equal(waiting.length, 1, 'the Undo is on its way');
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c1')!.status, 'archived');
+  assert.deepEqual(calls.map(call => call.op), ['archive', 'unarchive'], 'the Undo is on its way');
   assert.ok(doc.querySelector('[data-thread="c1"]'), 'no flicker back to archived while the Undo is saved');
-  await act(async () => { waiting.shift()!(); });
+  await act(async () => { unarchive.release(); });
   await settle();
-  assert.deepEqual(calls.map(call => status(call)), ['Resolved', 'Open']);
+  assert.ok(doc.querySelector('[data-thread="c1"]'));
+  assert.equal(storeOf(runtime).rows.find(item => item.id === 'c1')!.status, 'open');
 });
 
 test('The resolved filter name is still accepted by the exported type and the controller', async () => {
@@ -2635,30 +2807,21 @@ test('The resolved filter name is still accepted by the exported type and the co
   assert.equal(controller!.statusFilter, 'done');
 });
 
-test('A late partial-delete notice never replaces a newer Undo', async () => {
+test('A late failed-delete notice never replaces a newer Undo', async () => {
   const calls: Call[] = [];
-  const plain = fakeRuntime(ROWS, calls);
-  let failReply: () => void = () => {};
-  const runtime = {
-    ...plain,
-    callAction: async (action: string, input: { request: Record<string, unknown> }) => {
-      if (input.request.record_key === 'r1') {
-        await new Promise<void>(resolve => { failReply = resolve; });
-        throw new Error('nope');
-      }
-      return (plain.callAction as (a: string, i: unknown) => Promise<unknown>)(action, input);
-    },
-  } as unknown as NotisRuntime;
+  const runtime = fakeRuntime(ROWS, calls);
   await mount(<Harness {...base} />, runtime);
+  storeOf(runtime).fail('remove', 'comment_forbidden');
+  const held = storeOf(runtime).hold('remove');
   await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
   const c2 = controller!.threads.find(thread => thread.root.recordKey === 'c2')!.root;
   await act(async () => { controller!.actions.archive(c2); });
   await settle();
   assert.match(doc.querySelector('.nui-toast')!.textContent!, /Comment thread archived/);
-  await act(async () => { failReply(); });
+  await act(async () => { held.release(); });
   await settle();
   assert.match(doc.querySelector('.nui-toast')!.textContent!, /Comment thread archived/, 'the newer toast stays');
-  assert.doesNotMatch(doc.body.textContent!, /Some comments could not be deleted/);
+  assert.deepEqual(calls.map(call => call.op), ['remove', 'archive']);
 });
 
 test('Links are read at most 200 roots per request, and every answer is kept', async () => {
@@ -2666,9 +2829,9 @@ test('Links are read at most 200 roots per request, and every answer is kept', a
   const many = Array.from({ length: 450 }, (_, index) => row(`k${index}`, { body: `Note ${index}`, slide: 'slide-1',
     createdAt: '2026-10-21T09:00:00.000Z' }));
   const comments: Partial<SpaceCommentsTransport> = {
-    links: async ({ rootKeys }) => {
-      asked.push(rootKeys.length);
-      return Object.fromEntries(rootKeys.map(key => [key, [{ threadId: `t-${key}`, title: `Thread ${key}` }]]));
+    links: async ({ rootIds }) => {
+      asked.push(rootIds.length);
+      return Object.fromEntries(rootIds.map(key => [key, [{ threadId: `t-${key}`, title: `Thread ${key}` }]]));
     },
   };
   await mount(<Harness {...base} />, fakeRuntime(many, [], { comments }));
@@ -2689,11 +2852,11 @@ test('Goes to names the real thread once the wake starts it: a pending link and 
   await withFastRereads(async () => {
     const asked: string[][] = [];
     const comments: Partial<SpaceCommentsTransport> = {
-      links: async ({ rootKeys }) => {
-        asked.push([...rootKeys]);
+      links: async ({ rootIds }) => {
+        asked.push([...rootIds]);
         // The first read finds the thread not started yet; the wake has started it by the next one.
         const started = asked.length > 1;
-        return Object.fromEntries(rootKeys.filter(key => key === 'c1').map(key => [key, [started
+        return Object.fromEntries(rootIds.filter(key => key === 'c1').map(key => [key, [started
           ? { threadId: 't-7', title: 'Title pass', harness: 'claude' }
           : { threadId: null, title: '', harness: 'claude', status: 'pending' }]]));
       },
@@ -2724,8 +2887,8 @@ test('A root a links answer leaves out has no link any more: its cached links ar
   await withFastRereads(async () => {
     let linked = true;
     const comments: Partial<SpaceCommentsTransport> = {
-      links: async ({ rootKeys }) => (linked
-        ? Object.fromEntries(rootKeys.filter(key => key === 'c1').map(key => [key, [{ threadId: 't-1', title: 'Deck polish' }]]))
+      links: async ({ rootIds }) => (linked
+        ? Object.fromEntries(rootIds.filter(key => key === 'c1').map(key => [key, [{ threadId: 't-1', title: 'Deck polish' }]]))
         : {}),
     };
     await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
@@ -2786,16 +2949,15 @@ test('An agent question in a reply gets its answer controls, and the answer goes
   await mount(<Harness {...base} />, fakeRuntime(rows, calls));
   assert.ok(doc.querySelector('[data-thread="q1"] [data-ask="q2"]'), 'the choice ask shows under its reply');
   await click([...doc.querySelectorAll('[data-ask="q2"] button')].find(el => el.textContent === 'Green')!);
-  const answered = calls.find(call => call.action === 'comments.update')!;
-  assert.equal(answered.request.record_key, 'q2');
-  assert.equal(props(answered).Answer, 'Green');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q2', answer: 'Green' } });
   const field = doc.querySelector('[data-ask="q3"] textarea') as HTMLTextAreaElement;
   await type(field, 'Revenue');
   await click(doc.querySelector('[data-ask="q3"] button[aria-label="Send the answer"]')!);
-  const update = calls.filter(call => call.action === 'comments.update').at(-1)!;
-  assert.equal(update.request.record_key, 'q3', 'the input ask answered is that reply');
-  assert.equal(props(update).Answer, 'Revenue');
-  assert.equal(calls.filter(call => call.action === 'comments.insert').length, 1, 'the answer is posted once, as a reply');
+  const [reply] = writes(calls, 'reply');
+  assert.equal(reply!.input.answer_to, 'q3', 'the input ask answered is that reply');
+  assert.equal(reply!.input.root_id, 'q1');
+  assert.equal(reply!.input.body, 'Revenue');
+  assert.deepEqual(calls.map(call => call.op), ['answer', 'reply'], 'the answer is posted once, as a reply');
   await settle();
   // The answer reads once: the reply carries the text, the ask says it was answered without repeating it.
   assert.equal(doc.querySelector('[data-ask="q3"] .nui-comment-answer')!.textContent, 'Answered below, sent to the agent');
@@ -2809,10 +2971,8 @@ test('An edit keeps a Change of resolved, and Copy changes reports the edit from
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
   const c4 = controller!.comments.find(comment => comment.recordKey === 'c4')!;
   await act(async () => { await controller!.actions.edit(c4, 'Old note, reworded'); });
-  const write = calls.at(-1)!;
-  assert.equal(write.request.record_key, 'c4');
-  assert.deepEqual(props(write), {}, 'no Change written over resolved');
-  assert.equal((write.request.columns as Record<string, unknown>).title, 'Old note, reworded');
+  assert.deepEqual(calls.at(-1), { op: 'edit', input: { id: 'c4', body: 'Old note, reworded' } },
+    'the text alone: the status stays resolved');
 
   const [, , , , archived] = comments();
   const edited = { ...archived!, body: 'Old note, reworded', editedAt: '2026-10-21T08:00:00.000Z' };
@@ -2837,7 +2997,9 @@ test('Accessible names say whose comment and which thread, in English and French
 test('A new transport object from the host keeps the pane where it is, with a reply being typed', async () => {
   let shows = 0;
   let hidden = 0;
+  const plain = fakeRuntime(ROWS, []);
   const transport = (name: string): SpaceCommentsTransport => ({
+    ...storeOf(plain).transport,
     viewer: { name, canEditSpace: true },
     attach(source) {
       // A host that lists the source on its next tick, and hides the pane when the source leaves.
@@ -2845,7 +3007,6 @@ test('A new transport object from the host keeps the pane where it is, with a re
       return () => { hidden += 1; source.show(null); };
     },
   });
-  const plain = fakeRuntime(ROWS, []);
   // A real host keeps one query cache across its runtime objects.
   const cached = { ...plain, queryClient: createQueryClient() } as NotisRuntime;
   await mount(<Harness {...base} />, { ...cached, spaceComments: transport('Flo') } as NotisRuntime);

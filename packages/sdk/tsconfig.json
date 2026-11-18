@@ -12,5 +12,7 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests may use the design-system fixtures (outside rootDir): design-system/tsconfig.json type-checks them.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

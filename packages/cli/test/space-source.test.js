@@ -635,3 +635,33 @@ test('threadItems declares live item kinds read through a declared action, copie
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('agents wake on the Space comments (on: comments) or watch a database resource; columns are for database agents only', async () => {
+  const { validateSpaceAgents } = await import('../src/runtime/space-source.js');
+  const resources = { tasks: { kind: 'database' }, triage: { kind: 'skill' } };
+  // A comment agent takes event, wake, thread, runtime and skill: it needs no comment database.
+  validateSpaceAgents([{ id: 'reviewer', on: 'comments' }], {});
+  validateSpaceAgents([{ id: 'reviewer', on: 'comments', event: 'changed', wake: 'sent', thread: 'space', runtime: 'cloud_computer', skill: 'triage' }], resources);
+  // A database agent keeps its event inside on, and may rename columns.
+  validateSpaceAgents([{ id: 'tasks', on: { database: 'tasks', event: 'created' }, columns: { thread: 'Conversation' } }], resources);
+  validateSpaceAgents([{ id: 'reviewer', on: 'comments' }, { id: 'tasks', on: { database: 'tasks' } }], resources);
+  // An older Space's agent on its comments database still builds: the server reads an agent on a comment-shaped
+  // database as on: 'comments' (the CLI cannot see the database's columns, so it never refuses that form).
+  validateSpaceAgents([{ id: 'reviewer', on: { database: 'comments', event: 'changed' }, columns: { thread: 'Thread' } }],
+    { ...resources, comments: { kind: 'database' } });
+  const refused = [
+    [[{ id: 'reviewer', on: 'comments', columns: { thread: 'Thread' } }], /comments and takes id, on, event, thread, runtime, skill, wake only/],
+    [[{ id: 'reviewer', on: 'comment' }], /on: 'comments'/],
+    [[{ id: 'reviewer', on: { comments: true } }], /on: 'comments'/],
+    [[{ id: 'reviewer', on: { database: 'missing' } }], /on: 'comments'/],
+    [[{ id: 'reviewer', on: 'comments', event: 'deleted' }], /'created' or 'changed'/],
+    [[{ id: 'tasks', on: { database: 'tasks' }, event: 'created' }], /inside on: \{ database, event \}/],
+    [[{ id: 'reviewer', on: 'comments', wake: 'mine' }], /'all' comments or only those 'sent'/],
+    [[{ id: 'reviewer', on: 'comments', thread: 'record' }], /'best_match' or 'space'/],
+    [[{ id: 'reviewer', on: 'comments', runtime: 'laptop' }], /'notis' or 'cloud_computer'/],
+    [[{ id: 'reviewer', on: 'comments', skill: 'tasks' }], /names a Skill this Space links/],
+    [[{ id: 'reviewer', on: 'comments' }, { id: 'reviewer', on: 'comments' }], /its own short id/],
+    [[{ id: 'reviewer', on: 'comments', database: 'comments' }], /takes id, on, event/],
+  ];
+  for (const [agents, message] of refused) assert.throws(() => validateSpaceAgents(agents, resources), message, JSON.stringify(agents));
+});

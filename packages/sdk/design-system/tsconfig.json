@@ -8,5 +8,7 @@
     // placeholder src/ui.ts beside it. See design-system/resolve.mjs; harmless once the placeholder is gone.
     "moduleSuffixes": ["/index", ""]
   },
-  "include": ["../src", "."]
+  "include": ["../src", "."],
+  // The SDK's own tests are type-checked here (the package config leaves them out).
+  "exclude": []
 }

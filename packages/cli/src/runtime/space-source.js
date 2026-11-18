@@ -366,10 +366,15 @@ export function collectSelectedSpaceSource(projectDir, selection, { buildInputs 
   } finally { compiler.close(); }
 }
 
-const AGENT_FIELDS = ['id', 'on', 'thread', 'runtime', 'skill', 'wake', 'columns'];
+const AGENT_FIELDS = ['id', 'on', 'event', 'thread', 'runtime', 'skill', 'wake', 'columns'];
+const COMMENT_AGENT_FIELDS = ['id', 'on', 'event', 'thread', 'runtime', 'skill', 'wake'];
 const AGENT_COLUMNS = ['thread', 'scope', 'answer', 'author'];
 
-/** The `agents` a Space's database changes wake (server/lib/space_agents.py repeats every check). */
+/**
+ * The `agents` a Space wakes (server/lib/space_agents.py repeats every check): `on: 'comments'` for the Space's
+ * comments (event, wake, thread, runtime and skill; no columns, comments are not database rows), or
+ * `on: { database: '<alias>', event? }` for changes to one of its database resources.
+ */
 export function validateSpaceAgents(agents, resources = {}) {
   if (!Array.isArray(agents) || agents.length < 1 || agents.length > 8) throw usageError('Declare agents as a list of 1 to 8 agents.');
   const seen = new Set();
@@ -382,10 +387,19 @@ export function validateSpaceAgents(agents, resources = {}) {
     }
     seen.add(agent.id);
     const on = agent.on;
-    if (!on || typeof on !== 'object' || Object.keys(on).some(name => !['database', 'event'].includes(name)) || resources[on.database]?.kind !== 'database') {
-      throw usageError(`Agent ${agent.id} watches one of this Space's database resources: on: { database: '<alias>' }.`);
+    let event = agent.event;
+    if (on === 'comments') {
+      const extra = Object.keys(agent).find(name => !COMMENT_AGENT_FIELDS.includes(name));
+      if (extra) throw usageError(`Agent ${agent.id} wakes on this Space's comments and takes ${COMMENT_AGENT_FIELDS.join(', ')} only.`);
+    } else {
+      if (!on || typeof on !== 'object' || Array.isArray(on) || Object.keys(on).some(name => !['database', 'event'].includes(name))
+        || resources[on.database]?.kind !== 'database') {
+        throw usageError(`Agent ${agent.id} wakes on this Space's comments (on: 'comments') or watches one of its database resources: on: { database: '<alias>' }.`);
+      }
+      if (event != null) throw usageError(`Agent ${agent.id} watches a database: give its event inside on: { database, event }.`);
+      event = on.event;
     }
-    if (on.event != null && !['created', 'changed'].includes(on.event)) throw usageError(`Agent ${agent.id} wakes on 'created' or 'changed'.`);
+    if (event != null && !['created', 'changed'].includes(event)) throw usageError(`Agent ${agent.id} wakes on 'created' or 'changed'.`);
     if (agent.thread != null && !['best_match', 'space'].includes(agent.thread)) throw usageError(`Agent ${agent.id} uses thread 'best_match' or 'space'.`);
     if (agent.runtime != null && !['notis', 'cloud_computer'].includes(agent.runtime)) throw usageError(`Agent ${agent.id} runs on 'notis' or 'cloud_computer'.`);
     if (agent.wake != null && !['all', 'sent'].includes(agent.wake)) throw usageError(`Agent ${agent.id} wakes for 'all' comments or only those 'sent' to it.`);

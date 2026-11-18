@@ -7,15 +7,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNativeMutation } from '../../hooks/useNativeDocuments';
-import { useShown } from '../../hooks/useViewParams';
+import type { SpaceCommentAnchor } from '../../space';
 import { commentDraftKey, forgetCommentDraft, hasDraftContent, readCommentDraft, writeCommentDraft } from './commentDrafts';
-import { commentColumns, commentRowsOf, newCommentId, type CommentThread } from './commentModel';
+import type { CommentThread } from './commentModel';
 import { useCommentFocusParam } from './hostComments';
 import { useComments, type CommentController, type CommentFile, type UseCommentsOptions } from './useComments';
-import {
-  passageColumns, passageOffset, passageProperties, readPassage, type PassageAnchor, type PassageColumns, type PassageField,
-} from './passageModel';
+import { passageOffset, type PassageAnchor, type PassageField } from './passageModel';
 
 /** Where a thread was opened: its highlight in the text, its card or its quote in the pane, or a link to one comment. */
 export type PassageOpenedFrom = 'passage' | 'pane' | 'quote' | 'link';
@@ -23,8 +20,8 @@ export type PassageOpenedFrom = 'passage' | 'pane' | 'quote' | 'link';
 export interface UsePassageCommentsOptions extends Omit<UseCommentsOptions, 'anchors' | 'anchorKey' | 'onSelectThread'> {
   /** The text properties comments can sit on, in reading order. */
   fields: readonly PassageField[];
-  /** Column names of the passage (Field, Quote, Prefix, Suffix by default). */
-  passageColumns?: Partial<PassageColumns>;
+  /** @deprecated A passage is kept in the comment store (`field`, `quote`, `prefix`, `suffix`): ignored. */
+  passageColumns?: Partial<Record<'field' | 'quote' | 'prefix' | 'suffix', string>>;
   /**
    * Each field's value as edited on screen, by field key: a thread whose words are no longer there reads Text
    * changed, and threads list in reading order. A field left out is never marked changed.
@@ -64,6 +61,11 @@ export interface PassageCommentController {
   /** The comment being placed or written on the page (the New comment menu): the same as `controller.draftPin`. */
   draftPin: CommentController['draftPin'];
   startDraft(passage: PassageAnchor): void;
+  /**
+   * Starts a new comment on a place the host names (Comment on a selection): words in one of `fields` open this
+   * controller's own box on them, anything else the page's new comment. True when it was taken.
+   */
+  startAnchor(anchor: SpaceCommentAnchor): boolean;
   cancelDraft(): void;
   /**
    * Saves the draft with its text and the pictures and files attached to it (SPC-131: paste, drop or the paperclip),
@@ -92,27 +94,11 @@ const NO_FIELDS: readonly PassageField[] = Object.freeze([]);
 const PASSAGE_MODES = Object.freeze(['text', 'page'] as const);
 
 export function usePassageComments(options: UsePassageCommentsOptions): PassageCommentController {
-  const { fields = NO_FIELDS, values, group = null, list = 'comments', database = 'comments', pageSize = 500 } = options;
+  const { fields = NO_FIELDS, values, group = null } = options;
   const urlFocus = useCommentFocusParam();
   const focusKey = options.focusKey === undefined ? urlFocus : options.focusKey;
-  const columns = useMemo(() => passageColumns(options.passageColumns), [options.passageColumns]);
-  const baseColumns = useMemo(() => commentColumns(options.columns), [options.columns]);
   const latest = useRef(options);
   latest.current = options;
-
-  const query = useShown<Record<string, unknown>>(list, { pageSize });
-  const insert = useNativeMutation(database, 'insert');
-  const passages = useMemo(() => {
-    const map = new Map<string, PassageAnchor>();
-    for (const row of commentRowsOf(query.data)) {
-      const passage = readPassage(row, fields, columns);
-      const key = typeof row.record_key === 'string' ? row.record_key : '';
-      if (passage && key) map.set(key, passage);
-    }
-    return map;
-  }, [query.data, fields, columns]);
-  const passagesRef = useRef(passages);
-  passagesRef.current = passages;
   const fieldIndex = useMemo(() => new Map(fields.map((item, index) => [item.key, index])), [fields]);
   const field = useCallback((key: string) => fields.find(item => item.key === key), [fields]);
 
@@ -121,6 +107,7 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const openedFrom = useRef<PassageOpenedFrom>('pane');
 
+  const passagesRef = useRef<Map<string, PassageAnchor>>(new Map());
   const controller = useComments({
     ...options,
     anchors: undefined,
@@ -138,6 +125,18 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
       timer.current = setTimeout(() => setFlash(null), 1600);
     },
   });
+
+  // The passage each thread's first comment sits on: words in one of the declared fields.
+  const passages = useMemo(() => {
+    const map = new Map<string, PassageAnchor>();
+    for (const comment of controller.comments) {
+      const passage = comment.passage;
+      if (comment.thread || !passage?.quote || !passage.field || !fieldIndex.has(passage.field)) continue;
+      map.set(comment.recordKey, { field: passage.field, quote: passage.quote, prefix: passage.prefix, suffix: passage.suffix });
+    }
+    return map;
+  }, [controller.comments, fieldIndex]);
+  passagesRef.current = passages;
 
   // What rich text on screen shows, by field: it wins over the value for Text changed.
   const [found, setFound] = useState<Readonly<Record<string, ReadonlySet<string>>>>({});
@@ -214,9 +213,8 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   }, [draftKey, draft]);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const intent = useRef<{ key: string; id: string } | null>(null);
-  const { setThreadKey, refetch, signed, canWrite, cancelMode, cancelPin, draftPin } = controller;
-  const { linkNew, clearPick } = controller.routing;
+  const { setThreadKey, canWrite, cancelMode, cancelPin, draftPin, sendAt, startAnchor: startPageAnchor } = controller;
+  const { clearPick } = controller.routing;
 
   const startDraft = useCallback((passage: PassageAnchor) => {
     setFailed(false);
@@ -232,52 +230,33 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   const cancelDraft = useCallback(() => { setDraft(null); setFailed(false); clearPick(); forgetCommentDraft(draftKey); },
     [clearPick, draftKey]);
 
+  const startAnchor = useCallback((anchor: SpaceCommentAnchor) => {
+    if (anchor?.mode === 'text' && anchor.field && fieldIndex.has(anchor.field) && anchor.quote?.trim()) {
+      startDraft({ field: anchor.field, quote: anchor.quote, prefix: anchor.prefix ?? '', suffix: anchor.suffix ?? '' });
+      return true;
+    }
+    return startPageAnchor(anchor);
+  }, [fieldIndex, startDraft, startPageAnchor]);
+
   const send = useCallback(async (body: string, files: readonly CommentFile[] = []) => {
     const text = body.trim();
-    const schemaRevision = query.data?.schema_revision;
     const target = draft ? field(draft.field) : undefined;
-    // Files go only where the table has a files column (the pane offers the paperclip only then).
-    const attached = baseColumns.attachments && controller.attach === 'on' ? files : [];
-    if (!draft || !target || (!text && !attached.length) || schemaRevision == null || sending) return false;
-    // The author is who is signed in (`me` is the viewer under the host): nothing is sent until they are known.
+    const attached = controller.attach === 'on' ? files : [];
+    if (!draft || !target || (!text && !attached.length) || sending) return false;
+    // Nothing is sent until the signed-in viewer is known.
     if (!canWrite) { console.warn('[comments] the viewer is not known yet: nothing was sent'); return false; }
-    const scope = latest.current.scope ?? null;
-    const at = new Date().toISOString();
-    const properties: Record<string, unknown> = {
-      ...passageProperties(draft, target, columns),
-      [baseColumns.status]: 'Open', [baseColumns.needs]: 'none', [baseColumns.example]: false,
-      [baseColumns.change]: 'created', [baseColumns.changedAt]: at,
-    };
-    if (baseColumns.scope && scope) properties[baseColumns.scope] = [scope.id];
-    if (baseColumns.attachments && attached.length) {
-      properties[baseColumns.attachments] = attached.map(({ name, url }) => ({ name, url }));
-    }
-    // One request ID per intent: sending the same comment again replays it instead of adding a second one.
-    const key = JSON.stringify([draft, text, attached.map(file => file.url)]);
-    if (intent.current?.key !== key) intent.current = { key, id: newCommentId() };
     setSending(true);
     setFailed(false);
     try {
-      // The intent's request ID replays one author; a retry under another author is a new request.
-      const first = intent.current.id;
-      const receipt = await signed(author => insert.mutate(
-        { columns: { title: text }, properties: author ? { ...properties, [baseColumns.author]: author } : properties },
-        { schemaRevision, requestId: author === controller.me ? first : newCommentId() }));
-      intent.current = null;
+      const id = await sendAt({ anchorKey: null, x: null, y: null, w: null, h: null,
+        text: { quote: draft.quote, prefix: draft.prefix, suffix: draft.suffix, field: draft.field } }, text, attached);
+      if (!id) { setFailed(true); return false; }
       setDraft(null);
-      setThreadKey(receipt.record_key);
-      void refetch();
-      // The new comment thread goes to the thread picked with the chip or @, else the best match (SPC-117).
-      void linkNew(receipt.record_key);
       return true;
-    } catch {
-      setFailed(true);
-      return false;
     } finally {
       setSending(false);
     }
-  }, [query.data?.schema_revision, draft, field, sending, columns, baseColumns, signed, controller.me, canWrite, insert,
-    setThreadKey, refetch, linkNew, controller.attach]);
+  }, [draft, field, sending, canWrite, sendAt, controller.attach]);
 
   const { selectThread, revealThread } = controller;
   const open = useCallback((thread: CommentThread, from: PassageOpenedFrom) => {
@@ -305,7 +284,7 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
   return {
     controller, fields, field, passageOf: (rootKey: string) => passages.get(rootKey), group, threads, threadsOn, openCount,
     isChanged: (rootKey: string) => placement.changed.has(rootKey),
-    draft, draftPin, startDraft, cancelDraft, send, sending, failed, flash, open, openKey, reportFound,
+    draft, draftPin, startDraft, startAnchor, cancelDraft, send, sending, failed, flash, open, openKey, reportFound,
     revealRequest: controller.revealRequest,
   };
 }

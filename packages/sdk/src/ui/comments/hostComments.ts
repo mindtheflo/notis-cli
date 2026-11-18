@@ -2,7 +2,7 @@
  * The bridge from a Space's comment controllers to the host Comments panel (SPC-113 to SPC-131). The pane no longer
  * sits inside a Space: `CommentPane` and `PassageCommentPane` attach their controller here and draw their threads into
  * the element the host hands them, in its right panel beside the chat (a React portal: the controller, its uploads,
- * toasts and keys stay with the Space). A `SidePane` given one of them shows its page alone.
+ * toasts and keys stay with the Space).
  *
  * While the host has no Comments panel for the viewer (comments off, a Site, a link, a preview) the Space shows no
  * comments at all: `useHostComments()` is false and the pins and highlights stay hidden.
@@ -10,14 +10,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNotisRuntime } from '../../provider';
-import type { SpaceCommentSource } from '../../space';
+import type { SpaceCommentAnchor, SpaceCommentSource } from '../../space';
 
 /** True when the host shows comments for this viewer: pins, highlights and the Comment button may show. */
 export function useHostComments(): boolean {
   return Boolean(useNotisRuntime()?.spaceComments);
 }
 
-/** The view param a link to one comment carries (a push, a chat pill): `comment=<root record key>`. */
+/** The view param a link to one comment carries (a push, a chat pill): `comment=<root comment id>`. */
 export const COMMENT_FOCUS_PARAM = 'comment';
 
 /**
@@ -38,12 +38,19 @@ function revealOf(controller: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+/** The controller's own way to start a new comment on a place the host names (`startAnchor`), if it has one. */
+function startOf(controller: unknown): ((anchor: SpaceCommentAnchor) => boolean) | null {
+  const start = controller && typeof controller === 'object' ? (controller as { startAnchor?: unknown }).startAnchor : null;
+  return typeof start === 'function' ? start as (anchor: SpaceCommentAnchor) => boolean : null;
+}
+
 /**
  * Keeps `controller` listed in the host Comments panel while the calling component is mounted, and returns the panel
  * element to draw its threads in (null while the panel does not show them). `options` carries what the pane was given
  * (a title, the groups of a passage pane). `watch` lists what the host reads (the threads, the new comment, the
  * selected thread): the host hears of a render only when one of them changed, never on each pointer move of a drag.
- * `current().revealRequest` is the controller's (C8): the host hears of each increase.
+ * `current().revealRequest` is the controller's (C8): the host hears of each increase. A text selection's Comment
+ * (`startComment`) reaches the controller through the source's `start`: its `startAnchor`, unless `start` is given.
  *
  * The source object stays the same for the life of the component. A new transport object from the host (its viewer
  * resolving) lists that same source again without taking the panel element away, so the pane, a reply being typed and
@@ -54,6 +61,7 @@ export function useHostCommentSource(
   controller: unknown,
   options: Readonly<Record<string, unknown>> = {},
   watch?: readonly unknown[],
+  start?: (anchor: SpaceCommentAnchor) => boolean,
 ): HTMLElement | null {
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const targetRef = useRef(target);
@@ -65,6 +73,8 @@ export function useHostCommentSource(
   });
   /** True while this hook lists its source again for a new transport: the old listing's show(null) is not a close. */
   const relisting = useRef(false);
+  const startRef = useRef(start);
+  startRef.current = start;
   const sourceRef = useRef<SpaceCommentSource | null>(null);
   if (!sourceRef.current) {
     const current = state.current;
@@ -78,6 +88,16 @@ export function useHostCommentSource(
       show(element) {
         if (!element && relisting.current) return;
         setTarget(element);
+      },
+      start(anchor) {
+        const run = startRef.current ?? startOf(current.value.controller);
+        if (!run) return false;
+        try {
+          return run(anchor) === true;
+        } catch (error) {
+          console.warn('[comments] start failed', error);
+          return false;
+        }
       },
     };
   }
@@ -110,17 +130,20 @@ export function useHostCommentSource(
   return transport ? target : null;
 }
 
-const RETIRED = Symbol.for('notis.sdk.hostCommentPane');
+const HOST_PANE = Symbol.for('notis.sdk.hostCommentPane');
 
-/** Marks a pane that draws in the host Comments panel: a `SidePane` given one shows its page alone. */
-export function markRetiredPane<T extends object>(component: T): T {
-  (component as Record<symbol, boolean>)[RETIRED] = true;
+/** Marks a pane component that draws in the host Comments panel and renders nothing in the page. */
+export function markHostPane<T extends object>(component: T): T {
+  (component as Record<symbol, boolean>)[HOST_PANE] = true;
   return component;
 }
 
-/** Whether `node` is a pane element drawn in the host panel (`<CommentPane />`, `<PassageCommentPane />`). */
-export function isRetiredPane(node: unknown): boolean {
+/**
+ * Whether `node` is a `<CommentPane />` or `<PassageCommentPane />` element. Spaces built before the single comment
+ * store pass one as a `SidePane` pane; it renders nothing there, so `SidePane` shows the page alone.
+ */
+export function isHostPane(node: unknown): boolean {
   if (!node || typeof node !== 'object' || !('type' in node)) return false;
   const type = (node as { type: unknown }).type;
-  return Boolean(type && (typeof type === 'function' || typeof type === 'object') && (type as Record<symbol, boolean>)[RETIRED]);
+  return Boolean(type && (typeof type === 'function' || typeof type === 'object') && (type as Record<symbol, boolean>)[HOST_PANE]);
 }

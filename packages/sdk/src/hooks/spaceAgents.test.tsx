@@ -11,7 +11,7 @@ import type { NotisRuntime } from '../runtime';
 import type { SpaceAgentsStatus, SpaceItemThread } from '../space';
 import { useAgentQueue, AGENT_QUEUE_WORDS, type UseAgentQueueResult } from './useAgentQueue';
 import { useItemThread, type UseItemThreadResult } from './useItemThread';
-import { readCommentRow } from '../ui/comments/commentModel';
+import { commentFromRow } from '../ui/comments/commentModel';
 import { CommentAgentSource } from '../ui/comments/CommentPane';
 import { commentWords } from '../ui/comments/commentWords';
 import type { CommentController } from '../ui/comments/useComments';
@@ -85,36 +85,37 @@ test('without the transport the hooks say unavailable and do nothing', async () 
   assert.equal(queue!.label, AGENT_QUEUE_WORDS.unavailable.en);
   assert.equal(thread!.available, false);
   assert.equal(await thread!.open(), false);
-  assert.equal(await queue!.approve(), false);
   root.unmount();
 });
 
-test('useAgentQueue shows the status in French with the thread link, and approval releases held comments', async () => {
-  let approved = false;
+test('useAgentQueue shows the status in French with the thread link, and offers no approval', async () => {
+  let woke = false;
   const asked: Array<[string, string | undefined]> = [];
   const opened: string[] = [];
   const runtime = runtimeWith({
     agentStatus: async (agentId: string, scope?: string): Promise<SpaceAgentsStatus> => {
       asked.push([agentId, scope]);
-      return approved
-        ? { declared: ['editor'], approved: true, queue: { status: 'waiting', thread_id: 't-1', pending: 0, approval_required: false, updated_at: '2026-11-03T10:00:00Z' } }
-        : { declared: ['editor'], approved: false, queue: { status: 'waiting', thread_id: null, pending: 2, approval_required: true, updated_at: null } };
+      return woke
+        ? { declared: ['editor'], queue: { status: 'working', thread_id: 't-1', pending: 0, updated_at: '2026-11-03T10:00:00Z' } }
+        : { declared: ['editor'], queue: { status: 'queued', thread_id: null, pending: 2, updated_at: null } };
     },
-    approveAgents: async () => { approved = true; return { approved: true, released: 1 }; },
     open: async (threadId: string) => { opened.push(threadId); return true; },
   }, {}, 'fr');
   let queue: UseAgentQueueResult | null = null;
   const root = await mount(runtime, function Probe() { queue = useAgentQueue('editor', 'deck-1'); return null; });
   assert.deepEqual(asked[0], ['editor', 'deck-1']);
-  assert.equal(queue!.approvalRequired, true);
-  assert.equal(queue!.approveLabel, 'Autoriser');
-  assert.equal(queue!.approvalLabel, 'Autorise cet agent à répondre à tes commentaires');
+  assert.equal(queue!.label, 'En file d’attente');
+  assert.equal(queue!.pending, 2);
+  for (const gone of ['approve', 'approvalRequired', 'approvalLabel', 'approveLabel']) {
+    assert.equal(gone in queue!, false, `${gone} is gone: comments wake their agent with no approval`);
+  }
   assert.equal(queue!.threadId, null);
   assert.equal(await queue!.openThread(), false, 'no thread yet');
-  await act(async () => { await queue!.approve(); });
+  woke = true;
+  await act(async () => { await queue!.refresh(); });
   await settle();
-  assert.equal(queue!.status, 'waiting');
-  assert.equal(queue!.label, 'Attend ta réponse');
+  assert.equal(queue!.status, 'working');
+  assert.equal(queue!.label, 'En cours');
   assert.equal(queue!.openLabel, 'Ouvrir la conversation');
   assert.equal(queue!.threadId, 't-1');
   await act(async () => { await queue!.openThread(); });
@@ -125,12 +126,12 @@ test('useAgentQueue shows the status in French with the thread link, and approva
 test('useAgentQueue keeps reading while the agent works, even when the answer stays the same', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const answers: Array<SpaceAgentsStatus['queue']> = [];
-  const working = { status: 'working', thread_id: 't-1', pending: 0, approval_required: false, updated_at: '2026-11-03T10:00:00Z' } as const;
+  const working = { status: 'working', thread_id: 't-1', pending: 0, updated_at: '2026-11-03T10:00:00Z' } as const;
   const runtime = runtimeWith({
     agentStatus: async (): Promise<SpaceAgentsStatus> => {
-      const queue = answers.length < 3 ? working : { ...working, status: 'waiting' as const };
+      const queue = answers.length < 3 ? working : { ...working, status: 'done' as const };
       answers.push(queue);
-      return { declared: ['editor'], approved: true, queue };
+      return { declared: ['editor'], queue };
     },
   });
   let queue: UseAgentQueueResult | null = null;
@@ -140,7 +141,7 @@ test('useAgentQueue keeps reading while the agent works, even when the answer st
     await act(async () => { t.mock.timers.tick(4_000); });
     await settle();
   }
-  assert.equal(queue!.status, 'waiting', 'the same "working" answer twice must not stop the reads');
+  assert.equal(queue!.status, 'done', 'the same "working" answer twice must not stop the reads');
   const reads = answers.length;
   await act(async () => { t.mock.timers.tick(12_000); });
   await settle();
@@ -151,21 +152,51 @@ test('useAgentQueue keeps reading while the agent works, even when the answer st
   root.unmount();
 });
 
+test('useAgentQueue lets a status read slower than its 4 s tick land instead of starting another', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const queued = { status: 'queued', thread_id: 't-1', pending: 1, updated_at: '2026-11-17T21:02:25Z' } as const;
+  const slow: Array<(status: SpaceAgentsStatus) => void> = [];
+  let reads = 0;
+  const runtime = runtimeWith({
+    agentStatus: (): Promise<SpaceAgentsStatus> => {
+      reads += 1;
+      if (reads === 1) return Promise.resolve({ declared: ['desk'], queue: queued });
+      return new Promise((resolve) => { slow.push(resolve); });
+    },
+  });
+  let queue: UseAgentQueueResult | null = null;
+  const root = await mount(runtime, function Probe() { queue = useAgentQueue('desk'); return null; });
+  assert.equal(queue!.status, 'queued');
+  await act(async () => { t.mock.timers.tick(4_000); });
+  await settle();
+  assert.equal(reads, 2, 'the tick reads again');
+  for (let tick = 0; tick < 3; tick += 1) {
+    await act(async () => { t.mock.timers.tick(4_000); });
+    await settle();
+  }
+  assert.equal(reads, 2, 'no tick replaces the read still on its way');
+  await act(async () => { slow[0]({ declared: ['desk'], queue: { ...queued, status: 'done', pending: 0 } }); });
+  await settle();
+  assert.equal(queue!.status, 'done', 'the slow answer lands: the run finished reads Done, not Queued for good');
+  assert.equal(queue!.label, AGENT_QUEUE_WORDS.done.en);
+  root.unmount();
+});
+
 test('every queue status has its words in both languages', () => {
-  for (const status of ['idle', 'queued', 'working', 'waiting', 'failed', 'done'] as const) {
+  for (const status of ['idle', 'queued', 'working', 'failed', 'done'] as const) {
     assert.ok(AGENT_QUEUE_WORDS[status].en && AGENT_QUEUE_WORDS[status].fr, status);
     assert.notEqual(AGENT_QUEUE_WORDS[status].en, AGENT_QUEUE_WORDS[status].fr, status);
   }
 });
 
 test('a comment an agent wrote carries its signature, clickable to its thread only for its owner', () => {
-  const base = { record_key: 'c1', id: 'c1', title: 'Shortened the title', properties: { Author: 'Notis' } };
-  const owner = readCommentRow({ ...base, agent: { name: 'Editor', thread_id: 't-9', row_id: 'row-3' } } as never);
-  const other = readCommentRow({ ...base, agent: { name: 'Editor' } } as never);
-  const person = readCommentRow({ ...base, properties: { Author: 'Flo' } } as never);
+  const base = { id: 'c1', body: 'Shortened the title', author: { user_id: 'u1', name: 'Notis', you: false } };
+  const owner = commentFromRow({ ...base, agent: { name: 'Editor', thread_id: 't-9', row_id: 'row-3' } });
+  const other = commentFromRow({ ...base, agent: { name: 'Editor', thread_id: null, row_id: null } });
+  const person = commentFromRow({ ...base, author: { user_id: 'u2', name: 'Flo', you: false }, agent: null });
   assert.deepEqual(owner.agent, { name: 'Editor', threadId: 't-9', rowId: 'row-3' });
   assert.deepEqual(other.agent, { name: 'Editor', threadId: null, rowId: null });
-  assert.equal(person.agent, null, 'the Author column alone never makes an agent');
+  assert.equal(person.agent, null, "a person's comment has no agent");
 
   const words = commentWords();
   const controller = (locale: 'en' | 'fr', openThread?: (id: string) => void) => ({
@@ -180,7 +211,7 @@ test('a comment an agent wrote carries its signature, clickable to its thread on
   assert.match(plain, /^<span class="nui-comment-agent">/);
   assert.match(plain, /De Editor/);
   assert.equal(renderToStaticMarkup(<CommentAgentSource controller={controller('en')} comment={person} />), '');
-  const band = readCommentRow({ ...base, agent: { name: 'fred-and-the-machine' } } as never);
+  const band = commentFromRow({ ...base, agent: { name: 'fred-and-the-machine' } });
   assert.match(renderToStaticMarkup(<CommentAgentSource controller={controller('en')} comment={band} />), /From Fred And The Machine/,
     'a band name reads out with spaces and capitals');
 });

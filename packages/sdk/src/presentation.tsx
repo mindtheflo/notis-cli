@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { NotisProvider } from './provider';
 import { citeSpaceSelection, copySpaceSelection } from './components/NotisSelectionBoundary';
 import { CiteSelectionBar } from './components/SelectionActionBar';
+import { SpaceTextComments, canCommentOnPage, startTextComment } from './components/SpaceTextComments';
 import type { NotisRuntime } from './runtime';
 import { ShortcutScope } from './ui/engine/KeyboardEngine';
 
@@ -86,6 +87,7 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
         <div ref={appRoot} data-notis-app-root data-notis-theme={theme.mode} style={theme.style} onCopy={onCopy}>
           {Shell ? <Shell><Component /></Shell> : <Component />}
           <SpaceSelectionCite root={appRoot} runtime={runtime} />
+          <SpaceTextComments root={appRoot} runtime={runtime} />
         </div>
       </NotisProvider>
       </ShortcutScope>
@@ -94,15 +96,15 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
 }
 
 /**
- * Every Space view gets Cite on selected text by default (truth PRT-087), quoting what copy would quote. A comment
- * boundary draws its own bar (Cite and Comment), and a Site's runtime has no chat, so neither shows this one.
+ * Every Space view gets Cite on selected text by default (truth PRT-087), quoting what copy would quote, and Comment
+ * next to it while the host takes comments (`spaceComments` with `startComment`): the host's new comment opens on the
+ * selected words. A Site's runtime has neither chat nor comments, so no bar shows there. A Space's own commentable
+ * text keeps its own Comment button: the bar offers Cite alone on it.
  */
 function SpaceSelectionCite({ root, runtime }: { root: React.RefObject<HTMLDivElement | null>; runtime: NotisRuntime }) {
-  return <CiteSelectionBar root={root} enabled={Boolean(runtime.addContext)}
-    accept={range => {
-      const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-        ? range.commonAncestorContainer as Element : range.commonAncestorContainer.parentElement;
-      return !element?.closest('[data-notis-comment-boundary]');
-    }}
+  const canComment = Boolean(runtime.spaceComments?.startComment);
+  return <CiteSelectionBar root={root} cite={Boolean(runtime.addContext)}
+    onComment={canComment ? (range => { startTextComment(runtime, root.current, range); }) : undefined}
+    canComment={canCommentOnPage}
     onCite={(range, text) => { void citeSpaceSelection(runtime, range, text).catch(() => false); }} />;
 }

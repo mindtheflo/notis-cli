@@ -293,6 +293,15 @@ export interface CiteSelectionBarProps {
   root: RefObject<HTMLElement | null>;
   /** Receives the cited text once the bar has cleared the selection. */
   onCite(range: Range, text: string): void;
+  /** False hides Cite (a surface with nowhere to send a quote). Default true. */
+  cite?: boolean;
+  /**
+   * Adds Comment after Cite (a Space page while the host takes comments): receives the selected range and text once
+   * the bar has cleared the selection.
+   */
+  onComment?(range: Range, text: string): void;
+  /** Whether this selection may be commented on with the bar's Comment (default: any it shows for). */
+  canComment?(range: Range): boolean;
   enabled?: boolean;
   accept?: UseSelectionAnchorOptions['accept'];
   /**
@@ -304,15 +313,39 @@ export interface CiteSelectionBarProps {
 }
 
 /**
- * The Cite-only bar every quoting surface shows (chat, Space views, Skills and automations; truth PRT-087): it follows
- * the selection in `root`, measures itself, and hands the cited text to `onCite`.
+ * The Comment action of a selection bar: the same words and glyph everywhere; it clears the selection and hides the
+ * bar before handing over the selected range and text.
  */
-export function CiteSelectionBar({ root, onCite, enabled = true, accept, portal }: CiteSelectionBarProps) {
+export function commentSelectionAction(locale: keyof typeof SELECTION_BAR_WORDS.comment, anchor: SelectionAnchor,
+  root: RefObject<HTMLElement | null>, dismiss: () => void, onComment: (range: Range, text: string) => void): SelectionBarAction {
+  return {
+    key: 'comment', label: SELECTION_BAR_WORDS.comment[locale], icon: COMMENT_GLYPH,
+    onSelect: () => {
+      const { range, text } = anchor;
+      clearSelectionIn(root.current);
+      dismiss();
+      onComment(range, text);
+    },
+  };
+}
+
+/**
+ * The bar every quoting surface shows (chat, Space views, Skills and automations; truth PRT-087): it follows the
+ * selection in `root`, measures itself, and hands the cited text to `onCite`. With `onComment` (a Space page while the
+ * host takes comments) it also offers Comment.
+ */
+export function CiteSelectionBar({ root, onCite, cite = true, onComment, canComment, enabled = true, accept, portal }: CiteSelectionBarProps) {
   const locale = useToolkitLocale();
   const [barSize, setBarSize] = useState({ width: 72, height: 32 });
-  const { anchor, dismiss } = useSelectionAnchor(root, { enabled, accept, barSize });
+  const { anchor, dismiss } = useSelectionAnchor(root, { enabled: enabled && (cite || Boolean(onComment)), accept, barSize });
   if (!anchor) return null;
-  const bar = <SelectionActionBar anchor={anchor} onSize={setBarSize} actions={[citeSelectionAction(locale, anchor, root, dismiss, onCite)]} />;
+  const actions: SelectionBarAction[] = [];
+  if (cite) actions.push(citeSelectionAction(locale, anchor, root, dismiss, onCite));
+  if (onComment && (!canComment || canComment(anchor.range))) {
+    actions.push(commentSelectionAction(locale, anchor, root, dismiss, onComment));
+  }
+  if (!actions.length) return null;
+  const bar = <SelectionActionBar anchor={anchor} onSize={setBarSize} actions={actions} />;
   return portal ? portal(bar) : bar;
 }
 
@@ -336,8 +369,10 @@ export function SelectionActionBar({ anchor, actions, onSize }: {
   onSize?(size: { width: number; height: number }): void;
 }) {
   const bar = useRef<HTMLDivElement>(null);
-  const first = useRef(actions[0]);
-  first.current = actions[0];
+  // The Cite key cites: never another action (a bar without Cite ignores it).
+  const citeAction = actions.find(action => action.key === 'cite') ?? (actions[0]?.key === 'comment' ? undefined : actions[0]);
+  const first = useRef(citeAction);
+  first.current = citeAction;
   const [left, setLeft] = useState(anchor.left);
   // A finger needs a bigger target than the 26 px a pointer gets.
   const coarse = typeof window !== 'undefined' && isCoarsePointer(window);

@@ -12,7 +12,11 @@
  * when the link fails.
  *
  * Until a root's links came back (and, with none, the page's best match), its Goes to line names nothing: `known` is
- * false, never a guess that turns into another thread a moment later. The last links of each root and the best match
+ * false, never a guess that turns into another thread a moment later. When those reads fail and nothing is kept,
+ * `lost` is true and the line shows nothing, never "a new thread"; a failed best match keeps the last one known.
+ *
+ * The server may name an agent's thread ahead of the links (`via`, SPC-458, SPC-459): it is where a reply goes, so
+ * `goesTo` names it, but it is no link (`linksOf` leaves it out). The last links of each root and the best match
  * of each page are kept for the session, per viewer and Space, so a page shown again names its threads at once while
  * they are read again.
  */
@@ -24,12 +28,22 @@ import type { SpaceCommentThreadPick, SpaceCommentThreadRef } from '../../space'
 export interface CommentRouting {
   /** True when the host links comment threads to threads: each card shows its Goes to line. */
   links: boolean;
-  /** The threads a comment thread is linked to; the first is where a reply goes. */
+  /** The threads a comment thread is linked to; the first is where a reply goes unless an agent's thread takes it. */
   linksOf(rootKey: string): readonly SpaceCommentThreadRef[];
-  /** Where a reply on this thread goes: its first link, else the best match (no link yet), else null (a new thread). */
+  /**
+   * Where a reply on this thread goes: the agent's thread the server names ahead of the links (`via`), else its first
+   * link, else the best match (no link yet), else null (a new thread).
+   */
   goesTo(rootKey: string): SpaceCommentThreadRef | null;
   /** The best-match thread for a new comment on this page (THR-024); null: none, or the host has no best match. */
   bestMatch: SpaceCommentThreadRef | null;
+  /** True when this page's best match could not be read and none is kept: the To chip names no thread. */
+  bestMatchLost?: boolean;
+  /**
+   * True when where this thread goes could not be read (its links, or with none the best match) and nothing is kept:
+   * the Goes to line shows nothing rather than a destination it does not know (never "a new thread").
+   */
+  lost?(rootKey: string): boolean;
   /** True when the host answers best matches: the new comment box shows its To chip. */
   hasBestMatch: boolean;
   /** The thread the next new comment goes to, when picked with the chip or @; null: the best match. */
@@ -102,19 +116,25 @@ function settled(refs: readonly SpaceCommentThreadRef[] | undefined): boolean {
   return Boolean(first && first.threadId && first.status !== 'pending');
 }
 
+/** The links proper, without the agent's thread the server names ahead of them (`via`). */
+function linksOnly(refs: readonly SpaceCommentThreadRef[]): readonly SpaceCommentThreadRef[] {
+  return refs.some(ref => ref.via) ? refs.filter(ref => !ref.via) : refs;
+}
+
 /** The links a successful answer gives `rootKey`: none when it leaves the root out. */
 function refsOf(answer: object, rootKey: string): SpaceCommentThreadRef[] {
   const refs = (answer as Record<string, unknown>)[rootKey];
   return Array.isArray(refs) ? refs as SpaceCommentThreadRef[] : [];
 }
 
-/** The key a root's links are kept under: the same record key in another database is another thread. */
+/** The key a root's links are kept under (a comment id is unique in the store; `database` only splits older callers). */
 function linkId(database: string, rootKey: string): string {
   return `${database}\u0000${rootKey}`;
 }
 
 export function useCommentRouting(input: {
-  database: string;
+  /** @deprecated Comments live in one store: only splits the session cache. */
+  database?: string;
   /** Root record keys of the threads on screen (drafts left out): their links are read in one batch. */
   rootKeys: readonly string[];
   /** The record the page shows, for the best match. */
@@ -129,7 +149,7 @@ export function useCommentRouting(input: {
   /** Called when a thread someone picked could not be linked, so they hear it instead of a silent "a new thread". */
   onLinkFailed?: () => void;
 }): CommentRouting {
-  const { database, rootKeys, recordKey, fallbackOpen } = input;
+  const { database = 'comments', rootKeys, recordKey, fallbackOpen } = input;
   const pickKey = input.draftScope ?? '';
   const onLinkFailed = useRef(input.onLinkFailed);
   onLinkFailed.current = input.onLinkFailed;
@@ -152,8 +172,10 @@ export function useCommentRouting(input: {
   const canRead = Boolean(transport?.links);
   const hasBestMatch = Boolean(transport?.bestMatch);
   const [links, setLinks] = useState<Record<string, SpaceCommentThreadRef[]>>({});
-  /** The best match answered for a page (`for`: its record key). */
-  const [best, setBest] = useState<{ for: string | null; thread: SpaceCommentThreadRef | null } | null>(null);
+  /** The best match answered for a page (`for`: its record key); `failed` when its read failed. */
+  const [best, setBest] = useState<{ for: string | null; thread: SpaceCommentThreadRef | null; failed?: boolean } | null>(null);
+  /** Roots whose links reads gave up with nothing kept: their Goes to line names nothing until a read answers. */
+  const [lostIds, setLostIds] = useState<ReadonlySet<string>>(() => new Set());
   /** The pick for the next new comment of each page (`pickKey`). */
   const [picks, setPicks] = useState<Readonly<Record<string, SpaceCommentThreadPick>>>({});
   const newPick = picks[pickKey] ?? null;
@@ -223,7 +245,7 @@ export function useCommentRouting(input: {
       const ids = chunk.map(key => linkId(database, key));
       for (const id of ids) reading.current.add(id);
       const startedAt = writes.current.seq;
-      host.links({ database, rootKeys: chunk }).then(answer => {
+      host.links({ rootIds: chunk }).then(answer => {
         for (const id of ids) { reading.current.delete(id); read.current.add(id); }
         failures.current = 0;
         keep(chunk, answer, startedAt);
@@ -232,12 +254,20 @@ export function useCommentRouting(input: {
         console.warn('[comments] links failed', error);
         failures.current += 1;
         if (failures.current > RETRIES) {
-          // Given up: these roots show their last known links, else none, rather than loading for ever.
-          if (mounted.current) setLinks(current => {
-            const next = { ...current };
-            for (const id of ids) if (!(id in next)) next[id] = [...(knownLinks(id, current) ?? [])];
-            return next;
-          });
+          // Given up: these roots show their last known links, else nothing (never "a new thread"), rather than
+          // loading for ever. The next read that answers names them.
+          if (mounted.current) {
+            const kept = ids.filter(id => knownLinks(id, linksRef.current) !== undefined);
+            setLinks(current => {
+              const next = { ...current };
+              for (const id of kept) if (!(id in next)) next[id] = [...(knownLinks(id, current) ?? [])];
+              return next;
+            });
+            setLostIds(current => {
+              const lostNow = ids.filter(id => !kept.includes(id) && !current.has(id));
+              return lostNow.length ? new Set([...current, ...lostNow]) : current;
+            });
+          }
           return;
         }
         setTimeout(() => { if (mounted.current) setRetry(count => count + 1); }, RETRY_MS * 2 ** (failures.current - 1));
@@ -264,7 +294,7 @@ export function useCommentRouting(input: {
       if (!mounted.current || !host?.links) { rereads.current.set(id, { timer: null, step }); return; }
       const startedAt = writes.current.seq;
       const next = () => { if (mounted.current) rereadAt(rootKey, step + 1); };
-      host.links({ database, rootKeys: [rootKey] }).then(answer => {
+      host.links({ rootIds: [rootKey] }).then(answer => {
         keep([rootKey], answer, startedAt);
         const now = answer && typeof answer === 'object' && (writes.current.at.get(id) ?? 0) <= startedAt
           ? refsOf(answer, rootKey) : linksRef.current[id];
@@ -301,24 +331,33 @@ export function useCommentRouting(input: {
       setBest({ for: recordKey, thread: thread ?? null });
       if (bestId) sessionPut(sessionBest, bestId, thread ?? null);
     }, (error: unknown) => {
-      if (alive) setBest({ for: recordKey, thread: null });
+      // A failed read keeps the last known best match (the session's), never "a new thread" it does not know.
+      if (alive) setBest({ for: recordKey, thread: null, failed: true });
       console.warn('[comments] best match failed', error);
     });
     return () => { alive = false; };
   }, [hasBestMatch, recordKey, bestId]);
   // Only this page's best match: another page's would name a thread this one does not go to.
-  const answered = best !== null && best.for === recordKey;
-  const bestKnown = !hasBestMatch || answered || Boolean(bestId && sessionBest.has(bestId));
+  const answered = best !== null && best.for === recordKey && !best.failed;
+  const bestKept = Boolean(bestId && sessionBest.has(bestId));
+  const bestMatchLost = hasBestMatch && !answered && !bestKept && best !== null && best.for === recordKey;
+  const bestKnown = !hasBestMatch || answered || bestKept || bestMatchLost;
   const bestMatch = !hasBestMatch ? null : answered ? best.thread : (bestId && sessionBest.get(bestId)) || null;
 
-  const linksOf = useCallback((rootKey: string) => knownLinks(linkId(database, rootKey), links) ?? NONE,
+  const linksOf = useCallback((rootKey: string) => linksOnly(knownLinks(linkId(database, rootKey), links) ?? NONE),
     [links, database, knownLinks]);
   const goesTo = useCallback((rootKey: string) => (knownLinks(linkId(database, rootKey), links) ?? NONE)[0] ?? bestMatch,
     [links, database, bestMatch, knownLinks]);
+  const lost = useCallback((rootKey: string) => {
+    const id = linkId(database, rootKey);
+    const refs = knownLinks(id, links);
+    return refs === undefined ? lostIds.has(id) : !refs.length && bestMatchLost;
+  }, [links, database, lostIds, bestMatchLost, knownLinks]);
   const known = useCallback((rootKey: string) => {
-    const refs = knownLinks(linkId(database, rootKey), links);
-    return Boolean(refs && (refs.length || bestKnown));
-  }, [links, database, bestKnown, knownLinks]);
+    const id = linkId(database, rootKey);
+    const refs = knownLinks(id, links);
+    return Boolean(refs ? refs.length || bestKnown : lostIds.has(id));
+  }, [links, database, bestKnown, lostIds, knownLinks]);
 
   const pickId = (pick: SpaceCommentThreadPick | null) => pick && 'threadId' in pick ? pick.threadId : null;
 
@@ -341,10 +380,13 @@ export function useCommentRouting(input: {
     writes.current.seq += 1;
     writes.current.at.set(id, writes.current.seq);
     read.current.add(id);
-    setLinks(current => ({
-      ...current,
-      [id]: [thread, ...(knownLinks(id, current) ?? NONE).filter(item => !sameThread(item, thread))],
-    }));
+    setLinks(current => {
+      const others = (knownLinks(id, current) ?? NONE).filter(item => !sameThread(item, thread));
+      // The thread of the agent that wrote the first comment still takes replies over any link (SPC-458); the thread
+      // of an agent that only replied gives way to it (SPC-459).
+      const started = others.filter(item => item.via === 'started');
+      return { ...current, [id]: [...started, thread, ...others.filter(item => !item.via)] };
+    });
     return writes.current.seq;
   }, [database, knownLinks]);
 
@@ -375,7 +417,7 @@ export function useCommentRouting(input: {
       });
     };
     try {
-      const thread = await host.link({ database, rootKey, pick, ...(primary ? { primary: true } : {}) });
+      const thread = await host.link({ rootId: rootKey, pick, ...(primary ? { primary: true } : {}) });
       if (thread) {
         if (writes.current.at.get(id) === mine) remember(rootKey, thread);
       } else {
@@ -397,7 +439,7 @@ export function useCommentRouting(input: {
     let pick: SpaceCommentThreadPick | null;
     try {
       pick = await host.pickThread({ anchor,
-        current: (knownLinks(linkId(database, rootKey), linksRef.current) ?? NONE)[0]?.threadId ?? null });
+        current: linksOnly(knownLinks(linkId(database, rootKey), linksRef.current) ?? NONE)[0]?.threadId ?? null });
     } catch (error) {
       console.warn('[comments] thread picker failed', error);
       onLinkFailed.current?.();
@@ -425,8 +467,8 @@ export function useCommentRouting(input: {
   const canLink = Boolean(transport?.pickThread && transport?.link);
 
   return useMemo(() => ({
-    links: canRead, linksOf, goesTo, bestMatch, hasBestMatch, newPick,
-    canPick, canLink, pickForNew, clearPick, change, linkNew, saving, reread, known, open,
-  }), [canRead, linksOf, goesTo, bestMatch, hasBestMatch, newPick, canPick, canLink, pickForNew, clearPick, change, linkNew,
-    saving, reread, known, open]);
+    links: canRead, linksOf, goesTo, bestMatch, bestMatchLost, hasBestMatch, newPick,
+    canPick, canLink, pickForNew, clearPick, change, linkNew, saving, reread, known, lost, open,
+  }), [canRead, linksOf, goesTo, bestMatch, bestMatchLost, hasBestMatch, newPick, canPick, canLink, pickForNew, clearPick,
+    change, linkNew, saving, reread, known, lost, open]);
 }

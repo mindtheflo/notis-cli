@@ -33,7 +33,7 @@ import {
 } from './paneParts';
 import { locatePassage, passageAt, type PassageAnchor } from './passageModel';
 import { createPortal } from 'react-dom';
-import { markRetiredPane, useHostCommentSource, useHostComments } from './hostComments';
+import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
 import type { PassageCommentController } from './usePassageComments';
 
 // ---------------------------------------------------------------------------
@@ -214,6 +214,14 @@ function wordsAfter(nodes: Array<{ node: Text; start: number }>, text: string, e
 }
 
 /** The selection of the document or shadow root the element is in. */
+type SelectionEnds = { startContainer: Node; startOffset: number; endContainer: Node; endOffset: number };
+const endsOf = (range: Range): SelectionEnds => ({ startContainer: range.startContainer, startOffset: range.startOffset,
+  endContainer: range.endContainer, endOffset: range.endOffset });
+const sameEnds = (a: SelectionEnds, b: SelectionEnds) => a.startContainer === b.startContainer
+  && a.startOffset === b.startOffset && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+/** How long a touch selection rests before the Comment button is placed for it again. */
+const TOUCH_SETTLE_MS = 450;
+
 function selectionOf(el: HTMLElement): Selection | null {
   const root = el.getRootNode() as Document | (ShadowRoot & { getSelection?: () => Selection | null });
   const own = 'getSelection' in root && typeof root.getSelection === 'function' ? root.getSelection() : null;
@@ -317,6 +325,9 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flash?.n, boxes.length > 0]);
 
+  // The selection the Comment button was placed for: it goes as soon as the selection is cleared (a click away, Cite),
+  // leaves the text or becomes another one, until that one is read again (MGR-386, SPC-470).
+  const readEnds = useRef<SelectionEnds | null>(null);
   const readSelection = () => {
     const box = wrap.current;
     const root = textRoot.current;
@@ -324,10 +335,12 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
     const holder = textHolder(root);
     const selection = selectionOf(root);
     const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    readEnds.current = null;
     if (!range || range.collapsed || !holder.contains(range.startContainer) || !holder.contains(range.endContainer)) {
       setSelected(null);
       return;
     }
+    readEnds.current = endsOf(range);
     const before = holder.ownerDocument.createRange();
     before.selectNodeContents(holder);
     before.setEnd(range.startContainer, range.startOffset);
@@ -366,6 +379,44 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
       place: above ? 'above' : 'below',
     });
   };
+
+  const shown = selected != null;
+  // The touch settle timer outlives the listener below: hiding Comment ends that effect, and the timer must still
+  // read the moved selection once its handles stop. It is only cancelled by a newer move or on unmount.
+  const settleRef = useRef<{ view: Window; id: number } | null>(null);
+  useEffect(() => () => {
+    const settle = settleRef.current;
+    if (settle) settle.view.clearTimeout(settle.id);
+  }, []);
+  useEffect(() => {
+    const root = textRoot.current;
+    if (!shown || !root) return undefined;
+    const document = root.ownerDocument;
+    const view = document.defaultView;
+    const scope = root.getRootNode() as Document | ShadowRoot;
+    const onSelectionChange = () => {
+      const selection = selectionOf(root);
+      const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+      const kept = readEnds.current;
+      if (range && !range.collapsed && kept && sameEnds(endsOf(range), kept)) return;
+      setSelected(null);
+      // A touch selection has no mouse or key up when its handles move: it is read once they stop.
+      if (settleRef.current) settleRef.current.view.clearTimeout(settleRef.current.id);
+      settleRef.current = null;
+      if (view && range && !range.collapsed && view.matchMedia?.('(pointer: coarse)').matches) {
+        const id = view.setTimeout(() => { settleRef.current = null; readSelectionRef.current(); }, TOUCH_SETTLE_MS);
+        settleRef.current = { view, id };
+      }
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    if (scope !== document) scope.addEventListener('selectionchange', onSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', onSelectionChange);
+      if (scope !== document) scope.removeEventListener('selectionchange', onSelectionChange);
+    };
+  }, [shown]);
+  const readSelectionRef = useRef(readSelection);
+  readSelectionRef.current = readSelection;
 
   const onClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     const box = wrap.current;
@@ -441,8 +492,11 @@ function PassageCommentBox({ comments }: { comments: PassageCommentController })
   const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !comments.sending && controller.canWrite;
   const send = async () => {
     if (!canSend) return;
-    // A failed save keeps the text and the attached files in the box.
-    if (await comments.send(body, files.ready)) { setBody(''); files.clear(); }
+    // The new comment shows at once, so the box empties at once too (the text never shows twice while the store
+    // answers); a failed save brings back the text, and the attached files stay.
+    const text = body;
+    setBody('');
+    if (await comments.send(text, files.ready)) files.clear(); else setBody(text);
   };
   return (
     <div ref={boxRef} className="nui-comment-new-box" role="group" aria-label={controller.say('newComment')}
@@ -503,7 +557,7 @@ export interface PassageCommentPaneProps extends Omit<CommentListOptions, 'order
   className?: string;
 }
 
-export const PassageCommentPane = markRetiredPane(function PassageCommentPane(props: PassageCommentPaneProps) {
+export const PassageCommentPane = markHostPane(function PassageCommentPane(props: PassageCommentPaneProps) {
   const { comments } = props;
   const inner = comments.controller;
   // What the host reads: the threads (its waiting count) and the new comment, on words or the page (it opens the panel).
@@ -549,7 +603,7 @@ function PassageCommentPaneBody({ comments, onClose, title, groups, onGroup, cla
             {gone ? <span className="nui-passage-hint">{controller.say('textChangedHint')}</span> : null}
           </button>
         ) : null}
-        <CommentThreadCard controller={controller} thread={thread} />
+        <CommentThreadCard controller={controller} thread={thread} quote={false} />
       </div>
     );
   };

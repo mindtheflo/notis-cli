@@ -193,7 +193,6 @@ async function settle(): Promise<void> {
  * book's browser frames. Keyed by specimen id, with the reason.
  */
 const JSDOM_SKIPS_INTERACT: Readonly<Record<string, string>> = {
-  'notis-comment-boundary': 'its steps select text inside the frame shadow root, and jsdom cannot select text inside a shadow root',
   'notis-selection-boundary': 'its steps select text inside the frame shadow root, and jsdom cannot select text inside a shadow root',
 };
 

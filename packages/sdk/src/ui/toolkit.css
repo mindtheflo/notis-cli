@@ -1399,6 +1399,7 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-comment-new-box { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
   background: hsl(var(--foreground) / .06); }
 .nui-comment-new-title { margin: 0; font-weight: 600; }
+.nui-comment-new-items { margin: -4px 0 0; overflow-wrap: anywhere; color: hsl(var(--muted-foreground)); font-size: 12px; }
 .nui-comment-new-actions, .nui-comment-dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .nui-comment-new-actions { align-items: center; }
 .nui-comment-new-gap { flex: 1; }
@@ -1473,6 +1474,10 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   overflow-wrap: anywhere; }
 .nui-passage-anchor[data-changed] .nui-passage-quote { color: hsl(var(--muted-foreground)); text-decoration: line-through;
   text-decoration-color: hsl(var(--muted-foreground) / .5); }
+/* The quoted words of a text comment, on its card and in its new comment box. */
+.nui-comment-quote { padding: 2px 6px; border-radius: 4px; background: hsl(var(--primary) / .1); font-size: 13px; }
+.nui-comment-quote-row { cursor: default; }
+.nui-comment-quote-row:hover { background: transparent; }
 .nui-passage-hint, .nui-passage-error { margin: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
 .nui-passage-error { color: hsl(var(--destructive, 0 72% 51%)); }
 .nui-passage-other { align-self: flex-start; padding: 0; border: 0; background: transparent; font: inherit; font-size: 12px;
@@ -1577,6 +1582,7 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
 .nui-comment-toolbar-hint .nui-comment-hint-cancel { margin-inline-start: 4px; }
 /* Over the page card by default: an inset from its top left corner, never wider than the card (K36). */
 .nui-comment-toolbar[data-place="overlay"] { position: absolute; top: 8px; left: 8px; z-index: 3; max-width: calc(100% - 16px); }
+.nui-comment-toolbar-slot { display: none; }
 /* "Esc cancels" means nothing without a keyboard: gone on touch screens and on narrow screens (a phone, a phone-width panel). */
 @media (hover: none), (max-width: 767px) { .nui-comment-hint-cancel { display: none; } }
 /* On a phone the hint wraps to two lines instead of running off the bar, and the idle hint (a keyboard tip) goes. The
@@ -1587,6 +1593,10 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
   .nui-comment-toolbar[data-place="overlay"] { position: absolute; top: auto; bottom: calc(100% + 8px); left: 0; display: flex;
     width: fit-content; max-width: 100%; margin: 0; }
   :has(> .nui-comment-toolbar[data-place="overlay"]) { margin-top: var(--nui-comment-toolbar-room, 46px); }
+  /* The bar draws in the layer root (SPC-464), fixed over the room its slot keeps, so a parent that clips its
+     overflow never hides it; the script sets its top, left and max width from the card. */
+  .nui-comment-toolbar[data-place="overlay"][data-lifted] { position: fixed; bottom: auto; }
+  :has(> .nui-comment-toolbar-slot[data-place="overlay"]) { margin-top: var(--nui-comment-toolbar-room, 46px); }
   .nui-comment-toolbar-hint { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
     white-space: normal; line-height: 1.3; }
   .nui-comment-toolbar-hint[data-idle] { display: none; }

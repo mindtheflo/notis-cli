@@ -1,12 +1,15 @@
 /**
  * A stand-in for the host Comments panel in specimens: the comment panes draw in the host's right panel
- * (`runtime.spaceComments`), so a specimen gives them a slot where the panel would be. The viewer is Flo, who can edit
- * the Space; `routing` adds the host's threads (links, best match, the @ picker) from fixtures.
+ * (`runtime.spaceComments`), so a specimen gives them a slot where the panel would be. The comments come from an
+ * in-memory store seeded with `rows` (writes succeed without a server); the viewer is Flo, who can edit the Space;
+ * `routing` adds the host's threads (links, best match, the @ picker) from fixtures.
  */
 import { createContext, useCallback, useContext, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import {
-  NotisProvider, type NotisRuntime, type SpaceCommentSource, type SpaceCommentsTransport, type SpaceCommentThreadRef,
+  NotisProvider, type NotisRuntime, type SpaceCommentPage, type SpaceCommentRow, type SpaceCommentSource,
+  type SpaceCommentsTransport, type SpaceCommentThreadRef,
 } from '../../src';
+import { memoryCommentStore } from '../runtime/memoryComments';
 
 const THREADS: Record<string, SpaceCommentThreadRef> = {
   deck: { threadId: 'thread-deck', title: 'Q3 deck polish', harness: 'claude', status: 'Working' },
@@ -15,7 +18,7 @@ const THREADS: Record<string, SpaceCommentThreadRef> = {
 
 /** The host's threads from fixtures: c1 goes to the deck thread, the best match is the copy thread. */
 export const ROUTING_FIXTURE: Partial<SpaceCommentsTransport> = {
-  links: async ({ rootKeys }) => Object.fromEntries(rootKeys.filter(key => key === 'c1').map(key => [key, [THREADS.deck!]])),
+  links: async ({ rootIds }) => Object.fromEntries(rootIds.filter(key => key === 'c1').map(key => [key, [THREADS.deck!]])),
   bestMatch: async () => THREADS.copy!,
   pickThread: async () => THREADS.deck!,
   link: async input => ('threadId' in input.pick ? input.pick : null),
@@ -24,23 +27,34 @@ export const ROUTING_FIXTURE: Partial<SpaceCommentsTransport> = {
 
 const SlotContext = createContext<((node: HTMLElement | null) => void) | null>(null);
 
-export function HostCommentsProvider({ runtime, routing, children }: {
-  runtime: NotisRuntime; routing?: Partial<SpaceCommentsTransport>; children: ReactNode;
+export function HostCommentsProvider({ runtime, routing, rows, page, upload, more, children }: {
+  runtime: NotisRuntime; routing?: Partial<SpaceCommentsTransport>;
+  /** The comments the store starts with. */
+  rows?: readonly Partial<SpaceCommentRow>[];
+  /** The page the host shows. Default: none (the Space home). */
+  page?: SpaceCommentPage | null;
+  /** Whether files can be attached. Default true. */
+  upload?: boolean;
+  /** More transport parts (an upload that keeps going, a refusal). */
+  more?: Partial<SpaceCommentsTransport>;
+  children: ReactNode;
 }) {
   const sources = useRef(new Set<SpaceCommentSource>());
   const slot = useRef<HTMLElement | null>(null);
+  const store = useMemo(() => memoryCommentStore({ rows, page, upload }), [rows, page, upload]);
   const withPanel = useMemo(() => ({
     ...runtime,
     spaceComments: {
-      viewer: { name: 'Flo', canEditSpace: true },
+      ...store.transport,
       ...routing,
+      ...more,
       attach(source: SpaceCommentSource) {
         sources.current.add(source);
         source.show(slot.current);
         return () => { sources.current.delete(source); source.show(null); };
       },
-    },
-  }) as NotisRuntime, [runtime, routing]);
+    } satisfies SpaceCommentsTransport,
+  }) as NotisRuntime, [runtime, routing, store, more]);
   const setSlot = useCallback((node: HTMLElement | null) => {
     slot.current = node;
     for (const source of sources.current) source.show(node);

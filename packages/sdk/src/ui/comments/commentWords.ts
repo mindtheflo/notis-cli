@@ -27,9 +27,10 @@ export const COMMENT_WORDS = Object.freeze({
   reply: w('Reply', 'Répondre'),
   replyToReopen: w('Reply', 'Répondre'),
   newComment: w('New comment', 'Nouveau commentaire'),
-  newCommentOn: w('New comment on item {n}', 'Nouveau commentaire sur l’élément {n}'),
-  newCommentWhole: w('New comment on all of item {n}', 'Nouveau commentaire sur tout l’élément {n}'),
-  commentOnAnchor: w('Comment on all of item {n}', 'Commenter tout l’élément {n}'),
+  // "{anchor}" is the anchor's own name from `anchorLabel` ("Slide 2"); "{n}" stays filled for older overrides.
+  newCommentOn: w('New comment on {anchor}', 'Nouveau commentaire sur {anchor}'),
+  newCommentWhole: w('New comment on all of {anchor}', 'Nouveau commentaire sur {anchor} en entier'),
+  commentOnAnchor: w('Comment on all of {anchor}', 'Commenter {anchor} en entier'),
   pinHint: w('Click where the comment goes.', 'Clique là où va le commentaire.'),
   zoneHint: w('Click to pin a spot, or hold and drag to mark a zone.',
     'Clique pour épingler un point, ou maintiens et fais glisser pour marquer une zone.'),
@@ -160,6 +161,7 @@ export const COMMENT_WORDS = Object.freeze({
   openLinkedThread: w('Open {title} in the chat', 'Ouvrir {title} dans le chat'),
   toThread: w('To {title}', 'À {title}'),
   toNew: w('To a new thread', 'À une nouvelle conversation'),
+  toPick: w('Choose a thread', 'Choisis une conversation'),
   toNewHarness: w('To a new {harness} thread', 'À une nouvelle conversation {harness}'),
   pickThread: w('Choose the thread this comment goes to', 'Choisir la conversation où va ce commentaire'),
   // While a picked thread is being linked: the Goes to line already names it.
@@ -187,7 +189,10 @@ export const COMMENT_WORDS = Object.freeze({
   newCommentItems: w('New comment on {n} items', 'Nouveau commentaire sur {n} éléments'),
   newCommentItem: w('New comment on 1 item', 'Nouveau commentaire sur 1 élément'),
   newCommentTime: w('New comment at {time}', 'Nouveau commentaire à {time}'),
+  newCommentText: w('New comment on these words', 'Nouveau commentaire sur ces mots'),
   itemsLabel: w('{n} items', '{n} éléments'),
+  // The items a comment is on, named: the first few titles, then "+{n}" for the rest (SPC-463).
+  moreItems: w('{items} +{n}', '{items} +{n}'),
 }) satisfies Readonly<Record<string, Words>>;
 
 export type CommentWordKey = keyof typeof COMMENT_WORDS;

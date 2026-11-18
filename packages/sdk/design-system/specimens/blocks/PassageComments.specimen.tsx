@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { defineSpecimen, type SpecimenRenderContext } from '../../specimen';
-import type { NotisRuntime } from '../../../src';
+import type { SpaceCommentRow } from '../../../src';
 import { HostCommentsProvider, HostPanelSlot, ROUTING_FIXTURE } from '../hostCommentsPanel';
 import {
   CommentableRichText, CommentableText, PassageCommentPane, usePassageComments, type CommentScope, type PassageField,
@@ -29,62 +29,42 @@ const VALUES = {
 
 const GROUPS = { EN: w('the English copy', 'la version anglaise'), FR: w('the French copy', 'la version française') };
 
-interface Seed { key: string; field: string; lang: string; quote: string; prefix?: string; author: string; at: string;
-  body: { en: string; fr: string }; status?: string; thread?: string;
+/** `field`: the key of the field the words are in. */
+interface Seed { key: string; field: string; quote: string; prefix?: string; author: string; at: string;
+  body: { en: string; fr: string }; thread?: string;
   /** The server's stamp of the agent that wrote it, with what it ran on (its logo and hover card). */
   agent?: { name: string; runtime: Record<string, string | null> } }
 
 const SEEDS: Seed[] = [
-  { key: 'p1', field: 'Body', lang: 'EN', quote: 'comments on any passage', prefix: 'a new editor, ', author: 'Flo',
+  { key: 'p1', field: 'bodyEn', quote: 'comments on any passage', prefix: 'a new editor, ', author: 'Flo',
     at: '2026-11-02T09:00:00Z', body: { en: 'Say what a passage is.', fr: 'Dis ce qu’est un passage.' } },
-  { key: 'r1', field: 'Body', lang: 'EN', quote: '', author: 'fred-and-the-machine', at: '2026-11-02T09:20:00Z', thread: 'p1',
+  { key: 'r1', field: 'bodyEn', quote: '', author: 'fred-and-the-machine', at: '2026-11-02T09:20:00Z', thread: 'p1',
     agent: { name: 'fred-and-the-machine', runtime: { provider: 'claude_code', label: 'Claude', model: 'claude-opus-5.5',
       intelligence: null, effort: 'high', speed: 'normal' } },
     body: { en: 'Changed to "comments on the words you select".', fr: 'Remplacé par « commentaires sur les mots choisis ».' } },
-  { key: 'p2', field: 'Subject', lang: 'EN', quote: 'Three new things', author: 'Flo', at: '2026-11-02T09:05:00Z',
+  { key: 'p2', field: 'subjectEn', quote: 'Three new things', author: 'Flo', at: '2026-11-02T09:05:00Z',
     body: { en: 'Name them instead?', fr: 'Les nommer plutôt ?' } },
-  { key: 'p3', field: 'Body', lang: 'EN', quote: 'a smarter inbox', author: 'Flo', at: '2026-11-01T17:00:00Z',
+  { key: 'p3', field: 'bodyEn', quote: 'a smarter inbox', author: 'Flo', at: '2026-11-01T17:00:00Z',
     body: { en: 'Is this ready?', fr: 'C’est prêt ?' } },
-  { key: 'p4', field: 'Body', lang: 'FR', quote: 'une recherche plus rapide', author: 'Flo', at: '2026-11-02T10:00:00Z',
+  { key: 'p4', field: 'bodyFr', quote: 'une recherche plus rapide', author: 'Flo', at: '2026-11-02T10:00:00Z',
     body: { en: 'Same order as in English.', fr: 'Même ordre qu’en anglais.' } },
 ];
 
-function rows(lang: Ctx['lang']) {
-  const text = (value: string) => ({ type: 'rich_text', rich_text: [{ text: { content: value } }] });
-  const select = (value: string) => ({ type: 'select', select: { name: value } });
+/** The seeds as comment store rows, in the viewer's language. Flo is the viewer. */
+function rows(lang: Ctx['lang']): Partial<SpaceCommentRow>[] {
   return SEEDS.map(seed => ({
-    id: `id-${seed.key}`, record_key: seed.key, revision: 1, title: seed.body[lang], created_at: seed.at,
-    ...(seed.agent ? { agent: seed.agent } : {}),
-    properties: {
-      Issue: { type: 'relation', relation: [{ id: 'issue-1' }] }, Author: select(seed.author),
-      Status: select(seed.status ?? 'Open'), Needs: select('none'), Thread: text(seed.thread ?? ''),
-      Field: select(seed.field), Language: select(seed.lang), Quote: text(seed.quote), Prefix: text(seed.prefix ?? ''),
-      Suffix: text(''),
-    },
+    id: seed.key, page_key: 'issue-1', thread_root_id: seed.thread ?? null, mode: 'text',
+    field: seed.thread ? null : seed.field, quote: seed.thread ? null : seed.quote, prefix: seed.thread ? null : seed.prefix ?? '',
+    suffix: seed.thread ? null : '', body: seed.body[lang], created_at: seed.at, changed_at: seed.at,
+    author: seed.agent ? { user_id: 'user-flo', name: 'Flo', you: false } : { user_id: 'user-flo', name: seed.author, you: seed.author === 'Flo' },
+    agent: seed.agent ?? null,
   }));
-}
-
-function passageRuntime(lang: Ctx['lang'], empty: boolean): NotisRuntime {
-  const base = bookRuntime(lang);
-  let next = 0;
-  return {
-    ...base,
-    space: {
-      ...base.space!, cacheScope: `passages-book:${lang}:${empty ? 'empty' : 'full'}`,
-      actions: { 'comments.insert': { readOnly: false }, 'comments.update': { readOnly: false } },
-      shows: { comments: { database: 'comments' } },
-      bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
-    } as unknown as NotisRuntime['space'],
-    shown: async () => ({ rows: empty ? [] : rows(lang), schema_revision: 1 }),
-    callAction: async () => ({ record_key: `book-${next += 1}`, revision: 2 }),
-  } as unknown as NotisRuntime;
 }
 
 function Issue({ drafting }: { drafting?: boolean }) {
   const [group, setGroup] = useState('EN');
   const comments = usePassageComments({
-    scope: SCOPE, fields: FIELDS, values: VALUES, group, columns: { scope: 'Issue', anchor: null },
-    authors: ['Flo', 'Claude', 'Notis', 'fred-and-the-machine'],
+    scope: SCOPE, fields: FIELDS, values: VALUES, group,
   });
   const { startDraft, controller } = comments;
   useEffect(() => {
@@ -108,9 +88,14 @@ function Issue({ drafting }: { drafting?: boolean }) {
 }
 
 function Demo({ ctx, empty = false, drafting }: { ctx: Ctx; empty?: boolean; drafting?: boolean }) {
-  const runtime = useMemo(() => passageRuntime(ctx.lang, empty), [ctx.lang, empty]);
+  const runtime = useMemo(() => bookRuntime(ctx.lang), [ctx.lang]);
+  const seeded = useMemo(() => (empty ? [] : rows(ctx.lang)), [ctx.lang, empty]);
   // Each card names the thread it goes to at its top (the host's best match, from fixtures).
-  return <HostCommentsProvider runtime={runtime} routing={ROUTING_FIXTURE}><Issue drafting={drafting} /></HostCommentsProvider>;
+  return (
+    <HostCommentsProvider runtime={runtime} rows={seeded} routing={ROUTING_FIXTURE}>
+      <Issue drafting={drafting} />
+    </HostCommentsProvider>
+  );
 }
 
 export const specimen = defineSpecimen({

@@ -1,8 +1,10 @@
 # Sharing context with the agent
 
-Context is a generic SDK capability. An app can share a selected passage, a comment,
+Context is a generic SDK capability. An app can share a selected passage, a note,
 an image point, chart state, loaded records or any other JSON-serializable reference.
-It is not a feedback database or an instruction to execute work.
+It is not a feedback database or an instruction to execute work. Space comments
+are a different thing: Notis stores them and lists them in the host Comments panel
+([Comments](sdk.md#comments)); a context pill never becomes a comment.
 
 ## Live context versus explicit pills
 
@@ -14,8 +16,9 @@ It is not a feedback database or an instruction to execute work.
 - `update(item)` replaces an existing unsent snapshot with the same app-scoped ID.
 - `remove(id)` detaches an existing unsent pill. These operations return whether a pill
   was actually changed. Sent snapshots are immutable. A missing update/remove returns false.
-- Apps own annotation storage, markers and sidebars. Chat owns composer drafts. Removing
-  a chat pill never deletes an app annotation, and annotations are not invisibly attached.
+- Apps own their own markers and any annotation data that is not a comment. Chat owns
+  composer drafts. Removing a chat pill never deletes app data or a comment, and neither
+  is invisibly attached.
 
 ## Generic item
 
@@ -54,23 +57,24 @@ pipeline and persists the resulting media URLs. Context attachments share a 50 M
 budget and the message's 10-file limit. A failed fetch/upload fails the send and retains
 the draft. Refresh expiring attachment URLs with `update` before sending when needed.
 
-## Nearby comments and ordinary copy/paste
+## Selected text, Cite and Comment
 
-```tsx
-<NotisCommentBoundary resource={currentResource} commentClassName="my-comment-style">
-  <Article />
-</NotisCommentBoundary>
-```
+Every Space page offers a bar on selected text with no code: **Cite** adds the words
+as a selected-text pill to the chat composer (it sends nothing), and, where comments
+are on for the viewer, **Comment** opens the host Comments panel with the passage
+ready to comment on. That comment is stored by Notis, not by the app, and agents
+reach it through `LOCAL_NOTIS_SPACE_COMMENT_THREADS` ([Comments](sdk.md#comments)).
+Never build your own comment box or selection bar for this.
 
-Selecting text reveals Comment. The action stays clickable; its nearby editor remains
-open independently of browser selection. Submit adds a context pill. It does not create
-an annotation record, poll a store, send a message or clear an app's annotation data.
-Use `renderComment(props)` to replace the optional standard editor. `NotisCommentBox`
-is also exported as a controlled component (`value`, `onChange`, `onSubmit`, `onCancel`,
-optional `quote`, `pending`, `error`, `className`) for image markers or custom layouts.
+`NotisCommentBoundary` and `NotisCommentBox` are deprecated: the boundary only
+renders its children and the box renders nothing, so older Spaces keep loading.
+Do not add them; remove them when you touch a view. For an image point, chart state
+or another reference the person wants to bring to chat, call `useAgentContext().add`
+from your own control; for a pin or a zone that should stay as a comment, use the
+comment modes of `useComments`.
 
-Use `NotisSelectionBoundary` without the comment UI when only copy/paste provenance is
-needed. It preserves ordinary clipboard text and source metadata so normal paste into
+Use `NotisSelectionBoundary` when copy/paste should name a specific resource. It
+preserves ordinary clipboard text and source metadata so normal paste into
 chat creates a selected-text pill. No special Paste as context action is required.
 A `MarkdownEditor` inside the boundary is quoted the same way; inputs and textareas
 keep plain copy. Without any boundary, copied view text still pastes as a quote
@@ -78,7 +82,7 @@ named after the Space; add a boundary to name the resource the text belongs to.
 
 ## Verify
 
-Check the real host: selection/copy/paste, nearby editor stability, app-defined image
+Check the real host: selection, Cite and copy/paste, app-defined image
 points and icons, data in previews, draft reload, source navigation, explicit attachment
 bytes, failed sends, updates/removal and immutable sent history. Keep private payloads
 out of analytics. Context remains untrusted reference, never an authorization channel.

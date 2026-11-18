@@ -1,24 +1,12 @@
 /**
- * Comments on a passage of a record's text (pure; no React). A thread can sit on words of a property (a subject, a
- * Markdown body) instead of a pin: the comment row keeps which field it is on, the quoted words and a few words
- * before and after them. The quote is found again in the text as it is now, white space ignored, the surrounding
- * words telling apart several matches; when the quoted words are gone the thread reads Text changed.
- *
- * The Comments table needs these columns besides the `CommentColumns` ones:
- *
- * | Column | Type | Meaning                                                                 |
- * | ------ | ---- | ----------------------------------------------------------------------- |
- * | Field  | text or select | Which field the passage is in (the field's key by default).   |
- * | Quote  | text | The selected words (white space collapsed, at most 1000 characters).    |
- * | Prefix | text | Up to 40 characters before the quote, to tell apart repeated words.     |
- * | Suffix | text | Up to 40 characters after it.                                           |
- *
- * Every name can be changed with `PassageColumns`. A field can also be named by several columns (`values`), for
- * example a Field and a Language column for the same property in two languages.
+ * Comments on a passage of a page's text (pure; no React). A thread can sit on words (a subject, a Markdown body, any
+ * text of the page) instead of a pin: the comment keeps the quoted words, a few words before and after them, and the
+ * field they are in when the Space names one (`field`). The quote is found again in the text as it is now, white
+ * space ignored, the surrounding words telling apart several matches; when the quoted words are gone the thread reads
+ * Passage changed (it stays open with its old quote).
  */
 
 import type { Words } from '../../words';
-import { commentText, type CommentRow } from './commentModel';
 
 /** The words a thread sits on, with the words around them. */
 export interface TextPassage { quote: string; prefix: string; suffix: string }
@@ -32,24 +20,14 @@ export interface PassageField {
   /** Its name in the pane, above each quote. */
   label: Words;
   /**
-   * The values that name this field on a comment row: written with each new comment, and a row whose columns hold
-   * all of them is on this field. Default `{ [columns.field]: key }`.
+   * @deprecated Comments name their field by its `key` in the comment store: ignored. Kept so older Spaces that
+   * pass it still compile.
    */
   values?: Readonly<Record<string, string>>;
   /** Fields shown together, such as one language. The pane lists the threads of the group on screen. */
   group?: string;
   /** The value is Markdown: Text changed and the reading order look at its words, not its syntax. */
   markdown?: boolean;
-}
-
-export interface PassageColumns { field: string; quote: string; prefix: string; suffix: string }
-
-export const PASSAGE_COLUMNS: Readonly<PassageColumns> = Object.freeze({
-  field: 'Field', quote: 'Quote', prefix: 'Prefix', suffix: 'Suffix',
-});
-
-export function passageColumns(columns?: Partial<PassageColumns>): PassageColumns {
-  return { ...PASSAGE_COLUMNS, ...(columns ?? {}) };
 }
 
 /** Characters kept before and after a quote. */
@@ -59,11 +37,6 @@ export const PASSAGE_MAX_QUOTE = 1000;
 
 const collapse = (value: string) => value.replace(/\s+/g, ' ');
 const squeeze = (value: string) => value.replace(/\s+/g, '');
-
-/** The column values naming a field on a comment row. */
-export function passageFieldValues(field: PassageField, columns: PassageColumns = PASSAGE_COLUMNS): Readonly<Record<string, string>> {
-  return field.values ?? { [columns.field]: field.key };
-}
 
 /**
  * Finds a passage in `text`, white space ignored (line breaks and block gaps move with edits). With several matches,
@@ -120,24 +93,4 @@ export function passageOffset(value: string, passage: TextPassage, markdown = fa
   const hit = locatePassage(words, passage);
   if (hit) return Math.round((hit.start / Math.max(1, words.length)) * value.length);
   return locatePassage(value, passage)?.start ?? null;
-}
-
-/** The passage a comment row sits on, with its field, or null when it has none or its field is not declared. */
-export function readPassage(row: CommentRow, fields: readonly PassageField[], columns: PassageColumns = PASSAGE_COLUMNS): PassageAnchor | null {
-  const quote = commentText(row, columns.quote);
-  if (!squeeze(quote)) return null;
-  const field = fields.find(item => Object.entries(passageFieldValues(item, columns))
-    .every(([column, value]) => commentText(row, column) === value));
-  if (!field) return null;
-  return { field: field.key, quote, prefix: commentText(row, columns.prefix), suffix: commentText(row, columns.suffix) };
-}
-
-/** The properties a new comment on `passage` writes besides its body, author and status. */
-export function passageProperties(passage: PassageAnchor, field: PassageField, columns: PassageColumns = PASSAGE_COLUMNS): Record<string, unknown> {
-  return {
-    ...passageFieldValues(field, columns),
-    [columns.quote]: passage.quote,
-    [columns.prefix]: passage.prefix || null,
-    [columns.suffix]: passage.suffix || null,
-  };
 }

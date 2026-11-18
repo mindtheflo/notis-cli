@@ -11,12 +11,14 @@ import { useShortcuts } from '../engine/hooks';
 import { Icon } from '../icons';
 import { Menu } from '../overlay';
 import {
-  formatCommentTime, groupCommentThreads, orderCommentThreads, type CommentGroup, type CommentOrder, type CommentThread,
+  commentAnchorsOf, formatCommentTime, groupCommentThreads, orderCommentThreads, type CommentAnchor, type CommentGroup,
+  type CommentOrder, type CommentThread,
 } from './commentModel';
 import type { SpaceCommentThreadRef } from '../../space';
 import type { CommentWordKey } from './commentWords';
 import { revealInScroller } from './scrollReveal';
-import type { CommentController, CommentMode, CommentStatusView } from './useComments';
+import type { CommentMode } from './commentModel';
+import type { CommentController, CommentStatusView } from './useComments';
 
 export const COMMENT_MODE_ICON: Readonly<Record<CommentMode, string>> = {
   text: 'file-text', point: 'circle', box: 'square-center', items: 'copy', time: 'clock', page: 'file',
@@ -133,15 +135,18 @@ export function commentThreadName(controller: CommentController, thread: SpaceCo
 }
 
 /**
- * The "To <thread>" chip of a new comment (SPC-117): the thread picked, else the best match, else "To a new thread".
- * A click opens the @ thread picker, at any time. Nothing on a host without best matches or the picker. A long name
+ * The "To <thread>" chip of a new comment (SPC-117): the thread picked, else the best match, else "To a new thread";
+ * "Choose a thread" when the best match could not be read. A click opens the @ thread picker, at any time. Nothing on a host without best matches or the picker. A long name
  * ends with an ellipsis (never cut mid-word without one); its title attribute has it in full.
  */
 export function CommentToChip({ controller }: { controller: CommentController }) {
   const ref = useRef<HTMLButtonElement>(null);
   const routing = controller.routing;
   if (!routing.hasBestMatch && !routing.canPick && !routing.newPick) return null;
-  const named = commentThreadName(controller, routing.newPick ?? routing.bestMatch);
+  // The best match could not be read: the chip offers the picker without naming a thread (never "To a new thread").
+  const unread = !routing.newPick && routing.bestMatchLost === true;
+  if (unread && !routing.canPick) return null;
+  const named = unread ? { to: controller.say('toPick') } : commentThreadName(controller, routing.newPick ?? routing.bestMatch);
   if (!routing.canPick) return <span className="nui-comment-to" data-part="to-chip" title={named.to}><span>{named.to}</span></span>;
   return (
     <button ref={ref} type="button" className="nui-comment-to" data-part="to-chip" title={`${named.to}. ${controller.say('pickThread')}`}
@@ -188,6 +193,8 @@ export function CommentGoesTo({ controller, thread }: { controller: CommentContr
   const { routing } = controller;
   const rootKey = thread.root.recordKey;
   if (!routing.links || rootKey.startsWith('draft-')) return null;
+  // Its links (or best match) could not be read and nothing is kept: no line rather than a destination it does not know.
+  if (routing.lost?.(rootKey)) return null;
   // Still being read: a neutral line in the same place, never a guess that turns into another thread a moment later.
   if (routing.known && !routing.known(rootKey)) {
     return (
@@ -227,11 +234,33 @@ export function CommentGoesTo({ controller, thread }: { controller: CommentContr
   );
 }
 
-/** A thread's place, for the card meta line: a moment ("0:24") and how many items it is on. */
+const NAMED_ITEMS = 3;
+const ITEM_NAME_MAX = 32;
+
+/**
+ * The items a comment is on, named (SPC-463): each item's title, else its anchor label ("Task 2"), the first three
+ * then "+N" for the rest. `total` counts items the Space no longer lists too; with none of them listed it reads
+ * "3 items".
+ */
+export function commentItemNames(controller: Pick<CommentController, 'say'>, items: readonly CommentAnchor[],
+  total = items.length): string {
+  if (!items.length) return controller.say('itemsLabel', { n: total });
+  const name = (item: CommentAnchor) => {
+    const title = (item.title ?? '').trim() || controller.say('anchorLabel', { n: item.order });
+    return title.length > ITEM_NAME_MAX ? `${title.slice(0, ITEM_NAME_MAX - 1).trimEnd()}…` : title;
+  };
+  const shown = items.slice(0, NAMED_ITEMS).map(name).join(', ');
+  const rest = Math.max(total, items.length) - Math.min(items.length, NAMED_ITEMS);
+  return rest > 0 ? controller.say('moreItems', { items: shown, n: rest }) : shown;
+}
+
+/** A thread's place, for the card meta line: a moment ("0:24") and the items it is on, named. */
 export function commentPlaceMeta(controller: CommentController, thread: CommentThread): string[] {
   const parts: string[] = [];
   if (thread.root.time != null) parts.push(formatCommentTime(thread.root.time));
-  if (thread.root.anchorIds.length > 1) parts.push(controller.say('itemsLabel', { n: thread.root.anchorIds.length }));
+  if (thread.root.anchorIds.length > 1) {
+    parts.push(commentItemNames(controller, commentAnchorsOf(thread.root, controller.anchors), thread.root.anchorIds.length));
+  }
   return parts;
 }
 

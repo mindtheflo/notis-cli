@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { defineSpecimen, nextFrame, type SpecimenRenderContext } from '../../specimen';
-import { CommentAvatar, SidePane } from '../../../src/ui';
+import { SidePane } from '../../../src/ui';
 import { ALL_TICKETS, LONG_TICKET, TICKETS, type Ticket } from '../../fixtures/layout-engine/tickets';
 
 type T = SpecimenRenderContext['t'];
@@ -33,7 +33,9 @@ function NotesPane({ tickets, t }: { tickets: readonly Ticket[]; t: T }) {
       {tickets.map((ticket) => (
         <article key={ticket.id} className="flex flex-col gap-2 rounded-lg bg-foreground/[.04] p-3 text-[13px] leading-5">
           <header className="flex items-center gap-2">
-            <CommentAvatar author={ticket.owner} />
+            <span aria-hidden className="grid size-6 place-items-center rounded-full bg-primary/15 text-[11px] font-semibold text-foreground">
+              {ticket.owner.slice(0, 1).toUpperCase()}
+            </span>
             <span className="font-semibold">{ticket.owner}</span>
             <span className="text-xs text-muted-foreground">{ticket.key}</span>
           </header>

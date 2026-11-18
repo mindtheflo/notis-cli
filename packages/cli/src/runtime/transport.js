@@ -11,8 +11,10 @@ import {
   getProfile,
   isJwtExpired,
   loadConfig,
+  resolveConfigFile,
   resolveWorktreeRuntime,
 } from './profiles.js';
+import { AGENT_RENEW_REQUEST, renewAgentCredentialIfDue } from './agent-credential.js';
 import { createExpiredAuthError, createInvalidAuthHints } from './auth-recovery.js';
 import { refreshOAuthCredential } from './oauth.js';
 import { findUpsell, renderUpsell } from './upsell.js';
@@ -356,6 +358,19 @@ export async function httpRequest({
     currentProfile = getProfile(loadConfig(), runtime.profileName);
     reloadDevJwt(runtime, currentProfile);
     currentProfile = getActiveWorktreeCredentialProfile(runtime, currentProfile);
+  }
+  // A Cloud Computer command's credential naming its agent is renewed once before it lapses; a failed renewal
+  // keeps the current token (agent-credential.js).
+  if (requireAuth && runtime.credentialKind === 'env' && runtime.agentEnvJwt) {
+    await renewAgentCredentialIfDue(runtime, {
+      configFile: resolveConfigFile(),
+      renew: async () => (await httpRequest({
+        runtime,
+        path: AGENT_RENEW_REQUEST.path,
+        body: AGENT_RENEW_REQUEST.body,
+        timeoutMs: Math.min(timeoutMs || AGENT_RENEW_REQUEST.timeoutMs, AGENT_RENEW_REQUEST.timeoutMs),
+      })).payload,
+    });
   }
   if (requireAuth && credentialIsExpired(runtime, currentProfile)) {
     throw createExpiredAuthError(runtime);

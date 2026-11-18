@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { defineSpecimen, type SpecimenRenderContext } from '../../specimen';
-import { NotisProvider, SpaceFileError, type NotisRuntime, type SpaceFilesTransport } from '../../../src';
+import { SpaceFileError, type NotisRuntime, type SpaceCommentRow, type SpaceCommentsTransport } from '../../../src';
 import {
-  CommentAgentBadge, CommentAgentSource, CommentAttachButton, CommentAvatar, CommentDropVeil, CommentFileChips, CommentPane,
-  CommentPins, CommentThreadCard, CommentToolBar, useCommentFiles, useComments,
+  CommentAgentBadge, CommentAgentSource, CommentAttachButton, CommentDropVeil, CommentFileChips, CommentPane,
+  CommentPins, CommentToolBar, useCommentFiles, useComments,
   type CommentAnchor, type CommentMode, type CommentScope, type UseCommentsOptions,
 } from '../../../src/ui/index';
 import { w } from '../../../src/words/index';
@@ -11,9 +11,6 @@ import { bookRuntime } from '../../fixtures/documents/runtimes';
 import { HostCommentsProvider, HostPanelSlot, ROUTING_FIXTURE } from '../hostCommentsPanel';
 
 type Ctx = SpecimenRenderContext;
-
-/** The Slides Comments table with its zone columns. */
-const ZONE_COLUMNS = { w: 'W', h: 'H' };
 
 const SLIDE_WORDS = { thisAnchor: w('This slide', 'Cette diapositive'), anchorLabel: w('Slide {n}', 'Diapositive {n}'),
   newCommentOn: w('New comment on slide {n}', 'Nouveau commentaire sur la diapositive {n}'),
@@ -29,7 +26,8 @@ const SCOPE: CommentScope = { id: 'deck-1', recordKey: 'deck-1', name: 'Q3 revie
 interface Seed {
   key: string; body: { en: string; fr: string }; author: string; slide: string; at: string; thread?: string; x?: number; y?: number;
   w?: number; h?: number;
-  needs?: string; options?: string; status?: string; change?: string; files?: { name: string; url: string }[];
+  needs?: SpaceCommentRow['needs']; options?: string[]; status?: SpaceCommentRow['status']; change?: SpaceCommentRow['change'];
+  files?: { name: string; url: string }[];
   /** When its author edited it: the card reads "edited". */
   editedAt?: string;
   /** Another page of the Space (a deck), for the Space home. */
@@ -44,8 +42,6 @@ interface Seed {
 /** The agents' runtimes: a Codex sub-agent at high intelligence on the Fast speed, and Notis on Claude. */
 const CODEX_RUNTIME = { provider: 'codex', label: 'Codex', model: 'gpt-5.5-codex', intelligence: 'high', effort: null, speed: 'priority' };
 const NOTIS_RUNTIME = { provider: 'notis', label: null, model: 'claude-opus-5.5', intelligence: 'medium', effort: null, speed: null };
-/** Who may sign: the Space's authors, with the band name a sub-agent declared. */
-const AUTHORS = ['Flo', 'Claude', 'Notis', 'fred-and-the-machine'];
 
 const SEEDS: Seed[] = [
   { key: 'c1', author: 'Flo', slide: 'slide-1', at: '2026-06-15T08:10:00Z', x: 0.22, y: 0.3, change: 'created',
@@ -60,9 +56,9 @@ const SEEDS: Seed[] = [
     body: { en: 'This whole block is hard to read.', fr: 'Tout ce bloc est difficile à lire.' } },
   { key: 'c5', author: 'Flo', slide: 'slide-1', at: '2026-06-15T09:10:00Z',
     body: { en: 'Too many words on this slide.', fr: 'Trop de mots sur cette diapositive.' } },
-  { key: 'c3', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:12:00Z', x: 0.45, y: 0.82, needs: 'choice', options: 'Bar | Line',
+  { key: 'c3', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:12:00Z', x: 0.45, y: 0.82, needs: 'choice', options: ['Bar', 'Line'],
     body: { en: 'Which chart reads better from the back row?', fr: 'Quel graphique se lit le mieux du fond de la salle ?' } },
-  { key: 'c4', author: 'Flo', slide: 'slide-2', at: '2026-06-14T16:00:00Z', status: 'Resolved',
+  { key: 'c4', author: 'Flo', slide: 'slide-2', at: '2026-06-14T16:00:00Z', status: 'archived',
     body: { en: 'Add the dates.', fr: 'Ajoute les dates.' } },
 ];
 
@@ -70,31 +66,28 @@ const SEEDS: Seed[] = [
 const HOME_SEEDS: Seed[] = [
   { key: 'h1', author: 'Flo', slide: 'slide-1', at: '2026-06-15T08:10:00Z', editedAt: '2026-06-15T08:20:00Z',
     body: { en: 'The title is too long for the room.', fr: 'Le titre est trop long pour la salle.' } },
-  { key: 'h2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T08:30:00Z', thread: 'h1', status: 'Deleted',
-    body: { en: 'Removed.', fr: 'Supprimé.' } },
+  { key: 'h2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T08:30:00Z', thread: 'h1', status: 'deleted',
+    body: { en: '', fr: '' } },
   { key: 'h3', author: 'Flo', slide: 'slide-1', at: '2026-06-15T08:50:00Z', thread: 'h1',
     body: { en: 'Better now.', fr: 'Mieux maintenant.' } },
   { key: 'h4', author: 'Claude', slide: 'slide-2', at: '2026-06-15T09:30:00Z', deck: 'deck-2',
     body: { en: 'The launch date moved to Tuesday.', fr: 'La date de lancement passe à mardi.' } },
 ];
 
-function rows(lang: Ctx['lang'], seeds: Seed[] = SEEDS) {
-  const text = (value: string) => ({ type: 'rich_text', rich_text: [{ text: { content: value } }] });
-  const select = (value: string) => ({ type: 'select', select: { name: value } });
+/** The seeds as comment store rows, in the viewer's language. Flo is the viewer. */
+function rows(lang: Ctx['lang'], seeds: Seed[] = SEEDS): Partial<SpaceCommentRow>[] {
   return seeds.map(seed => ({
-    id: `id-${seed.key}`, record_key: seed.key, revision: 1, title: seed.body[lang], created_at: seed.at,
-    ...(seed.agent ? { agent: seed.agent } : {}),
-    properties: {
-      Deck: { type: 'relation', relation: [{ id: seed.deck ?? 'deck-1' }] },
-      Slide: { type: 'relation', relation: [{ id: seed.slide }] },
-      Author: select(seed.author), Status: select(seed.status ?? 'Open'), Needs: select(seed.needs ?? 'none'),
-      Thread: text(seed.thread ?? ''), Options: text(seed.options ?? ''), Answer: text(''),
-      ...(seed.x != null ? { X: { type: 'number', number: seed.x }, Y: { type: 'number', number: seed.y } } : {}),
-      ...(seed.w != null ? { W: { type: 'number', number: seed.w }, H: { type: 'number', number: seed.h } } : {}),
-      ...(seed.change ? { Change: select(seed.change), 'Changed at': { type: 'date', date: { start: seed.at } } } : {}),
-      ...(seed.files ? { Attachments: { type: 'files', files: seed.files } } : {}),
-      ...(seed.editedAt ? { 'Edited at': { type: 'date', date: { start: seed.editedAt } } } : {}),
-    },
+    id: seed.key, page_key: seed.deck ?? 'deck-1', thread_root_id: seed.thread ?? null,
+    mode: seed.w != null ? 'box' : seed.x != null ? 'point' : 'page', anchor_keys: [seed.slide],
+    x: seed.x ?? null, y: seed.y ?? null, w: seed.w ?? null, h: seed.h ?? null,
+    body: seed.body[lang], status: seed.status ?? 'open', needs: seed.needs ?? 'none', options: seed.options ?? [],
+    change: seed.change ?? (seed.thread ? 'replied' : 'created'), created_at: seed.at, changed_at: seed.at,
+    edited_at: seed.editedAt ?? null, deleted_at: seed.status === 'deleted' ? seed.at : null,
+    attachments: (seed.files ?? []).map(file => ({ ...file, type: file.name.endsWith('.pdf') ? 'application/pdf' : 'image/svg+xml' })),
+    author: seed.agent
+      ? { user_id: 'user-flo', name: 'Flo', you: false }
+      : { user_id: seed.author === 'Flo' ? 'user-flo' : `user-${seed.author.toLowerCase()}`, name: seed.author, you: seed.author === 'Flo' },
+    agent: seed.agent ?? null,
   }));
 }
 
@@ -109,45 +102,32 @@ function screenshot(fill: string, label: string): string {
 
 /** Asks with pictures: a before and after to pick from, and a check with the agent's own answers. */
 const PICTURE_SEEDS: Seed[] = [
-  { key: 'p1', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:20:00Z', needs: 'choice', options: 'Before | After',
+  { key: 'p1', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:20:00Z', needs: 'choice', options: ['Before', 'After'],
     body: { en: 'The floating button covered the last menu. Which spacing do you keep?',
       fr: 'Le bouton flottant cachait le dernier menu. Quel espacement gardes-tu ?' },
     files: [{ name: 'Before.png', url: screenshot('#8a8f98', 'Before') }, { name: 'After.png', url: screenshot('#5b7cfa', 'After') }] },
-  { key: 'p2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:25:00Z', needs: 'check', options: 'Keep the fix | Hold',
+  { key: 'p2', author: 'Claude', slide: 'slide-1', at: '2026-06-15T09:25:00Z', needs: 'check', options: ['Keep the fix', 'Hold'],
     body: { en: 'The full review is at https://beta.notis.ai/notes/review . May I keep the fix?',
       fr: 'La revue complète est sur https://beta.notis.ai/notes/review . Je garde la correction ?' },
     files: [{ name: 'Menu.png', url: screenshot('#2f9e77', 'Menu') }, { name: 'Review.pdf', url: 'https://example.com/review.pdf' }] },
 ];
 
-/** The book runtime plus a Comments list that answers from fixtures and writes that succeed without a server. */
-function commentRuntime(lang: Ctx['lang'], empty: boolean, seeds: Seed[] = SEEDS): NotisRuntime {
+/** The book runtime, with a thread the agent links open. The comments come from the host's store (HostCommentsProvider). */
+function commentRuntime(lang: Ctx['lang']): NotisRuntime {
   const base = bookRuntime(lang);
-  let next = 0;
-  return {
-    ...base,
-    space: {
-      ...base.space!, cacheScope: `comments-book:${lang}:${empty ? 'empty' : seeds === SEEDS ? 'full' : seeds === HOME_SEEDS ? 'home' : 'pictures'}`,
-      actions: { 'comments.insert': { readOnly: false }, 'comments.update': { readOnly: false } },
-      shows: { comments: { database: 'comments' } },
-      bindings: { comments: { kind: 'database', operations: { insert: 'comments.insert', update: 'comments.update' } } },
-    } as unknown as NotisRuntime['space'],
-    shown: async () => ({ rows: empty ? [] : rows(lang, seeds), schema_revision: 1 }),
-    callAction: async () => ({ record_key: `book-${next += 1}`, revision: 2 }),
-    spaceThreads: { open: async () => true },
-  } as unknown as NotisRuntime;
+  return { ...base, spaceThreads: { open: async () => true } } as unknown as NotisRuntime;
 }
 
 /** A host that uploads: pictures finish, a PDF keeps uploading, and a file over the limit is refused. */
 const SHOT = 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAeCAIAAADlxgqWAAAANElEQVR42u3OMREAMAgAMXxipcpZQEQHGPL3AhJ9rAACAgLaBuWrUwMBAQEBAQEBAQEB/T3tbDKVJhI70wAAAABJRU5ErkJggg==';
 const SHOT_URL = `data:image/png;base64,${SHOT}`;
-const FILES: SpaceFilesTransport = {
-  check: async () => ({ available: true, maxBytes: 8 * 1024 * 1024, extensions: ['png', 'pdf'] }),
+const UPLOADS: Partial<SpaceCommentsTransport> = {
+  maxFileBytes: 8 * 1024 * 1024,
   upload: async input => {
     const name = input.name ?? 'file';
     if (name.endsWith('.pdf')) { input.onProgress?.(input.file.size * 0.4, input.file.size); return new Promise(() => {}); }
     if (name.endsWith('.mov')) throw new SpaceFileError('Unsupported', 'space_file_type_unsupported', 415);
-    return { file: { name, url: SHOT_URL }, previewUrl: SHOT_URL, sizeBytes: input.file.size, contentType: 'image/png',
-      sha256: '0'.repeat(64), requestId: 'fixture' };
+    return { path: `comments/${name}`, name, url: SHOT_URL, previewUrl: SHOT_URL, size: input.file.size, type: 'image/png' };
   },
 };
 
@@ -159,8 +139,7 @@ function Deck({ anchorKey, draft, options, toolBar }: {
   toolBar?: CommentMode | true;
 }) {
   const controller = useComments({
-    scope: SCOPE, anchors: ANCHORS, anchorKey, authors: AUTHORS, words: SLIDE_WORDS,
-    columns: ZONE_COLUMNS, ...options,
+    scope: SCOPE, anchors: ANCHORS, anchorKey, words: SLIDE_WORDS, ...options,
   });
   const { placePin, setCommenting, setToolBar, startMode, hasData } = controller;
   useEffect(() => {
@@ -191,9 +170,10 @@ function Deck({ anchorKey, draft, options, toolBar }: {
 function Demo({ ctx, empty = false, draft, routing = false, toolBar }: {
   ctx: Ctx; empty?: boolean; draft?: Draft; routing?: boolean; toolBar?: CommentMode | true;
 }) {
-  const runtime = useMemo(() => commentRuntime(ctx.lang, empty), [ctx.lang, empty]);
+  const runtime = useMemo(() => commentRuntime(ctx.lang), [ctx.lang]);
+  const seeded = useMemo(() => (empty ? [] : rows(ctx.lang)), [ctx.lang, empty]);
   return (
-    <HostCommentsProvider runtime={runtime} routing={routing ? ROUTING_FIXTURE : undefined}>
+    <HostCommentsProvider runtime={runtime} rows={seeded} routing={routing ? ROUTING_FIXTURE : undefined}>
       <Deck anchorKey="slide-1" draft={draft} toolBar={toolBar} options={toolBar ? { onStartItems: () => {} } : undefined} />
     </HostCommentsProvider>
   );
@@ -201,34 +181,33 @@ function Demo({ ctx, empty = false, draft, routing = false, toolBar }: {
 
 /** The Space home: no scope, so the pane lists every comment of the Space, grouped by page. */
 function HomeDemo({ ctx }: { ctx: Ctx }) {
-  const runtime = useMemo(() => commentRuntime(ctx.lang, false, HOME_SEEDS), [ctx.lang]);
-  return <HostCommentsProvider runtime={runtime}><HomePane /></HostCommentsProvider>;
+  const runtime = useMemo(() => commentRuntime(ctx.lang), [ctx.lang]);
+  const seeded = useMemo(() => rows(ctx.lang, HOME_SEEDS), [ctx.lang]);
+  return <HostCommentsProvider runtime={runtime} rows={seeded}><HomePane /></HostCommentsProvider>;
 }
 
 function HomePane() {
-  const controller = useComments({ authors: AUTHORS, scopeNames: { 'deck-1': 'Q3 review', 'deck-2': 'Launch' } });
+  const controller = useComments({ scopeNames: { 'deck-1': 'Q3 review', 'deck-2': 'Launch' } });
   return <div style={{ maxWidth: 360 }}><CommentPane controller={controller} /><HostPanelSlot /></div>;
 }
 
 function PicturesDemo({ ctx }: { ctx: Ctx }) {
-  const runtime = useMemo(() => commentRuntime(ctx.lang, false, PICTURE_SEEDS), [ctx.lang]);
-  return <HostCommentsProvider runtime={runtime}><PicturesPane /></HostCommentsProvider>;
+  const runtime = useMemo(() => commentRuntime(ctx.lang), [ctx.lang]);
+  const seeded = useMemo(() => rows(ctx.lang, PICTURE_SEEDS), [ctx.lang]);
+  return <HostCommentsProvider runtime={runtime} rows={seeded}><PicturesPane /></HostCommentsProvider>;
 }
 
 /** The pane alone, as a Space's side panel shows it. */
 function PicturesPane() {
   const controller = useComments({
-    scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1', authors: AUTHORS, words: SLIDE_WORDS,
+    scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1', words: SLIDE_WORDS,
   });
   return <div style={{ maxWidth: 360 }}><CommentPane controller={controller} /><HostPanelSlot /></div>;
 }
 
 function AttachingDemo({ ctx }: { ctx: Ctx }) {
-  const runtime = useMemo(() => {
-    const base = commentRuntime(ctx.lang, true);
-    return { ...base, spaceFiles: FILES } as NotisRuntime;
-  }, [ctx.lang]);
-  return <NotisProvider runtime={runtime}><AttachingBox lang={ctx.lang} /></NotisProvider>;
+  const runtime = useMemo(() => commentRuntime(ctx.lang), [ctx.lang]);
+  return <HostCommentsProvider runtime={runtime} rows={NO_ROWS} more={UPLOADS}><AttachingBox lang={ctx.lang} /></HostCommentsProvider>;
 }
 
 /** A Space that lays out its own comment box with the toolkit's attachment pieces: chips, the paperclip, the drop veil. */
@@ -262,49 +241,49 @@ function AttachingBox({ lang }: { lang: Ctx['lang'] }) {
   );
 }
 
+const NO_ROWS: Partial<SpaceCommentRow>[] = [];
+
 function CardOnly({ ctx, runtimeCard = false }: { ctx: Ctx; runtimeCard?: boolean }) {
-  const runtime = useMemo(() => commentRuntime(ctx.lang, false), [ctx.lang]);
+  const runtime = useMemo(() => commentRuntime(ctx.lang), [ctx.lang]);
+  const seeded = useMemo(() => rows(ctx.lang).filter(row => row.id === 'c1' || row.id === 'r1'), [ctx.lang]);
   return (
-    <HostCommentsProvider runtime={runtime} routing={ROUTING_FIXTURE}>
+    <HostCommentsProvider runtime={runtime} rows={seeded} routing={ROUTING_FIXTURE}>
       {runtimeCard ? <RuntimeCard /> : <Card />}
     </HostCommentsProvider>
   );
 }
 
+/** The pieces a Space lays out itself beside the pane: an agent's logo with its runtime card, and its From line. */
 function Card() {
-  const controller = useComments({
-    scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1', authors: AUTHORS, columns: ZONE_COLUMNS,
-  });
+  const controller = useComments({ scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1' });
   const thread = controller.threads.find(item => item.root.recordKey === 'c1');
   const reply = thread?.replies[0];
   return (
     <div style={{ display: 'grid', gap: 12, maxWidth: 340 }}>
-      <div style={{ display: 'flex', gap: 8 }}><CommentAvatar author="Flo" me="Flo" /><CommentAvatar author="Claude" me="Flo" /></div>
-      {/* The pieces a Space lays out itself: an agent's logo with its runtime card, and its From line. */}
       {reply ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <CommentAgentBadge controller={controller} comment={reply} /><CommentAgentSource controller={controller} comment={reply} />
         </div>
       ) : null}
-      {thread ? <CommentThreadCard controller={controller} thread={thread} showAnchor /> : null}
+      <CommentPane controller={controller} />
+      <div style={{ height: 320 }}><HostPanelSlot /></div>
     </div>
   );
 }
 
-/** The first thread's card with the reply's runtime card open, as hover or keyboard focus shows it. */
+/** The thread's card with the reply's runtime card open, as hover or keyboard focus shows it. */
 function RuntimeCard() {
-  const controller = useComments({
-    scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1', authors: AUTHORS, columns: ZONE_COLUMNS,
-  });
-  const thread = controller.threads.find(item => item.root.recordKey === 'c1');
+  const controller = useComments({ scope: SCOPE, anchors: ANCHORS, anchorKey: 'slide-1' });
   const box = useRef<HTMLDivElement>(null);
+  const shown = controller.threads.length;
   useEffect(() => {
     const badge = box.current?.querySelector<HTMLElement>('[data-comment="r1"] [data-part="agent-runtime"]');
     badge?.focus({ preventScroll: true });
-  }, [thread]);
+  }, [shown]);
   return (
     <div ref={box} style={{ display: 'grid', gap: 12, maxWidth: 340, paddingBottom: 160 }}>
-      {thread ? <CommentThreadCard controller={controller} thread={thread} /> : null}
+      <CommentPane controller={controller} />
+      <div style={{ height: 320 }}><HostPanelSlot /></div>
     </div>
   );
 }
@@ -314,7 +293,7 @@ export const specimen = defineSpecimen({
   name: 'CommentPane',
   group: 'blocks',
   from: '@notis/sdk/ui',
-  covers: ['CommentPane', 'CommentThreadCard', 'NewCommentBox', 'CommentPins', 'CommentAvatar', 'CommentFileChips',
+  covers: ['CommentPane', 'CommentPins', 'CommentFileChips',
     'CommentAttachButton', 'CommentDropVeil', 'CommentAgentSource', 'CommentAgentBadge', 'CommentToolBar'],
   summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files (pasted, dropped or picked before Send), asks the agent waits on (answered from under a picture), Archive (E) with Undo, the Open, Done and All filter, Edit and Delete by your rights, where a reply goes, the New comment modes and the page tool bar (C), and Copy changes. Each card names the thread that owns it once at its top; a comment an agent wrote is signed with its name (a band name reads "Fred And The Machine") and its harness logo, whose hover card says what it ran on.',
   states: [
@@ -383,7 +362,7 @@ export const specimen = defineSpecimen({
     },
     {
       id: 'card',
-      label: 'One thread card with its owning thread, the avatars, and an agent\'s logo and From line on their own',
+      label: 'One thread with its owning thread, and an agent\'s logo and From line laid out on their own',
       render: ctx => <CardOnly ctx={ctx} />,
     },
     {

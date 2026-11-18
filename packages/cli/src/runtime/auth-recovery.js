@@ -88,6 +88,20 @@ export function createExpiredAuthError(runtime) {
       ],
     });
   }
+  if (runtime?.credentialSource === 'env' && runtime.agentEnvJwt) {
+    // A Notis agent's Cloud Computer credential and every renewal of it lapsed (agent-credential.js).
+    return new CliError({
+      code: 'auth_expired',
+      message: 'NOTIS_JWT is expired: this agent\'s Notis credential lapsed',
+      exitCode: EXIT_CODES.auth,
+      details: { credential_source: 'env', agent_credential: true },
+      hints: [
+        {
+          message: 'Start a new Cloud Computer command: it gets a fresh credential naming this agent.',
+        },
+      ],
+    });
+  }
   if (runtime?.credentialSource === 'env') {
     return new CliError({
       code: 'auth_expired',

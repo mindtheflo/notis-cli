@@ -27,7 +27,7 @@
  */
 
 import React, {
-  useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
+  useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
 } from 'react';
 import type { KeySpec } from '../../words';
 import { ActionToast } from '../actions/ActionToast';
@@ -37,20 +37,23 @@ import { ESCAPE_PRIORITY } from '../engine/core';
 import { useEscapeLayer, useShortcuts } from '../engine/hooks';
 import { Icon } from '../icons';
 import { Tooltip } from '../overlay';
+import { fixedOrigin } from '../overlay/floating';
+import { LAYER_ROOT_ATTRIBUTE, findLayerRoot, usePinnedLayerRoot } from '../overlay/layerRoot';
 import { cx, useIsoLayoutEffect } from '../util';
 import { CommentAgentBadge } from './agentRuntime';
 import {
   COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, agentDisplayName, clipCommentAnswer, commentAttachmentFor, commentBodyParts, commentRelativeTime, commentReplyRuns, formatCommentTime,
-  isCommentZone, scrollCommentIntoView, type CommentAttachment, type CommentRecord, type CommentThread,
+  isCommentZone, scrollCommentIntoView, type CommentAnchor, type CommentAttachment, type CommentRecord, type CommentThread,
 } from './commentModel';
 import { commentDraftKey, useCommentDraftText } from './commentDrafts';
 import { useRevealOnOpen } from './scrollReveal';
+import { usePassageChanged } from './textHighlights';
 import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles } from './commentFiles';
 import { createPortal } from 'react-dom';
-import { markRetiredPane, useHostCommentSource, useHostComments } from './hostComments';
+import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
 import {
   COMMENT_MODE_ICON, COMMENT_MODE_WORD, CommentFilterMenu, CommentGoesTo, CommentListLoading, CommentModeHint, CommentPaneKeys, CommentThreadList,
-  CommentToChip, NewCommentMenu, commentIdleHint, commentPlaceMeta, useAtThreadPicker, usePaneFocusKeeper, useThreadScroller,
+  CommentToChip, NewCommentMenu, commentIdleHint, commentItemNames, commentPlaceMeta, useAtThreadPicker, usePaneFocusKeeper, useThreadScroller,
   type CommentListOptions,
 } from './paneParts';
 import type { CommentController } from './useComments';
@@ -250,6 +253,8 @@ export interface CommentThreadCardProps {
   thread: CommentThread;
   /** Name the anchor in the card's meta line (when the pane lists every anchor). */
   showAnchor?: boolean;
+  /** Show the quoted words of a text comment under its head. Default true; a passage pane shows them itself. */
+  quote?: boolean;
 }
 
 /** Your own comment's text, edited in place: Enter saves, Shift+Enter adds a line, Escape cancels. */
@@ -294,6 +299,22 @@ function CommentEditBox({ controller, comment, onDone }: {
 /** "edited", after the time of a comment its author changed. */
 function EditedMark({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
   return comment.editedAt ? <span className="nui-comment-edited">{controller.say('edited')}</span> : null;
+}
+
+/**
+ * The quoted words of a text comment on its card. When the page no longer has them (`SpaceTextComments` reports it)
+ * the quote is struck through under Passage changed; the thread stays open.
+ */
+function CommentQuote({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
+  const gone = usePassageChanged(comment.passage && !comment.passage.field ? comment.recordKey : null);
+  if (!comment.passage) return null;
+  return (
+    <div className="nui-passage-anchor nui-comment-quote-row" data-changed={gone ? '' : undefined}>
+      {gone ? <span className="nui-passage-field-name"><Badge tone="warning">{controller.say('textChanged')}</Badge></span> : null}
+      <p className="nui-passage-quote nui-comment-quote">{comment.passage.quote}</p>
+      {gone ? <span className="nui-passage-hint">{controller.say('textChangedHint')}</span> : null}
+    </div>
+  );
 }
 
 /**
@@ -384,13 +405,16 @@ function CommentAsk({ controller, thread, comment }: { controller: CommentContro
   );
 }
 
-export function CommentThreadCard({ controller, thread, showAnchor = false }: CommentThreadCardProps) {
+export function CommentThreadCard({ controller, thread, showAnchor = false, quote = true }: CommentThreadCardProps) {
   const { root, replies, anchor } = thread;
   const { actions, locale, now, isNew, me } = controller;
   // The reply being written, and its files, are kept while the pane is away (`commentDrafts`): another Space, a page
   // over the view or another brief unmounts the card, and the reply comes back with it.
   const replyKey = commentDraftKey(controller.draftScope, `reply:${root.recordKey}`);
   const [draft, setDraft] = useCommentDraftText(replyKey);
+  // What the reply box holds now, read after a failed save (the person may have typed on while it was sent).
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
   const [sending, setSending] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const files = useCommentFiles(controller, replyKey);
@@ -412,10 +436,13 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
   const send = async () => {
     if (!canSend) return;
     setSending(true);
-    // A failed save keeps the text and the attached files in the box.
-    const ok = await actions.reply(thread, draft.trim(), files.ready);
+    // The reply shows in the thread at once, so the box empties at once too; a failed save puts the text back, and the
+    // attached files stay until the save succeeds.
+    const text = draft.trim();
+    setDraft('');
+    const ok = await actions.reply(thread, text, files.ready);
     setSending(false);
-    if (ok) { setDraft(''); files.clear(); }
+    if (ok) files.clear(); else setDraft(draftNow.current.trim() ? `${text}\n${draftNow.current}` : text);
   };
 
   const select = () => controller.selectThread(thread);
@@ -431,7 +458,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
   const pictureAsk = root.needs !== 'none' && pictureAskOf(root);
   const meta = [
     commentRelativeTime(root.createdAt, locale, now),
-    showAnchor && anchor ? controller.say('anchorLabel', { n: anchor.order }) : '',
+    // A comment on several items names them all below, not only the first.
+    showAnchor && anchor && root.anchorIds.length < 2 ? controller.say('anchorLabel', { n: anchor.order }) : '',
     number > 0 && root.x != null ? `#${number}` : '',
     ...commentPlaceMeta(controller, thread),
   ].filter(Boolean).join(' · ');
@@ -530,6 +558,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false }: Co
           ) : null}
         </div>
       </header>
+      {quote && root.passage ? <CommentQuote controller={controller} comment={root} /> : null}
 
       {root.example || resolved ? (
         <div className="nui-comment-badges">
@@ -602,7 +631,7 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const cancel = () => { files.clear(); controller.cancelPin(); };
   const atPicker = useAtThreadPicker(controller);
-  const where = pin ? `${pin.anchorKey ?? ''}|${pin.items?.length ?? ''}|${pin.time ?? ''}` : null;
+  const where = pin ? `${pin.anchorKey ?? ''}|${pin.items?.length ?? ''}|${pin.time ?? ''}|${pin.text?.quote ?? ''}` : null;
   useEffect(() => { ref.current?.focus({ preventScroll: true }); }, [where]);
   // The box opens at the top of the list: a list scrolled down scrolls up to show it whole, with its To chip.
   useRevealOnOpen(boxRef, where);
@@ -612,22 +641,29 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
     { priority: ESCAPE_PRIORITY.selection + 1, enabled: pin != null });
   if (!pin) return null;
   const anchor = controller.anchors.find(item => item.recordKey === pin.anchorKey);
-  const heading = pin.time != null ? controller.say('newCommentTime', { time: formatCommentTime(pin.time) })
+  const heading = pin.text?.quote ? controller.say('newCommentText')
+    : pin.time != null ? controller.say('newCommentTime', { time: formatCommentTime(pin.time) })
     : pin.items && pin.items.length > 1 ? controller.say('newCommentItems', { n: pin.items.length })
     : pin.items?.length && !anchor ? controller.say('newCommentItem')
-    : anchor && pin.x == null ? controller.say('newCommentWhole', { n: anchor.order })
-    : anchor ? controller.say('newCommentOn', { n: anchor.order })
+    : anchor && pin.x == null ? sayOnAnchor(controller, 'newCommentWhole', anchor)
+    : anchor ? sayOnAnchor(controller, 'newCommentOn', anchor)
     : controller.anchors.length ? controller.say('newCommentPage') : controller.say('newComment');
+  // Items the heading only counts are named under it (SPC-463).
+  const itemNames = pin.items?.length && (pin.items.length > 1 || !anchor) ? commentItemNames(controller, pin.items) : null;
 
   const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !sending && controller.canWrite;
   const send = async () => {
     if (!canSend) return;
     setSending(true);
-    // A failed save keeps the text and the attached files in the box.
-    const ok = await controller.sendNew(body.trim(), files.ready);
+    // The new comment shows in the list at once, so the box goes at once too (the text no longer shows twice while the
+    // store answers); a failed save brings the box back with the text and the attached files.
+    const text = body.trim();
+    setBody('');
+    const ok = await controller.sendNew(text, files.ready);
     setSending(false);
-    if (ok) { setBody(''); files.clear(); }
+    if (ok) files.clear(); else setBody(text);
   };
+  if (sending) return null;
 
   return (
     <div ref={boxRef} className="nui-comment-new-box" role="group" aria-label={heading}
@@ -636,6 +672,8 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
         <p className="nui-comment-new-title">{heading}</p>
         <CommentToChip controller={controller} />
       </div>
+      {itemNames ? <p className="nui-comment-new-items">{itemNames}</p> : null}
+      {pin.text?.quote ? <p className="nui-passage-quote nui-comment-quote">{pin.text.quote}</p> : null}
       <textarea
         ref={ref}
         className="nui-comment-input"
@@ -663,6 +701,12 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
       <CommentDropVeil controller={controller} files={files} />
     </div>
   );
+}
+
+/** Words about one anchor, with the Space's own anchor label as "{anchor}" ("New comment on Slide 2", SPC-462). */
+function sayOnAnchor(controller: CommentController, key: 'newCommentOn' | 'newCommentWhole' | 'commentOnAnchor',
+  anchor: Pick<CommentAnchor, 'order'>): string {
+  return controller.say(key, { n: anchor.order, anchor: controller.say('anchorLabel', { n: anchor.order }) });
 }
 
 // ---------------------------------------------------------------------------
@@ -768,8 +812,9 @@ export interface CommentToolBarProps {
   /**
    * 'overlay' (default): the bar floats over the top left of its positioned parent (the page card), with an inset, and
    * never moves the content below it. At phone width (480 px or less) it sits just above the card instead, and the
-   * card moves down by the bar's height to make that room, so it never covers the card or its pins. 'inline': it sits
-   * in the flow where the Space puts it.
+   * card moves down by the bar's height to make that room, so it never covers the card or its pins; there it draws in
+   * the layer root (as menus do), so no parent that clips its overflow hides it (SPC-464). 'inline': it sits in the
+   * flow where the Space puts it.
    */
   place?: 'overlay' | 'inline';
   className?: string;
@@ -787,15 +832,95 @@ export function CommentToolBar(props: CommentToolBarProps) {
 /** The room the overlay bar's card keeps above itself at phone width: the bar's height and its 8 px gap. */
 const TOOL_BAR_ROOM = '--nui-comment-toolbar-room';
 
+/** The width at which the overlay bar leaves the card (toolkit.css uses the same query). */
+const PHONE_WIDTH = '(max-width: 480px)';
+
+function phoneWidthNow(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.(PHONE_WIDTH).matches === true;
+}
+
+/** True at phone width while `active`, following the screen as it turns or a panel resizes. */
+function usePhoneWidth(active: boolean): boolean {
+  const [phone, setPhone] = useState(phoneWidthNow);
+  useEffect(() => {
+    if (!active || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia(PHONE_WIDTH);
+    const sync = () => setPhone(media.matches);
+    sync();
+    media.addEventListener?.('change', sync);
+    return () => media.removeEventListener?.('change', sync);
+  }, [active]);
+  return active && phone;
+}
+
 /**
- * Tells the overlay bar's parent (the page card) how tall the bar is, as `--nui-comment-toolbar-room`. At phone width
- * the stylesheet puts the bar above the card and moves the card down by that much (toolkit.css); elsewhere the value
- * is unused. It follows the bar's size (a hint on two lines) and goes when the bar does.
+ * True when something outside the Space covers the card where the lifted bar stands (the host's Comments or Chat sheet
+ * on a phone): the bar is in the layer root, which stacks over the host, so it hides instead of floating over that
+ * sheet (SPC-464). The probe is a point just inside the card's top left corner, which the bar never covers (it sits
+ * above the card); a hit on the card or on the Space's own layer counts as visible. A card off screen counts as
+ * covered. Without `elementFromPoint` (a test DOM) nothing counts as covered.
  */
-function useToolBarRoom(active: boolean) {
-  const [bar, setBar] = useState<HTMLDivElement | null>(null);
+function cardCovered(card: HTMLElement, rect: DOMRect): boolean {
+  const root = card.getRootNode() as Document | ShadowRoot;
+  if (typeof root.elementFromPoint !== 'function') return false;
+  const view = card.ownerDocument.defaultView;
+  const x = rect.left + Math.min(12, rect.width / 2);
+  const y = rect.top + Math.min(12, rect.height / 2);
+  if (view && (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight)) return true;
+  const hit = root.elementFromPoint(x, y);
+  if (!hit) return false;
+  return !card.contains(hit) && !hit.closest(`[${LAYER_ROOT_ATTRIBUTE}]`);
+}
+
+/** How often the lifted bar checks for a host sheet opening over its card (no event says so). */
+const COVER_CHECK_MS = 400;
+
+/**
+ * Where the lifted bar goes: fixed, 8 px above the card's top edge (in the room the card keeps), from its left edge
+ * and never wider than it. It follows scrolling, resizing and the bar's own size, and hides while the host covers
+ * its card.
+ */
+function useLiftedBarStyle(lifted: boolean, card: HTMLElement | null, bar: HTMLElement | null): CSSProperties | undefined {
+  const [style, setStyle] = useState<{ top: number; left: number; maxWidth: number; covered: boolean } | null>(null);
   useIsoLayoutEffect(() => {
-    const parent = active ? bar?.parentElement : null;
+    if (!lifted || !card || !bar) { setStyle(null); return undefined; }
+    const update = () => {
+      const rect = card.getBoundingClientRect();
+      const origin = fixedOrigin(bar);
+      const next = { top: rect.top - bar.getBoundingClientRect().height - 8 - origin.y, left: rect.left - origin.x,
+        maxWidth: rect.width, covered: cardCovered(card, rect) };
+      setStyle(current => current && current.top === next.top && current.left === next.left
+        && current.maxWidth === next.maxWidth && current.covered === next.covered ? current : next);
+    };
+    update();
+    const view = bar.ownerDocument.defaultView;
+    view?.addEventListener('resize', update);
+    view?.addEventListener('scroll', update, true);
+    const sizes = view && typeof view.ResizeObserver !== 'undefined' ? new view.ResizeObserver(update) : null;
+    sizes?.observe(bar);
+    sizes?.observe(card);
+    const timer = view ? view.setInterval(update, COVER_CHECK_MS) : undefined;
+    return () => {
+      view?.removeEventListener('resize', update);
+      view?.removeEventListener('scroll', update, true);
+      sizes?.disconnect();
+      if (timer !== undefined) view?.clearInterval(timer);
+    };
+  }, [lifted, card, bar]);
+  if (!lifted) return undefined;
+  if (!style) return { visibility: 'hidden' };
+  return { top: style.top, left: style.left, maxWidth: style.maxWidth, ...(style.covered ? { visibility: 'hidden' as const } : {}) };
+}
+
+/**
+ * Tells the overlay bar's card how tall the bar is, as `--nui-comment-toolbar-room`. At phone width the stylesheet
+ * puts the bar above the card and moves the card down by that much (toolkit.css); elsewhere the value is unused. It
+ * follows the bar's size (a hint on two lines) and goes when the bar does. The card is the bar's parent, or the
+ * parent of the slot the bar left when it draws in the layer root.
+ */
+function useToolBarRoom(active: boolean, bar: HTMLElement | null, card: HTMLElement | null) {
+  useIsoLayoutEffect(() => {
+    const parent = active ? card : null;
     if (!bar || !parent) return undefined;
     const measure = () => {
       parent.style.setProperty(TOOL_BAR_ROOM, `${Math.ceil(bar.getBoundingClientRect().height) + 8}px`);
@@ -808,8 +933,7 @@ function useToolBarRoom(active: boolean) {
       sizes?.disconnect();
       parent.style.removeProperty(TOOL_BAR_ROOM);
     };
-  }, [active, bar]);
-  return setBar;
+  }, [active, bar, card]);
 }
 
 function ShownCommentToolBar({ controller, toggleKey = 'c', pinned = false, place = 'overlay', className }: CommentToolBarProps) {
@@ -827,13 +951,21 @@ function ShownCommentToolBar({ controller, toggleKey = 'c', pinned = false, plac
   useEscapeLayer('comments.toolbar', () => { setToolBar(false); return true; },
     { priority: ESCAPE_PRIORITY.selection, enabled: shown && !pinned && controller.commentMode == null });
   const visible = shown && modes.length > 0;
-  const barRef = useToolBarRoom(visible && place === 'overlay');
+  const [bar, setBar] = useState<HTMLDivElement | null>(null);
+  const [slot, setSlot] = useState<HTMLSpanElement | null>(null);
+  // At phone width the overlay bar sits outside its card, where a parent that clips its overflow would hide it: it
+  // draws in the layer root instead, and an empty slot in the card keeps its room (SPC-464).
+  const lifted = usePhoneWidth(visible && place === 'overlay');
+  const card = lifted ? slot?.parentElement ?? null : bar?.parentElement ?? null;
+  useToolBarRoom(visible && place === 'overlay', bar, card);
+  const liftedStyle = useLiftedBarStyle(lifted, card, bar);
+  const pinnedLayer = usePinnedLayerRoot();
   if (!visible) return null;
   const mode = controller.commentMode;
   const idle = commentIdleHint(controller);
-  return (
-    <div ref={barRef} className={cx('nui-comment-toolbar', className)} role="toolbar" aria-label={controller.say('toolBar')}
-      data-mode={mode ?? undefined} data-place={place}>
+  const toolBar = (
+    <div ref={setBar} className={cx('nui-comment-toolbar', className)} role="toolbar" aria-label={controller.say('toolBar')}
+      data-mode={mode ?? undefined} data-place={place} data-lifted={lifted ? '' : undefined} style={liftedStyle}>
       {modes.map(item => {
         const label = controller.say(COMMENT_MODE_WORD[item]);
         return (
@@ -859,6 +991,14 @@ function ShownCommentToolBar({ controller, toggleKey = 'c', pinned = false, plac
       )}
     </div>
   );
+  if (!lifted) return toolBar;
+  const layer = pinnedLayer ?? (slot ? findLayerRoot(slot) : null);
+  return (
+    <>
+      <span ref={setSlot} className="nui-comment-toolbar-slot" data-place="overlay" aria-hidden="true" />
+      {layer ? createPortal(toolBar, layer) : null}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -874,7 +1014,7 @@ export interface CommentPaneProps extends CommentListOptions {
   className?: string;
 }
 
-export const CommentPane = markRetiredPane(function CommentPane(props: CommentPaneProps) {
+export const CommentPane = markHostPane(function CommentPane(props: CommentPaneProps) {
   const { controller } = props;
   // What the host reads: the threads (its waiting count) and the new comment (it opens the panel for it).
   const target = useHostCommentSource('pins', controller, { title: props.title },
@@ -926,7 +1066,7 @@ function CommentPaneBody({ controller, title, showCopy = true, className, order,
         {draftPin ? <NewCommentBox controller={controller} /> : anchors.length && controller.anchor ? (
           <div className="nui-comment-start">
             <Button variant="secondary" icon="chat-circle-text" onClick={() => controller.placePin(anchorKey, null, null)}>
-              {controller.say('commentOnAnchor', { n: controller.anchor.order })}
+              {sayOnAnchor(controller, 'commentOnAnchor', controller.anchor)}
             </Button>
             <CommentModeHint controller={controller} />
           </div>
