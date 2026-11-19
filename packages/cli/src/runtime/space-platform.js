@@ -9,6 +9,7 @@ import { editorsOnlySummary, manifestActions, manifestResources } from './space-
 import { usageError } from './errors.js';
 import { assertSourceRoot } from './source-root.js';
 import { ensureSpaceDependencies } from './space-dependencies.js';
+import { buildSpaceFunctions, functionManifestFields } from './space-functions.js';
 
 const SPACE_ICON = /^(phosphor:[a-z0-9]+(-[a-z0-9]+)*|https:\/\/\S{1,2000})$/;
 
@@ -35,6 +36,8 @@ export function generateSpaceManifest(selection) {
     ...(definition.agents?.length ? { agents: definition.agents } : {}),
     // Live items agents attach to threads; absent when undeclared.
     ...(definition.threadItems && Object.keys(definition.threadItems).length ? { thread_items: definition.threadItems } : {}),
+    // Server functions and what runs them; each absent when undeclared. Handler paths stay in the source.
+    ...functionManifestFields(definition),
     // Absent when nothing is editor-only (SPC-073: unmarked means public).
     ...(editorsOnly ? { editors_only: editorsOnly } : {}),
     readable_context: definition.readableContext || '', collection: definition.collection || null,
@@ -85,7 +88,9 @@ export function assertSpaceBundleUsesHostSdk(source) {
   }
 }
 
-function finalizeSelectedArtifact(projectDir) {
+async function finalizeSelectedArtifact(projectDir, selection) {
+  // The handlers of this Space's functions, as one module of their own next to the page bundle.
+  await buildSpaceFunctions(projectDir, selection?.functionHandlers);
   const manifestPath = join(projectDir, '.notis/output/manifest.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   if (manifest.bundle?.js) assertSpaceBundleUsesHostSdk(readFileSync(join(projectDir, '.notis/output', manifest.bundle.js), 'utf8'));
@@ -120,7 +125,7 @@ export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inhe
     }
     const frozenSelection = await loadSelectedSpace(staging.projectDir, selectedKey);
     await buildArtifact(staging.projectDir, { stdio, refreshSdk: false, executable: Boolean(selection.entry),
-      prepare: directory => prepareSelectedArtifact(directory, frozenSelection, { designBar, log: designLog }), finalize: finalizeSelectedArtifact,
+      prepare: directory => prepareSelectedArtifact(directory, frozenSelection, { designBar, log: designLog }), finalize: directory => finalizeSelectedArtifact(directory, frozenSelection),
       ...(runBuild ? { runBuild } : {}) });
     const current = await loadSelectedSpace(projectDir, selectedKey);
     if (sourceHash !== appFilesDigest(collectSelectedSpaceSource(projectDir, current))) throw usageError('This Space source changed during the selected build. Build again.');

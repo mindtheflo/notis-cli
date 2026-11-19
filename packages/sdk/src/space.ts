@@ -118,8 +118,13 @@ export type SpaceThreadItemConfirm = string
 /** A button on the item, run with the person's own connection to the tool's app. */
 export interface SpaceThreadItemAction {
   label: SpaceThreadItemText;
-  /** A connected app tool, such as `GITHUB_MERGE_A_PULL_REQUEST`. */
-  tool: string;
+  /** A connected app tool, such as `GITHUB_MERGE_A_PULL_REQUEST`. Give `tool` or `function`, not both. */
+  tool?: string;
+  /**
+   * One of this Space's `functions`, run for the person who clicked, with `ctx.item` set to the item. Its
+   * `arguments` are the function's input.
+   */
+  function?: string;
   /** Templated arguments: a whole-string placeholder such as `'{item.number}'` keeps its type. */
   arguments?: Record<string, unknown>;
   confirm?: SpaceThreadItemConfirm;
@@ -942,6 +947,22 @@ export interface SpaceDefinition {
    */
   threadItems?: Record<string, SpaceThreadItemKind>;
   /**
+   * Server code this Space declares once and Notis calls from its views, its API and MCP server, Notis agents,
+   * thread items, thread hooks and comment options (see `SpaceFunctionDeclaration`).
+   */
+  functions?: Record<string, import('./functions').SpaceFunctionDeclaration>;
+  /**
+   * The function that runs after a built-in thread action (archive, read, star, Later, delete and their opposites)
+   * on a thread one of this Space's items is attached to. The action itself never waits for it. Its `input` is
+   * `threadHookInput`.
+   */
+  threadHooks?: Partial<Record<import('./functions').SpaceThreadHookEvent, string>>;
+  /**
+   * Options that run a function when a person answers a choice comment in this Space with them. Its `input` is
+   * `commentOptionInput`.
+   */
+  commentOptions?: Record<string, import('./functions').SpaceCommentOption>;
+  /**
    * Lists the database's records as sidebar rows under this Space. Only for a short list people navigate
    * like pages (folders, chapters); a database that keeps growing belongs in the view's `shows` instead.
    */
@@ -1021,6 +1042,8 @@ export interface SpaceRuntimeDescriptor {
   shows?: Record<string, SpaceShownDescriptor>;
   chrome?: SpaceChrome;
   actions: Record<string, SpaceActionDescriptor>;
+  /** The functions this viewer may call from the page (`expose: ['page']` and their role in `access`). */
+  functions?: Record<string, import('./functions').SpaceFunctionDescriptor>;
   bindings: Record<string, {
     kind: SpaceResourceReference['kind'];
     operations?: Partial<Record<'query' | 'insert' | 'update' | 'delete', string>>;
@@ -1164,7 +1187,9 @@ export function publicSpaceDescriptor(space: SpaceRuntimeDescriptor): SpaceRunti
     ? { ...binding, operations: Object.fromEntries(Object.entries(binding.operations).filter(([, id]) => Boolean(id && Object.hasOwn(actions, id)))) }
     : binding]));
   const { editorsOnly: _marks, viewerReads: _reads, cloudComputer: _computer, ...rest } = space;
+  const functions = Object.fromEntries(Object.entries(space.functions ?? {}).filter(([, declared]) => declared.public));
   return { ...rest, audience: 'public', actions, bindings,
+    ...(space.functions ? { functions } : {}),
     ...(space.shows ? { shows: without(space.shows, marks.shows) } : {}),
     ...(space.params ? { params: without(space.params, marks.params) } : {}) };
 }
@@ -1309,6 +1334,7 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
   };
   const deny = async (): Promise<never> => { throw protocolError('Use a declared Space action; account-wide tool and backend calls are unavailable.'); };
   const callAction = runtime.callAction;
+  const callFunction = runtime.callFunction;
   if (!callAction) throw new Error('This host needs the current Space action protocol.');
   const asPublic = runtime.space!.viewAs === 'public';
   const space = asPublic ? publicSpaceDescriptor(runtime.space!) : runtime.space!;
@@ -1477,6 +1503,11 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
       if (!family) throw protocolError('Viewer reads never change data. Choose a supported read.', 'readUnavailable');
       if (!space.viewerReads?.includes(family)) throw protocolError(`This Space does not declare viewer reads of ${family}.`, 'readUnavailable');
       return viewerRead<TResult>(operation, input);
+    } : undefined,
+    callFunction: callFunction ? async function guardedFunction<TResult>(name: string, input: Record<string, unknown> = {},
+      options: import('./functions').SpaceFunctionCallOptions = {}): Promise<TResult> {
+      if (!space.functions || !Object.hasOwn(space.functions, name)) throw protocolError('This view cannot call that function.', 'actionUnavailable');
+      return callFunction<TResult>(name, input, options);
     } : undefined,
     async callAction<TResult>(id: string, inputs: Record<string, unknown> = {}, options: SpaceActionOptions = {}): Promise<TResult> {
       const descriptor = Object.hasOwn(space.actions, id) ? space.actions[id] : null;

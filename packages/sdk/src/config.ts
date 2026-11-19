@@ -1,6 +1,8 @@
 export { defineSpace, defineSpaces } from './space';
 export type { SpaceDefinition, SpacesWorkspace, SpaceActionTemplate, SpaceResourceReference, SpaceDatabaseCreate } from './space';
 export type { SpaceViewParam, SpaceViewParamType, SpaceShows, SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
+export { threadHookInput, commentOptionInput } from './functions';
+export type { SpaceFunctionDeclaration, SpaceFunctionHandler, SpaceFunctionContext } from './functions';
 
 /**
  * Configuration utilities for notis.config.ts and Space definitions.

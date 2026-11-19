@@ -596,6 +596,9 @@ export interface RuntimeResource {
 export interface NotisRuntime {
   space?: SpaceRuntimeDescriptor;
   callAction?<TResult = unknown>(actionId: string, inputs?: Record<string, unknown>, options?: SpaceActionOptions): Promise<TResult>;
+  /** Space-only: run one of the Space's functions exposed to its views. Absent on hosts that predate functions. */
+  callFunction?<TResult = unknown>(name: string, input?: Record<string, unknown>,
+    options?: import('./functions').SpaceFunctionCallOptions): Promise<TResult>;
   documentBody?(request: SpaceDocumentBodyRequest): Promise<SpaceDocumentBodyResult>;
   /**
    * Space-only declared viewer read (`viewerReads`): what the signed-in viewer can open,

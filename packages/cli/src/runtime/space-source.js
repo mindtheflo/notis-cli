@@ -7,8 +7,9 @@ import { usageError } from './errors.js';
 import { fixtureImageEntries } from './space-test-server.js';
 import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifest.js';
 import { editorOnlyColumns, editorsOnlyFlag, withoutMarker } from './space-audience.js';
+import { functionHandlerPaths, validateSpaceFunctions } from './space-functions.js';
 
-const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'threadItems', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
+const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'threadItems', 'functions', 'threadHooks', 'commentOptions', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
 /** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-spaces-platform.md. */
 export const VIEWER_READ_FAMILIES = Object.freeze(['databases', 'skills']);
 const WORKSPACE_INDEXES = new Set(['notis.config.ts', 'notis.config.js', 'notis.config.mjs']);
@@ -227,7 +228,8 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
   if (definition.cloudComputer != null) validateCloudComputer(definition.cloudComputer);
   if (definition.cloudComputer != null && !entry) throw usageError('A container has no page, so it cannot use the cloud computer.');
   if (definition.agents != null) validateSpaceAgents(definition.agents, resources);
-  if (definition.threadItems != null) validateThreadItems(definition.threadItems, definition.actions || {});
+  if (definition.threadItems != null) validateThreadItems(definition.threadItems, definition.actions || {}, definition.functions || {});
+  validateSpaceFunctions(definition, { entry });
   if (definition.collection && (resources[definition.collection.database]?.kind !== 'database' || !definition.collection.titleProperty)) {
     throw usageError('A collection needs a declared database binding and title property.');
   }
@@ -251,7 +253,9 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
   viewManifestFields(definition, { entry, resources });
   const markdown = definition.markdown ? resolveDefinitionPath(definition.markdown) : null;
   const fixturePath = definition.verificationFixtures ? resolveDefinitionPath(definition.verificationFixtures) : null;
-  return { key: selectedKey, workspace, definition, definitionPath, entry, layout, markdown, fixturePath, resolveDefinitionPath };
+  // Each function's handler module, by function name: built into functions/index.js, never into the page bundle.
+  const functionHandlers = functionHandlerPaths(definition, resolveDefinitionPath);
+  return { key: selectedKey, workspace, definition, definitionPath, entry, layout, markdown, fixturePath, functionHandlers, resolveDefinitionPath };
 }
 
 
@@ -309,6 +313,7 @@ export function collectSelectedSpaceSource(projectDir, selection, { buildInputs 
   if (selection.entry) add(selection.entry);
   if (selection.layout) add(selection.layout);
   if (selection.markdown) add(selection.markdown);
+  Object.values(selection.functionHandlers || {}).forEach(add);
   if (selection.fixturePath) {
     add(selection.fixturePath);
     // The image files the fixtures show travel with them; verify reports a bad entry on its own.
@@ -413,7 +418,7 @@ export function validateSpaceAgents(agents, resources = {}) {
 
 const THREAD_ITEM_FIELDS = ['label', 'description', 'inputs', 'read', 'title', 'url', 'states', 'checks', 'actions', 'page'];
 const THREAD_ITEM_STATE_FIELDS = ['id', 'label', 'icon', 'when', 'needsYou', 'final'];
-const THREAD_ITEM_ACTION_FIELDS = ['label', 'tool', 'arguments', 'confirm', 'states', 'primary'];
+const THREAD_ITEM_ACTION_FIELDS = ['label', 'tool', 'function', 'arguments', 'confirm', 'states', 'primary'];
 const REFUSED_ITEM_TOOL = /^(LOCAL_|COMPOSIO_|NOTIS_|CUSTOM_|MCP_)/;
 
 function threadItemLabel(value) {
@@ -427,7 +432,7 @@ function threadItemLabel(value) {
  * mistake fails before the build; server/lib/space_thread_items.py repeats every check, including
  * placeholders and conditions, when the Space is published.
  */
-export function validateThreadItems(threadItems, actions = {}) {
+export function validateThreadItems(threadItems, actions = {}, functions = {}) {
   const kinds = threadItems && typeof threadItems === 'object' && !Array.isArray(threadItems) ? Object.entries(threadItems) : null;
   if (!kinds || kinds.length < 1 || kinds.length > 8) throw usageError('Declare threadItems as 1 to 8 item kinds.');
   for (const [kind, spec] of kinds) {
@@ -465,8 +470,15 @@ export function validateThreadItems(threadItems, actions = {}) {
         throw usageError(`Action ${actionId} of thread item ${kind} takes ${THREAD_ITEM_ACTION_FIELDS.join(', ')} only.`);
       }
       if (!threadItemLabel(action.label)) throw usageError(`Action ${actionId} of thread item ${kind} needs a label.`);
-      if (typeof action.tool !== 'string' || !/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(action.tool) || REFUSED_ITEM_TOOL.test(action.tool)) {
-        throw usageError(`Action ${actionId} of thread item ${kind} runs one connected app tool, such as GITHUB_MERGE_A_PULL_REQUEST.`);
+      if (Object.hasOwn(action, 'tool') === Object.hasOwn(action, 'function')) {
+        throw usageError(`Action ${actionId} of thread item ${kind} runs one connected app tool (tool) or one of this Space's functions (function), not both.`);
+      }
+      if (Object.hasOwn(action, 'function')) {
+        if (typeof action.function !== 'string' || !Object.hasOwn(functions || {}, action.function)) {
+          throw usageError(`Action ${actionId} of thread item ${kind} names a function this Space does not declare.`);
+        }
+      } else if (typeof action.tool !== 'string' || !/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(action.tool) || REFUSED_ITEM_TOOL.test(action.tool)) {
+        throw usageError(`Action ${actionId} of thread item ${kind} runs one connected app tool, such as GITHUB_MERGE_A_PULL_REQUEST, or one of this Space's functions.`);
       }
       if (action.states != null && (!Array.isArray(action.states) || action.states.some(id => !stateIds.has(id)))) {
         throw usageError(`Action ${actionId} of thread item ${kind} lists states this item declares.`);

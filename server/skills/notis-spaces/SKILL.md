@@ -2,7 +2,7 @@
 name: notis-spaces
 description: Explain Notis Spaces, sharing, resource links and lifecycle; build or update their views and linked Skills, inspect a saved view with its current data, choose whether text, a view, a Notes page or a Space answers a request, or install or update a Space from the Store or a pasted Space share link (check it, ask, then install).
 mcp_resource: true
-mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_SPACE_VERSIONS", "LOCAL_NOTIS_DOCUMENT_VERSIONS", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW"]
+mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_SPACE_VERSIONS", "LOCAL_NOTIS_DOCUMENT_VERSIONS", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW", "LOCAL_NOTIS_SPACE_FUNCTIONS"]
 mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/fixtures.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md", "references/store.md"]
 ---
 

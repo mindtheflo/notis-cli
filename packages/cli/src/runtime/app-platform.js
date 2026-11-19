@@ -189,12 +189,20 @@ function stripNotisSdkImports(source) {
     .replace(/import\s+type\s+[\s\S]*?from\s+['"][^'"]*['"]\s*;?/g, '')
     .replace(/import\s*{([^}]+)}\s+from\s+['"]@notis\/sdk\/config['"]\s*;?/g, (_statement, names) => {
       const declarations = [];
+      const schemas = [];
       for (const imported of names.split(',').map(value => value.trim()).filter(Boolean)) {
         if (imported.startsWith('type ')) continue;
+        // The function input schemas are values, not identity helpers: take them from the project's own
+        // SDK package entry (built JavaScript), the one copy of them.
+        if (/^(threadHookInput|commentOptionInput)(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(imported)) {
+          schemas.push(imported);
+          continue;
+        }
         const match = imported.match(/^(defineNotisApp|defineSpace|defineSpaces)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
         if (!match) throw usageError(`Unsupported configuration helper: ${imported}`);
         declarations.push(`const ${match[2] || match[1]} = (value) => value;`);
       }
+      if (schemas.length) declarations.unshift(`import { ${schemas.join(', ')} } from '@notis/sdk';`);
       return declarations.join('\n');
     });
 }

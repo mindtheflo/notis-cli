@@ -485,6 +485,47 @@ again. Keep a fallback (a Manager draft) for Sites, previews offline and viewers
 who do not allow it. Declare it only when the page's core controls run on the
 cloud computer.
 
+## Functions
+
+`functions` in `defineSpace` gives the Space its own server-side code, for logic one
+declared action cannot express: several actions in a row, a decision between them, a
+command on the caller's cloud computer, or a built-in thread action. Each function
+declares `description`, `kind` (`read` changes nothing, `write` changes the Space's
+data, `action` reaches outside), a closed `input` schema, an optional `output`,
+`expose` (`page`, `api`, `agents`; leave it out for a function only an item action,
+a thread hook or a comment option runs), `access` (`public`, `viewer`, `editor`,
+`key`; `editor` when left out), `uses` and `handler`, the path of a file whose
+default export is `async (input, ctx) => result`.
+
+The handler has no network and no secrets. It reaches only `ctx`:
+`ctx.actions.<id>(inputs)` for the actions named in `uses.actions`,
+`ctx.cloudComputer.facts()` and `.run({ command, cwd, timeoutMs })` with
+`uses.cloudComputer`, and `ctx.threads.archive(threadId)` (also `unarchive`, `read`,
+`unread`, `star`, `unstar`, `later(threadId, until)`, `back`) for the operations
+named in `uses.threads`, only on a thread one of the Space's items is attached to.
+`ctx.caller.role` tells who calls. Throw an `Error` to refuse: its message is shown
+to the reader as written, so write it for them. A run lasts at most 60 seconds.
+
+Call one from a view with `const { call, loading, error, available } =
+useFunction('name')`, then `await call(input)`; `useFunctionQuery('name', input)`
+for a `read`. Keep a fallback when `available` is false (verify, an older host).
+Agents list and call the functions exposed to `agents` with
+`LOCAL_NOTIS_SPACE_FUNCTIONS`.
+
+Three more places run a function:
+
+- A thread item action: `actions: { settle: { label, function: 'settle_workspace',
+  arguments: { thread: '{item.thread}' } } }` instead of `tool`. The handler also
+  gets `ctx.item` (the item and its thread).
+- `threadHooks: { archive: 'on_archive' }`: after the person, an agent or Notis
+  archives (or `unarchive`, `read`, `unread`, `star`, `unstar`, `later`, `back`,
+  `delete`) a thread that holds one of the Space's items. The function's `input` is
+  `threadHookInput` from `@notis/sdk`: `{ event, actor, thread, items }`. A hook runs
+  after the action and cannot stop it; make it safe to run twice.
+- `commentOptions: { approve: { label: 'Approve', function: 'approve_change' } }`:
+  when a person picks that label among a choice comment's options (an agent's own
+  answer never runs it). The function's `input` is `commentOptionInput`.
+
 ## Visual data and Markdown
 
 Give a chart its numbers through `RenderChartData` (the toolkit's `Chart`,
