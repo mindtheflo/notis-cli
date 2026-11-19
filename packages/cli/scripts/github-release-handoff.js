@@ -21,6 +21,10 @@ const TITLE_SETTLE_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 // have been applied, and GitHub can list the release or run only later (seen
 // on 5 Nov 2026: a 500 that had created the draft). Re-read the same tag or
 // run name for about 2 minutes before holding; never send the POST again.
+// The same budget covers a 404 on the exact run ID an accepted dispatch just
+// returned: GitHub can answer 404 for that ID for a moment after handing it
+// back (seen on 19 Nov 2026, Temporal release 44597565602: run 44603370357
+// existed but its read 1 s after the POST got 404).
 const RECONCILE_DELAYS_MS = [2_000, 4_000, 8_000, 15_000, 30_000, 60_000];
 
 function held(message, code = 'HANDOFF_HELD') {
@@ -461,19 +465,25 @@ export function createGithubHandoffStore({ repository, token, fetcher = fetch,
   }
 
   // Re-read only the exact accepted run, and only while every identity field
-  // except the provisional title already matches, or while the read itself has
-  // an unknown outcome (5xx/429/lost). Never redispatch or accept any title
-  // other than the exact handoff run name; a definite 4xx holds at once.
+  // except the provisional title already matches, while the read itself has
+  // an unknown outcome (5xx/429/lost), or while GitHub still answers 404 for
+  // the run ID it just returned (not indexed yet; see RECONCILE_DELAYS_MS).
+  // Never redispatch or accept any title other than the exact handoff run name;
+  // any other 4xx and any other identity mismatch hold at once. Only this
+  // readback waits on a 404: every other read, including the finalizer's own
+  // readFinalizerRun, still treats a 404 as definite.
   async function readAcceptedRun(identity, tag, runId) {
-    // Each wait has its own budget, so a 5xx streak never shortens the title wait.
-    const tries = { title: 0, read: 0 };
+    // Each wait has its own budget, so a 5xx or 404 streak never shortens the
+    // title wait (and vice versa).
+    const tries = { title: 0, read: 0, indexing: 0 };
     for (;;) {
       try { return await readRun(identity, tag, runId); }
       catch (error) {
         const checks = error?.code === 'HANDOFF_RUN_MISMATCH' ? error.identityChecks : null;
         const titlePending = checks?.title === false
           && Object.entries(checks).every(([key, value]) => key === 'title' || value === true);
-        const kind = titlePending ? 'title' : uncertain(error) ? 'read' : null;
+        const notIndexed = error?.code === 'HANDOFF_HTTP_ERROR' && error.httpStatus === 404;
+        const kind = titlePending ? 'title' : uncertain(error) ? 'read' : notIndexed ? 'indexing' : null;
         const delays = kind === 'title' ? TITLE_SETTLE_DELAYS_MS : RECONCILE_DELAYS_MS;
         if (!kind || tries[kind] >= delays.length) throw error;
         await sleep(delays[tries[kind]++]);

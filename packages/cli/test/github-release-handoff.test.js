@@ -454,12 +454,13 @@ test('an uncertain 5xx readback of the accepted run is re-read for the same ID w
   assert.equal(down.state.sleeps.reduce((total, ms) => total + ms, 0), 119_000);
   assert.equal(posts(down.calls).length, 1);
 
-  // A definite 4xx readback is read once and held at once, never re-read.
+  // A definite 4xx readback (other than the not-yet-indexed 404) is read once
+  // and held at once, never re-read.
   const missing = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
-    && request.method === 'GET' ? response(404, {}) : undefined });
+    && request.method === 'GET' ? response(403, {}) : undefined });
   await assert.rejects(missing.store.dispatchFinalizer({ tag, inputs }), error => {
     assert.equal(error.code, 'HANDOFF_DISPATCH_UNCONFIRMED');
-    assert.deepEqual(error.readbackOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: 404 });
+    assert.deepEqual(error.readbackOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: 403 });
     return true;
   });
   assert.equal(missing.calls.filter(call => call.url.pathname.endsWith('/actions/runs/81')).length, 1);
@@ -616,4 +617,90 @@ test('a definite 4xx rejection or a 5xx run listing is never waited on or re-pos
   assert.equal((await flaky.store.findFinalizerRuns({ tag, sourceSha, inputs, settle: true })).length, 1);
   assert.deepEqual(flaky.state.sleeps, [2_000]);
   assert.equal(posts(flaky.calls).length, 0);
+});
+
+test('a just-dispatched run that GitHub briefly answers 404 is re-read for the same ID without redispatch', async () => {
+  // Seen on nightly 19 Nov 2026 (Temporal release 44597565602): POST 200 with
+  // run ID 44603370357, then GET /actions/runs/{id} one second later got 404
+  // although GitHub had created that run; the release failed unconfirmed.
+  let reads = 0;
+  const { store, state, calls } = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+    && request.method === 'GET' && ++reads <= 2 ? response(404, { message: token }) : undefined });
+  const result = await store.dispatchFinalizer({ tag, inputs });
+  assert.equal(result.status, 'accepted');
+  assert.equal(result.acceptedRunId, 81);
+  assert.equal(result.runs[0].id, 81);
+  assert.equal(result.runs[0].display_title, finalizerRunName({ repository, tag, sourceSha, inputs }));
+  assert.equal(reads, 3);
+  assert.deepEqual(state.sleeps, [2_000, 4_000]);
+  assert.equal(posts(calls).length, 1);
+  assert.equal(calls.filter(call => call.url.pathname.endsWith('/runs')).length, 1);
+});
+
+test('an accepted run ID still 404 after about 2 minutes holds unconfirmed with one POST', async () => {
+  const { store, state, calls } = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+    && request.method === 'GET' ? response(404, { message: token }) : undefined });
+  await assert.rejects(store.dispatchFinalizer({ tag, inputs }), error => {
+    assert.equal(error.code, 'HANDOFF_DISPATCH_UNCONFIRMED');
+    assert.equal(error.acceptedRunId, 81);
+    assert.deepEqual(error.postOutcome, { code: 'HANDOFF_RESPONSE_ACCEPTED', httpStatus: 200 });
+    assert.deepEqual(error.readbackOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: 404 });
+    assert.ok(!(error.stack + JSON.stringify(error)).includes(token));
+    return true;
+  });
+  assert.equal(calls.filter(call => call.url.pathname.endsWith('/actions/runs/81')).length, 7);
+  assert.equal(state.sleeps.reduce((total, ms) => total + ms, 0), 119_000);
+  assert.equal(posts(calls).length, 1);
+});
+
+test('a 404, a 5xx and a provisional title on the accepted run each use their own wait', async () => {
+  let reads = 0;
+  const { store, state, calls } = api({ intercept: (url, request, current) => {
+    if (!url.pathname.endsWith('/actions/runs/81') || request.method !== 'GET') return undefined;
+    reads += 1;
+    if (reads === 1) return response(404, {});
+    if (reads === 2) return response(502, {});
+    const identity = { repository, tag, sourceSha, inputs: current.dispatchBody.inputs };
+    return response(200, run(reads === 3 ? { display_title: 'CLI finalizer' } : {}, identity));
+  } });
+  const result = await store.dispatchFinalizer({ tag, inputs });
+  assert.equal(result.status, 'accepted');
+  assert.equal(reads, 4);
+  assert.deepEqual(state.sleeps, [2_000, 2_000, 1_000]);
+  assert.equal(posts(calls).length, 1);
+});
+
+test('only the accepted run waits on 404: other 4xx readbacks, mismatches and the finalizer self-read stay definite', async () => {
+  for (const status of [401, 403, 410, 422]) {
+    const rejected = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+      && request.method === 'GET' ? response(status, {}) : undefined });
+    await assert.rejects(rejected.store.dispatchFinalizer({ tag, inputs }), error => {
+      assert.deepEqual(error.readbackOutcome, { code: 'HANDOFF_HTTP_ERROR', httpStatus: status });
+      return true;
+    });
+    assert.equal(rejected.calls.filter(call => call.url.pathname.endsWith('/actions/runs/81')).length, 1);
+    assert.deepEqual(rejected.state.sleeps, []);
+    assert.equal(posts(rejected.calls).length, 1);
+  }
+
+  let reads = 0;
+  const altered = api({ intercept: (url, request) => {
+    if (!url.pathname.endsWith('/actions/runs/81') || request.method !== 'GET') return undefined;
+    return ++reads === 1 ? response(404, {}) : response(200, run({ head_sha: 'd'.repeat(40) }));
+  } });
+  await assert.rejects(altered.store.dispatchFinalizer({ tag, inputs }), error => {
+    assert.equal(error.readbackOutcome.code, 'HANDOFF_RUN_MISMATCH');
+    return true;
+  });
+  assert.equal(reads, 2);
+  assert.deepEqual(altered.state.sleeps, [2_000]);
+  assert.equal(posts(altered.calls).length, 1);
+
+  const own = api({ intercept: (url, request) => url.pathname.endsWith('/actions/runs/81')
+    && request.method === 'GET' ? response(404, {}) : undefined });
+  await assert.rejects(own.store.readFinalizerRun({ tag, sourceSha, inputs, runId: 81 }),
+    { code: 'HANDOFF_HTTP_ERROR', httpStatus: 404 });
+  assert.equal(own.calls.filter(call => call.url.pathname.endsWith('/actions/runs/81')).length, 1);
+  assert.deepEqual(own.state.sleeps, []);
+  assert.equal(posts(own.calls).length, 0);
 });
