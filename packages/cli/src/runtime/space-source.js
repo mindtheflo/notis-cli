@@ -9,7 +9,7 @@ import { VIEW_DEFINITION_FIELDS, viewManifestFields } from './space-view-manifes
 import { editorOnlyColumns, editorsOnlyFlag, withoutMarker } from './space-audience.js';
 import { functionHandlerPaths, validateSpaceFunctions } from './space-functions.js';
 
-const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'threadItems', 'functions', 'threadHooks', 'commentOptions', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', ...VIEW_DEFINITION_FIELDS]);
+const CONFIG_FIELDS = new Set(['name', 'description', 'icon', 'accent', 'entry', 'layout', 'readableContext', 'resources', 'actions', 'navigation', 'viewerReads', 'cloudComputer', 'agents', 'threadItems', 'functions', 'threadHooks', 'commentOptions', 'collection', 'sourceIncludes', 'verificationFixtures', 'editorsOnly', 'store', ...VIEW_DEFINITION_FIELDS]);
 /** Reads with each signed-in viewer's own authority (never an issuer grant); see docs/notis-spaces-platform.md. */
 export const VIEWER_READ_FAMILIES = Object.freeze(['databases', 'skills']);
 const WORKSPACE_INDEXES = new Set(['notis.config.ts', 'notis.config.js', 'notis.config.mjs']);
@@ -230,6 +230,7 @@ export async function loadSelectedSpace(projectDir, selectedKey) {
   if (definition.agents != null) validateSpaceAgents(definition.agents, resources);
   if (definition.threadItems != null) validateThreadItems(definition.threadItems, definition.actions || {}, definition.functions || {});
   validateSpaceFunctions(definition, { entry });
+  if (definition.store != null) validateStoreShips(definition.store, selectedKey);
   if (definition.collection && (resources[definition.collection.database]?.kind !== 'database' || !definition.collection.titleProperty)) {
     throw usageError('A collection needs a declared database binding and title property.');
   }
@@ -369,6 +370,58 @@ export function collectSelectedSpaceSource(projectDir, selection, { buildInputs 
   result['notis.config.ts'] = Buffer.from(`import { defineSpaces } from '@notis/sdk/config';\nexport default defineSpaces(${JSON.stringify({ spaces: { [selection.key]: { definition: selection.definitionPath } }, resources, defaultSpace: selection.key }, null, 2)});\n`).toString('base64');
   return result;
   } finally { compiler.close(); }
+}
+
+const STORE_SHIPS_LIMIT = 200;
+
+/**
+ * What ships to the Store (`store: { ships: { <source key>: [<resource alias>, ...] } }`, truth SPC-150): the source
+ * keys of this Space and of the sub-Spaces that go to the Store, each with the aliases of the linked items that go
+ * with it. Everything unlisted stays private. server/lib/space_store_ships.py repeats every check.
+ */
+export function validateStoreShips(store, selfKey) {
+  const shape = 'Declare store as { ships: { <source key>: [<resource alias>, ...] } }: this Space and the sub-Spaces that go to the Store, each with the aliases of its linked items that go with it.';
+  if (!store || typeof store !== 'object' || Array.isArray(store) || Object.keys(store).join(',') !== 'ships') throw usageError(shape);
+  const ships = store.ships;
+  if (!ships || typeof ships !== 'object' || Array.isArray(ships)) throw usageError(shape);
+  const keys = Object.keys(ships);
+  if (!keys.length || keys.length > STORE_SHIPS_LIMIT) throw usageError(`store.ships lists 1 to ${STORE_SHIPS_LIMIT} Spaces by source key.`);
+  for (const [spaceKey, aliases] of Object.entries(ships)) {
+    key(spaceKey, 'A store.ships key');
+    if (!Array.isArray(aliases) || aliases.length > STORE_SHIPS_LIMIT) throw usageError(`store.ships.${spaceKey} lists the aliases of the linked items that ship with it.`);
+    aliases.forEach(alias => key(alias, `An alias in store.ships.${spaceKey}`));
+    if (new Set(aliases).size !== aliases.length) throw usageError(`store.ships.${spaceKey} lists an alias twice.`);
+  }
+  if (!Object.hasOwn(ships, selfKey)) throw usageError(`store.ships must list this Space itself (${selfKey}): the root always ships.`);
+}
+
+/** The canonical store manifest field: source keys and aliases sorted, so each build writes the same bytes. */
+export function storeManifest(store) {
+  return { ships: Object.fromEntries(Object.keys(store.ships).sort().map(name => [name, [...store.ships[name]].sort()])) };
+}
+
+/**
+ * A shipped view must not read or write a database that stays private (truth SPC-152), nor use a Skill, automation or
+ * page that does: its installed copy would break. Checks every listed Space this source workspace defines; a listed
+ * sub-Space from another workspace is checked by the server when the Space is published.
+ */
+export async function checkStoreShips(projectDir, selection) {
+  const ships = selection.definition.store?.ships;
+  if (!ships) return;
+  for (const spaceKey of Object.keys(ships).sort()) {
+    if (!Object.hasOwn(selection.workspace.spaces || {}, spaceKey)) continue;
+    const listed = spaceKey === selection.key ? selection : await loadSelectedSpace(projectDir, spaceKey);
+    const shipped = new Set(ships[spaceKey]);
+    for (const [alias, resource] of Object.entries(listed.definition.resources || {}).sort(([a], [b]) => a.localeCompare(b))) {
+      if (shipped.has(alias)) continue;
+      const name = `${listed.definition.name} (${spaceKey})`;
+      // The root always ships, so its own view can only list the alias.
+      const fix = spaceKey === selection.key ? `Add '${alias}' to store.ships.${spaceKey}: the root always ships.`
+        : `Add '${alias}' to store.ships.${spaceKey}, or take ${spaceKey} out of store.ships.`;
+      if (resource?.kind === 'database') throw usageError(`View ${name} reads or writes the database ${alias}, which stays private. ${fix}`);
+      throw usageError(`View ${name} uses the ${resource?.kind || 'resource'} ${alias}, which stays private. ${fix}`);
+    }
+  }
 }
 
 const AGENT_FIELDS = ['id', 'on', 'event', 'thread', 'runtime', 'skill', 'wake', 'columns'];

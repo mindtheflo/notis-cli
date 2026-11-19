@@ -665,3 +665,45 @@ test('agents wake on the Space comments (on: comments) or watch a database resou
   ];
   for (const [agents, message] of refused) assert.throws(() => validateSpaceAgents(agents, resources), message, JSON.stringify(agents));
 });
+
+test('store.ships is the Store allowlist: checked, emitted sorted, absent when undeclared (SPC-150)', async () => {
+  const { generateSpaceManifest } = await import('../src/runtime/space-platform.js');
+  const root = fixture();
+  const config = store => `export default {name:'A',${VIEW_DECLARATION},entry:'./view.tsx'${store ? `,store:${store}` : ''}};`;
+  try {
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), config(`{ships:{b:['notes','board'],a:[]}}`));
+    const manifest = generateSpaceManifest(await loadSelectedSpace(root, 'a'));
+    assert.deepEqual(manifest.store, { ships: { a: [], b: ['board', 'notes'] } });
+    assert.deepEqual(Object.keys(manifest.store.ships), ['a', 'b']);
+    // Undeclared: no store key at all, so every existing manifest stays byte-identical.
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), config(null));
+    assert.equal(Object.hasOwn(generateSpaceManifest(await loadSelectedSpace(root, 'a')), 'store'), false);
+    for (const [store, words] of [[`{ships:{b:[]}}`, /must list this Space itself \(a\)/], [`{ships:{}}`, /1 to 200 Spaces/],
+      [`{ships:{a:'tasks'}}`, /aliases of the linked items/], [`{ships:{a:['x','x']}}`, /alias twice/],
+      [`{ships:{A:[]}}`, /store\.ships key/], [`{ships:{a:[]},extra:true}`, /Declare store/], [`['a']`, /Declare store/]]) {
+      writeFileSync(join(root, 'spaces/a/space.config.ts'), config(store));
+      await assert.rejects(loadSelectedSpace(root, 'a'), words, store);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a build refuses a shipped view that reads or writes a database that stays private (SPC-152)', async () => {
+  const root = fixture();
+  const container = (resources, ships) => `export default {name:'Board',resources:${resources},store:{ships:${ships}}};`;
+  try {
+    const resources = `{clients:{kind:'database',key:'clients'},diary:{kind:'database',key:'diary'}}`;
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), container(resources, `{a:['clients']}`));
+    await assert.rejects(buildSpaceArtifact(root, 'a', { stdio: 'pipe', refreshSdk: false }),
+      /View Board \(a\) reads or writes the database diary, which stays private\. Add 'diary' to store\.ships\.a: the root always ships\.$/);
+    assert.equal(existsSync(join(root, '.notis/output/manifest.json')), false, 'Nothing is built');
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), container(`{helper:{kind:'skill',key:'helper'}}`, `{a:[]}`));
+    await assert.rejects(buildSpaceArtifact(root, 'a', { stdio: 'pipe', refreshSdk: false }), /uses the skill helper, which stays private/);
+    // A listed sibling this workspace defines is checked too; one it does not define is left to the server.
+    writeFileSync(join(root, 'spaces/b/space.config.ts'), `export default {name:'Notes',resources:{log:{kind:'database',key:'log'}}};`);
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), container(`{}`, `{a:[],b:[]}`));
+    await assert.rejects(buildSpaceArtifact(root, 'a', { stdio: 'pipe', refreshSdk: false }), /View Notes \(b\) reads or writes the database log/);
+    writeFileSync(join(root, 'spaces/a/space.config.ts'), container(resources, `{a:['clients','diary'],b:['log'],elsewhere:[]}`));
+    const built = await buildSpaceArtifact(root, 'a', { stdio: 'pipe', refreshSdk: false });
+    assert.deepEqual(built.manifest.store, { ships: { a: ['clients', 'diary'], b: ['log'], elsewhere: [] } });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -16,11 +16,34 @@ link. A link or team listing goes live as soon as the user presses Share; a
 public listing goes to the sandbox reviewer, and Notis messages the user with
 its result.
 
+## List what ships first
+
+Only what the root's source lists goes to the Store; everything else stays in
+the user's account, including anything they link later. Before preparing, the
+root's own `defineSpace` declares `store: { ships: { <source key>: [<alias>, ...] } }`
+with its own source key and each sub-Space that ships, each with the aliases
+of the linked items (databases, Skills, automations, pages) that go with it.
+Ask the user which sub-Spaces and items to share when it is not obvious, and
+keep personal ones out. Deploy the root, then prepare. Without the list
+`store_prepare` is refused with `store_ships_undeclared` (an update of a
+listing already in the Store too); `store_ships_unknown` names a key or alias
+the Space does not have, `store_ships_ambiguous` a key two sub-Spaces share
+(a copy built from the same source: give each its own key), and
+`store_ships_parent_private` a listed sub-Space whose parent is not listed,
+and `store_ships_main_view_private` a listed database whose record view sits in
+a Space or link that stays private (list that view and its link too).
+Every Space between the root and a shipped one needs published source: a
+folder made in the Portal has no key to list, so deploy it from source first. A listed view must list every database it reads or
+writes, or the scan raises a red `view_database_private` finding. Spaces inside
+records travel with their record and are never listed.
+
 ## The flow
 
 All steps use `LOCAL_NOTIS_MANAGE_SPACE`. Each answer is the submission view:
 status, listing text, locales, sample rows and counts, screenshots, findings,
-`can_publish`, `blocked_reason` and `link`.
+`ships` (`shipped` and `private`: the Spaces and linked items that go to the
+Store and the ones that stay private), `can_publish`, `blocked_reason` and `link`.
+Tell the user both lists before sending the link.
 
 1. **Prepare.** Call `store_prepare {space_id, request_id}` with the root of the
    tree to publish and a stable request ID. Notis copies the tree into the

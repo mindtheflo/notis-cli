@@ -977,10 +977,29 @@ export interface SpaceDefinition {
    * like pages (folders, chapters); a database that keeps growing belongs in the view's `shows` instead.
    */
   collection?: { database: string; titleProperty: string; parentProperty?: string; allowCreate?: boolean };
+  /**
+   * What ships to the Store when this Space is published as a root (truths SPC-150 to SPC-152). Declared on the root's
+   * own definition; publishing is refused until it is.
+   */
+  store?: SpaceStore;
   /** Reproducible source dependencies not discovered by the module graph. */
   sourceIncludes?: string[];
   /** Explicit synthetic action cases for offline render verification. */
   verificationFixtures?: string;
+}
+
+/**
+ * The Store allowlist: `ships` maps the source key of this Space and of each sub-Space that goes to the Store to the
+ * aliases of its linked items (databases, Skills, automations, pages) that go with it. Anything unlisted stays private,
+ * a sub-Space or link added later included. A listed sub-Space needs its parent listed too, and a shipped view must
+ * list every database it reads or writes. Spaces inside records travel with their record.
+ *
+ * ```ts
+ * store: { ships: { coding: ['repositories'], workspaces: ['workspaces', 'new-workspace'] } }
+ * ```
+ */
+export interface SpaceStore {
+  ships: Record<string, string[]>;
 }
 
 export interface SpacesWorkspace {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 
 import { dirname, join, relative, resolve } from 'node:path';
 import { appFilesDigest, buildArtifact, freezeSourceWorkspace, prepareAppRelease, prepareSelectedBuild, saveSelectedBuild, syncSpaceSdk } from './app-platform.js';
 import { validateProjectBoundary, validateProjectDesign, validateSourceDesign } from './app-boundary-validator.js';
-import { collectSelectedSpaceSource, loadSelectedSpace } from './space-source.js';
+import { checkStoreShips, collectSelectedSpaceSource, loadSelectedSpace, storeManifest } from './space-source.js';
 import { viewManifestFields } from './space-view-manifest.js';
 import { editorsOnlySummary, manifestActions, manifestResources } from './space-audience.js';
 import { usageError } from './errors.js';
@@ -40,6 +40,8 @@ export function generateSpaceManifest(selection) {
     ...functionManifestFields(definition),
     // Absent when nothing is editor-only (SPC-073: unmarked means public).
     ...(editorsOnly ? { editors_only: editorsOnly } : {}),
+    // What ships to the Store (SPC-150); absent when undeclared, so existing manifests stay byte-identical.
+    ...(definition.store ? { store: storeManifest(definition.store) } : {}),
     readable_context: definition.readableContext || '', collection: definition.collection || null,
     // V4 declarations are mandatory for every presentation; the wire schema stays v1.
     ...viewManifestFields(definition, { entry: selection.entry, resources: definition.resources || {} }),
@@ -115,6 +117,8 @@ export async function buildSpaceRelease(projectDir, selectedKey, { stdio = 'inhe
   // After the SDK sync, so the install follows the lock file that sync keeps in step with the SDK.
   const installed = installDependencies ? ensureSpaceDependencies(projectDir, { log: installLog }) : null;
   const selection = await loadSelectedSpace(projectDir, selectedKey);
+  // A shipped view never uses a database that stays private (SPC-152): refused before anything is built.
+  await checkStoreShips(projectDir, selection);
   const sourceFiles = collectSelectedSpaceSource(projectDir, selection);
   const sourceHash = appFilesDigest(sourceFiles);
   const staging = freezeSourceWorkspace(projectDir, sourceFiles);

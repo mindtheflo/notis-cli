@@ -467,6 +467,25 @@ view a Space as the public (`<ViewAsPublic />`, the Share menu); agents check th
 same with `LOCAL_NOTIS_RENDER_VIEW` and `view_as: "public"` (CLI
 `notis views render <link> --view-as public`). Actions still run as the Editor.
 
+## What ships to the Store
+
+Only the root Space's own `defineSpace` declares `store`: its own source key and
+each sub-Space that goes to the Store, each with the aliases of the linked items
+that go with it. Everything unlisted stays private, and the Store refuses to
+publish until the list exists ([Store publishing](store.md#list-what-ships-first)).
+
+```ts
+export default defineSpace({
+  name: 'Coding',
+  store: { ships: { coding: ['repositories'], workspaces: ['workspaces', 'new-workspace'] } },
+  // ...
+});
+```
+
+A listed sub-Space needs its parent listed, and a listed view lists every
+database it reads or writes: `notis spaces build` refuses otherwise, naming the
+view and the database.
+
 ## The viewer's cloud computer
 
 `cloudComputer: 'shell'` (or `'read'` for facts only) lets a page run one command

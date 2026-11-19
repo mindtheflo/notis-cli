@@ -489,6 +489,35 @@ test('store publish forwards only the request and shows server refusals for find
   }
 });
 
+test("store publish says what ships, and refuses with the server's words until the source lists it (SPC-150, SPC-151)", async t => {
+  const ships = { shipped: { spaces: [{ key: 'coding', name: 'Coding' }], items: [{ space_key: 'coding', space: 'Coding', alias: 'repositories',
+    kind: 'database', name: 'Repositories' }] }, private: { spaces: [{ key: 'servers', name: 'Servers' }], items: [] } };
+  const answers = [
+    { status: 409, payload: { error: 'store_ships_undeclared', message: 'List what ships before you publish: add store: { ships: { ... } } to this Space\'s defineSpace.' } },
+    { status: 200, payload: { version: 1, package_digest: 'a'.repeat(64), ships, findings: [] } },
+  ];
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    calls.push(JSON.parse(request.body));
+    const answer = answers[calls.length - 1];
+    return new Response(JSON.stringify(answer.payload), { status: answer.status, headers: { 'content-type': 'application/json' } });
+  });
+  const refused = context('spaces store publish', { channel: 'team', requestId: 'publish-1', dryRun: true }, { spaceId: 'root-space' });
+  await assert.rejects(() => refused.spec.handler(refused), error => {
+    assert.equal(error.details.error, 'store_ships_undeclared');
+    assert.match(error.message, /List what ships before you publish/);
+    return true;
+  });
+  const dry = context('spaces store publish', { channel: 'team', requestId: 'publish-1', dryRun: true }, { spaceId: 'root-space' });
+  const result = await dry.spec.handler(dry);
+  assert.deepEqual(result.data.ships, ships);
+  assert.equal(result.meta.mutating, false);
+  assert.deepEqual(calls[1], { space_id: 'root-space', channel: 'team', request_id: 'publish-1', dry_run: true });
+  assert.match(dry.spec.when_to_use, /store: \{ ships: \{ <source key>: \[<alias>, \.\.\.\] \} \}/);
+  assert.match(dry.spec.when_to_use, /stays private/);
+  assert.match(dry.spec.summary, /store\.ships/);
+});
+
 test('store publish shares by link, and store list keeps to the listed channels', async t => {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (url, request) => {
