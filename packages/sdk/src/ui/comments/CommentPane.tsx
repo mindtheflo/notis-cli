@@ -29,12 +29,12 @@
 import React, {
   useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
 } from 'react';
-import type { KeySpec } from '../../words';
+import type { KeySpec, Words } from '../../words';
 import { ActionToast } from '../actions/ActionToast';
 import { Badge, Button, EmptyState, SegmentedControl } from '../blocks';
 import { AttachmentGallery, ImageViewer } from '../gallery';
-import { ESCAPE_PRIORITY } from '../engine/core';
-import { useEscapeLayer, useShortcuts } from '../engine/hooks';
+import { ESCAPE_PRIORITY, type KeyboardEngineCore } from '../engine/core';
+import { useEngineCore, useEscapeLayer, useShortcutOwner } from '../engine/hooks';
 import { Icon } from '../icons';
 import { Tooltip } from '../overlay';
 import { fixedOrigin } from '../overlay/floating';
@@ -417,6 +417,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
   draftNow.current = draft;
   const [sending, setSending] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  // The reply tapped last in this card: on a touch screen its buttons show instead of the comment's (SPC-488).
+  const [tappedReply, setTappedReply] = useState<string | null>(null);
   const files = useCommentFiles(controller, replyKey);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -458,8 +460,9 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
   const pictureAsk = root.needs !== 'none' && pictureAskOf(root);
   const meta = [
     commentRelativeTime(root.createdAt, locale, now),
-    // A comment on several items names them all below, not only the first.
-    showAnchor && anchor && root.anchorIds.length < 2 ? controller.say('anchorLabel', { n: anchor.order }) : '',
+    // A comment on several items names them all below, not only the first; one item is named by its title, like the
+    // group headings and the items of a comment on several (SPC-490), else the Space's label ("Task 3").
+    showAnchor && anchor && root.anchorIds.length < 2 ? commentItemNames(controller, [anchor]) : '',
     number > 0 && root.x != null ? `#${number}` : '',
     ...commentPlaceMeta(controller, thread),
   ].filter(Boolean).join(' · ');
@@ -469,7 +472,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
     ? <span className="nui-comment-new" role="img" aria-label={controller.say('newActivity')} /> : null;
 
   const replyItem = (reply: CommentRecord) => (
-    <li key={reply.recordKey} className="nui-comment-reply" data-comment={reply.recordKey}>
+    <li key={reply.recordKey} className="nui-comment-reply" data-comment={reply.recordKey}
+      data-tapped={selected && tappedReply === reply.recordKey ? '' : undefined}>
       <CommentAvatar author={reply.author} me={me} />
       <div className="nui-comment-reply-text">
         {/* The name line and the reply's buttons share one row, so the text starts right under it (no empty line). */}
@@ -519,10 +523,16 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
       aria-current={selected ? 'true' : undefined}
       aria-label={controller.say('pin', { who: agentDisplayName(root.author), body: root.body })}
       tabIndex={0}
-      onClick={select}
+      onClick={event => {
+        const reply = (event.target as Element | null)?.closest?.('.nui-comment-reply')?.getAttribute('data-comment') ?? null;
+        setTappedReply(reply);
+        select();
+      }}
       onKeyDown={onCardKey}
       onFocus={onCardFocus}
     >
+      {/* The quoted words first, like a passage thread's card, so every comments pane reads the same (SPC-489). */}
+      {quote && root.passage ? <CommentQuote controller={controller} comment={root} /> : null}
       {/* The thread that owns this comment thread, once at the top; the signatures name only who wrote (SPC-114). */}
       <CommentGoesTo controller={controller} thread={thread} />
       <header className="nui-comment-head">
@@ -558,7 +568,6 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
           ) : null}
         </div>
       </header>
-      {quote && root.passage ? <CommentQuote controller={controller} comment={root} /> : null}
 
       {root.example || resolved ? (
         <div className="nui-comment-badges">
@@ -936,17 +945,71 @@ function useToolBarRoom(active: boolean, bar: HTMLElement | null, card: HTMLElem
   }, [active, bar, card]);
 }
 
+/** A mounted comment tool bar that takes its toggle key, with the owner (Space or retained view) it draws in. */
+interface ToolBarTaker { owner: string; label: Words; takes(): boolean; toggle(): void }
+
+/**
+ * One registration of a toggle key for every comment tool bar mounted on an engine (SPC-491). The key is one Notis
+ * keeps (C), so it registers as Notis, and two tool bars on screen at once (a page and the one it opens, a retained
+ * view) would clash: the one key toggles the newest tool bar whose Space or view is on screen.
+ */
+interface ToolBarKeySlot { takers: ToolBarTaker[]; unregister: (() => void) | null }
+const TOOL_BAR_KEYS = new WeakMap<KeyboardEngineCore, Map<string, ToolBarKeySlot>>();
+
+function useToolBarKey(key: string | false | undefined, taker: ToolBarTaker): void {
+  const core = useEngineCore();
+  const owner = useShortcutOwner();
+  const ref = useRef(taker);
+  ref.current = { ...taker, owner };
+  useEffect(() => {
+    if (!key) return undefined;
+    const byKey = TOOL_BAR_KEYS.get(core) ?? new Map<string, ToolBarKeySlot>();
+    TOOL_BAR_KEYS.set(core, byKey);
+    const slot: ToolBarKeySlot = byKey.get(key) ?? { takers: [], unregister: null };
+    byKey.set(key, slot);
+    const mine: ToolBarTaker = {
+      get owner() { return ref.current.owner; },
+      get label() { return ref.current.label; },
+      takes: () => ref.current.takes(),
+      toggle: () => ref.current.toggle(),
+    };
+    slot.takers.push(mine);
+    const pick = () => [...slot.takers].reverse()
+      .find(item => core.registry.isOwnerAvailable(item.owner) && item.takes()) ?? null;
+    if (!slot.unregister) {
+      slot.unregister = core.register({
+        id: 'comments.toolbar', keys: key, scope: 'route', owner: 'notis',
+        get label() { return (pick() ?? slot.takers[slot.takers.length - 1] ?? mine).label; },
+        when: () => pick() != null,
+        run: () => {
+          const taker = pick();
+          if (!taker) return false;
+          taker.toggle();
+          return true;
+        },
+      }, 'notis');
+    }
+    return () => {
+      slot.takers = slot.takers.filter(item => item !== mine);
+      if (!slot.takers.length) {
+        slot.unregister?.();
+        slot.unregister = null;
+        byKey.delete(key);
+      }
+    };
+  }, [core, key]);
+}
+
 function ShownCommentToolBar({ controller, toggleKey = 'c', pinned = false, place = 'overlay', className }: CommentToolBarProps) {
   const shown = pinned || controller.toolBar;
   const { setToolBar, cancelMode, modes } = controller;
-  useShortcuts(toggleKey && !pinned ? [{
-    id: 'comments.toolbar', keys: toggleKey, scope: 'route', label: controller.words.toggleToolBar, owner: 'notis',
-    when: () => modes.length > 0,
-    run: () => {
+  useToolBarKey(!pinned && toggleKey, {
+    owner: '', label: controller.words.toggleToolBar,
+    takes: () => modes.length > 0,
+    toggle: () => {
       if (controller.toolBar) { cancelMode(); setToolBar(false); } else setToolBar(true);
-      return true;
     },
-  }] : [], [controller, toggleKey, pinned]);
+  });
   // Escape closes the bar once no mode waits (the mode's own Escape runs first).
   useEscapeLayer('comments.toolbar', () => { setToolBar(false); return true; },
     { priority: ESCAPE_PRIORITY.selection, enabled: shown && !pinned && controller.commentMode == null });

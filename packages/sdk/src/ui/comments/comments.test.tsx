@@ -5,7 +5,7 @@ import test from 'node:test';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import { KeyboardEngine, KeyboardEngineCore } from '../engine';
+import { KeyboardEngine, KeyboardEngineCore, ShortcutScope } from '../engine';
 import { NotisProvider } from '../../provider';
 import { createQueryClient } from '../../queryCache';
 import type { NotisRuntime } from '../../runtime';
@@ -1982,6 +1982,95 @@ test('Goes to: a failed best match names nothing and the To chip asks to choose,
   assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /^Goes to Q4 deck/);
 });
 
+test('Goes to: a reply that wakes another person\'s agent names no line, and is not read again (SPC-467)', async () => {
+  let reads = 0;
+  const comments: Partial<SpaceCommentsTransport> = {
+    links: async () => {
+      reads += 1;
+      return { c1: [{ threadId: null, title: '', status: 'elsewhere', via: 'started' }, { threadId: 't-1', title: 'Deck polish' }] };
+    },
+    bestMatch: async () => ({ threadId: 't-best', title: 'Q4 deck' }),
+  };
+  await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
+  await settle();
+  assert.equal(doc.querySelector('[data-thread="c1"] [data-part="goes-to"]'), null,
+    'neither the viewer\'s own link nor the best match is named');
+  assert.deepEqual(controller!.routing.linksOf('c1').map(link => link.threadId), ['t-1'], 'the link itself stays listed');
+  assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /^Goes to Q4 deck/);
+  const before = reads;
+  for (let i = 0; i < 4; i += 1) await act(async () => { await sleep(1_000); });
+  assert.equal(reads, before, 'a settled answer is not read again');
+});
+
+test('The pane in the host panel: no browser button borders, quiet replies, buttons only where used (SPC-451, mockup B)', () => {
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  const rule = (selector: string) => {
+    const at = css.indexOf(`${selector} {`);
+    assert.ok(at >= 0, `${selector} is styled`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  // The panes draw in the host panel's shadow root, outside .nui-root: they need the same button reset.
+  assert.match(css, /:where\([^)]*\.nui-comment-pane[^)]*\) button \{ font: inherit; color: inherit; background: none; border: 0;/);
+  // Hidden buttons are hidden, not only transparent: nothing invisible is tapped, and they float, taking no room.
+  assert.match(rule('.nui-comment-actions'), /visibility: hidden;/);
+  assert.match(css, /\.nui-comment-actions, \.nui-comment-head > \.nui-comment-reply-actions, \.nui-comment-reply-head > \.nui-comment-reply-actions \{\s*position: absolute;/);
+  assert.match(css, /@media \(hover: none\) \{\s*\.nui-comment-card:hover \.nui-comment-actions \{ visibility: hidden; opacity: 0; \}\s*\.nui-comment-card\[data-selected\] \.nui-comment-actions \{ visibility: visible; opacity: 1; \}/,
+    'on touch only the selected card shows its buttons');
+  // A card's reply field is one quiet line; the paperclip and Send show once it is used.
+  assert.match(css, /\.nui-comment-card \.nui-comment-compose-box:not\(:focus-within\):not\(:hover\):not\(:has\(\.nui-comment-file\)\)\s+\.nui-comment-compose:has\(> \.nui-comment-input:placeholder-shown\) > \.nui-comment-icon-btn \{ display: none; \}/,
+    'shown on hover too, so a click never lands on a button that hid as the focus moved (Safari)');
+  assert.match(rule('.nui-comment-compose > .nui-comment-input, .nui-comment-compose > .nui-comment-input:hover'), /background: transparent;/,
+    'the reply field holds its buttons: one surface');
+  assert.match(rule('.nui-comment-input'), /background: hsl\(var\(--foreground\) \/ \.05\);/, 'an edit or new comment field keeps its fill');
+  // A reply's own buttons are reachable from the keyboard: hidden, they are see-through and take no click but Tab
+  // reaches them, and the focus shows them, for that reply only.
+  assert.match(css, /\.nui-comment-reply-actions \{ display: inline-flex; gap: 2px; opacity: 0; pointer-events: none;/);
+  assert.match(css, /\.nui-comment-reply:hover \.nui-comment-reply-actions, \.nui-comment-reply:focus-within \.nui-comment-reply-actions \{\s*opacity: 1; pointer-events: auto; \}/);
+  assert.doesNotMatch(css, /\.nui-comment-card(?:(?!\.nui-comment-reply)[^{,])*\s\.nui-comment-reply-actions \{\s*(visibility: visible|opacity: 1)/,
+    'nothing about the card (its focus, a sent answer) shows every reply\'s buttons at once (C2 recording)');
+  assert.doesNotMatch(css, /\.nui-comment-card:is\(:focus-visible[^{]*\.nui-comment-reply-actions \{/,
+    'keyboard focus in the card never shows every reply\'s buttons');
+  // One toolbar at a time (SPC-488): a click or a selected card never shows the replies' buttons too, and the comment's
+  // own buttons hide while a reply is hovered.
+  const pointerCss = css.replace(/@media \(hover: none\) \{[^}]*\}[^}]*\}\s*\}/g, '');
+  assert.doesNotMatch(pointerCss, /\.nui-comment-card(:focus-within|\[data-selected\]) \.nui-comment-reply-actions[^{]*\{\s*visibility: visible/,
+    'outside touch screens');
+  assert.match(css, /\.nui-comment-card:has\(\.nui-comment-reply:is\(:hover, :focus-within\)\) \.nui-comment-actions \{ visibility: hidden; opacity: 0; \}/);
+  assert.doesNotMatch(rule('.nui-comment-goes'), /border-bottom/, 'the Goes to line has no rule under it');
+  // A passage thread is one card: its field name and quote inside, never floating between cards.
+  assert.match(rule('.nui-passage-thread:has(> .nui-passage-anchor)'), /background: hsl\(var\(--foreground\) \/ \.04\);/);
+});
+
+test('All items: a comment on one item names it by its title, like a comment on several, else the Space label (SPC-490)', async () => {
+  const tasks: CommentAnchor[] = [
+    { id: 't1', recordKey: 'tk1', order: 1, title: 'Record the product demo' },
+    { id: 't2', recordKey: 'tk2', order: 2, title: '' },
+  ];
+  const words = { anchorLabel: { en: 'Task {n}', fr: 'Tâche {n}' } };
+  await mount(<Harness scope={scope} anchors={tasks} anchorKey="tk1" words={words} />, fakeRuntime([
+    row('i1', { body: 'Who records it?', slide: 'tk1', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('i2', { body: 'Untitled one', slide: 'tk2', createdAt: '2026-10-21T10:00:00.000Z' }),
+  ], []));
+  await act(async () => { controller!.setFilter('all'); });
+  await settle();
+  const meta = (key: string) => doc.querySelector(`[data-thread="${key}"] .nui-comment-meta`)!.textContent!;
+  assert.match(meta('i1'), /Record the product demo/);
+  assert.doesNotMatch(meta('i1'), /Task 1/);
+  assert.match(meta('i2'), /Task 2/, 'an item with no title keeps the Space label');
+});
+
+test('A text comment card starts with its quote, like a passage thread, so every comments pane reads the same (SPC-489)', async () => {
+  const text = commentRow({ ...row('t1', { body: 'Is this date confirmed?', page: PAGE }), mode: 'text', quote: 'second Monday',
+    prefix: 'on the ', suffix: ' of March' });
+  await mount(<Harness scope={scope} anchors={ANCHORS} />, fakeRuntime([text], []));
+  const card = doc.querySelector('[data-thread="t1"]')!;
+  assert.ok(card, 'the text comment is listed');
+  const parts = [...card.children].map(el => el.matches('.nui-comment-quote-row') ? 'quote'
+    : el.matches('[data-part="goes-to"]') ? 'goes-to' : el.matches('header') ? 'head' : null).filter(Boolean);
+  assert.equal(parts[0], 'quote', `the quote first, then who wrote: ${parts.join(', ')}`);
+  assert.ok(parts.indexOf('head') > 0);
+});
+
 test('Goes to: links that keep failing name nothing once given up, never "a new thread" (SPC-467)', async () => {
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => { tries += 1; throw new Error('57014'); },
@@ -2193,6 +2282,52 @@ test('Tool bar and empty states: the idle hint follows the modes, Done is empty 
   assert.equal(doc.querySelectorAll('button[aria-label="Close comment tool bar"]').length, 1);
   await pickFilter('done');
   assert.match(doc.querySelector('.nui-comment-empty')!.textContent!, /No done comments\./);
+});
+
+test('On a touch screen a tapped reply shows its own buttons instead of the comment\'s (SPC-488)', async () => {
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
+  const reply = () => doc.querySelector('[data-thread="c1"] .nui-comment-reply[data-comment="r1"]')!;
+  await click(reply().querySelector('.nui-comment-reply-text')!);
+  assert.equal(controller!.threadKey, 'c1', 'the tap selects the card');
+  assert.ok(reply().hasAttribute('data-tapped'), 'and marks the reply tapped');
+  await click(doc.querySelector('[data-thread="c1"] > .nui-comment-body')!);
+  assert.ok(!reply().hasAttribute('data-tapped'), 'a tap on the comment itself gives its buttons back');
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  assert.match(css, /\.nui-comment-card\[data-selected\] \.nui-comment-reply\[data-tapped\] \.nui-comment-reply-actions \{ opacity: 1; pointer-events: auto; \}/);
+  assert.match(css, /\.nui-comment-card\[data-selected\]:has\(\.nui-comment-reply\[data-tapped\]\) \.nui-comment-actions \{ visibility: hidden; opacity: 0; \}/);
+});
+
+test('Two comment tool bars on screen at once never clash: C toggles the one whose view shows (SPC-491)', async () => {
+  let second: CommentController | null = null;
+  function Page({ hidden }: { hidden: boolean }) {
+    controller = useComments({ ...base, modes: ['point'] });
+    return (
+      <div>
+        <ui.CommentToolBar controller={controller} />
+        <CommentPane controller={controller} />
+      </div>
+    );
+  }
+  function Opened() {
+    second = useComments({ ...base, modes: ['point'] });
+    return <ui.CommentToolBar controller={second} />;
+  }
+  function Both({ shown }: { shown: boolean }) {
+    return (
+      <div>
+        <ShortcutScope owner="space:first" available={!shown}><Page hidden={shown} /></ShortcutScope>
+        <ShortcutScope owner="space:second" available={shown}><Opened /></ShortcutScope>
+      </div>
+    );
+  }
+  // The strict engine throws NotisKeyClash on a duplicate key: mounting both proves there is none.
+  await mount(<Both shown />, fakeRuntime(ROWS, []));
+  await key(doc.body, 'c');
+  assert.equal(second!.toolBar, true, 'C shows the tool bar of the view on screen');
+  assert.equal(controller!.toolBar, false, 'never the hidden one');
+  await rerender(<Both shown={false} />, fakeRuntime(ROWS, []));
+  await key(doc.body, 'c');
+  assert.equal(controller!.toolBar, true, 'once the first view shows again, C is its own');
 });
 
 test('At 390 px the point tool bar sits above the card, which moves down to make room, and Esc cancels is hidden', async () => {

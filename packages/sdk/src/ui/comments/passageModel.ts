@@ -30,6 +30,14 @@ export interface PassageField {
   markdown?: boolean;
 }
 
+/**
+ * The Space page's selection bar hands a selection in a Space's own commentable rich text to that text with this DOM
+ * event (detail: `{ range }`), so one bar shows Cite and Comment together and the text draws no button of its own.
+ */
+export const PASSAGE_COMMENT_EVENT = 'notis-passage-comment';
+/** On the Space page root while its selection bar takes comments: own rich text then leaves Comment to the bar. */
+export const SELECTION_BAR_COMMENTS_ATTR = 'data-notis-bar-comments';
+
 /** Characters kept before and after a quote. */
 export const PASSAGE_CONTEXT = 40;
 /** The longest quote kept. */

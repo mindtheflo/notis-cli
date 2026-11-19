@@ -31,7 +31,9 @@ import {
   CommentFilterMenu, CommentListLoading, CommentModeHint, CommentPaneKeys, CommentThreadList, CommentToChip, NewCommentMenu, useAtThreadPicker,
   usePaneFocusKeeper, useThreadScroller, type CommentListOptions,
 } from './paneParts';
-import { locatePassage, passageAt, type PassageAnchor } from './passageModel';
+import {
+  PASSAGE_COMMENT_EVENT, SELECTION_BAR_COMMENTS_ATTR, locatePassage, passageAt, type PassageAnchor,
+} from './passageModel';
 import { createPortal } from 'react-dom';
 import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
 import type { PassageCommentController } from './usePassageComments';
@@ -177,6 +179,15 @@ function textNodes(root: Node): { text: string; nodes: Array<{ node: Text; start
     text += (node as Text).data;
   }
   return { text, nodes };
+}
+
+/** Where a range starts and ends in the text of holder. */
+function rangeOffsets(holder: Node, range: Range): { start: number; end: number } {
+  const before = (holder.ownerDocument ?? document).createRange();
+  before.selectNodeContents(holder);
+  before.setEnd(range.startContainer, range.startOffset);
+  const start = before.toString().length;
+  return { start, end: start + range.toString().length };
 }
 
 /** Boxes of the text between two offsets, one per line of each text node. */
@@ -340,13 +351,11 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
       setSelected(null);
       return;
     }
+    // The Space page's selection bar shows Comment next to Cite for this text: no second button (SPC-487).
+    if (box.closest(`[${SELECTION_BAR_COMMENTS_ATTR}]`)) { setSelected(null); return; }
     readEnds.current = endsOf(range);
-    const before = holder.ownerDocument.createRange();
-    before.selectNodeContents(holder);
-    before.setEnd(range.startContainer, range.startOffset);
-    const start = before.toString().length;
-    const end = start + range.toString().length;
     const all = textNodes(holder);
+    const { start, end } = rangeOffsets(holder, range);
     const passage = passageAt(all.text, start, end);
     if (!passage) { setSelected(null); return; }
     const rects = Array.from(range.getClientRects?.() ?? []).filter(rect => rect.width > 0);
@@ -381,16 +390,17 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
   };
 
   const shown = selected != null;
-  // The touch settle timer outlives the listener below: hiding Comment ends that effect, and the timer must still
-  // read the moved selection once its handles stop. It is only cancelled by a newer move or on unmount.
+  // The touch settle timer keeps the listener below alive while Comment is hidden, so every newer move restarts the
+  // wait and only the last stop is read. It is cancelled by a newer move or on unmount.
   const settleRef = useRef<{ view: Window; id: number } | null>(null);
+  const [settling, setSettling] = useState(false);
   useEffect(() => () => {
     const settle = settleRef.current;
     if (settle) settle.view.clearTimeout(settle.id);
   }, []);
   useEffect(() => {
     const root = textRoot.current;
-    if (!shown || !root) return undefined;
+    if (!(shown || settling) || !root) return undefined;
     const document = root.ownerDocument;
     const view = document.defaultView;
     const scope = root.getRootNode() as Document | ShadowRoot;
@@ -404,8 +414,15 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
       if (settleRef.current) settleRef.current.view.clearTimeout(settleRef.current.id);
       settleRef.current = null;
       if (view && range && !range.collapsed && view.matchMedia?.('(pointer: coarse)').matches) {
-        const id = view.setTimeout(() => { settleRef.current = null; readSelectionRef.current(); }, TOUCH_SETTLE_MS);
+        const id = view.setTimeout(() => {
+          settleRef.current = null;
+          setSettling(false);
+          readSelectionRef.current();
+        }, TOUCH_SETTLE_MS);
         settleRef.current = { view, id };
+        setSettling(true);
+      } else {
+        setSettling(false);
       }
     };
     document.addEventListener('selectionchange', onSelectionChange);
@@ -414,9 +431,31 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
       document.removeEventListener('selectionchange', onSelectionChange);
       if (scope !== document) scope.removeEventListener('selectionchange', onSelectionChange);
     };
-  }, [shown]);
+  }, [shown, settling]);
   const readSelectionRef = useRef(readSelection);
   readSelectionRef.current = readSelection;
+
+  // The Space page's selection bar pressed Comment on words of this text: a new comment on them, as this text's own
+  // button would start (SPC-487).
+  const startDraftRef = useRef(comments.startDraft);
+  startDraftRef.current = comments.startDraft;
+  useEffect(() => {
+    const root = textRoot.current;
+    if (!root) return undefined;
+    const onComment = (event: Event) => {
+      const range = (event as CustomEvent<{ range?: Range }>).detail?.range;
+      const holder = textHolder(root);
+      if (!range || range.collapsed || !holder.contains(range.startContainer) || !holder.contains(range.endContainer)) return;
+      const { start, end } = rangeOffsets(holder, range);
+      const passage = passageAt(textNodes(holder).text, start, end);
+      if (!passage) return;
+      event.preventDefault();
+      setSelected(null);
+      startDraftRef.current({ field, ...passage });
+    };
+    root.addEventListener(PASSAGE_COMMENT_EVENT, onComment);
+    return () => root.removeEventListener(PASSAGE_COMMENT_EVENT, onComment);
+  }, [field]);
 
   const onClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     const box = wrap.current;
@@ -465,6 +504,14 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
 // The pane
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether a quote names its field: only when more than one commentable text is on screen, so a page with one text
+ * reads like a Notes page (SPC-489).
+ */
+function namesFields(comments: PassageCommentController): boolean {
+  return comments.fields.filter(item => comments.group == null || item.group == null || item.group === comments.group).length > 1;
+}
+
 function PassageCommentBox({ comments }: { comments: PassageCommentController }) {
   const { controller, draft } = comments;
   // The text is kept while the pane is away (`commentDrafts`); usePassageComments brings the passage back.
@@ -488,7 +535,7 @@ function PassageCommentBox({ comments }: { comments: PassageCommentController })
   useEscapeLayer('comments.passage.new', () => { cancel(); return true; },
     { priority: ESCAPE_PRIORITY.selection + 1, enabled: draft != null });
   if (!draft) return null;
-  const label = comments.field(draft.field)?.label;
+  const label = namesFields(comments) ? comments.field(draft.field)?.label : undefined;
   const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !comments.sending && controller.canWrite;
   const send = async () => {
     if (!canSend) return;
@@ -501,11 +548,14 @@ function PassageCommentBox({ comments }: { comments: PassageCommentController })
   return (
     <div ref={boxRef} className="nui-comment-new-box" role="group" aria-label={controller.say('newComment')}
       data-dragging={files.dragging ? '' : undefined} {...files.boxHandlers}>
+      {/* The same head and quote chip as a new comment on words in Notes (SPC-489). */}
       <div className="nui-comment-new-head">
-        {label ? <p className="nui-passage-field-name">{pick(label, controller.locale)}</p> : <span />}
+        <p className="nui-comment-new-title">
+          {label ? `${controller.say('newCommentText')} · ${pick(label, controller.locale)}` : controller.say('newCommentText')}
+        </p>
         <CommentToChip controller={controller} />
       </div>
-      <p className="nui-passage-quote">{draft.quote}</p>
+      <p className="nui-passage-quote nui-comment-quote">{draft.quote}</p>
       <textarea
         ref={ref}
         className="nui-comment-input"
@@ -587,7 +637,7 @@ function PassageCommentPaneBody({ comments, onClose, title, groups, onGroup, cla
 
   const card = (thread: CommentThread) => {
     const passage = comments.passageOf(thread.root.recordKey);
-    const label = passage ? comments.field(passage.field)?.label : undefined;
+    const label = passage && namesFields(comments) ? comments.field(passage.field)?.label : undefined;
     const gone = comments.isChanged(thread.root.recordKey);
     return (
       <div key={thread.root.recordKey} className="nui-passage-thread" data-comment-thread={thread.root.recordKey}>

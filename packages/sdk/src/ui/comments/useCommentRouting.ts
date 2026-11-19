@@ -110,10 +110,16 @@ function sameThread(a: SpaceCommentThreadRef, b: SpaceCommentThreadRef): boolean
   return (a.harness ?? null) === (b.harness ?? null);
 }
 
-/** A first link that names a started thread: nothing more to read again. */
+/** A first link that names a started thread, or a reply that goes to another person's agent: nothing more to read
+ * again. */
 function settled(refs: readonly SpaceCommentThreadRef[] | undefined): boolean {
   const first = refs?.[0];
-  return Boolean(first && first.threadId && first.status !== 'pending');
+  return Boolean(first && (elsewhere(first) || (first.threadId && first.status !== 'pending')));
+}
+
+/** A reply that wakes an agent another person runs (the server's `elsewhere` ref): no thread of the viewer's is named. */
+export function elsewhere(ref: SpaceCommentThreadRef | null | undefined): boolean {
+  return Boolean(ref && ref.via && !ref.threadId && ref.status === 'elsewhere');
 }
 
 /** The links proper, without the agent's thread the server names ahead of them (`via`). */
@@ -384,7 +390,8 @@ export function useCommentRouting(input: {
       const others = (knownLinks(id, current) ?? NONE).filter(item => !sameThread(item, thread));
       // The thread of the agent that wrote the first comment still takes replies over any link (SPC-458); the thread
       // of an agent that only replied gives way to it (SPC-459).
-      const started = others.filter(item => item.via === 'started');
+      // A reply that wakes another person's agent still goes there after a link (SPC-481): it stays first too.
+      const started = others.filter(item => item.via === 'started' || elsewhere(item));
       return { ...current, [id]: [...started, thread, ...others.filter(item => !item.via)] };
     });
     return writes.current.seq;

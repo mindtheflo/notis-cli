@@ -19,6 +19,7 @@ import {
 } from '../../../design-system/runtime/memoryComments';
 import { clearCommentDrafts, commentDraftKey, readCommentDraft, writeCommentDraft } from './commentDrafts';
 import { clearCommentRoutingCache } from './useCommentRouting';
+import { PASSAGE_COMMENT_EVENT } from './passageModel';
 
 const doc = dom.window.document;
 Object.defineProperty(globalThis, 'HTMLTextAreaElement', { configurable: true, writable: true, value: dom.window.HTMLTextAreaElement });
@@ -343,6 +344,76 @@ test('CommentableRichText: the Comment button goes with its selection, and comes
   await fire(comment!, new dom.window.MouseEvent('click', { bubbles: true }));
   assert.equal(current!.draft?.quote, 'three new things', 'Comment still quotes the words selected now');
   assert.equal(button(label), undefined);
+});
+
+test('On a touch screen the Comment button comes back once the selection handles stop moving (SPC-470)', async () => {
+  const win = dom.window as unknown as { matchMedia?: (query: string) => unknown };
+  const saved = win.matchMedia;
+  // A coarse pointer: a moved handle gives selectionchange only, never a mouse or key up.
+  win.matchMedia = (query: string) => ({ matches: query === '(pointer: coarse)', media: query,
+    addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+  try {
+    await mount(<Harness rich={<div>Hi there, this week brings three new things.</div>} />, fakeRuntime(ROWS, []));
+    const text = doc.querySelector('.nui-passage-rich-text > div')!;
+    const textNode = text.firstChild as Text;
+    const selection = dom.window.getSelection()!;
+    const select = (words: string) => {
+      const start = textNode.data.indexOf(words);
+      const range = doc.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + words.length);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    const selectionChanged = () => fire(doc as unknown as Element, new dom.window.Event('selectionchange'));
+    const label = 'Comment on the selected text';
+    select('this week');
+    await fire(text, new dom.window.MouseEvent('mouseup', { bubbles: true }));
+    assert.ok(button(label), 'the first selection offers Comment');
+    // The handles move twice in quick succession: the button goes, and only the last stop is read.
+    select('this week brings');
+    await selectionChanged();
+    assert.equal(button(label), undefined, 'a moving handle drops the old button');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)); });
+    select('this week brings three');
+    await selectionChanged();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    assert.equal(button(label), undefined, 'still moving: not read yet');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    const comment = button(label);
+    assert.ok(comment, 'once the handles stop, Comment is back with no mouse up');
+    await fire(comment!, new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(current!.draft?.quote, 'this week brings three', 'and it quotes the words selected after the move');
+  } finally {
+    win.matchMedia = saved;
+  }
+});
+
+test('On a Space page whose selection bar takes comments, the bar shows Comment and the text draws no button of its own (SPC-487)', async () => {
+  await mount(<div data-notis-bar-comments=""><Harness rich={<div>Hi there, this week brings three new things.</div>} /></div>,
+    fakeRuntime(ROWS, []));
+  const text = doc.querySelector('.nui-passage-rich-text > div')!;
+  const textNode = text.firstChild as Text;
+  const start = textNode.data.indexOf('this week');
+  const range = doc.createRange();
+  range.setStart(textNode, start);
+  range.setEnd(textNode, start + 'this week'.length);
+  const selection = dom.window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  await fire(text, new dom.window.MouseEvent('mouseup', { bubbles: true }));
+  assert.equal(button('Comment on the selected text'), undefined, 'one bar: no second Comment button over it');
+  assert.equal(doc.querySelector('.nui-passage-pick'), null);
+  // The bar's Comment hands the words to the text, which opens its own new comment on them.
+  const event = new dom.window.CustomEvent(PASSAGE_COMMENT_EVENT, { detail: { range }, cancelable: true });
+  await act(async () => { doc.querySelector('.nui-passage-rich-text')!.dispatchEvent(event); });
+  await settle();
+  assert.equal(event.defaultPrevented, true, 'the text took it');
+  assert.equal(current!.draft?.quote, 'this week');
+  assert.equal(current!.draft?.field, 'bodyEn');
+  // The new comment box reads like the one in Notes: its title, then the words as the quote chip (SPC-489).
+  assert.match(doc.querySelector('.nui-comment-new-box .nui-comment-new-title')!.textContent!, /^New comment on these words/);
+  assert.equal(doc.querySelector('.nui-comment-new-box .nui-comment-quote')!.textContent, 'this week');
 });
 
 test('Opening a thread from its quote selects it and shows its group', async () => {

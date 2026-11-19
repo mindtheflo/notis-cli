@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { NotisProvider } from './provider';
 import { citeSpaceSelection, copySpaceSelection } from './components/NotisSelectionBoundary';
 import { CiteSelectionBar } from './components/SelectionActionBar';
-import { SpaceTextComments, canCommentOnPage, startTextComment } from './components/SpaceTextComments';
+import { SpaceTextComments, canCommentOnPage, commentOnSelection } from './components/SpaceTextComments';
+import { SELECTION_BAR_COMMENTS_ATTR } from './ui/comments/passageModel';
 import type { NotisRuntime } from './runtime';
 import { ShortcutScope } from './ui/engine/KeyboardEngine';
 
@@ -84,7 +85,8 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
       {boundsCss ? <style data-notis-runtime-bounds>{boundsCss}</style> : null}
       <ShortcutScope owner={shortcutOwner} kind="space" available={shortcutsAvailable()}>
       <NotisProvider runtime={runtime} onProtocolError={onProtocolError} shortcutsAvailable={shortcutsAvailable}>
-        <div ref={appRoot} data-notis-app-root data-notis-theme={theme.mode} style={theme.style} onCopy={onCopy}>
+        <div ref={appRoot} data-notis-app-root data-notis-theme={theme.mode} style={theme.style} onCopy={onCopy}
+          {...(runtime.spaceComments?.startComment ? { [SELECTION_BAR_COMMENTS_ATTR]: '' } : {})}>
           {Shell ? <Shell><Component /></Shell> : <Component />}
           <SpaceSelectionCite root={appRoot} runtime={runtime} />
           <SpaceTextComments root={appRoot} runtime={runtime} />
@@ -98,13 +100,14 @@ export function SdkPresentation({ mount, runtime, component: Component, shell: S
 /**
  * Every Space view gets Cite on selected text by default (truth PRT-087), quoting what copy would quote, and Comment
  * next to it while the host takes comments (`spaceComments` with `startComment`): the host's new comment opens on the
- * selected words. A Site's runtime has neither chat nor comments, so no bar shows there. A Space's own commentable
- * text keeps its own Comment button: the bar offers Cite alone on it.
+ * selected words. A Site's runtime has neither chat nor comments, so no bar shows there. On a Space's own commentable
+ * rich text the same bar shows Cite and Comment, and Comment starts that text's own new comment (SPC-487); a text
+ * field keeps its own Comment button.
  */
 function SpaceSelectionCite({ root, runtime }: { root: React.RefObject<HTMLDivElement | null>; runtime: NotisRuntime }) {
   const canComment = Boolean(runtime.spaceComments?.startComment);
   return <CiteSelectionBar root={root} cite={Boolean(runtime.addContext)}
-    onComment={canComment ? (range => { startTextComment(runtime, root.current, range); }) : undefined}
+    onComment={canComment ? (range => { commentOnSelection(runtime, root.current, range); }) : undefined}
     canComment={canCommentOnPage}
     onCite={(range, text) => { void citeSpaceSelection(runtime, range, text).catch(() => false); }} />;
 }

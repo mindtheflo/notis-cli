@@ -17,6 +17,7 @@ import {
 import type { SpaceCommentThreadRef } from '../../space';
 import type { CommentWordKey } from './commentWords';
 import { revealInScroller } from './scrollReveal';
+import { elsewhere } from './useCommentRouting';
 import type { CommentMode } from './commentModel';
 import type { CommentController, CommentStatusView } from './useComments';
 
@@ -206,6 +207,8 @@ export function CommentGoesTo({ controller, thread }: { controller: CommentContr
     );
   }
   const target = routing.goesTo(rootKey);
+  // A plain reply wakes an agent another person runs: no line rather than a thread it does not go to (SPC-467).
+  if (elsewhere(target)) return null;
   const named = commentThreadName(controller, target);
   const linked = Boolean(target?.threadId) && routing.linksOf(rootKey).some(link => link.threadId === target!.threadId);
   const title = named.pending ? named.title : target?.title || controller.say('goesToNew');

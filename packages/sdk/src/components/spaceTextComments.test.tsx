@@ -12,8 +12,9 @@ import type { SpaceCommentAnchor, SpaceCommentRow, SpaceCommentsTransport } from
 import { NotisCommentBoundary, NotisCommentBox } from '../index';
 import { CommentAvatar, CommentThreadCard, NewCommentBox } from '../ui/index';
 import { changedPassages } from '../ui/comments/textHighlights';
+import { PASSAGE_COMMENT_EVENT } from '../ui/comments/passageModel';
 import {
-  canCommentOnPage, locateTextComments, openTextComments, pageTextOf, startTextComment, textCommentAnchor,
+  canCommentOnPage, commentOnSelection, locateTextComments, openTextComments, pageTextOf, startTextComment, textCommentAnchor,
 } from './SpaceTextComments';
 import { commentRow, memoryCommentStore } from '../../design-system/runtime/memoryComments';
 
@@ -76,16 +77,38 @@ test('locateTextComments finds the words again in the page and names the ones th
   assert.deepEqual(missing, ['t2']);
 });
 
-test('canCommentOnPage: never inside a Space\'s own commentable text, which has its own Comment', () => {
+test('canCommentOnPage: page text and a Space\'s own rich text (one bar, SPC-487), never a text field with its own Comment', () => {
   const host = doc.createElement('div');
-  host.innerHTML = '<p>Page words</p><div class="nui-passage-text-field"><span>Field words</span></div>';
+  host.innerHTML = '<p>Page words</p><div class="nui-passage-text-field"><span>Field words</span></div>'
+    + '<div class="nui-passage-rich-text"><em>Rich words</em></div>';
   doc.body.replaceChildren(host);
-  const page = doc.createRange();
-  page.selectNodeContents(host.querySelector('p')!.firstChild!);
-  const own = doc.createRange();
-  own.selectNodeContents(host.querySelector('span')!.firstChild!);
-  assert.equal(canCommentOnPage(page), true);
-  assert.equal(canCommentOnPage(own), false);
+  const over = (selector: string) => {
+    const range = doc.createRange();
+    range.selectNodeContents(host.querySelector(selector)!.firstChild!);
+    return range;
+  };
+  assert.equal(canCommentOnPage(over('p')), true);
+  assert.equal(canCommentOnPage(over('span')), false);
+  assert.equal(canCommentOnPage(over('em')), true);
+});
+
+test('commentOnSelection: words in a Space\'s own rich text go to that text, never to the host\'s page comment (SPC-487)', () => {
+  const host = doc.createElement('div');
+  host.innerHTML = '<p>Page words</p><div class="nui-passage-rich-text"><em>Rich words</em></div>';
+  doc.body.replaceChildren(host);
+  const rich = host.querySelector('.nui-passage-rich-text')!;
+  const handed: string[] = [];
+  rich.addEventListener(PASSAGE_COMMENT_EVENT, event => {
+    handed.push(String((event as CustomEvent<{ range: Range }>).detail.range));
+    event.preventDefault();
+  });
+  const started: unknown[] = [];
+  const runtime = { spaceComments: { startComment: (anchor: unknown) => { started.push(anchor); } } } as unknown as NotisRuntime;
+  const range = doc.createRange();
+  range.selectNodeContents(host.querySelector('em')!.firstChild!);
+  assert.equal(commentOnSelection(runtime, host, range), true);
+  assert.deepEqual(handed, ['Rich words']);
+  assert.deepEqual(started, [], 'the host opens no page comment for it');
 });
 
 test('startTextComment hands the words to the host on the page it shows, only when the host takes comments', () => {

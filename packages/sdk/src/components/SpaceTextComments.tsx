@@ -16,13 +16,15 @@
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import type { NotisRuntime } from '../runtime';
 import type { SpaceCommentAnchor, SpaceCommentRow, SpaceCommentsTransport } from '../space';
-import { locatePassage, passageAt } from '../ui/comments/passageModel';
+import { PASSAGE_COMMENT_EVENT, locatePassage, passageAt } from '../ui/comments/passageModel';
 import { setChangedPassages } from '../ui/comments/textHighlights';
 
 /** Text a passage is never read from: styles, scripts and the selection bar. */
 const SKIP_TEXT = 'style, script, noscript, template, [data-notis-selection-ui], [data-notis-comment-skip]';
 /** A Space's own commentable text: it has its own Comment button and highlights. */
 export const OWN_PASSAGE_TEXT = '.nui-passage-text-field, .nui-passage-rich-text';
+/** A Space's own commentable rich text: the page's selection bar offers Comment on it (SPC-487). */
+const OWN_RICH_TEXT = '.nui-passage-rich-text';
 
 export interface PageText { text: string; nodes: Array<{ node: Text; start: number }> }
 
@@ -224,11 +226,36 @@ export function SpaceTextComments({ root, runtime }: { root: RefObject<HTMLEleme
   return <style data-notis-comment-highlights>{`::highlight(${name}) { background-color: hsl(var(--primary) / .18); }`}</style>;
 }
 
-/** Whether the bar's Comment may start a comment on this selection: never inside a Space's own commentable text. */
-export function canCommentOnPage(range: Range): boolean {
+/** The Space's own commentable text a selection lies in, if any. */
+function ownTextOf(range: Range): Element | null {
   const container = range.commonAncestorContainer;
   const element = container.nodeType === 1 ? container as Element : container.parentElement;
-  return !element?.closest(OWN_PASSAGE_TEXT);
+  return element?.closest(OWN_PASSAGE_TEXT) ?? null;
+}
+
+/**
+ * Whether the bar's Comment may start a comment on this selection: page text, and a Space's own commentable rich text
+ * (the bar hands it the selection, SPC-487), never a text field (its own Comment button stays).
+ */
+export function canCommentOnPage(range: Range): boolean {
+  const own = ownTextOf(range);
+  return !own || own.matches(OWN_RICH_TEXT);
+}
+
+/**
+ * The bar's Comment on a selection: inside a Space's own commentable rich text that text starts its own new comment
+ * on the words; elsewhere the host's new text comment opens on them. False when nothing took it.
+ */
+export function commentOnSelection(runtime: NotisRuntime, root: Node | null, range: Range): boolean {
+  const own = ownTextOf(range);
+  if (own) {
+    if (!own.matches(OWN_RICH_TEXT)) return false;
+    const view = own.ownerDocument?.defaultView;
+    const Custom = view?.CustomEvent ?? CustomEvent;
+    // Cancelled by the text once it opened the comment.
+    return !own.dispatchEvent(new Custom(PASSAGE_COMMENT_EVENT, { detail: { range }, cancelable: true }));
+  }
+  return startTextComment(runtime, root, range);
 }
 
 /** Hands a selection to the host's new text comment. False when there is nothing to comment on or no host for it. */

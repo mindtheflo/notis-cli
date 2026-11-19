@@ -462,7 +462,8 @@ export interface SpaceCommentViewer { name: string; canEditSpace: boolean; id?: 
 /**
  * A manager thread a comment thread is linked to. `subagent` names the subagent a reply goes back to, when one wrote it.
  * `threadId: null` with `status: 'pending'` is a "New <harness> thread" pick not started yet: the first wake
- * starts it.
+ * starts it. `threadId: null` with a `via` and `status: 'elsewhere'`: a plain reply wakes an agent another person
+ * runs, so no thread of the viewer's is named.
  */
 export interface SpaceCommentThreadRef {
   threadId: string | null;
