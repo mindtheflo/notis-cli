@@ -5,6 +5,10 @@ import { verifySpaceRelease } from '../src/runtime/space-verification.js';
 import { createSpaceFixtureBroker } from '../src/runtime/space-fixture-broker.js';
 import { createSpaceFixtureEngine } from '../src/runtime/space-test-server.js';
 import * as renderer from '../../view-renderer/src/index.js';
+import { createRequire } from 'node:module';
+
+// redPng() reads node:zlib through require: give this ES module its own, so a test filtered by its title runs alone.
+const require = createRequire(import.meta.url);
 
 const b = value => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64');
 const record = '11111111-1111-4111-8111-111111111111';
