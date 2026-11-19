@@ -44,6 +44,8 @@ export const COMMENT_WORDS = Object.freeze({
   unarchiveThread: w('Unarchive the comment thread: {excerpt}', `Désarchiver le fil de commentaires${NNBSP}: {excerpt}`),
   deleteThreadNamed: w('Delete the comment thread: {excerpt}', `Supprimer le fil de commentaires${NNBSP}: {excerpt}`),
   copyLinkNamed: w('Copy the link to the comment thread: {excerpt}', `Copier le lien du fil de commentaires${NNBSP}: {excerpt}`),
+  // A reply's own Copy link (unified comments): the link opens the reply's comment thread.
+  copyReplyLinkNamed: w('Copy the link to the reply: {excerpt}', `Copier le lien de la réponse${NNBSP}: {excerpt}`),
   // The viewer's own reply reads "your reply" on both its buttons; someone else's reads "{who}’s reply".
   deleteReplyOf: w('Delete {who}’s reply: {excerpt}', `Supprimer la réponse de {who}${NNBSP}: {excerpt}`),
   deleteYourReply: w('Delete your reply: {excerpt}', `Supprimer ta réponse${NNBSP}: {excerpt}`),
@@ -154,6 +156,14 @@ export const COMMENT_WORDS = Object.freeze({
   ownerThread: w('Thread', 'Conversation'),
   goesToNew: w('a new thread', 'une nouvelle conversation'),
   goesToNewHarness: w('a new {harness} thread', 'une nouvelle conversation {harness}'),
+  // SPC-535, SPC-536: a comment thread an agent outside Notis holds (it declared itself on a Notis CLI call). A reply
+  // stays with it: Notis wakes nobody, and the agent reads it when it checks.
+  outsideNotis: w('outside Notis', 'hors de Notis'),
+  outsideAgentTitle: w('{name} works outside Notis and reads replies when it checks',
+    '{name} travaille hors de Notis et lit les réponses quand il les consulte'),
+  replyToWho: w('Reply to {who}', 'Répondre à {who}'),
+  outsideUnread: w('{who} has not read it yet', 'Pas encore lu par {who}'),
+  agentHarness: w('Runs on {harness}', 'Tourne sur {harness}'),
   // Read out while the Goes to line is still loading (no destination shown yet).
   goesToLoading: w('Finding where this goes', 'Recherche de la destination'),
   change: w('Change', 'Changer'),

@@ -240,8 +240,9 @@ export function createProgram(launchContext = {}) {
     // Any agent using the CLI declares itself, so what it writes is its own (a comment's Author), not the person's.
     // A comment written through the CLI needs the name (agent-identity.js).
     .option('--agent-name <name>', 'The agent making this call, a lowercase band name such as fred-and-the-machine, shown as the Author of what it writes; required to write comments (or set NOTIS_AGENT_NAME)')
-    .option('--agent-id <id>', 'Override the id this computer keeps for the agent name (generated on first use) (or set NOTIS_AGENT_ID)')
+    .option('--agent-id <id>', 'The agent\'s own unique id, such as its session id; without one the CLI keeps a generated id per name on this computer (or set NOTIS_AGENT_ID)')
     .option('--agent-thread <thread>', 'The thread or session the agent runs in: a Notis thread id or link of yours gets the replies (or set NOTIS_AGENT_THREAD)')
+    .option('--agent-thread-name <name>', 'The name of the thread the agent works in (a T3 thread title, "PR #3851"), at most 80 characters, shown after its name (or set NOTIS_AGENT_THREAD_NAME)')
     .addOption(new Option('--notis-managed-agent-hook').hideHelp());
 
   const parentMap = new Map([['', program]]);

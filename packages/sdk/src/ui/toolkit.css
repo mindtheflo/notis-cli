@@ -1589,6 +1589,19 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
   text-decoration-color: hsl(var(--muted-foreground) / .4); cursor: pointer; }
 .nui-comment-goes-change:hover { color: hsl(var(--foreground)); }
 .nui-comment-goes-change:disabled { cursor: default; opacity: .5; }
+/* SPC-535: a thread an agent outside Notis holds: its harness logo, its name, the thread it works in, quiet, and
+   "outside Notis". The agent's name keeps its width before the thread name gives way. */
+.nui-comment-goes-logo { width: 12px; height: 12px; flex: none; }
+.nui-comment-goes[data-outside] .nui-comment-goes-title { flex: 0 1 auto; min-width: 4em; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.nui-comment-goes-outside, .nui-comment-goes-sep { flex: none; }
+/* An agent outside Notis's thread name after its name on a comment (SPC-537), quiet. */
+.nui-comment-agent-thread { min-width: 0; max-width: 100%; overflow: hidden; color: hsl(var(--muted-foreground));
+  font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* SPC-536: under the person's latest reply, until the agent outside Notis has read it. */
+.nui-comment-unread { display: flex; align-items: center; gap: 4px; margin: 0; color: hsl(var(--muted-foreground));
+  font-size: 12px; line-height: 16px; }
+.nui-comment-unread .nui-icon { width: 12px; height: 12px; flex: none; }
 /* Where it goes is still being read: a placeholder the width of a short title, on the text's line. */
 .nui-comment-goes-skel { align-self: center; width: 96px; height: 10px; }
 /* A pick being saved: named at once, quiet until the link is saved. */
@@ -1611,6 +1624,31 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
   .nui-comment-reply:hover:not(:focus-within) .nui-comment-reply-actions { opacity: 0; pointer-events: none; }
   .nui-comment-card[data-selected] .nui-comment-reply[data-tapped] .nui-comment-reply-actions { opacity: 1; pointer-events: auto; }
   .nui-comment-card[data-selected]:has(.nui-comment-reply[data-tapped]) .nui-comment-actions { visibility: hidden; opacity: 0; }
+}
+/* Unified comments (comment mode, card A; the card sets data-buttons): the buttons stay in the flow at the end of their
+   line, always shown, small and grey: the thread's at the end of its Thread line (its name line when the card shows no
+   Thread line), each reply's at the end of its name line. The :is() list only lifts these rules above every hover, focus
+   and tapped rule above, so nothing hides them. Change shows beside the thread's name while the Thread line is hovered
+   or holds the focus, and on a touch screen's selected card. */
+.nui-comment-thread-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.nui-comment-thread-line > .nui-comment-goes { flex: 1 1 auto; }
+.nui-comment-card[data-resolved] > .nui-comment-thread-line { opacity: 1; }
+.nui-comment-card[data-resolved] > .nui-comment-thread-line > .nui-comment-goes { opacity: .7; }
+.nui-comment-card[data-buttons]:is(*, :has(.nui-comment-reply:is(:hover, :focus-within)), [data-selected]:has(.nui-comment-reply[data-tapped]))
+  :is(.nui-comment-actions, .nui-comment-reply-head > .nui-comment-reply-actions) {
+  position: static; transform: none; z-index: auto; flex: none; align-self: center; margin-block: -3px; margin-inline-start: auto;
+  padding: 0; gap: 0; background: none; box-shadow: none; visibility: visible; opacity: 1; pointer-events: auto; }
+.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn {
+  width: 22px; height: 22px; min-width: 22px; padding: 0; color: hsl(var(--muted-foreground)); opacity: .55; }
+.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn:is(:hover, :focus-visible) {
+  color: hsl(var(--foreground)); opacity: 1; }
+.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-icon { width: 14px; height: 14px; }
+/* Change takes no room until the Thread line is hovered or focused (it stays focusable), so the name keeps it. */
+.nui-comment-thread-line .nui-comment-goes-change { margin-inline-start: 2px; padding: 0; max-width: 0; overflow: hidden;
+  opacity: 0; transition: opacity .12s; }
+.nui-comment-thread-line:is(:hover, :focus-within) .nui-comment-goes-change { max-width: 8em; padding: 0 2px; opacity: 1; }
+@media (hover: none) {
+  .nui-comment-card[data-selected] .nui-comment-thread-line .nui-comment-goes-change { max-width: 8em; padding: 0 2px; opacity: 1; }
 }
 .nui-comment-toolbar { display: inline-flex; align-items: center; gap: 2px; box-sizing: border-box; max-width: 100%; padding: 4px;
   border-radius: 999px;

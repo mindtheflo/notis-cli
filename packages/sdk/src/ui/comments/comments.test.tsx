@@ -642,7 +642,7 @@ test('Owning thread: the linked thread once at the top of the card (Thread), els
   const line = () => doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!;
   assert.match(line().textContent!, /Thread Deck polish/);
   const card = doc.querySelector('[data-thread="c1"]')!;
-  assert.equal(card.firstElementChild, line(), 'once, at the top of the card, above the first comment');
+  assert.ok(card.firstElementChild!.contains(line()), 'once, at the top of the card, above the first comment');
   assert.equal(card.querySelectorAll('[data-part="goes-to"]').length, 1, 'never repeated on the replies');
   assert.equal(card.querySelector('.nui-comment-compose-box [data-part="goes-to"]'), null, 'not under the reply box');
   assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /Goes to Q4 deck/,
@@ -662,6 +662,59 @@ test('Owning thread: the linked thread once at the top of the card (Thread), els
 
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
   assert.equal(doc.querySelector('[data-part="goes-to"]'), null, 'a host without links shows no Goes to line');
+});
+
+test('Unified comments: the thread\'s buttons end its Thread line and every reply has its own, always shown; flag off keeps them on hover', async () => {
+  const rows = [
+    row('m1', { body: 'Mine', slide: 'slide-1', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('m2', { body: 'Agreed', author: 'Claude', slide: 'slide-1', thread: 'm1', createdAt: '2026-10-21T10:00:00.000Z' }),
+    row('m3', { body: 'Mine again', slide: 'slide-1', thread: 'm1', createdAt: '2026-10-21T11:00:00.000Z' }),
+  ];
+  const linked: Partial<SpaceCommentsTransport> = {
+    viewer: { name: 'Flo', canEditSpace: false, id: 'user-flo' },
+    links: async ({ rootIds }) => Object.fromEntries(rootIds.map(key => [key, [{ threadId: 't-1', title: 'Deck polish' }]])),
+    bestMatch: async () => null,
+  };
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: linked }));
+  const card = doc.querySelector('[data-thread="m1"]')!;
+  assert.equal(card.getAttribute('data-buttons'), 'shown');
+  const threadLine = card.querySelector(':scope > .nui-comment-thread-line')!;
+  assert.ok(threadLine.querySelector('[data-part="goes-to"]'), 'the Thread line');
+  const bar = threadLine.querySelector(':scope > .nui-comment-actions')!;
+  assert.ok(bar, 'the thread\'s buttons sit on the Thread line, after it');
+  assert.equal(threadLine.lastElementChild, bar, 'at its right end');
+  assert.deepEqual([...bar.querySelectorAll('button')].map(item => item.getAttribute('aria-label')!.split(':')[0]),
+    ['Archive the comment thread', 'Copy the link to the comment thread', 'Edit your comment']);
+  assert.equal(card.querySelector(':scope > header .nui-comment-actions'), null, 'no longer on the name line');
+  // Every reply: Copy link; Edit and Delete only on your own (this viewer cannot edit the Space).
+  const labels = (key: string) => [...card.querySelectorAll(`[data-comment="${key}"] .nui-comment-reply-head > .nui-comment-reply-actions button`)]
+    .map(item => item.getAttribute('aria-label'));
+  assert.deepEqual(labels('m2'), ['Copy the link to the reply: Agreed'], 'someone else\'s reply: Copy link only');
+  assert.deepEqual(labels('m3'), ['Copy the link to the reply: Mine again', 'Edit your reply: Mine again', 'Delete your reply: Mine again']);
+  // Always shown and quiet: the stylesheet puts them in the flow, seen, and greys their 22px buttons.
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  const rule = css.slice(css.indexOf('.nui-comment-card[data-buttons]:is('), css.indexOf('}', css.indexOf('.nui-comment-card[data-buttons]:is(')));
+  assert.match(rule, /:is\(\.nui-comment-actions, \.nui-comment-reply-head > \.nui-comment-reply-actions\)/);
+  assert.match(rule, /position: static/);
+  assert.match(rule, /visibility: visible; opacity: 1; pointer-events: auto/);
+  assert.match(css, /\.nui-comment-card\[data-buttons\] :is\(\.nui-comment-actions, \.nui-comment-reply-actions\) \.nui-comment-icon-btn \{\s*width: 22px; height: 22px;[^}]*opacity: \.55/);
+  assert.match(css, /\.nui-comment-thread-line \.nui-comment-goes-change \{[^}]*max-width: 0; overflow: hidden;/,
+    'Change takes no room on the Thread line until it is hovered or focused');
+  assert.match(css, /\.nui-comment-thread-line:is\(:hover, :focus-within\) \.nui-comment-goes-change \{ max-width: 8em; padding: 0 2px; opacity: 1; \}/,
+    'Change shows on hover or focus of the Thread line');
+
+  // French: the reply's own Copy link reads in French too.
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: linked, locale: 'fr' }), 'fr');
+  assert.ok(doc.querySelector('[data-comment="m2"] button[aria-label="Copier le lien de la réponse : Agreed"]'));
+
+  // Flag off (no links from the host): nightly's card, the buttons on the name line and no Copy link on replies.
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer: linked.viewer } }));
+  const off = doc.querySelector('[data-thread="m1"]')!;
+  assert.equal(off.hasAttribute('data-buttons'), false);
+  assert.equal(off.querySelector('.nui-comment-thread-line'), null);
+  assert.ok(off.querySelector(':scope > header .nui-comment-actions'));
+  assert.equal(off.querySelector('[data-comment="m2"] .nui-comment-reply-actions'), null, 'no buttons on someone else\'s reply');
+  assert.equal(off.querySelector('button[aria-label^="Copy the link to the reply"]'), null);
 });
 
 test('An agent signs with its band name read out and its harness logo; the logo opens its runtime card on keyboard focus', async () => {
@@ -732,6 +785,68 @@ test('An agent signs with its band name read out and its harness logo; the logo 
   await mount(<Harness {...base} authors={authors} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
   assert.equal(doc.querySelector('[data-comment="r1"] [data-part="agent-runtime"]')!.getAttribute('aria-label'),
     'Fred And The Machine · Codex · Intelligence : Élevé · Vitesse : Rapide · Modèle : gpt-5.5-codex');
+});
+
+test('An agent outside Notis holds its thread: Goes to names it outside Notis, the box replies to it, and the card says it has not read the reply yet (SPC-535, SPC-536, SPC-537)', async () => {
+  const outside = { name: 'Velvet Margin Echo', thread_name: 'PR #3851', harness: 'claude_code', outside: true };
+  const rows = [
+    { ...row('c1', { body: 'Which slide?', author: 'Velvet Margin Echo', slide: 'slide-1', createdAt: '2026-10-21T09:00:00.000Z' }),
+      agent: outside },
+    row('r1', { body: 'Slide 3', slide: 'slide-1', thread: 'c1', createdAt: '2026-10-21T10:00:00.000Z' }),
+  ];
+  const claim = (readAt: string | null) => ({ threadId: null, title: 'Velvet Margin Echo', harness: 'claude_code',
+    status: 'outside', subagent: 'Velvet Margin Echo', via: 'claimed' as const, outside: true,
+    agentId: 'declared:7c1d', agentName: 'Velvet Margin Echo', threadName: 'PR #3851', readAt });
+  const linked: unknown[] = [];
+  const transport = (readAt: string | null): Partial<SpaceCommentsTransport> => ({
+    links: async ({ rootIds }) => Object.fromEntries(rootIds.map(key => [key, [claim(readAt)]])),
+    pickThread: async () => ({ threadId: 't-2', title: 'Chart work' }),
+    link: async input => { linked.push(input); return { threadId: 't-2', title: 'Chart work' }; },
+  });
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport(null) }));
+  const card = () => doc.querySelector('[data-thread="c1"]')!;
+  const line = () => card().querySelector('[data-part="goes-to"]')!;
+  assert.ok(line().hasAttribute('data-outside'));
+  assert.equal(line().querySelector('svg')!.getAttribute('data-harness'), 'claude_code', 'its harness logo');
+  assert.equal(line().textContent, 'Goes to Velvet Margin Echo·outside Notis Change');
+  const box = card().querySelector('textarea')!;
+  assert.equal(box.getAttribute('placeholder'), 'Reply to Velvet Margin Echo');
+  assert.equal(card().querySelector('[data-part="outside-unread"]')!.textContent, 'Velvet Margin Echo has not read it yet');
+  // The signature: its band name, its harness logo and, quiet, the thread it works in.
+  const head = card().querySelector('header')!;
+  assert.equal(head.querySelector('[data-part="agent-harness"]')!.getAttribute('aria-label'), 'Runs on Claude');
+  assert.equal(head.querySelector('[data-part="agent-thread-name"]')!.textContent, 'PR #3851');
+
+  // Read after the reply: no line. The agent wrote last: no line either.
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport('2026-10-21T11:00:00.000Z') }));
+  assert.equal(card().querySelector('[data-part="outside-unread"]'), null);
+  await mount(<Harness {...base} />, fakeRuntime([rows[0]], [], { comments: transport(null) }));
+  assert.equal(card().querySelector('[data-part="outside-unread"]'), null);
+  assert.equal(card().querySelector('textarea')!.getAttribute('placeholder'), 'Reply to Velvet Margin Echo');
+
+  // Change hands the thread to a Notis thread: the claim goes, the box says Reply again.
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport(null) }));
+  await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
+  assert.deepEqual(linked, [{ rootId: 'c1', pick: { threadId: 't-2', title: 'Chart work' }, primary: true }]);
+  assert.match(line().textContent!, /Thread Chart work/);
+  assert.equal(line().hasAttribute('data-outside'), false);
+  assert.equal(card().querySelector('[data-part="outside-unread"]'), null);
+
+  // French: tu, and a narrow no-break space before a colon.
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport(null), locale: 'fr' }), 'fr');
+  assert.equal(line().textContent, 'Va à Velvet Margin Echo·hors de Notis Changer');
+  assert.equal(card().querySelector('textarea')!.getAttribute('placeholder'), 'Répondre à Velvet Margin Echo');
+  assert.equal(card().querySelector('[data-part="outside-unread"]')!.textContent, 'Pas encore lu par Velvet Margin Echo');
+  assert.equal(card().querySelector('[data-part="agent-harness"]')!.getAttribute('aria-label'), 'Tourne sur Claude');
+});
+
+test('commentFromRow reads an agent outside Notis: its thread name, its harness and that it is outside', () => {
+  const read = commentFromRow({ ...row('c9', { body: 'Hi', author: 'velvet-margin-echo' }),
+    agent: { name: 'velvet-margin-echo', thread_name: ' PR #3851 ', harness: 'codex', outside: true } });
+  assert.deepEqual(read.agent, { name: 'velvet-margin-echo', threadId: null, rowId: null, threadName: 'PR #3851',
+    harness: 'codex', outside: true });
+  const notis = commentFromRow({ ...row('c8', { body: 'Hi', author: 'Notis' }), agent: { name: 'Notis' } });
+  assert.deepEqual(notis.agent, { name: 'Notis', threadId: null, rowId: null });
 });
 
 test('agentDisplayName reads a band name with spaces and capitals, and leaves any other name as it is', () => {

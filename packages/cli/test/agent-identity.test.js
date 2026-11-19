@@ -6,13 +6,18 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
+  AGENT_HARNESS_HEADER,
   AGENT_ID_HEADER,
   AGENT_NAME_HEADER,
   AGENT_THREAD_HEADER,
   AGENT_THREAD_LIMIT,
+  AGENT_THREAD_NAME_HEADER,
+  RESERVED_AGENT_NAMES,
   agentIdForName,
   agentIdentityHeaders,
   agentIdsFile,
+  detectAgentHarness,
+  isBandName,
   readAgentIdentity,
   validateAgentIdentity,
 } from '../src/runtime/agent-identity.js';
@@ -165,4 +170,63 @@ test('a bad declaration too long to send whole is cut by whole characters and st
   assert.ok(sentName.startsWith('a'.repeat(511)) && sentName.includes('\u{1F3B8}'));
   assert.equal(Array.from(sentName).length, AGENT_THREAD_LIMIT + 1);
   assert.equal(decodeURIComponent(headers[AGENT_THREAD_HEADER]).length, AGENT_THREAD_LIMIT + 1);
+});
+
+test('a harness or product name is refused: each agent picks an imaginary rock-band name of its own', () => {
+  for (const name of ['claude-code', 'codex-cli', 'cursor-agent', 'notis-agent', 't3-code', 'gemini-cli', 'bot-agent',
+    'assistant-cli', 'opencode-agent']) {
+    assert.ok(RESERVED_AGENT_NAMES.has(name), name);
+    assert.ok(!isBandName(name), name);
+    assert.throws(() => validateAgentIdentity({ name }), /harness or product name.*imaginary rock-band name/, name);
+  }
+  // A band name that only contains a product word is fine.
+  assert.deepEqual(validateAgentIdentity({ name: 'claude-and-the-codecs' }), { name: 'claude-and-the-codecs' });
+  // A bad name is still sent as written for the backend to answer invalid_agent_identity.
+  assert.equal(agentIdentityHeaders({ agentIdentity: { name: 'claude-code' } })[AGENT_NAME_HEADER], 'claude-code');
+});
+
+test('the id may be the agent\'s own session id; the thread name and harness travel as labels', () => withConfigDir((configFile) => {
+  const env = { NOTIS_AGENT_NAME: 'velvet-margin-echo', NOTIS_AGENT_ID: 'thread:d1f0-2c', NOTIS_AGENT_THREAD_NAME: ' PR #3851 ',
+    CLAUDECODE: '1' };
+  const raw = readAgentIdentity({}, env);
+  assert.deepEqual(raw, { name: 'velvet-margin-echo', id: 'thread:d1f0-2c', thread: undefined, threadName: ' PR #3851 ',
+    harness: 'claude_code' });
+  assert.deepEqual(validateAgentIdentity(raw),
+    { name: 'velvet-margin-echo', id: 'thread:d1f0-2c', threadName: 'PR #3851', harness: 'claude_code' });
+  assert.deepEqual(agentIdentityHeaders({ agentIdentity: raw }, { configFile }), {
+    [AGENT_NAME_HEADER]: 'velvet-margin-echo',
+    [AGENT_ID_HEADER]: 'thread%3Ad1f0-2c',
+    [AGENT_THREAD_NAME_HEADER]: 'PR%20%233851',
+    [AGENT_HARNESS_HEADER]: 'claude_code',
+  });
+  // A flag wins over its variable; NOTIS_AGENT_HARNESS wins over what the CLI detects.
+  assert.equal(readAgentIdentity({ agentThreadName: 'Fix comments' }, env).threadName, 'Fix comments');
+  assert.equal(readAgentIdentity({}, { ...env, NOTIS_AGENT_HARNESS: 'codex' }).harness, 'codex');
+  // The harness alone declares nothing.
+  assert.equal(readAgentIdentity({}, { CLAUDECODE: '1' }), null);
+  // Too short an id, too long or multi-line a thread name, are refused; a harness that is no identifier is dropped.
+  assert.throws(() => validateAgentIdentity({ name: 'ok-bot', id: 'ab' }), /NOTIS_AGENT_ID must be 3 to 128/);
+  assert.throws(() => validateAgentIdentity({ name: 'ok-bot', threadName: 'x'.repeat(81) }), /NOTIS_AGENT_THREAD_NAME/);
+  assert.throws(() => validateAgentIdentity({ name: 'ok-bot', threadName: 'two\nlines' }), /NOTIS_AGENT_THREAD_NAME/);
+  assert.deepEqual(validateAgentIdentity({ name: 'ok-bot', harness: 'Not a harness' }), { name: 'ok-bot' });
+  assert.throws(() => validateAgentIdentity({ threadName: 'PR #1' }), /NOTIS_AGENT_NAME/);
+}));
+
+test('the CLI detects the harness that runs it from its environment', () => {
+  assert.equal(detectAgentHarness({}), null);
+  assert.equal(detectAgentHarness({ CLAUDECODE: '1' }), 'claude_code');
+  assert.equal(detectAgentHarness({ CLAUDE_CODE_ENTRYPOINT: 't3-code' }), 'claude_code');
+  assert.equal(detectAgentHarness({ CODEX_SANDBOX: 'seatbelt' }), 'codex');
+  assert.equal(detectAgentHarness({ CODEX_THREAD_ID: 'abc' }), 'codex');
+  // A person's own CODEX_HOME is no Codex session.
+  assert.equal(detectAgentHarness({ CODEX_HOME: '/home/me/.codex' }), null);
+  assert.equal(detectAgentHarness({ CURSOR_AGENT: '1' }), 'cursor_agent');
+  assert.equal(detectAgentHarness({ GEMINI_CLI: '1' }), 'gemini');
+  assert.equal(detectAgentHarness({ AI_AGENT: 'claude-code_2-1-328_agent' }), 'claude_code');
+});
+
+test('the program takes --agent-thread-name as a global flag', () => {
+  const program = createProgram();
+  program.parseOptions(['--agent-name', 'john-trash', '--agent-thread-name', 'PR #3851']);
+  assert.equal(program.opts().agentThreadName, 'PR #3851');
 });

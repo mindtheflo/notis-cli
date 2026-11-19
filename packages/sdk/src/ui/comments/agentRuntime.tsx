@@ -52,7 +52,7 @@ const LOGOS: Readonly<Record<CommentHarness, { viewBox: string; paths: readonly 
   antigravity: { viewBox: '11 11 90 90', paths: ['M89.6992 93.695C94.3659 97.195 101.366 94.8617 94.9492 88.445C75.6992 69.7783 79.7825 18.445 55.8659 18.445C31.9492 18.445 36.0325 69.7783 16.7825 88.445C9.78251 95.445 17.3658 97.195 22.0325 93.695C40.1159 81.445 38.9492 59.8617 55.8659 59.8617C72.7825 59.8617 71.6159 81.445 89.6992 93.695Z'] },
 };
 
-function isHarness(value: string | null | undefined): value is CommentHarness {
+export function isHarness(value: string | null | undefined): value is CommentHarness {
   return value != null && Object.prototype.hasOwnProperty.call(COMMENT_HARNESS_NAMES, value);
 }
 const isLevel = (value: string | null | undefined): value is Level => value === 'low' || value === 'medium' || value === 'high';
@@ -193,13 +193,35 @@ export function CommentAgentRuntimeCard({ name, view }: { name: string; view: Co
 }
 
 /**
+ * After an agent outside Notis's name on its comment: the thread it said it works in ("PR #3851"), quiet (SPC-537).
+ */
+export function CommentAgentThreadName({ comment }: { comment: CommentRecord }) {
+  const threadName = comment.agent?.threadName;
+  if (!threadName) return null;
+  return <span className="nui-comment-agent-thread" data-part="agent-thread-name" title={threadName}>{threadName}</span>;
+}
+
+/**
  * After an agent's name on its comment: the harness logo, with the runtime card on hover and on keyboard focus (Tab
- * reaches it; its accessible name says everything the card shows). Nothing on a person's comment or an agent with no
- * recorded runtime.
+ * reaches it; its accessible name says everything the card shows). An agent outside Notis has no recorded runtime: its
+ * harness logo shows when it said which harness runs it (SPC-537), named on hover. Nothing on a person's comment or an
+ * agent with neither.
  */
 export function CommentAgentBadge({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
   const runtime = comment.agent?.runtime;
-  if (!runtime) return null;
+  if (!runtime) {
+    const harness = comment.agent?.harness;
+    if (!isHarness(harness)) return null;
+    const label = controller.say('agentHarness', { harness: COMMENT_HARNESS_NAMES[harness] });
+    return (
+      <Tooltip label={label} side="bottom" align="start">
+        <span className="nui-runtime-badge" role="img" tabIndex={0} aria-label={label} data-part="agent-harness"
+          data-harness={harness}>
+          <CommentHarnessLogo harness={harness} />
+        </span>
+      </Tooltip>
+    );
+  }
   const name = agentDisplayName(comment.author || comment.agent!.name);
   const view = commentAgentRuntimeView(controller.say, name, runtime);
   return (

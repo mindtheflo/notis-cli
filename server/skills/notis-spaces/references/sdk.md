@@ -331,8 +331,13 @@ comment is signed with its band name and never wakes it; the Notis
 assistant never writes comments itself (`orchestrator_comments_refused`)
 and starts a sub-agent for comment work. Through the Notis CLI, every
 comment needs the writing agent's band name (`NOTIS_AGENT_NAME` or
-`--agent-name`, such as `fred-and-the-machine`; see the notis-cli skill),
-or it is refused (`agent_name_required`). A comment's files open from the
+`--agent-name`, such as `fred-and-the-machine`, never a harness or product
+name; see the notis-cli skill), or it is refused (`agent_name_required`),
+plus its own id (`NOTIS_AGENT_ID`) and the name of the thread it works in
+(`NOTIS_AGENT_THREAD_NAME`). A comment thread such an agent outside Notis
+wrote in last stays with it: replies there wake no Notis agent, the Goes to
+line names it "outside Notis", and the card says when it has not read the
+latest reply yet. A comment's files open from the
 `url` its read returns, for an hour; read it again for a fresh one.
 
 ## Records and declared reads

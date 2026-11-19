@@ -11,13 +11,14 @@ import { useShortcuts } from '../engine/hooks';
 import { Icon } from '../icons';
 import { Menu } from '../overlay';
 import {
-  commentAnchorsOf, formatCommentTime, groupCommentThreads, orderCommentThreads, type CommentAnchor, type CommentGroup,
+  agentDisplayName, commentAnchorsOf, formatCommentTime, groupCommentThreads, orderCommentThreads, type CommentAnchor, type CommentGroup,
   type CommentOrder, type CommentThread,
 } from './commentModel';
 import type { SpaceCommentThreadRef } from '../../space';
 import type { CommentWordKey } from './commentWords';
 import { revealInScroller } from './scrollReveal';
-import { elsewhere } from './useCommentRouting';
+import { elsewhere, outsideClaim } from './useCommentRouting';
+import { CommentHarnessLogo, isHarness } from './agentRuntime';
 import type { CommentMode } from './commentModel';
 import type { CommentController, CommentStatusView } from './useComments';
 
@@ -184,6 +185,18 @@ export function useAtThreadPicker(controller: CommentController) {
 }
 
 /**
+ * Whether a card shows its Thread line (CommentGoesTo renders one): the line that carries the thread's buttons under
+ * unified comments. Mirrors CommentGoesTo's own conditions, so the buttons fall back to the name line when it shows none.
+ */
+export function commentGoesToShows(controller: CommentController, thread: CommentThread): boolean {
+  const { routing } = controller;
+  const rootKey = thread.root.recordKey;
+  if (!routing.links || rootKey.startsWith('draft-') || routing.lost?.(rootKey)) return false;
+  if (routing.known && !routing.known(rootKey)) return true;
+  return !elsewhere(routing.goesTo(rootKey));
+}
+
+/**
  * At the top of a comment thread's card, the thread that owns it: "Thread <title>" (its first linked thread), else
  * "Goes to <best match>" or "Goes to a new thread", with Change, which opens the @ thread picker and links the pick
  * (SPC-114). The signatures below it name only who wrote each comment. Nothing when the host does not link threads;
@@ -209,6 +222,30 @@ export function CommentGoesTo({ controller, thread }: { controller: CommentContr
   const target = routing.goesTo(rootKey);
   // A plain reply wakes an agent another person runs: no line rather than a thread it does not go to (SPC-467).
   if (elsewhere(target)) return null;
+  // SPC-535: an agent outside Notis holds this thread, so a reply stays with it and Notis wakes nobody. The line names
+  // it with its harness logo (the thread it said it works in is on its signature and in the hover title); Change hands
+  // the thread to a Notis thread.
+  if (target && outsideClaim(target)) {
+    const name = commentOutsideName(target);
+    return (
+      <p className="nui-comment-goes" data-part="goes-to" data-outside="" title={[controller.say('outsideAgentTitle', { name }), target.threadName].filter(Boolean).join(' · ')}
+        onClick={stop} onKeyDown={stop}>
+        {isHarness(target.harness) ? <CommentHarnessLogo harness={target.harness} className="nui-comment-goes-logo" />
+          : <Icon name="chat-circle-text" />}
+        <span className="nui-comment-goes-label">{controller.say('goesTo')}</span>{' '}
+        <span className="nui-comment-goes-title">{name}</span>
+        <span className="nui-comment-goes-sep" aria-hidden="true">·</span>
+        <span className="nui-comment-goes-outside">{controller.say('outsideNotis')}</span>
+        {routing.canLink ? (
+          <>
+            {' '}
+            <button ref={ref} type="button" className="nui-comment-goes-change" aria-label={controller.say('changeThread')}
+              onClick={() => { if (ref.current) void routing.change(rootKey, ref.current); }}>{controller.say('change')}</button>
+          </>
+        ) : null}
+      </p>
+    );
+  }
   const named = commentThreadName(controller, target);
   const linked = Boolean(target?.threadId) && routing.linksOf(rootKey).some(link => link.threadId === target!.threadId);
   const title = named.pending ? named.title : target?.title || controller.say('goesToNew');
@@ -235,6 +272,45 @@ export function CommentGoesTo({ controller, thread }: { controller: CommentContr
       ) : null}
     </p>
   );
+}
+
+/** The name of the agent outside Notis a `claimed` ref names, as its comments sign it. */
+export function commentOutsideName(ref: SpaceCommentThreadRef): string {
+  return agentDisplayName(ref.agentName || ref.title || ref.subagent || '');
+}
+
+/** The agent outside Notis that holds this comment thread (SPC-535), when the Goes to line names one; else null. */
+export function commentOutsideClaim(controller: CommentController, thread: CommentThread): SpaceCommentThreadRef | null {
+  const { routing } = controller;
+  const rootKey = thread.root.recordKey;
+  if (!routing.links || rootKey.startsWith('draft-') || (routing.known && !routing.known(rootKey))) return null;
+  const target = routing.goesTo(rootKey);
+  return target && outsideClaim(target) ? target : null;
+}
+
+const time = (value: string | null | undefined) => (value ? Date.parse(value) : Number.NaN);
+
+/**
+ * SPC-536: whether the agent outside Notis that holds this thread has not read the person's latest word yet: someone
+ * replied or answered after the agent last wrote, and the agent has not read the thread since (`readAt`, recorded
+ * when it reads comments through the CLI or replies).
+ */
+export function commentOutsideUnread(thread: CommentThread, claim: SpaceCommentThreadRef): boolean {
+  let agentAt = Number.NEGATIVE_INFINITY;
+  let personAt = Number.NEGATIVE_INFINITY;
+  for (const comment of [thread.root, ...thread.replies]) {
+    if (comment.status === 'Deleted') continue;
+    const at = time(comment.createdAt);
+    if (!Number.isNaN(at)) {
+      if (comment.agent) agentAt = Math.max(agentAt, at);
+      else personAt = Math.max(personAt, at);
+    }
+    const answered = time(comment.answeredAt);
+    if (comment.answer && !Number.isNaN(answered)) personAt = Math.max(personAt, answered);
+  }
+  if (!(personAt > agentAt)) return false;
+  const read = time(claim.readAt);
+  return Number.isNaN(read) || read < personAt;
 }
 
 const NAMED_ITEMS = 3;

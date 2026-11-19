@@ -114,7 +114,15 @@ function sameThread(a: SpaceCommentThreadRef, b: SpaceCommentThreadRef): boolean
  * again. */
 function settled(refs: readonly SpaceCommentThreadRef[] | undefined): boolean {
   const first = refs?.[0];
-  return Boolean(first && (elsewhere(first) || (first.threadId && first.status !== 'pending')));
+  return Boolean(first && (elsewhere(first) || outsideClaim(first) || (first.threadId && first.status !== 'pending')));
+}
+
+/**
+ * A comment thread an agent outside Notis holds (the server's `claimed` ref, SPC-535): a reply stays with that agent
+ * and wakes nobody in Notis until the viewer hands it to a thread with Change.
+ */
+export function outsideClaim(ref: SpaceCommentThreadRef | null | undefined): boolean {
+  return Boolean(ref && ref.via === 'claimed' && !ref.threadId && ref.outside);
 }
 
 /** A reply that wakes an agent another person runs (the server's `elsewhere` ref): no thread of the viewer's is named. */
@@ -390,8 +398,9 @@ export function useCommentRouting(input: {
       const others = (knownLinks(id, current) ?? NONE).filter(item => !sameThread(item, thread));
       // The thread of the agent that wrote the first comment still takes replies over any link (SPC-458); the thread
       // of an agent that only replied gives way to it (SPC-459).
-      // A reply that wakes another person's agent still goes there after a link (SPC-481): it stays first too.
-      const started = others.filter(item => item.via === 'started' || elsewhere(item));
+      // A reply that wakes another person's agent still goes there after a link (SPC-481): it stays first too. A thread
+      // an agent outside Notis held is handed over by the pick (SPC-535): its claim goes.
+      const started = others.filter(item => (item.via === 'started' || elsewhere(item)) && !outsideClaim(item));
       return { ...current, [id]: [...started, thread, ...others.filter(item => !item.via)] };
     });
     return writes.current.seq;

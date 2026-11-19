@@ -307,7 +307,9 @@ export interface SpaceCommentRow {
   attachments: SpaceCommentAttachment[];
   author: { user_id: string; name: string; you: boolean };
   agent: { name: string; id?: string | null; thread_id?: string | null; row_id?: string | null;
-    runtime?: Record<string, string | null> | null } | null;
+    runtime?: Record<string, string | null> | null;
+    /** An agent outside Notis: the thread it works in, the harness running it, and that it is outside (SPC-535). */
+    thread_name?: string | null; harness?: string | null; outside?: boolean } | null;
   example: boolean;
   revision: number;
   created_at: string;
@@ -468,7 +470,10 @@ export interface SpaceCommentViewer { name: string; canEditSpace: boolean; id?: 
  * A manager thread a comment thread is linked to. `subagent` names the subagent a reply goes back to, when one wrote it.
  * `threadId: null` with `status: 'pending'` is a "New <harness> thread" pick not started yet: the first wake
  * starts it. `threadId: null` with a `via` and `status: 'elsewhere'`: a plain reply wakes an agent another person
- * runs, so no thread of the viewer's is named.
+ * runs, so no thread of the viewer's is named. `threadId: null` with `via: 'claimed'` and `outside: true`: an agent
+ * outside Notis holds the comment thread (SPC-535), so a reply stays with it and wakes nobody; `title` and
+ * `agentName` name it, `harness` picks its logo, `threadName` is the thread it said it works in and `readAt` when it
+ * last read the thread (SPC-536; null: not yet).
  */
 export interface SpaceCommentThreadRef {
   threadId: string | null;
@@ -480,7 +485,12 @@ export interface SpaceCommentThreadRef {
    * Not a link: the thread a plain reply wakes ahead of the links. `started`: the agent that wrote the first comment
    * (its thread wins over every link while available); `replied`: with no link, the agent that replied last.
    */
-  via?: 'started' | 'replied';
+  via?: 'started' | 'replied' | 'claimed';
+  outside?: boolean;
+  agentId?: string | null;
+  agentName?: string | null;
+  threadName?: string | null;
+  readAt?: string | null;
 }
 export type SpaceCommentThreadPick = SpaceCommentThreadRef | { newThread: string };
 /**

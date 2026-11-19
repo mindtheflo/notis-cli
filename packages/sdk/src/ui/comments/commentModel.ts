@@ -89,7 +89,15 @@ export interface CommentAgentRuntime {
  * An agent author, as the server stamped it. `threadId` is only given to the agent's owner; `runtime` (when the
  * server recorded it) is what it ran on, for the logo and the hover card beside its name.
  */
-export interface CommentAgent { name: string; threadId: string | null; rowId: string | null; runtime?: CommentAgentRuntime | null }
+export interface CommentAgent {
+  name: string; threadId: string | null; rowId: string | null; runtime?: CommentAgentRuntime | null;
+  /** An agent outside Notis (declared on a Notis CLI call): the thread it said it works in ("PR #3851"). */
+  threadName?: string | null;
+  /** An agent outside Notis: the harness that runs it (claude_code, codex, cursor_agent...), for its logo. */
+  harness?: string | null;
+  /** True for an agent outside Notis (SPC-535): a thread it holds wakes nobody in Notis. */
+  outside?: boolean;
+}
 
 /** An agent name read out like a band: a band name ("fred-and-the-machine") reads "Fred And The Machine". */
 const BAND_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
@@ -119,8 +127,12 @@ function agentOf(value: unknown): CommentAgent | null {
   const agent = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   if (!agent || typeof agent.name !== 'string' || !agent.name.trim()) return null;
   const runtime = runtimeOf(agent.runtime);
+  const label = (key: string) => typeof agent[key] === 'string' && (agent[key] as string).trim() ? (agent[key] as string).trim() : null;
+  const threadName = label('thread_name');
+  const harness = label('harness');
   return { name: agent.name.trim(), threadId: typeof agent.thread_id === 'string' && agent.thread_id ? agent.thread_id : null,
-    rowId: typeof agent.row_id === 'string' && agent.row_id ? agent.row_id : null, ...(runtime ? { runtime } : {}) };
+    rowId: typeof agent.row_id === 'string' && agent.row_id ? agent.row_id : null, ...(runtime ? { runtime } : {}),
+    ...(threadName ? { threadName } : {}), ...(harness ? { harness } : {}), ...(agent.outside === true ? { outside: true } : {}) };
 }
 
 /**

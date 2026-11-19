@@ -40,7 +40,7 @@ import { Tooltip } from '../overlay';
 import { fixedOrigin } from '../overlay/floating';
 import { LAYER_ROOT_ATTRIBUTE, findLayerRoot, usePinnedLayerRoot } from '../overlay/layerRoot';
 import { cx, useIsoLayoutEffect } from '../util';
-import { CommentAgentBadge } from './agentRuntime';
+import { CommentAgentBadge, CommentAgentThreadName } from './agentRuntime';
 import {
   COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, agentDisplayName, clipCommentAnswer, commentAttachmentFor, commentBodyParts, commentRelativeTime, commentReplyRuns, formatCommentTime,
   isCommentZone, scrollCommentIntoView, type CommentAnchor, type CommentAttachment, type CommentRecord, type CommentThread,
@@ -52,7 +52,8 @@ import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles
 import { createPortal } from 'react-dom';
 import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
 import {
-  COMMENT_MODE_ICON, COMMENT_MODE_WORD, CommentFilterMenu, CommentGoesTo, CommentListLoading, CommentModeHint, CommentPaneKeys, CommentThreadList,
+  COMMENT_MODE_ICON, COMMENT_MODE_WORD, CommentFilterMenu, CommentGoesTo, commentGoesToShows, commentOutsideClaim,
+  commentOutsideName, commentOutsideUnread, CommentListLoading, CommentModeHint, CommentPaneKeys, CommentThreadList,
   CommentToChip, NewCommentMenu, commentIdleHint, commentItemNames, commentPlaceMeta, useAtThreadPicker, usePaneFocusKeeper, useThreadScroller,
   type CommentListOptions,
 } from './paneParts';
@@ -466,7 +467,17 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
     number > 0 && root.x != null ? `#${number}` : '',
     ...commentPlaceMeta(controller, thread),
   ].filter(Boolean).join(' · ');
-  const replyLabel = resolved ? controller.say('replyToReopen') : controller.say('reply');
+  // SPC-535, SPC-536: a thread an agent outside Notis holds. The box says who reads the reply, and until that agent
+  // reads the thread after the person's latest word, the card says it has not read it yet.
+  const outside = commentOutsideClaim(controller, thread);
+  const outsideName = outside ? commentOutsideName(outside) : '';
+  const outsideUnread = Boolean(outside) && commentOutsideUnread(thread, outside!);
+  const replyLabel = resolved ? controller.say('replyToReopen')
+    : outside ? controller.say('replyToWho', { who: outsideName }) : controller.say('reply');
+  // Unified comments (the host links comment threads to threads): the buttons are always shown, small and grey, the
+  // thread's at the end of its Thread line (on the name line when the card has none), each reply's on its name line.
+  const shownButtons = controller.routing.links;
+  const onThreadLine = shownButtons && commentGoesToShows(controller, thread);
 
   const newDot = (comment: CommentRecord) => isNew(comment)
     ? <span className="nui-comment-new" role="img" aria-label={controller.say('newActivity')} /> : null;
@@ -481,12 +492,19 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
           <div className="nui-comment-who">
             <span className="nui-comment-author">{agentDisplayName(reply.author)}</span>
             <CommentAgentBadge controller={controller} comment={reply} />
+            <CommentAgentThreadName comment={reply} />
             <span className="nui-comment-meta">{commentRelativeTime(reply.createdAt, locale, now)}</span>
             <EditedMark controller={controller} comment={reply} />
             {newDot(reply)}
           </div>
-          {controller.canEdit(reply) || controller.canDelete(reply) ? (
+          {shownButtons || controller.canEdit(reply) || controller.canDelete(reply) ? (
             <span className="nui-comment-reply-actions" onClick={stop} onKeyDown={stop}>
+              {/* Unified comments: every reply has its own Copy link, which opens its thread. */}
+              {shownButtons ? (
+                <IconAction label={controller.say('copyLink')} icon="link" disabled={root.recordKey.startsWith('draft-')}
+                  name={namedAction(controller, 'copyReplyLinkNamed', controller.say('copyLink'), reply)}
+                  onClick={() => void actions.copyLink(root, cardRef.current)} />
+              ) : null}
               {controller.canEdit(reply) ? (
                 <IconAction label={controller.say('editReply')} icon="pencil-simple"
                   name={namedAction(controller, 'editReplyNamed', controller.say('editReply'), reply)}
@@ -513,10 +531,37 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
     </li>
   );
 
+  const actionsBar = (
+    <div className="nui-comment-actions" onClick={stop} onKeyDown={stop}>
+      {resolved
+        ? <IconAction label={controller.say('reopen')} icon="tray-arrow-up" disabled={busy}
+            name={namedAction(controller, 'unarchiveThread', controller.say('reopen'), root)}
+            onClick={() => actions.unarchive(root)} />
+        : <IconAction label={controller.say('resolve')} icon="archive" disabled={busy}
+            name={namedAction(controller, 'archiveThread', controller.say('resolve'), root)}
+            onClick={() => actions.archive(root)} />}
+      {/* A link that opens this page with the thread revealed (comment=<root key>), for someone else. */}
+      <IconAction label={controller.say('copyLink')} icon="link" disabled={root.recordKey.startsWith('draft-')}
+        name={namedAction(controller, 'copyLinkNamed', controller.say('copyLink'), root)}
+        onClick={() => void actions.copyLink(root, cardRef.current)} />
+      {controller.canEdit(root) ? (
+        <IconAction label={controller.say('editRoot')} icon="pencil-simple" disabled={busy}
+          name={namedAction(controller, 'editRootNamed', controller.say('editRoot'), root)}
+          onClick={() => setEditing(root.recordKey)} />
+      ) : null}
+      {controller.canDelete(root) ? (
+        <IconAction label={controller.say('deleteThread')} icon="trash" disabled={busy}
+          name={namedAction(controller, 'deleteThreadNamed', controller.say('deleteThread'), root)}
+          onClick={() => actions.remove(root)} />
+      ) : null}
+    </div>
+  );
+
   return (
     <article
       ref={cardRef}
       className="nui-comment-card"
+      data-buttons={shownButtons ? 'shown' : undefined}
       data-thread={root.recordKey}
       data-selected={selected ? '' : undefined}
       data-resolved={resolved ? '' : undefined}
@@ -534,39 +579,24 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
       {/* The quoted words first, like a passage thread's card, so every comments pane reads the same (SPC-489). */}
       {quote && root.passage ? <CommentQuote controller={controller} comment={root} /> : null}
       {/* The thread that owns this comment thread, once at the top; the signatures name only who wrote (SPC-114). */}
-      <CommentGoesTo controller={controller} thread={thread} />
+      {onThreadLine ? (
+        // Unified comments: the thread's buttons end its Thread line, always shown and quiet (comment mode, card A).
+        <div className="nui-comment-thread-line">
+          <CommentGoesTo controller={controller} thread={thread} />
+          {actionsBar}
+        </div>
+      ) : <CommentGoesTo controller={controller} thread={thread} />}
       <header className="nui-comment-head">
         <CommentAvatar author={root.author} me={me} />
         <div className="nui-comment-who">
           <span className="nui-comment-author">{agentDisplayName(root.author)}</span>
           <CommentAgentBadge controller={controller} comment={root} />
+          <CommentAgentThreadName comment={root} />
           <span className="nui-comment-meta">{meta}</span>
           <EditedMark controller={controller} comment={root} />
           {newDot(root)}
         </div>
-        <div className="nui-comment-actions" onClick={stop} onKeyDown={stop}>
-          {resolved
-            ? <IconAction label={controller.say('reopen')} icon="tray-arrow-up" disabled={busy}
-                name={namedAction(controller, 'unarchiveThread', controller.say('reopen'), root)}
-                onClick={() => actions.unarchive(root)} />
-            : <IconAction label={controller.say('resolve')} icon="archive" disabled={busy}
-                name={namedAction(controller, 'archiveThread', controller.say('resolve'), root)}
-                onClick={() => actions.archive(root)} />}
-          {/* A link that opens this page with the thread revealed (comment=<root key>), for someone else. */}
-          <IconAction label={controller.say('copyLink')} icon="link" disabled={root.recordKey.startsWith('draft-')}
-            name={namedAction(controller, 'copyLinkNamed', controller.say('copyLink'), root)}
-            onClick={() => void actions.copyLink(root, cardRef.current)} />
-          {controller.canEdit(root) ? (
-            <IconAction label={controller.say('editRoot')} icon="pencil-simple" disabled={busy}
-              name={namedAction(controller, 'editRootNamed', controller.say('editRoot'), root)}
-              onClick={() => setEditing(root.recordKey)} />
-          ) : null}
-          {controller.canDelete(root) ? (
-            <IconAction label={controller.say('deleteThread')} icon="trash" disabled={busy}
-              name={namedAction(controller, 'deleteThreadNamed', controller.say('deleteThread'), root)}
-              onClick={() => actions.remove(root)} />
-          ) : null}
-        </div>
+        {onThreadLine ? null : actionsBar}
       </header>
 
       {root.example || resolved ? (
@@ -593,6 +623,11 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
         </ol>
       ) : null}
 
+      {outsideUnread ? (
+        <p className="nui-comment-unread" data-part="outside-unread">
+          <Icon name="clock" />{controller.say('outsideUnread', { who: outsideName })}
+        </p>
+      ) : null}
       <div className="nui-comment-compose-box" data-dragging={files.dragging ? '' : undefined} onClick={stop} onKeyDown={stop}
         {...files.boxHandlers}>
         <CommentFileChips controller={controller} files={files} />

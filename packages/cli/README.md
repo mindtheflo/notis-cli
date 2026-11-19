@@ -64,22 +64,26 @@ The CLI defaults to `json` output in agent or non-TTY contexts and `table` outpu
 - `--timeout-ms <n>` — Time limit in milliseconds for each call, automatic retries included
 - `--idempotency-key <key>` — Override the generated idempotency key for mutating commands
 - `--no-retry` (or `NOTIS_NO_RETRY=1`): turn off automatic retries. By default the CLI retries an interrupted tool call (network error, timeout, 502, 503 or 504) when repeating it is safe: a read, or a write with an idempotency key. It makes up to 3 attempts within `--timeout-ms` and reports the count in `meta.attempts`, or `error.details.attempts` on a failure.
-- `--agent-name <name>`, `--agent-id <id>`, `--agent-thread <thread>` (or `NOTIS_AGENT_NAME`, `NOTIS_AGENT_ID`, `NOTIS_AGENT_THREAD`): the agent making the call. See Agents declare themselves.
+- `--agent-name <name>`, `--agent-id <id>`, `--agent-thread <thread>`, `--agent-thread-name <name>` (or `NOTIS_AGENT_NAME`, `NOTIS_AGENT_ID`, `NOTIS_AGENT_THREAD`, `NOTIS_AGENT_THREAD_NAME`): the agent making the call. See Agents declare themselves.
 
 ## Agents declare themselves
 
 An agent using the CLI (Claude Code or Codex on your computer, a script, a session on your Cloud Computer) says who it is on every call, so what it writes is its own and not yours: a comment's Author is its name, the comment never counts as yours, and it never wakes the agent that wrote it. Set the variables once for the agent's session, or pass the flags on a call (a flag wins over its variable):
 
 ```bash
-export NOTIS_AGENT_NAME="fred-and-the-machine"  # a fresh lowercase band name, shown as "Fred And The Machine"
-export NOTIS_AGENT_THREAD="<notis thread id or link>"  # optional: where replies go
+export NOTIS_AGENT_NAME="fred-and-the-machine"  # a fresh imaginary rock-band name, shown as "Fred And The Machine"
+export NOTIS_AGENT_ID="<your session id>"  # your own unique id, such as your T3 thread or Codex session id
+export NOTIS_AGENT_THREAD_NAME="PR #3851"  # the name of the thread you work in, shown after your name
 ```
 
-- The name is a fresh lowercase imaginary rock-band name: lowercase letters and digits in at least two words joined by hyphens, 3 to 60 characters, such as `fred-and-the-machine`. Anything else stops the command before it is sent (`usage_error`; the server answers `invalid_agent_identity`).
-- The name is only a name; an id decides which comments are the agent's own. The first time a name is used on a computer, the CLI generates a random id for it and keeps it in `agents.json` next to the CLI config file, then sends it with that name on every call. Two agents with the same name on two computers are two agents. `NOTIS_AGENT_ID` (or `--agent-id`) overrides it: up to 128 letters, digits and `. _ : @ / + -`.
-- The name is required whenever an id or a thread is set. The thread is an id or link of up to 512 characters without spaces. A Notis thread of yours named in `NOTIS_AGENT_THREAD` gets the replies to the agent's comments. A Notis thread you do not own is ignored; any other value (another tool's session id or link) is kept as a label.
+- Every agent, and every sub-agent, picks a fresh lowercase imaginary rock-band name of its own, so the person sees which one wrote: lowercase letters and digits in at least two words joined by hyphens, 3 to 60 characters, such as `fred-and-the-machine`. A harness or product name (`claude`, `claude-code`, `codex`, `cursor`, `cursor-agent`, `gemini`, `notis`, `t3`, `t3-code`, `opencode`, `agent`, `assistant`, `bot`, also with `-cli` or `-agent`) is no band name. Anything else stops the command before it is sent (`usage_error`; the server answers `invalid_agent_identity`).
+- The name is only a name; an id decides which comments are the agent's own. Set `NOTIS_AGENT_ID` (or `--agent-id`) to your own unique id, such as your session id: 3 to 128 letters, digits and `. _ : @ / + -`. Without one, the CLI generates a random id the first time a name is used on a computer, keeps it in `agents.json` next to the CLI config file and sends it with that name on every call, so two agents with the same name on two computers are two agents.
+- `NOTIS_AGENT_THREAD_NAME` (or `--agent-thread-name`) names the thread you work in, whatever you call it (a T3 thread title, `PR #3851`): at most 80 characters on one line, shown after your name on your comments and on the Goes to line.
+- The CLI tells Notis which harness runs it (Claude Code, Codex, Cursor...) from the variables that harness sets, so your comments show its logo; `NOTIS_AGENT_HARNESS` (`claude_code`, `codex`, `cursor_agent`...) overrides it.
+- The name is required whenever an id, a thread or a thread name is set. The thread is an id or link of up to 512 characters without spaces. A Notis thread of yours named in `NOTIS_AGENT_THREAD` gets the replies to the agent's comments. A Notis thread you do not own is ignored; any other value (another tool's session id or link) is kept as a label.
 - The declaration names the writer; it never grants access, and Notis records it as declared. A Notis agent's own Cloud Computer command already carries a signed identity, which wins over a declaration.
 - Declarations take effect on accounts with unified comments on (being rolled out). On other accounts Notis ignores them and every write counts as yours, as before; only a badly formed name still stops the command locally.
+- A comment thread you wrote in last is yours: when the person replies or answers there, Notis wakes no agent of its own; you read the reply the next time you check (`list`, `thread` or `waiting` of `LOCAL_NOTIS_SPACE_COMMENT_THREADS`), and until then the person sees that you have not read it yet. The person can hand the thread to a Notis thread with Change.
 - With unified comments on, comments written through the CLI always need a name, even when you type the command yourself: without one the comment is refused with `agent_name_required`, and a declaration without an id with `agent_id_required`. Other writes made with your own sign-in and no declaration count as yours. The Notis assistant itself never writes comments: it starts a sub-agent, whose comments carry the sub-agent's name.
 
 ## Authentication
