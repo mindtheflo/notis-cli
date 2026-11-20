@@ -558,6 +558,20 @@ Three more places run a function:
   `delete`) a thread that holds one of the Space's items. The function's `input` is
   `threadHookInput` from `@notis/sdk`: `{ event, actor, thread, items }`. A hook runs
   after the action and cannot stop it; make it safe to run twice.
+- `settle: { function: 'settle_workspace' }` on a thread item kind: when a read of
+  an item first lands in a `final` state (merged, closed), Notis runs the function
+  once per item and Space revision, as the thread's owner, in the background. Its
+  `input` is `threadSettleInput` from `@notis/sdk`: `{ item, thread }`; `ctx.item` is
+  set too and `ctx.via` is `thread_settle`. The kind needs a `final` state. To settle
+  the thread, declare `uses: { threads: ['archive'] }` and call
+  `ctx.threads.archive(input.thread.id)`. That archive does not run this Space's own
+  `archive` hook, so do the hook's cleanup in the settle too. Keep it under 60 s: start
+  long work detached on the cloud computer. A failure is only logged.
+- A hook or a settle that uses the cloud computer runs only when the thread's owner
+  allowed the Space's current revision. Without that, nothing fails: the item needs
+  the person, with **Allow** in the thread's panel, and the run happens once they
+  allow (from the panel or the Space's page). A waiting settle brings the thread back
+  to the inbox. Every Store update needs a new approval, so expect this after an update.
 - `commentOptions: { approve: { label: 'Approve', function: 'approve_change' } }`:
   when a person picks that label among a choice comment's options (an agent's own
   answer never runs it). The function's `input` is `commentOptionInput`.

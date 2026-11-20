@@ -194,7 +194,7 @@ function stripNotisSdkImports(source) {
         if (imported.startsWith('type ')) continue;
         // The function input schemas are values, not identity helpers: take them from the project's own
         // SDK package entry (built JavaScript), the one copy of them.
-        if (/^(threadHookInput|commentOptionInput)(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(imported)) {
+        if (/^(threadHookInput|threadSettleInput|commentOptionInput)(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(imported)) {
           schemas.push(imported);
           continue;
         }

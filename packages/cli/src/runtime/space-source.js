@@ -469,7 +469,9 @@ export function validateSpaceAgents(agents, resources = {}) {
   }
 }
 
-const THREAD_ITEM_FIELDS = ['label', 'description', 'inputs', 'read', 'title', 'url', 'states', 'checks', 'actions', 'page'];
+const THREAD_ITEM_FIELDS = ['label', 'description', 'inputs', 'read', 'title', 'url', 'states', 'checks', 'actions', 'page', 'settle'];
+// Field names a kind's settle function must take: the server compares the whole schema (threadSettleInput).
+const SETTLE_INPUT_FIELDS = 'item,thread';
 const THREAD_ITEM_STATE_FIELDS = ['id', 'label', 'icon', 'when', 'needsYou', 'final'];
 const THREAD_ITEM_ACTION_FIELDS = ['label', 'tool', 'function', 'arguments', 'confirm', 'states', 'primary'];
 const REFUSED_ITEM_TOOL = /^(LOCAL_|COMPOSIO_|NOTIS_|CUSTOM_|MCP_)/;
@@ -537,5 +539,27 @@ export function validateThreadItems(threadItems, actions = {}, functions = {}) {
         throw usageError(`Action ${actionId} of thread item ${kind} lists states this item declares.`);
       }
     }
+    if (spec.settle !== undefined) validateThreadItemSettle(kind, spec, functions);
+  }
+}
+
+/**
+ * `settle: { function }`: one of this Space's functions, taking threadSettleInput, that Notis runs once when an
+ * item of this kind first reaches a final state (truth FAC-065).
+ */
+function validateThreadItemSettle(kind, spec, functions) {
+  const settle = spec.settle;
+  if (!settle || typeof settle !== 'object' || Array.isArray(settle) || Object.keys(settle).join(',') !== 'function'
+    || typeof settle.function !== 'string') {
+    throw usageError(`Thread item ${kind} settles with one of this Space's functions: settle: { function: '<name>' }.`);
+  }
+  if (!Object.hasOwn(functions || {}, settle.function)) {
+    throw usageError(`Thread item ${kind} settles with function ${settle.function}, which this Space does not declare.`);
+  }
+  if (Object.keys(functions[settle.function]?.input?.properties || {}).sort().join(',') !== SETTLE_INPUT_FIELDS) {
+    throw usageError(`Function ${settle.function} settles thread item ${kind}: declare its input as threadSettleInput from @notis/sdk.`);
+  }
+  if (!spec.states.some(state => state.final === true)) {
+    throw usageError(`Thread item ${kind} settles when an item reaches a final state: mark at least one state final.`);
   }
 }

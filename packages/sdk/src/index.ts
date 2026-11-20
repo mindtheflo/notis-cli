@@ -85,10 +85,10 @@ export { useItemThread } from './hooks/useItemThread';
 export type { UseItemThreadResult } from './hooks/useItemThread';
 export { useThreadItem } from './hooks/useThreadItem';
 export { useFunction, useFunctionQuery } from './hooks/useFunction';
-export { threadHookInput, commentOptionInput } from './functions';
+export { threadHookInput, threadSettleInput, commentOptionInput } from './functions';
 export type { SpaceFunctionDeclaration, SpaceFunctionHandler, SpaceFunctionContext, SpaceFunctionKind, SpaceFunctionExposure,
-  SpaceFunctionRole, SpaceFunctionUses, SpaceThreadOperation, SpaceThreadHookEvent, SpaceThreadHookInput, SpaceCommentOption,
-  SpaceCommentOptionInput, SpaceFunctionThread, SpaceFunctionThreadItem, SpaceFunctionCloudComputer, SpaceFunctionDescriptor,
+  SpaceFunctionRole, SpaceFunctionUses, SpaceThreadOperation, SpaceThreadHookEvent, SpaceThreadHookInput, SpaceThreadSettleInput,
+  SpaceCommentOption, SpaceCommentOptionInput, SpaceFunctionThread, SpaceFunctionThreadItem, SpaceFunctionCloudComputer, SpaceFunctionDescriptor,
   SpaceFunctionCallOptions } from './functions';
 export type { UseThreadItemResult } from './hooks/useThreadItem';
 export { useAgentQueue, AGENT_QUEUE_WORDS } from './hooks/useAgentQueue';

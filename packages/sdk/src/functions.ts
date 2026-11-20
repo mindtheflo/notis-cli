@@ -95,6 +95,24 @@ export const threadHookInput = {
   },
 } satisfies SpaceFunctionDeclaration['input'];
 
+/**
+ * The `input` of the function a thread item kind settles with (`threadItems.<kind>.settle`): copy it as written.
+ * Notis runs it once when an item of that kind first reaches a final state, with the item and its thread.
+ */
+export const threadSettleInput = {
+  type: 'object', additionalProperties: false, required: ['item', 'thread'],
+  properties: {
+    item: { type: 'object', additionalProperties: false, required: ['id', 'kind', 'inputs'], properties: {
+      id: { type: 'string' }, kind: { type: 'string' }, inputs: { type: 'object' },
+      state: { type: ['string', 'null'] }, title: { type: ['string', 'null'] },
+      url: { type: ['string', 'null'] } } },
+    thread: { type: 'object', additionalProperties: false, required: ['id', 'thread_id'], properties: {
+      id: { type: 'string' }, thread_id: { type: 'string' }, title: { type: ['string', 'null'] },
+      archived: { type: 'boolean' }, starred: { type: 'boolean' }, read: { type: 'boolean' },
+      later_until: { type: ['string', 'null'] } } },
+  },
+} satisfies SpaceFunctionDeclaration['input'];
+
 /** The `input` of a function a comment option runs (`commentOptions`): copy it as written. */
 export const commentOptionInput = {
   type: 'object', additionalProperties: false, required: ['option', 'comment'],
@@ -126,6 +144,11 @@ export interface SpaceThreadHookInput {
   /** This Space's items attached to the thread. */
   items: SpaceFunctionThreadItem[];
 }
+/** What a thread item kind's settle function receives: the item that reached a final state, and its thread. */
+export interface SpaceThreadSettleInput {
+  item: SpaceFunctionThreadItem;
+  thread: SpaceFunctionThread;
+}
 /** What a comment option's function receives. */
 export interface SpaceCommentOptionInput {
   /** The id of the declared option. */
@@ -146,7 +169,7 @@ export interface SpaceFunctionContext {
   caller: { role: SpaceFunctionRole; userId: string | null };
   space: { id: string; revision: number };
   /** The way this call came in. */
-  via: SpaceFunctionExposure | 'thread_item' | 'thread_hook' | 'comment_option';
+  via: SpaceFunctionExposure | 'thread_item' | 'thread_hook' | 'thread_settle' | 'comment_option';
   /** One method per action named in `uses.actions`: the action's result, or a thrown error. */
   actions: Record<string, (inputs?: Record<string, unknown>) => Promise<unknown>>;
   /** The caller's own cloud computer. Calls throw until that person allowed this Space to use it. */
@@ -157,7 +180,7 @@ export interface SpaceFunctionContext {
    */
   threads: { [Operation in SpaceThreadOperation]: Operation extends 'later'
     ? (threadId: string, until: string) => Promise<void> : (threadId: string) => Promise<void> };
-  /** Set when a thread item's action runs the function: the item it was clicked on and its thread. */
+  /** Set when a thread item's action or settle runs the function: the item and its thread. */
   item?: SpaceFunctionThreadItem & { thread: SpaceFunctionThread };
 }
 

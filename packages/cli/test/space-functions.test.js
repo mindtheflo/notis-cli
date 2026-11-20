@@ -53,7 +53,7 @@ test('a function outside the contract is refused before the build', () => {
   assert.throws(() => check({ threadHooks: { archive: 'x' } }), /declare functions first/);
 });
 
-test('a Space config takes threadHookInput and commentOptionInput from @notis/sdk/config', async () => {
+test('a Space config takes threadHookInput, threadSettleInput and commentOptionInput from @notis/sdk/config', async () => {
   const project = mkdtempSync(join(tmpdir(), 'notis-functions-config-'));
   try {
     // The project's own SDK package, as a scaffold installs it: its built entry holds the schema values.
@@ -62,12 +62,13 @@ test('a Space config takes threadHookInput and commentOptionInput from @notis/sd
     writeFileSync(join(sdk, 'package.json'), JSON.stringify({ name: '@notis/sdk', type: 'module',
       exports: { '.': { node: './index.js' }, './config': './config.ts' } }));
     writeFileSync(join(sdk, 'index.js'), "export const threadHookInput = { type: 'object', hook: true };\n"
+      + "export const threadSettleInput = { type: 'object', settle: true };\n"
       + "export const commentOptionInput = { type: 'object', option: true };\n");
     writeFileSync(join(project, 'notis.config.ts'), [
-      "import { defineSpace, threadHookInput, commentOptionInput as optionInput } from '@notis/sdk/config';",
-      'export default defineSpace({ hook: threadHookInput, option: optionInput });', ''].join('\n'));
+      "import { defineSpace, threadHookInput, threadSettleInput, commentOptionInput as optionInput } from '@notis/sdk/config';",
+      'export default defineSpace({ hook: threadHookInput, settle: threadSettleInput, option: optionInput });', ''].join('\n'));
     assert.deepEqual(await loadAppConfig(project),
-      { hook: { type: 'object', hook: true }, option: { type: 'object', option: true } });
+      { hook: { type: 'object', hook: true }, settle: { type: 'object', settle: true }, option: { type: 'object', option: true } });
     writeFileSync(join(project, 'notis.config.ts'), "import { definePage } from '@notis/sdk/config';\nexport default definePage({});\n");
     await assert.rejects(loadAppConfig(project), /Unsupported configuration helper: definePage/);
   } finally { rmSync(project, { recursive: true, force: true }); }
@@ -140,4 +141,24 @@ test('a handler cannot bring in the page SDK, node or a missing default export',
     await assert.rejects(buildSpaceFunctions(project, { a: 'functions/node.ts' }), /cannot import node:fs/);
     await assert.rejects(buildSpaceFunctions(project, { a: 'functions/none.ts' }), /did not build|no default export/);
   } finally { rmSync(project, { recursive: true, force: true }); }
+});
+
+test('a thread item kind settles with a function that takes threadSettleInput', () => {
+  const settleInput = closed({ item: {}, thread: {} });
+  const kind = (changes = {}) => ({ pull_request: { label: 'Pull request',
+    inputs: { type: 'object', additionalProperties: false, properties: { number: { type: 'integer' } }, required: ['number'] },
+    read: { action: 'read_pull_request' }, title: '#{item.number}',
+    states: [{ id: 'merged', label: 'Merged', icon: 'phosphor:git-merge', when: { path: 'data.merged', equals: true }, final: true },
+      { id: 'open', label: 'Open', icon: 'phosphor:git-pull-request' }],
+    settle: { function: 'settle_workspace' }, ...changes } });
+  const functions = { settle_workspace: { input: settleInput }, clean_workspace: { input: hookInput } };
+  const actions = { read_pull_request: {} };
+  validateThreadItems(kind(), actions, functions);
+  assert.throws(() => validateThreadItems(kind({ settle: { function: 'missing' } }), actions, functions), /does not declare/);
+  assert.throws(() => validateThreadItems(kind({ settle: { function: 'clean_workspace' } }), actions, functions), /threadSettleInput/);
+  assert.throws(() => validateThreadItems(kind({ settle: 'settle_workspace' }), actions, functions), /settle: \{ function: '<name>' \}/);
+  assert.throws(() => validateThreadItems(kind({ settle: { function: 'settle_workspace', when: 'merged' } }), actions, functions),
+    /settle: \{ function: '<name>' \}/);
+  assert.throws(() => validateThreadItems(kind({ states: [{ id: 'open', label: 'Open', icon: 'phosphor:git-pull-request' }] }),
+    actions, functions), /final state/);
 });

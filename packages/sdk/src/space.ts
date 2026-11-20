@@ -171,6 +171,12 @@ export interface SpaceThreadItemKind {
   actions?: Record<string, SpaceThreadItemAction>;
   /** This view draws the item in the thread's panel; it receives these params plus the item through `useThreadItem`. */
   page?: { params?: Record<string, string> };
+  /**
+   * One of this Space's functions, whose `input` is `threadSettleInput`: Notis runs it once per item and Space
+   * revision, as the thread's owner, when a read first lands in a `final` state. It may archive the thread
+   * (`ctx.threads.archive`). A function that uses the Cloud Computer waits on the item until its owner allows.
+   */
+  settle?: { function: string };
 }
 /** An attached item as Notis last read it. */
 export interface SpaceThreadItem {
@@ -202,6 +208,18 @@ export interface SpaceThreadItem {
   refreshed_at: string | null;
   /** The code of the last failed read, kept until a read succeeds. */
   error: string | null;
+  /**
+   * Set while a hook or a settle of the item's Space waits for its owner to allow the Space's use of their Cloud
+   * Computer: the item needs them, and the host's Allow opens the approval for this `revision`.
+   */
+  approval?: { space_id: string; revision: number; level: 'read' | 'shell' | null; reason: string | null;
+    since: string | null; functions: string[] } | null;
+  /**
+   * The settle Notis started for the item: the Space revision, the function, the state it settled in and how it
+   * ended (`pending` while it runs, then `ran`, `waiting`, `failed` or `dropped`; `abandoned` after three tries).
+   */
+  settled?: { revision: number; function: string; state: string | null; at: string;
+    status?: 'pending' | 'ran' | 'waiting' | 'failed' | 'dropped' | 'abandoned' } | null;
 }
 export interface SpaceThreadItemRun {
   /** False when the person cancelled the confirmation or the host cannot run actions. */
