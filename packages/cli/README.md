@@ -702,9 +702,9 @@ Examples:
 
 ### `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id>`
 
-Publish a Space and its sub-Spaces as the next Store version.
+Publish what a Space's source lists in store.ships as the next Store version.
 
-When to use: Share a Space you own as an installable template: link and team listings publish at once, public ones wait for review. A link listing never shows in the Store; only people with its link see it. Notis runs the same safety scan and Owner check as the submission page and explains any refusal.
+When to use: Share a Space you own as an installable template: link and team listings publish at once, public ones wait for review. A link listing never shows in the Store; only people with its link see it. Only what the root's defineSpace lists in store: { ships: { <source key>: [<alias>, ...] } } ships; every other sub-Space and linked item stays private, and publishing (an update of an existing listing included) is refused until that list is deployed. The result (and --dry-run) names what ships and what stays private under ships. Notis runs the same safety scan and Owner check as the submission page and explains any refusal, including a shipped view that reads or writes a database that stays private.
 
 Options:
 - `--channel <link|team|public>` — Where to publish: anyone with the link, your team or everyone.
@@ -712,7 +712,7 @@ Options:
 - `--starter <json>` — Starter row IDs per database ({"<database-id>":["<record-key>"]}).
 - `--notes <text>` — Release notes for this version.
 - `--request-id <key>` — Stable intent key. Reuse after timeouts or lost replies.
-- `--dry-run` — Show the package counts and review diff without publishing.
+- `--dry-run` — Show what ships and stays private, the package counts and the review diff without publishing.
 
 Examples:
 - `npx --package @notis_ai/cli@latest -- notis spaces store publish <space-id> --channel team --request-id publish-1 --dry-run`
