@@ -19,11 +19,6 @@ export interface PassageField {
   key: string;
   /** Its name in the pane, above each quote. */
   label: Words;
-  /**
-   * @deprecated Comments name their field by its `key` in the comment store: ignored. Kept so older Spaces that
-   * pass it still compile.
-   */
-  values?: Readonly<Record<string, string>>;
   /** Fields shown together, such as one language. The pane lists the threads of the group on screen. */
   group?: string;
   /** The value is Markdown: Text changed and the reading order look at its words, not its syntax. */

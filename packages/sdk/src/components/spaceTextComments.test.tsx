@@ -1,16 +1,13 @@
 import { dom } from '../ui/testDom';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { act, createElement, type ReactNode } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { renderToStaticMarkup } from 'react-dom/server';
 
 import { KeyboardEngine, KeyboardEngineCore } from '../ui/engine';
 import { SdkPresentation } from '../presentation';
 import type { NotisRuntime } from '../runtime';
 import type { SpaceCommentAnchor, SpaceCommentRow, SpaceCommentsTransport } from '../space';
-import { NotisCommentBoundary, NotisCommentBox } from '../index';
-import { CommentAvatar, CommentThreadCard, NewCommentBox } from '../ui/index';
 import { changedPassages } from '../ui/comments/textHighlights';
 import { PASSAGE_COMMENT_EVENT } from '../ui/comments/passageModel';
 import {
@@ -248,22 +245,4 @@ test('Every Space page highlights its open text comments, reports the gone ones,
 test('Without the comment store a Space page draws no highlights and lists nothing', async () => {
   await present(spaceRuntime());
   assert.equal(doc.querySelector('style[data-notis-comment-highlights]'), null);
-});
-
-// ---------------------------------------------------------------------------
-// Deprecated stand-ins: a Space built against an older SDK keeps loading
-// ---------------------------------------------------------------------------
-
-test('The removed comment components are stand-ins: they render nothing, a boundary renders its children', () => {
-  const never = () => { throw new Error('a stand-in calls nothing'); };
-  assert.equal(renderToStaticMarkup(createElement(NotisCommentBox, { value: 'x', onChange: never, onSubmit: never, onCancel: never })), '');
-  assert.equal(renderToStaticMarkup(createElement(CommentAvatar, { author: 'Flo' })), '');
-  assert.equal(renderToStaticMarkup(createElement(CommentThreadCard, { controller: {} as never, thread: {} as never })), '');
-  assert.equal(renderToStaticMarkup(createElement(NewCommentBox, { controller: {} as never })), '');
-  const html = renderToStaticMarkup(<NotisCommentBoundary resource={null}><p>Kept words</p></NotisCommentBoundary>);
-  assert.match(html, /<p>Kept words<\/p>/, 'the boundary renders its children');
-  assert.doesNotMatch(html, /textarea|button/, 'and no comment box of its own');
-  for (const standIn of [NotisCommentBox, NotisCommentBoundary, CommentAvatar, CommentThreadCard, NewCommentBox]) {
-    assert.equal((standIn as unknown as Record<symbol, unknown>)[Symbol.for('notis.sdk.standIn')], true, standIn.name);
-  }
 });

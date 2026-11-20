@@ -273,8 +273,7 @@ const comments = useComments({
 - `useComments` takes no database. `scope` is the page (record) the comments
   belong to; leave it out to use the record the page has open (a record page,
   or the record a declared record param such as `page` names, the `main` one
-  first), or the Space home. `list`, `database`, `columns`, `me`, `authors` and `fallbackAuthor`
-  are deprecated: accepted and ignored. Drop them when you touch a view.
+  first), or the Space home. It takes no database, columns or author options.
 - Mount `<CommentPane controller={comments} />` once anywhere in the view: it
   draws in the host panel, not where it is mounted.
 - The host and the server own the rest: who wrote a comment (never set an
@@ -314,11 +313,8 @@ agents: [{ id: 'editor', on: 'comments', event: 'created', thread: 'best_match',
 `event` is `created` (default) or `changed`, `wake` is `all` or `sent` (only
 replies to and answers of the agent's own comments), `thread` is `best_match`
 or `space`, `runtime` is `notis` or `cloud_computer`, `skill` names a linked
-Skill. `on: { database: <alias> }` stays for agents that watch a real
-database. An older Space whose `on: { database: 'comments' }` points at its
-old Comments database keeps waking for now; write `on: 'comments'` when you
-next change it, and leave the old comments binding and its database alone:
-Notis copies their comments into its store and detaches them itself.
+Skill. `on: { database: <alias> }` is for agents that watch a real
+database's rows, never comments.
 
 Agents read and write comments only with `LOCAL_NOTIS_SPACE_COMMENT_THREADS`
 (`protocol` 2; operations `list`, `thread`, `comment`, `reply`, `edit`, `delete`,
@@ -616,8 +612,7 @@ extracts tables, lists, controls and visible document/HTML content automatically
   screens and stays in the page only on narrow ones, so never draw your own
   title or breadcrumb row. Do not duplicate host chrome.
 - `useActiveResource` publishes the current resource; `useAgentContext` and
-  `NotisSelectionBoundary` support explicit reference context
-  (`NotisCommentBoundary` and `NotisCommentBox` are deprecated and do nothing).
+  `NotisSelectionBoundary` support explicit reference context.
   [Context sharing](context.md) owns the contract.
 - `Dialog` supplies a themed modal with focus handling; while it is open, only
   its own keys and Escape work. For a confirmation (delete, discard), pass

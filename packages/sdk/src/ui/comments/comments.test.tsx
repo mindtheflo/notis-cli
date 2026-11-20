@@ -10,7 +10,7 @@ import { NotisProvider } from '../../provider';
 import { createQueryClient } from '../../queryCache';
 import type { NotisRuntime } from '../../runtime';
 import {
-  COMMENT_COLUMNS, CommentPane, CommentPins, applyCommentPatches, commentAnchorOfDraft, commentAttachmentFor, commentBodyParts,
+  CommentPane, CommentPins, applyCommentPatches, commentAnchorOfDraft, commentAttachmentFor, commentBodyParts,
   commentChangesSince, commentDigest, commentDraftOfAnchor, commentFromRow, commentRelativeTime, commentStatusOf, commentThreads,
   isCommentZone, storeStatusOf, useComments,
   type CommentAnchor, type CommentController, type CommentPaneProps, type CommentRecord,
@@ -88,19 +88,6 @@ const comments = () => ROWS.map(item => commentFromRow(item));
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
-
-test('Deprecated stand-in: COMMENT_COLUMNS keeps the retired table\'s names, and nothing reads them', () => {
-  assert.deepEqual({ ...COMMENT_COLUMNS }, {
-    body: 'Body', scope: 'Deck', anchor: 'Slide', thread: 'Thread', author: 'Author', x: 'X', y: 'Y', w: null, h: null,
-    status: 'Status',
-    needs: 'Needs', options: 'Options', answer: 'Answer', answeredAt: 'Answered at', change: 'Change',
-    changedAt: 'Changed at', example: 'Example', attachments: 'Attachments', editedAt: 'Edited at', time: null,
-    answerTo: 'Answer to',
-  });
-  assert.equal(ui.readCommentRow(ROWS[0]), null);
-  assert.deepEqual(ui.commentAuthorCandidates(['Flo']), []);
-  assert.equal(ui.isRefusedChoice(new Error('x')), false);
-});
 
 test('commentFromRow reads a store row: page, anchors, place, options and the author the server names', () => {
   const [first, second, third] = comments();
@@ -212,7 +199,7 @@ test('commentDigest: heading, reply instructions and one line per change', () =>
   assert.match(lines[2]!, /operation reply, comment_id set to the thread id/);
   assert.match(text, /- Slide 1 "Intro", pin at x 0\.25, y 0\.50: Flo commented "Tighten the title"; status Open \(thread c1\)/);
   assert.match(text, /- Slide 2 "Plan", on the whole slide, no pin: Flo resolved Flo: "Old note"; status Resolved \(thread c4\)/);
-  const empty = commentDigest({ scope: null, comments: [], anchors: [], changes: [], nowIso: 'x' }, { heading: 'Review', table: 'Notes' });
+  const empty = commentDigest({ scope: null, comments: [], anchors: [], changes: [], nowIso: 'x' }, { heading: 'Review' });
   assert.match(empty, /^# Review: Deck/);
   assert.match(empty, /- No changes\./);
 });
@@ -247,8 +234,12 @@ test('commentRelativeTime speaks English and French', () => {
 test('@notis/sdk/ui exports the pane and its pieces', () => {
   for (const name of ['CommentPane', 'CommentPins', 'useComments', 'commentFromRow', 'commentAnchorOfDraft',
     'commentDigest', 'COMMENT_WORDS', 'CommentToolBar', 'useCommentRouting', 'useCommentFocusParam',
-    'COMMENT_FOCUS_PARAM', 'CommentThreadCard', 'NewCommentBox', 'CommentAvatar', 'COMMENT_COLUMNS']) {
+    'COMMENT_FOCUS_PARAM']) {
     assert.ok(name in ui, `${name} is exported`);
+  }
+  for (const name of ['CommentThreadCard', 'NewCommentBox', 'CommentAvatar', 'COMMENT_COLUMNS', 'readCommentRow',
+    'commentAuthorCandidates', 'isRefusedChoice', 'PASSAGE_COLUMNS', 'readPassage', 'passageProperties']) {
+    assert.ok(!(name in ui), `${name} is no longer exported`);
   }
 });
 
@@ -729,8 +720,7 @@ test('An agent signs with its band name read out and its harness logo; the logo 
     { ...row('c3', { body: 'No runtime recorded', author: 'john-trash', slide: 'slide-1', createdAt: '2026-10-21T12:00:00.000Z' }),
       agent: { name: 'john-trash' } },
   ];
-  const authors = ['Flo', 'Notis', 'fred-and-the-machine', 'john-trash'];
-  await mount(<Harness {...base} authors={authors} />, fakeRuntime(rows, []));
+  await mount(<Harness {...base} />, fakeRuntime(rows, []));
   const reply = doc.querySelector('[data-comment="r1"]')!;
   assert.equal(reply.querySelector('.nui-comment-author')!.textContent, 'Fred And The Machine');
   assert.equal(reply.querySelector('.nui-comment-avatar')!.textContent, 'F');
@@ -782,7 +772,7 @@ test('An agent signs with its band name read out and its harness logo; the logo 
   assert.equal(doc.querySelector('[data-thread="c1"] > header [data-part="agent-runtime"]'), null, 'a person: no logo');
 
   // French: the Portal's words.
-  await mount(<Harness {...base} authors={authors} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
+  await mount(<Harness {...base} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
   assert.equal(doc.querySelector('[data-comment="r1"] [data-part="agent-runtime"]')!.getAttribute('aria-label'),
     'Fred And The Machine · Codex · Intelligence : Élevé · Vitesse : Rapide · Modèle : gpt-5.5-codex');
 });
@@ -1983,7 +1973,7 @@ const pinTexts = () => [...doc.querySelectorAll('.nui-comment-pin:not([data-draf
 
 test('Author is the signed-in viewer under the host: Send waits until the viewer is known, never a fallback name', async () => {
   const calls: Call[] = [];
-  await mount(<Harness {...base} me="Flo" />, fakeRuntime(ROWS, calls, { comments: { viewer: undefined } }));
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls, { comments: { viewer: undefined } }));
   assert.equal(controller!.canWrite, false);
   await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
   await settle();
@@ -1994,7 +1984,7 @@ test('Author is the signed-in viewer under the host: Send waits until the viewer
   assert.equal(writes(calls, 'insert').length, 0, 'nothing is sent as Flo');
 
   const named: Call[] = [];
-  await mount(<Harness {...base} me="Flo" />, fakeRuntime(ROWS, named, { comments: { viewer: { name: 'Ana', canEditSpace: true } } }));
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, named, { comments: { viewer: { name: 'Ana', canEditSpace: true } } }));
   assert.equal(controller!.canWrite, true);
   assert.equal(controller!.me, 'Ana');
   await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
@@ -2289,22 +2279,6 @@ test('Older Spaces keep working: deleting, cancelDelete, confirmDelete and the r
   assert.deepEqual(calls.at(-1), { op: 'remove', input: { id: 'r1' } }, 'confirmDelete deletes at once');
   await act(async () => { controller!.setStatusFilter('resolved'); });
   assert.equal(controller!.statusFilter, 'done');
-});
-
-test('A Space built for the Comments database still works: useComments({ database: \'comments\' }) reads and writes the store', async () => {
-  const calls: Call[] = [];
-  await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  const today = controller!.threads.map(thread => thread.root.recordKey);
-  const old = { ...base, database: 'comments', list: 'comments', me: 'Flo', authors: ['Flo', 'Notis'], fallbackAuthor: 'Notis',
-    columns: { scope: 'Deck', anchor: 'Slide' }, pageSize: 50 } as UseCommentsOptions;
-  const runtime = fakeRuntime(ROWS, calls);
-  await mount(<Harness {...old} />, runtime);
-  assert.deepEqual(controller!.threads.map(thread => thread.root.recordKey), today, 'the same threads, from the store');
-  assert.ok(storeOf(withHostPanel(runtime)).reads() > 0, 'read through the comment store');
-  const c2 = controller!.threads.find(thread => thread.root.recordKey === 'c2')!.root;
-  await act(async () => { controller!.actions.archive(c2); });
-  await settle();
-  assert.deepEqual(calls, [{ op: 'archive', input: { root_id: 'c2' } }], 'written to the store, never as a Space action');
 });
 
 test('On a touch screen a delete\'s Undo toast stays 8 seconds, or until dismissed; desktop keeps 6 seconds', async () => {

@@ -247,8 +247,5 @@ export { isInteractionElementVisible } from './interactions/visibility';
 
 export type { AgentContextContent, AgentContextItem, ContextAttachment } from './agentContext';
 export { useAgentContext } from './hooks/useAgentContext';
-// Deprecated stand-ins: comments live in the host Comments panel; Cite and Comment come with every Space page.
-export { NotisCommentBoundary, NotisCommentBox } from './compat/comments';
-export type { NotisCommentBoundaryProps, NotisCommentBoxProps } from './compat/comments';
 export { VIEW_PERIODS, isViewDate, isViewPeriod, resolveViewPeriod } from './viewPeriod';
 export { journalViewParams, tasksViewParams, tasksViewFilter } from './standardViewParams';

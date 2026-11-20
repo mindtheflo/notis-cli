@@ -25,7 +25,7 @@ import { useEscapeLayer, useToolkitLocale } from '../engine/hooks';
 import {
   applyCommentPatches, clipCommentAnswer, commentAttachmentList, commentChangesSince, commentDigest, commentFromRow,
   commentThreads, commentTimeOf, inCommentScope, isCommentOnAnchor, newCommentId, writeCommentClipboard,
-  type CommentAnchor, type CommentColumns, type CommentDigestOptions, type CommentGroup, type CommentMode,
+  type CommentAnchor, type CommentDigestOptions, type CommentGroup, type CommentMode,
   type CommentPassage, type CommentPatch, type CommentRecord, type CommentScope, type CommentThread,
 } from './commentModel';
 import { commentDraftKey, forgetCommentDraft, hasDraftContent, readCommentDraft, writeCommentDraft } from './commentDrafts';
@@ -112,10 +112,6 @@ export interface CommentActions {
 }
 
 export interface UseCommentsOptions {
-  /** @deprecated Comments live in the Space's one comment store: ignored. */
-  list?: string;
-  /** @deprecated Comments live in the Space's one comment store: ignored. */
-  database?: string;
   /**
    * The page (record) the comments belong to: they are read from and written on it. Default: the page the host shows
    * (`spaceComments.page`), else the Space home. Null: the Space home, which lists every comment of the Space grouped
@@ -126,22 +122,12 @@ export interface UseCommentsOptions {
   anchors?: readonly CommentAnchor[];
   /** The anchor on screen (its record key): the pane's "this item" filter and where pins are placed. */
   anchorKey?: string | null;
-  /** @deprecated The server signs every comment with the viewer: ignored. */
-  me?: string;
-  /** @deprecated The server names every author: ignored. */
-  authors?: readonly string[];
-  /** @deprecated The server names every author: ignored. */
-  fallbackAuthor?: string;
-  /** @deprecated Comments live in the Space's one comment store: ignored. */
-  columns?: Partial<CommentColumns>;
   /** Wording of the digest Copy changes puts on the clipboard. */
   digest?: CommentDigestOptions;
   /** Saves the checkpoint after a copy (for example the scope's "Last turn at"). A throw rolls the checkpoint back. */
   onCheckpoint?(at: string): Promise<void>;
   /** The Space's own wording on top of the defaults. */
   words?: Partial<Record<CommentWordKey, Words>>;
-  /** @deprecated The store answers every comment of the page: ignored. */
-  pageSize?: number;
   /** Lists the comments again whenever the host says they may have changed. Default true. */
   live?: boolean;
   /** Called when a thread is picked (a pin, a card): the Space can move to its anchor and open its panel. */
@@ -360,11 +346,11 @@ function touchScreen(): boolean {
 /**
  * The link that opens the page with one comment thread revealed: the host's (`commentLink`, a full address that names
  * the thread's own page, possibly later as a promise), else the page's own address with `comment=<root id>` (any
- * earlier comment param replaced). Null when neither is known. `database` is ignored (deprecated).
+ * earlier comment param replaced). Null when neither is known.
  */
 export function commentLinkFor(
   host: { commentLink?(input: { rootId: string }): string | null | Promise<string | null> } | null | undefined,
-  rootKey: string, _database?: string): string | null | Promise<string | null> {
+  rootKey: string): string | null | Promise<string | null> {
   if (!rootKey) return null;
   if (host?.commentLink) {
     try {

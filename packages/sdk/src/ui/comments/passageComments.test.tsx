@@ -11,7 +11,7 @@ import type { SpaceCommentRow, SpaceCommentsTransport } from '../../space';
 import { w } from '../../words';
 import {
   CommentableRichText, CommentableText, PassageCommentPane, commentFromRow, locatePassage, markdownReadableText,
-  passageAt, passageOffset, passageProperties, readPassage, usePassageComments, type PassageCommentController,
+  passageAt, passageOffset, usePassageComments, type PassageCommentController,
   type PassageField,
 } from '.';
 import {
@@ -76,15 +76,13 @@ const FIELDS: PassageField[] = [
   { key: 'bodyFr', label: w('Body', 'Corps'), group: 'FR', markdown: true },
 ];
 
-test('A text comment names its field by key in the store; the old passage helpers are inert stand-ins', () => {
+test('A text comment names its field by key in the store', () => {
   const comment = commentFromRow(commentRow({ id: 'c1', page_key: 'ik1', mode: 'text', field: 'bodyFr', quote: 'quelques mots',
     prefix: 'avec ', suffix: '' }));
   assert.deepEqual(comment.passage, { field: 'bodyFr', quote: 'quelques mots', prefix: 'avec ', suffix: '' });
   assert.equal(commentFromRow(commentRow({ id: 'c2', mode: 'text', field: 'bodyFr', quote: '  ' })).passage, null,
     'no quote: not a passage');
   assert.equal(commentFromRow(commentRow({ id: 'c3', mode: 'page', quote: 'x' })).passage, null, 'only text mode has one');
-  assert.equal(readPassage({ properties: {} }, FIELDS), null);
-  assert.deepEqual(passageProperties({ field: 'bodyFr', quote: 'q', prefix: '', suffix: '' }, FIELDS[3]!), {});
 });
 
 // ---------------------------------------------------------------------------

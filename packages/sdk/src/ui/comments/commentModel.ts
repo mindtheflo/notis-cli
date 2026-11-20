@@ -33,17 +33,6 @@ export type CommentMode = 'text' | 'point' | 'box' | 'items' | 'time' | 'page';
 /** The words a text comment sits on; `field` names the field of the page they are in, when one does. */
 export interface CommentPassage { quote: string; prefix: string; suffix: string; field?: string | null }
 
-/**
- * @deprecated Comments live in the Space's comment store: there are no columns to name. Kept so older Spaces that
- * pass `columns` still compile; it is ignored.
- */
-export interface CommentColumns {
-  body: string; scope: string | null; anchor: string | null; thread: string; author: string; x: string; y: string;
-  w: string | null; h: string | null; status: string; needs: string; options: string; answer: string; answeredAt: string;
-  change: string; changedAt: string; example: string; attachments: string | null; editedAt: string | null;
-  time: string | null; answerTo: string | null;
-}
-
 export interface CommentRecord {
   id: string; recordKey: string; revision: number; body: string; scopeIds: string[]; anchorIds: string[];
   thread: string; author: string; x: number | null; y: number | null; w: number | null; h: number | null; status: CommentStatus; needs: CommentNeeds;
@@ -460,12 +449,8 @@ export interface CommentDigestOptions {
   scopeNoun?: string;
   /** What an anchor is called ("Slide"): "Slide 3" and "Unknown slide". */
   anchorNoun?: string;
-  /** @deprecated Agents reply through the comment tool, not into a table: ignored. */
-  table?: string;
   /** The reader whose answers and status changes the digest reports. Default "Flo". */
   me?: string;
-  /** @deprecated Comments have no columns any more: ignored. */
-  columns?: Partial<CommentColumns>;
 }
 
 /** True when the comment marks a zone (a pin with a width and a height), not a point. */

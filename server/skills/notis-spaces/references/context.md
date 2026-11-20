@@ -66,12 +66,9 @@ ready to comment on. That comment is stored by Notis, not by the app, and agents
 reach it through `LOCAL_NOTIS_SPACE_COMMENT_THREADS` ([Comments](sdk.md#comments)).
 Never build your own comment box or selection bar for this.
 
-`NotisCommentBoundary` and `NotisCommentBox` are deprecated: the boundary only
-renders its children and the box renders nothing, so older Spaces keep loading.
-Do not add them; remove them when you touch a view. For an image point, chart state
-or another reference the person wants to bring to chat, call `useAgentContext().add`
-from your own control; for a pin or a zone that should stay as a comment, use the
-comment modes of `useComments`.
+For an image point, chart state or another reference the person wants to bring to
+chat, call `useAgentContext().add` from your own control; for a pin or a zone that
+should stay as a comment, use the comment modes of `useComments`.
 
 Use `NotisSelectionBoundary` when copy/paste should name a specific resource. It
 preserves ordinary clipboard text and source metadata so normal paste into

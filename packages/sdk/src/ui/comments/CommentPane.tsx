@@ -11,7 +11,7 @@
  *   a click drops a pin, a press and drag marks a zone (when the table has zone columns). The pane's "Comment on this
  *   item" starts a comment on the whole anchor, with no pin.
  * - `CommentToolBar`: the comment tool bar on the page, one button per mode, toggled with C (SPC-118).
- * - `CommentThreadCard`, `NewCommentBox` and `CommentAvatar` for Spaces that lay the pane out themselves.
+ * - `CommentThreadCard`, `NewCommentBox` and `CommentAvatar`: the pane's own pieces, also drawn by the passage pane.
  *
  * A card archives (E) and unarchives (Shift+E) with an Undo toast (Z), edits your own comments in place and deletes at
  * once with Undo, as the viewer's rights allow. At its top, "Thread <title>" names the thread that owns it (or "Goes to"

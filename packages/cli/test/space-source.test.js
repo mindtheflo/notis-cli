@@ -645,10 +645,7 @@ test('agents wake on the Space comments (on: comments) or watch a database resou
   // A database agent keeps its event inside on, and may rename columns.
   validateSpaceAgents([{ id: 'tasks', on: { database: 'tasks', event: 'created' }, columns: { thread: 'Conversation' } }], resources);
   validateSpaceAgents([{ id: 'reviewer', on: 'comments' }, { id: 'tasks', on: { database: 'tasks' } }], resources);
-  // An older Space's agent on its comments database still builds: the server reads an agent on a comment-shaped
-  // database as on: 'comments' (the CLI cannot see the database's columns, so it never refuses that form).
-  validateSpaceAgents([{ id: 'reviewer', on: { database: 'comments', event: 'changed' }, columns: { thread: 'Thread' } }],
-    { ...resources, comments: { kind: 'database' } });
+  // A database agent watches that database's rows only; comments wake on: 'comments' agents (SPC-671).
   const refused = [
     [[{ id: 'reviewer', on: 'comments', columns: { thread: 'Thread' } }], /comments and takes id, on, event, thread, runtime, skill, wake only/],
     [[{ id: 'reviewer', on: 'comment' }], /on: 'comments'/],

@@ -14,10 +14,10 @@ const SCOPE: CommentScope = { id: 'issue-1', recordKey: 'issue-1', name: 'Week 4
 
 /** A newsletter issue: a subject and a body per language, each a field comments can sit on. */
 const FIELDS: PassageField[] = [
-  { key: 'subjectEn', label: w('Subject', 'Objet'), group: 'EN', values: { Field: 'Subject', Language: 'EN' } },
-  { key: 'bodyEn', label: w('Body', 'Corps'), group: 'EN', markdown: true, values: { Field: 'Body', Language: 'EN' } },
-  { key: 'subjectFr', label: w('Subject', 'Objet'), group: 'FR', values: { Field: 'Subject', Language: 'FR' } },
-  { key: 'bodyFr', label: w('Body', 'Corps'), group: 'FR', markdown: true, values: { Field: 'Body', Language: 'FR' } },
+  { key: 'subjectEn', label: w('Subject', 'Objet'), group: 'EN' },
+  { key: 'bodyEn', label: w('Body', 'Corps'), group: 'EN', markdown: true },
+  { key: 'subjectFr', label: w('Subject', 'Objet'), group: 'FR' },
+  { key: 'bodyFr', label: w('Body', 'Corps'), group: 'FR', markdown: true },
 ];
 
 const VALUES = {

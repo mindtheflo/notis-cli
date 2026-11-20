@@ -20,8 +20,6 @@ export type PassageOpenedFrom = 'passage' | 'pane' | 'quote' | 'link';
 export interface UsePassageCommentsOptions extends Omit<UseCommentsOptions, 'anchors' | 'anchorKey' | 'onSelectThread'> {
   /** The text properties comments can sit on, in reading order. */
   fields: readonly PassageField[];
-  /** @deprecated A passage is kept in the comment store (`field`, `quote`, `prefix`, `suffix`): ignored. */
-  passageColumns?: Partial<Record<'field' | 'quote' | 'prefix' | 'suffix', string>>;
   /**
    * Each field's value as edited on screen, by field key: a thread whose words are no longer there reads Text
    * changed, and threads list in reading order. A field left out is never marked changed.

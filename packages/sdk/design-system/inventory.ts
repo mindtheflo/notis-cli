@@ -218,21 +218,12 @@ function declaredName(value: unknown): string | undefined {
   return undefined;
 }
 
-/** Marks a deprecated stand-in of a removed component (`src/compat`): it renders nothing and has no specimen. */
-const STAND_IN = Symbol.for('notis.sdk.standIn');
-
-/** Whether an export is a deprecated stand-in (`src/compat`), kept only so older Space bundles still load. */
-export function isStandIn(value: unknown): boolean {
-  return Boolean(value && (typeof value === 'function' || typeof value === 'object') && (value as Record<symbol, unknown>)[STAND_IN]);
-}
-
-/** The component values, each once, with all its exported names (aliases) and entries. Stand-ins are left out. */
+/** The component values, each once, with all its exported names (aliases) and entries. */
 export function componentValues(entries: EntryModules, classified = classifyExports(entries)): ComponentValue[] {
   const byValue = new Map<unknown, ComponentValue>();
   for (const item of classified) {
     if (item.kind !== 'component' || !isComponentEntry(item.entry)) continue;
     const value = entries[item.entry][item.name];
-    if (isStandIn(value)) continue;
     let found = byValue.get(value);
     if (!found) {
       found = { name: item.name, names: [], entries: {}, value };
