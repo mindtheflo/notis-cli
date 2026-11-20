@@ -1637,7 +1637,11 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
 .nui-comment-card[data-buttons]:is(*, :has(.nui-comment-reply:is(:hover, :focus-within)), [data-selected]:has(.nui-comment-reply[data-tapped]))
   :is(.nui-comment-actions, .nui-comment-reply-head > .nui-comment-reply-actions) {
   position: static; transform: none; z-index: auto; flex: none; align-self: center; margin-block: -3px; margin-inline-start: auto;
-  padding: 0; gap: 0; background: none; box-shadow: none; visibility: visible; opacity: 1; pointer-events: auto; }
+  padding: 0; gap: 0; visibility: visible; opacity: 1; pointer-events: auto; }
+/* Their floating chip is off. Kept out of the rule above, whose selector names a focus state: no rule on a focus state
+   sets a shadow (focus draws no ring, docs/portal-design-system.md), and only the chip's own rule sets one. */
+.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-head > .nui-comment-reply-actions) {
+  background: none; box-shadow: none; }
 .nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn {
   width: 22px; height: 22px; min-width: 22px; padding: 0; color: hsl(var(--muted-foreground)); opacity: .55; }
 .nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn:is(:hover, :focus-visible) {
