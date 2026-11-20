@@ -1238,6 +1238,32 @@ test('Thread cards select with Enter, and a pin selects its thread', async () =>
   assert.deepEqual(picked, ['c2', 'c1']);
 });
 
+test('A thread picked in the pane brings its pin into view when the page is away from it, a pressed pin stays put', async () => {
+  const proto = dom.window.HTMLElement.prototype as HTMLElement & { scrollIntoView?: (arg?: unknown) => void };
+  const original = proto.scrollIntoView;
+  const rect = proto.getBoundingClientRect;
+  const scrolled: string[] = [];
+  proto.scrollIntoView = function (this: HTMLElement) { scrolled.push(this.textContent ?? ''); };
+  // Every pin sits below the window.
+  proto.getBoundingClientRect = function (this: HTMLElement) {
+    return this.classList.contains('nui-comment-pin')
+      ? { top: 2000, bottom: 2020, left: 0, right: 20, width: 20, height: 20, x: 0, y: 2000, toJSON() {} } as DOMRect
+      : rect.call(this);
+  };
+  try {
+    await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
+    const card = doc.querySelector('[data-thread="c2"]') as HTMLElement;
+    card.focus();
+    await key(card, 'Enter');
+    assert.deepEqual(scrolled, ['4'], 'the picked card\'s pin is scrolled to');
+    await click(doc.querySelectorAll('.nui-comment-pin')[0]!);
+    assert.deepEqual(scrolled, ['4'], 'a pressed pin is already in view: the page does not move');
+  } finally {
+    proto.scrollIntoView = original;
+    proto.getBoundingClientRect = rect;
+  }
+});
+
 test('Copy changes: copies the digest, records the checkpoint and empties the count', async () => {
   const written: string[] = [];
   Object.defineProperty(dom.window.navigator, 'clipboard', {

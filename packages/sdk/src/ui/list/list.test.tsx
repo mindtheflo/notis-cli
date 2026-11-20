@@ -1949,6 +1949,21 @@ test('row tags: a tag still being saved shows a spinner where the x goes, a busy
   assert.match(cssRule('.nui-row-tag-spin::after') ?? '', /animation: nui-spin/);
 });
 
+test('row tags: on a phone-width list a tag with an icon shows the icon alone, its name kept for screen readers', async () => {
+  await mount(<Row title="Coding workspaces cleanup" tags={[
+    { id: 'a', label: 'Platform Health', icon: <span>P</span>, onRemove: () => undefined },
+  ]} />);
+  const tag = doc.querySelector('.nui-row-tag')!;
+  assert.equal(tag.getAttribute('title'), 'Platform Health', 'the name shows on hover and long press');
+  assert.equal(tag.querySelector('.nui-row-tag-label')!.textContent, 'Platform Health', 'and stays in the tag for a screen reader');
+  const at = toolkitCss.indexOf('@container nui-lr-list (max-width: 479px)');
+  assert.ok(at >= 0, 'a phone-width list has its own tag rule');
+  const block = toolkitCss.slice(at, toolkitCss.indexOf('\n}', at));
+  assert.match(block, /\.nui-row-tag:has\(> \.nui-row-tag-icon\) > \.nui-row-tag-label \{[^}]*clip: rect\(0 0 0 0\)/,
+    'the name is visually hidden, never display: none');
+  assert.doesNotMatch(block, /\.nui-row-tag-x[^{]*\{[^}]*display: none/, 'the x stays, so a phone can still take a row out of a Space');
+});
+
 test('footer: none, or a falsy one, draws nothing', async () => {
   await mount(list({ footer: null }));
   assert.ok(!q('.nui-lr-footer'));

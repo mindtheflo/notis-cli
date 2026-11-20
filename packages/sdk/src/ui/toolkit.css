@@ -188,6 +188,14 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row-tag-x:disabled { opacity: .4; cursor: default; }
 .nui-row-tag-spin { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 18px; height: 18px; }
 .nui-row-tag-spin::after { content: ""; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid hsl(var(--muted-foreground) / .6); border-top-color: transparent; animation: nui-spin .8s linear infinite; }
+/* A phone-width list keeps its rows' names readable: a tag with an icon shows the icon alone (its name stays its title
+   and what a screen reader hears), so two or three Spaces no longer squeeze a name to a few letters. */
+@container nui-lr-list (max-width: 479px) {
+  .nui-row-tags { max-width: 40%; }
+  .nui-row-tag:has(> .nui-row-tag-icon) { gap: 2px; padding-left: 5px; }
+  .nui-row-tag:has(> .nui-row-tag-icon):not([data-removable]) { padding-right: 5px; }
+  .nui-row-tag:has(> .nui-row-tag-icon) > .nui-row-tag-label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 .nui-row-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .nui-row-more { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; opacity: 0; font-size: 16px; color: hsl(var(--muted-foreground)); }
 .nui-row-more:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
@@ -1481,6 +1489,22 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   background: hsl(var(--primary) / .12); }
 .nui-passage-mark[data-state="selected"] { background: hsl(var(--primary) / .24); }
 .nui-passage-mark[data-state="flash"] { background: hsl(var(--primary) / .35); }
+/* An opened thread's words pulse twice, so the eye finds them after the page scrolls there (a phone's panel closing
+   over them first). Tints only. */
+@keyframes nui-passage-flash {
+  0%, 100% { background-color: hsl(var(--primary) / .3); }
+  25%, 65% { background-color: hsl(var(--primary) / .5); }
+  45% { background-color: hsl(var(--primary) / .26); }
+}
+.nui-passage-mark[data-state="flash"], .nui-passage-text-field[data-state="flash"] {
+  animation: nui-passage-flash 1.2s ease-in-out .2s both;
+}
+/* A pin or zone picked from the pane pops once where it sits on the page. */
+@keyframes nui-comment-pop { 0%, 100% { scale: 1; } 40% { scale: 1.25; } }
+.nui-comment-pin[data-selected] { animation: nui-comment-pop .45s cubic-bezier(.22, 1, .36, 1) .15s; }
+@media (prefers-reduced-motion: reduce) {
+  .nui-passage-mark[data-state="flash"], .nui-passage-text-field[data-state="flash"], .nui-comment-pin[data-selected] { animation: none; }
+}
 /* The words of the comment being written, while its box is open. */
 .nui-passage-mark[data-state="draft"] { background: hsl(var(--primary) / .24); }
 .nui-passage-pick { position: absolute; z-index: 10; white-space: nowrap; }

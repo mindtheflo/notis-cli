@@ -785,10 +785,26 @@ function ShownCommentPins({ controller, anchorKey, onOpen }: CommentPinsProps) {
   const draft = controller.draftPin;
   const drag = controller.dragZone;
   const here = (key ?? null);
+  const pressed = useRef<string | null>(null);
+  const selectedPin = useRef<HTMLButtonElement | null>(null);
   const open = (event: ReactMouseEvent, thread: CommentThread) => {
     event.stopPropagation();
+    pressed.current = thread.root.recordKey;
     if (onOpen) onOpen(thread); else controller.revealThread(thread);
   };
+  // A thread picked in the pane (or a link) brings its pin into view when the page is scrolled away from it: on a phone
+  // the pane closes over the page, and the page is then already on the pin, which pops. A pressed pin stays put.
+  useEffect(() => {
+    const selected = controller.threadKey;
+    if (!selected || pressed.current === selected) { pressed.current = null; return; }
+    const pin = selectedPin.current;
+    const view = pin?.ownerDocument.defaultView;
+    if (!pin || !view) return;
+    const at = pin.getBoundingClientRect();
+    if (at.top >= 0 && at.bottom <= view.innerHeight) return;
+    const still = view.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    pin.scrollIntoView?.({ block: 'center', behavior: still ? 'auto' : 'smooth' });
+  }, [controller.threadKey]);
   const box = (zone: { x: number; y: number; w: number; h: number }) =>
     ({ left: `${zone.x * 100}%`, top: `${zone.y * 100}%`, width: `${zone.w * 100}%`, height: `${zone.h * 100}%` });
   return (
@@ -813,6 +829,7 @@ function ShownCommentPins({ controller, anchorKey, onOpen }: CommentPinsProps) {
           type="button"
           className="nui-comment-pin"
           data-agent={thread.root.author !== controller.me ? '' : undefined}
+          ref={thread.root.recordKey === controller.threadKey ? selectedPin : undefined}
           data-selected={thread.root.recordKey === controller.threadKey ? '' : undefined}
           data-resolved={thread.root.status === 'Resolved' ? '' : undefined}
           style={{ left: `${thread.root.x! * 100}%`, top: `${thread.root.y! * 100}%` }}

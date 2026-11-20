@@ -123,6 +123,8 @@ export interface CollectionInteractionController<T> {
    * that removes the active item continues this way (iOS Photos), else the other way at the edge.
    */
   travelDirection: () => TravelDirection;
+  /** Moves the active item one step, as J/K or the arrows do (a swipe between open items on a phone). */
+  move: (direction: CollectionNavigationDirection) => void;
   getActionBarProps: () => Pick<MultiSelectActionBarProps, 'selectedCount' | 'actions' | 'collectionOwnerId' | 'isAvailable' | 'shortcutsEnabled' | 'onClearSelection'>;
 
   isSelected: (id: string) => boolean;
@@ -325,7 +327,7 @@ export function useCollectionInteractions<T>(
     const next = id && selectableIdsRef.current.includes(id) ? id : null;
     if (activeIdRef.current === next) return;
     // A click or focus further up or down sets the way; keys set it themselves (moveActive), a wrap included.
-    const travel = reason === 'items-changed' ? null : travelBetween(selectableIdsRef.current, activeIdRef.current, next);
+    const travel = reason === 'items-changed' || reason === 'navigate' ? null : travelBetween(selectableIdsRef.current, activeIdRef.current, next);
     if (travel) travelRef.current = travel;
     activeIdRef.current = next;
     if (controlledActiveId === undefined) setUncontrolledActiveId(next);
@@ -515,8 +517,9 @@ export function useCollectionInteractions<T>(
       keyboardRangeBaseRef.current = new Set();
       setAnchor(next, 'navigate');
     }
-    setActive(next, extend ? 'range' : 'navigate');
+    // Set before the change is reported, so the page reads the way of this very move (a wrap included).
     travelRef.current = forward ? 'next' : 'previous';
+    setActive(next, extend ? 'range' : 'navigate');
     const nextId = next;
     requestAnimationFrame(() => focusItem(nextId));
   }, [focusItem, replaceRange, setActive, setAnchor]);
@@ -689,6 +692,7 @@ export function useCollectionInteractions<T>(
 
   const getSelectedItems = useCallback(() => getItemsForIds(selectedIdsRef.current), [getItemsForIds]);
   const travelDirection = useCallback(() => travelRef.current, []);
+  const move = useCallback((direction: CollectionNavigationDirection) => moveActive(direction), [moveActive]);
   const isSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
 
   const actionContext = useMemo<CollectionActionContext<T>>(() => ({
@@ -757,6 +761,7 @@ export function useCollectionInteractions<T>(
     dragRect,
     actions: resolvedActions,
     travelDirection,
+    move,
     getActionBarProps,
     isSelected,
     getSelectedItems,
