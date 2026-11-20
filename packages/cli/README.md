@@ -1009,6 +1009,67 @@ Examples:
 - `npx --package @notis_ai/cli@latest -- notis computer ssh --revoke <key_id>`
 
 
+## Repository secrets
+
+Keep a repository's secrets encrypted for your team (or for you alone without a team): single variables, such as `STRIPE_SECRET_KEY`, or whole env files named by their path in the repository, such as `server/.env`. Notis never shows a value again, to you or anyone: `list` answers names, kinds, who set each one and when. `set` reads the value here (`--file` or `--stdin`, never an argument) and any team member can replace one. `exec` runs a command with the repository's secrets as environment variables, never as a file: everything after `--` is the command, and it never prints a value (names of secrets it left out go to stderr). Branch dev servers get them this way. Agents use `LOCAL_NOTIS_LIST_REPOSITORY_SECRETS` and `LOCAL_NOTIS_MANAGE_REPOSITORY_SECRETS`, which never return a value; people use Settings, Cloud Computer, Repository secrets.
+
+### `npx --package @notis_ai/cli@latest -- notis repository-secrets list`
+
+List the repository secrets of your team (or your own): names, kinds, who set each one and when.
+
+When to use: See which variables and env files Notis keeps for a repository. Values are never shown.
+
+Options:
+- `--repository <name>` — Only this repository.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets list`
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets list --repository notis`
+
+### `npx --package @notis_ai/cli@latest -- notis repository-secrets set`
+
+Store or replace a variable or an env file as a repository secret, encrypted. It is never shown again.
+
+When to use: Give the team's dev servers a key (--name STRIPE_SECRET_KEY --stdin) or a whole env file (--file server/.env). Any team member can replace one.
+
+Options:
+- `--repository <name>` — The repository's short name, such as notis.
+- `--name <name>` — A variable's name, such as STRIPE_SECRET_KEY, or the env file's path in the repository, such as server/.env (defaults to --file).
+- `--file <path>` — Read the value from this file.
+- `--stdin` — Read the value from standard input.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets set --repository notis --file server/.env`
+- `printf %s "$KEY" | notis repository-secrets set --repository web --name STRIPE_SECRET_KEY --stdin`
+
+### `npx --package @notis_ai/cli@latest -- notis repository-secrets delete`
+
+Remove a repository secret.
+
+When to use: A variable or env file the repository no longer needs.
+
+Options:
+- `--repository <name>` — The repository's short name, such as notis.
+- `--name <name>` — The variable's name or the env file's path, such as server/.env.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets delete --repository notis --name portal/.env.local`
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets delete --repository web --name STRIPE_SECRET_KEY`
+
+### `npx --package @notis_ai/cli@latest -- notis repository-secrets exec [command...]`
+
+Run a command with the repository's secrets as environment variables. Never prints a value.
+
+When to use: Start a dev server or a script that needs the repository's keys, without writing them to a file. Everything after -- is the command; it gets your environment plus the secrets, and NOTIS_REPOSITORY_SECRET_NAMES lists their names. Needs a CLI sign-in that can write.
+
+Options:
+- `--repository <name>` — The repository's short name, such as notis.
+
+Examples:
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets exec --repository notis -- ./dev.sh`
+- `npx --package @notis_ai/cli@latest -- notis repository-secrets exec --repository web -- npm run dev`
+
+
 ## Generic Tools
 
 ### `npx --package @notis_ai/cli@latest -- notis tools toolkits`

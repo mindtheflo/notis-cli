@@ -57,6 +57,7 @@ function renderReadme() {
   const agentSpecs = specsFor('agents');
   const skillSpecs = specsFor('skills');
   const computerSpecs = specsFor('computer');
+  const repositorySecretSpecs = specsFor('repository-secrets');
   const handoverSpecs = specsFor('handover');
   const toolSpecs = specsFor('tools');
   const ccSpecs = specsFor('cc');
@@ -201,6 +202,12 @@ Open SSH from this device to your Cloud Computer. The first \`notis computer ssh
 \`notis computer status\` says when your Cloud Computer stopped answering. \`notis computer restart\` restarts it with its files kept; \`notis computer recover\`, only after a restart failed, brings it back from its last save and loses what came after. Both show what they will do and ask first.
 
 ${computerSpecs.map(renderCommandBlock).join('\n')}
+
+## Repository secrets
+
+Keep a repository's secrets encrypted for your team (or for you alone without a team): single variables, such as \`STRIPE_SECRET_KEY\`, or whole env files named by their path in the repository, such as \`server/.env\`. Notis never shows a value again, to you or anyone: \`list\` answers names, kinds, who set each one and when. \`set\` reads the value here (\`--file\` or \`--stdin\`, never an argument) and any team member can replace one. \`exec\` runs a command with the repository's secrets as environment variables, never as a file: everything after \`--\` is the command, and it never prints a value (names of secrets it left out go to stderr). Branch dev servers get them this way. Agents use \`LOCAL_NOTIS_LIST_REPOSITORY_SECRETS\` and \`LOCAL_NOTIS_MANAGE_REPOSITORY_SECRETS\`, which never return a value; people use Settings, Cloud Computer, Repository secrets.
+
+${repositorySecretSpecs.map(renderCommandBlock).join('\n')}
 
 ## Generic Tools
 
