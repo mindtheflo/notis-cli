@@ -509,6 +509,18 @@ again. Keep a fallback (a Manager draft) for Sites, previews offline and viewers
 who do not allow it. Declare it only when the page's core controls run on the
 cloud computer.
 
+## Connected apps
+
+`useConnection('github')` answers the signed-in viewer's own account in a connected
+app (`connected`, `account`, `status`) with no declaration, and `connect()` opens
+the Portal's connect flow: call it straight from the button's click (the host
+refuses otherwise); it resolves true once the account works. It answers
+`available: false` on Sites, links and in verification; keep a link to
+Integrations there. The connected app never signs `gh` in on the Cloud Computer:
+to connect GitHub in one visible step, show one card that calls `connect()`, then
+runs GitHub CLI's device code on the Cloud Computer and shows the code and link
+inline. Never ask for a GitHub token in a page.
+
 ## Functions
 
 `functions` in `defineSpace` gives the Space its own server-side code, for logic one

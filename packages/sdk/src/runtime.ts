@@ -11,7 +11,7 @@ import type { AgentContextContent, AgentContextItem, AgentContextSource } from '
 import type { ComponentType, ReactNode } from 'react';
 import type { NotisQueryClient } from './queryCache';
 import type { NotisSpaceSkeleton } from './skeleton';
-import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceFilesTransport, SpaceThreadsTransport, SpaceThreadItemTransport, SpaceCommentsTransport } from './space';
+import type { SpaceRuntimeDescriptor, SpaceActionOptions, SpaceDocumentBodyRequest, SpaceDocumentBodyResult, SpaceViewerReadOperation, SpaceShownOptions, SpaceCloudComputerTransport, SpaceConnectionsTransport, SpaceFilesTransport, SpaceThreadsTransport, SpaceThreadItemTransport, SpaceCommentsTransport } from './space';
 
 // ---------------------------------------------------------------------------
 // Database types
@@ -622,6 +622,11 @@ export interface NotisRuntime {
    * viewer allows it. Absent on Sites, links, verification harnesses and older hosts.
    */
   spaceCloudComputer?: SpaceCloudComputerTransport;
+  /**
+   * Space-only connected apps (`useConnection`): the signed-in viewer's own account in one app, and the Portal's
+   * connect flow from the person's click. Absent on Sites, links, verification harnesses and older hosts.
+   */
+  spaceConnections?: SpaceConnectionsTransport;
   /**
    * Space-only files attached from a view to a database's files column (comment pictures): the signed-in Editor's
    * own upload into Notis's private EU storage. Absent on Sites, previews, verification harnesses and older hosts.

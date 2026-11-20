@@ -519,6 +519,30 @@ export type SpaceCloudComputerJobOperation = 'job.status' | 'job.logs' | 'job.ca
 export type SpaceCloudComputerTransferOperation = 'transfer.begin' | 'transfer.status' | 'transfer.commit' | 'transfer.abort';
 export type SpaceCloudComputerOperation = 'facts' | 'run' | 'upload' | SpaceCloudComputerJobOperation | 'service.lease'
   | 'service.access' | 'folder' | SpaceCloudComputerTransferOperation | 'import';
+/**
+ * The signed-in viewer's own account in one connected app (`useConnection`). `available` is false where the host
+ * cannot answer (Sites, shared links, verification, previews offline, older hosts). `status` is the newest account's
+ * state (`ACTIVE`, `EXPIRED`, `FAILED`...), null when there is none. `account` is the GitHub login for GitHub, else
+ * the name the person gave the account, else null. Never a credential.
+ */
+export interface SpaceConnection {
+  toolkit: string;
+  available: boolean;
+  connected: boolean;
+  account: string | null;
+  status: string | null;
+}
+/**
+ * The host's connected-app transport for a Space view: read the viewer's own account, and open the Portal's
+ * connect flow. `connect` must be called from the person's own click (the host refuses otherwise) and resolves
+ * once the account works, the person closed the window, or it timed out.
+ */
+export interface SpaceConnectionsTransport {
+  read(toolkit: string): Promise<SpaceConnection>;
+  connect(toolkit: string): Promise<SpaceConnection>;
+}
+/** A toolkit slug such as `github`. */
+export const SPACE_TOOLKIT_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export interface SpaceCloudComputerStatus {
   level: SpaceCloudComputerLevel;
   approved: boolean;
@@ -1490,7 +1514,8 @@ export function guardSpaceRuntime(runtime: NotisRuntime | null, onProtocolError?
       return floorResult(await shown<TResult>(name, visible, options), floor, learnOf(list.database));
     } : undefined,
     handover: undefined,
-    ...(asPublic ? { spaceFiles: undefined } : {}),
+    // View as the public never reads the editor's own connected apps.
+    ...(asPublic ? { spaceFiles: undefined, spaceConnections: undefined } : {}),
     // The legacy facts hook keeps working in a Space that declares the cloud computer.
     cloudComputerFacts: cloudComputer && cloudLevel ? async (options?: { refresh?: boolean }) => guardedCloud('facts').facts(options) : undefined,
     spaceCloudComputer: cloudComputer && cloudLevel ? Object.freeze({
