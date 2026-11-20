@@ -272,6 +272,8 @@ and the same shape for `install` and `update` below.
    `notis skills read --target '<onboarding_skill.target as JSON>'`. Never ask again
    for what you already know about the person. During Notis onboarding the Skill
    never asks for the basics again and never completes onboarding: Notis does.
+   An update never repeats the Space's setup: its `onboarding_skill` is null
+   unless the new version adds the Space's first onboarding Skill.
 
 If the answer is `plan_required`, installing with Notis needs a plan or the free
 trial. Offer its `subscribe_url`, or installing it with another agent through the
