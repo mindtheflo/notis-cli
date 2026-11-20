@@ -554,10 +554,14 @@ test('httpRequest does not retry on 401 when the on-disk JWT matches the in-memo
 });
 
 test('getApiBase defaults to live APIs and ignores stale localhost / Conductor ports', () => {
-  const originalConductorPort = process.env.CONDUCTOR_PORT;
-  const originalApiBase = process.env.NOTIS_API_BASE;
-  delete process.env.CONDUCTOR_PORT;
+  // getApiBase reads NOTIS_API_BASE, and NOTIS_JWT through routingProfile (a
+  // shell-exported token keeps a signed-out profile's pin). Clear both so the
+  // tester's own sign-in cannot change the answer; restore them afterwards.
+  const savedEnv = Object.fromEntries(
+    ['CONDUCTOR_PORT', 'NOTIS_API_BASE', 'NOTIS_JWT'].map((name) => [name, process.env[name]]),
+  );
   delete process.env.NOTIS_API_BASE;
+  delete process.env.NOTIS_JWT;
   process.env.CONDUCTOR_PORT = '55000';
   try {
     const staleLocalhost = getApiBase(
@@ -652,15 +656,12 @@ test('getApiBase defaults to live APIs and ignores stale localhost / Conductor p
       );
     }
   } finally {
-    if (originalConductorPort) {
-      process.env.CONDUCTOR_PORT = originalConductorPort;
-    } else {
-      delete process.env.CONDUCTOR_PORT;
-    }
-    if (originalApiBase) {
-      process.env.NOTIS_API_BASE = originalApiBase;
-    } else {
-      delete process.env.NOTIS_API_BASE;
+    for (const [name, value] of Object.entries(savedEnv)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
     }
   }
 });
