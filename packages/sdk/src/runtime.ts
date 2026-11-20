@@ -713,6 +713,13 @@ export interface NotisRuntime {
    */
   navigate?: (payload: { kind: string; [key: string]: unknown }) => NotisNavigationAnswer | Promise<NotisNavigationAnswer>;
 
+  /**
+   * True when this host opens its own Settings from `navigate({ kind: 'settings', ... })` (`useNotisSettings()`):
+   * a signed-in viewer's Space page in the Portal. Absent on a Site, a link, a release preview, verify and the vite
+   * preview.
+   */
+  settingsAvailable?: boolean;
+
   registerTopBarSearch?: (
     config:
       | {

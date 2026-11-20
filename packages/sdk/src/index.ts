@@ -101,6 +101,8 @@ export { useCloudComputerJob } from './hooks/useCloudComputerJob';
 export type { UseCloudComputerJobOptions, UseCloudComputerJobResult } from './hooks/useCloudComputerJob';
 export { CLOUD_COMPUTER_WORDS, cloudComputerPriceWords, formatHourlyPrice } from './cloudComputerWords';
 export { useNotisNavigation } from './hooks/useNotisNavigation';
+export { useNotisSettings } from './hooks/useNotisSettings';
+export type { NotisSettingsTarget, UseNotisSettingsResult } from './hooks/useNotisSettings';
 export { useTopBarSearch } from './hooks/useTopBarSearch';
 export { useTopBarTitleLeaf } from './hooks/useTopBarTitleLeaf';
 export { useBackend } from './hooks/useBackend';

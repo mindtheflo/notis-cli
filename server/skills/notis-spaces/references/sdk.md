@@ -433,6 +433,16 @@ there is no alias to declare and no destination request, and each call adds a
 history entry unless you pass `{replace: true}`. `ListReader` with `openParam` and
 `usePeriod` already write this way.
 
+To send the viewer to their repository secrets (a Space cannot write secrets
+itself), call `useNotisSettings().openSettings({ page: 'cloud-computer',
+section: 'repository-secrets', repository: 'my-repo', add: 'env_file' })` from a
+click (`add` is `env_file` or `variable`, both optional). Settings opens over the
+Space with that repository's Add form open; the person types or chooses the name
+and the value. Check `available` first: it is false on a Site, a link, a release
+preview and in verify, so show a plain link to
+`/manage?settings=cloud&settings_section=repository-secrets&settings_repository=my-repo&settings_add=env_file`
+or nothing there.
+
 ## Viewer-only exploration
 
 `viewerReads: ['databases', 'skills']` permits read-only inspection of what the
