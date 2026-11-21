@@ -5,6 +5,15 @@ export interface AgentTargets {
   codex: boolean;
 }
 
+/**
+ * Per-agent evidence of a readable managed link. `true` means the link carries the
+ * skill's folder name. A string means the link carries that name instead: a native
+ * skill's mirror folder is `native-<id>`, but its agent link carries its readable
+ * skill name. Older clients only act on `true`, so they never read a renamed link
+ * as a missing one.
+ */
+export type VerifiedAgentLinks = Partial<Record<keyof AgentTargets, boolean | string>>;
+
 export interface NativeSkillReference {
   kind: 'native_standalone_skill';
   skill_id: string;
@@ -23,7 +32,7 @@ export interface SyncedSkill {
   folderHash: string;
   agentTargets: AgentTargets;
   /** Actual readable managed links, never inferred from desired targets. */
-  verifiedAgentLinks?: Partial<AgentTargets>;
+  verifiedAgentLinks?: VerifiedAgentLinks;
   cloudUpdatedAt?: string;
   /** Content accepted on disk; independent of server-specific folder hash formats. */
   cloudContentHash?: string;

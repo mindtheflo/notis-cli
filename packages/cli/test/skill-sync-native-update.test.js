@@ -50,8 +50,9 @@ function fixture(t) {
   const run = () => runSkillSync('https://fixture.invalid', JWT, deps, { syncHome: home });
   const statePath = join(userRoot, '.notis-sync.json');
   const readState = () => JSON.parse(readFileSync(statePath, 'utf8'));
+  // Agents link a native Skill under its readable name; the mirror keeps native-<id>.
   const linked = () => ['.claude', '.cursor', '.codex'].every(agent => {
-    try { return lstatSync(join(home, agent, 'skills', NAME)).isSymbolicLink(); } catch { return false; }
+    try { return lstatSync(join(home, agent, 'skills', 'night-shift')).isSymbolicLink(); } catch { return false; }
   });
   return { folder, run, readState, statePath, linked, pushed, serve: value => { rows = value; } };
 }

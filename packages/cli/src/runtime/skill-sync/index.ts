@@ -10,6 +10,7 @@ import type {
   SyncPullResponse,
   SyncSettings,
   SyncedSkill,
+  VerifiedAgentLinks,
 } from "./types";
 import { normalizeAgentTargets } from "./types";
 import { assertNativePull, checkedNativeReference, isNativeSkill, nativeState } from './native-identity';
@@ -343,7 +344,7 @@ function buildSyncState(
   pullResponse: SyncPullResponse,
   localSkills: LocalSkill[],
   lastSyncedAt: string | null,
-  verifiedAgentLinks: Record<string, Partial<AgentTargets>> = {},
+  verifiedAgentLinks: Record<string, VerifiedAgentLinks> = {},
   failedContentNames: ReadonlySet<string> = new Set(),
   appliedRevisions: AppliedCloudRevisions = {},
   appliedFiles: Record<string, string[] | undefined> = {},
@@ -636,7 +637,7 @@ export async function materializeCloudSkillsForLocalShell(
 
   const relinkSkillNames = new Set(options.relinkSkillNames || []);
   const failures = [...failedDownloads];
-  const verifiedLinks: Record<string, Partial<AgentTargets>> = {};
+  const verifiedLinks: Record<string, VerifiedAgentLinks> = {};
   for (const skill of pullResponse.skills) {
     const previous = previousState.skills[skill.name];
     if (skill.updated_at && previous?.cloudId === skill.id && previous.cloudUpdatedAt === skill.updated_at) {
