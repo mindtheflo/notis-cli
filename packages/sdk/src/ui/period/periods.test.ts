@@ -102,6 +102,28 @@ test('ranges join with words, never a dash (C2); long days and day heads in Engl
   assert.equal(ui.formatDayHeading, formatDayHeading);
 });
 
+test('inSentence: French weekdays and months stay lower case inside a sentence, English stays capitalised; heads keep the capital', async () => {
+  const thursday = new Date(2026, 10, 19);
+  const sentence = { inSentence: true };
+  assert.equal(formatLongDay(thursday, 'fr', sentence), 'jeudi 19 novembre 2026');
+  assert.equal(formatLongDay(thursday, 'en', sentence), 'Thursday, November 19, 2026');
+  assert.equal(formatLongDay(new Date(2026, 10, 1), 'fr', sentence), 'dimanche 1er novembre 2026');
+  assert.equal(formatLongDay(thursday, 'fr'), 'Jeudi 19 novembre 2026');
+  assert.equal(formatLongDay(thursday, 'fr', { inSentence: false }), 'Jeudi 19 novembre 2026');
+  assert.equal(formatDayHeading(thursday, 'fr', { thisYear: 2026, inSentence: true }), 'jeudi 19 novembre');
+  assert.equal(formatDayHeading(thursday, 'en', { thisYear: 2026, inSentence: true }), 'Thursday, November 19');
+  assert.equal(formatDayHeading(thursday, 'fr', { thisYear: 2025, inSentence: true }), 'jeudi 19 novembre 2026');
+  assert.equal(formatDayHeading(thursday, 'fr', { thisYear: 2026 }), 'Jeudi 19 novembre');
+  assert.equal(formatDayHeading(thursday, 'fr', 2026), 'Jeudi 19 novembre');
+  assert.equal(formatMonthYear(new Date(2026, 9, 1), 'fr', sentence), 'octobre 2026');
+  assert.equal(formatMonthYear(new Date(2026, 9, 1), 'en', sentence), 'October 2026');
+  assert.equal(weekdayNames('fr', 'long', sentence)[2], 'mercredi');
+  assert.equal(weekdayNames('en', 'long', sentence)[2], 'Wednesday');
+  assert.equal(weekdayNames('fr', 'long')[2], 'Mercredi');
+  assert.deepEqual(weekdayNames('fr', 'short', sentence).slice(0, 2), ['lun', 'mar']);
+  assert.equal(`Publiée le ${formatLongDay(new Date(2026, 10, 9), 'fr', sentence)}`, 'Publiée le lundi 9 novembre 2026');
+});
+
 test('@notis/sdk/ui exports intlLocale, the Intl locale for a toolkit locale', async () => {
   const ui = await import('../index');
   assert.equal(ui.intlLocale('fr'), 'fr-FR');

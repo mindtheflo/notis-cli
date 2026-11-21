@@ -72,19 +72,44 @@ export function formatDateRange(range: DateRange, locale: Locale, options: Intl.
   return `${formatDay(fmt, range.from, locale)}${join}${formatDay(fmt, range.to, locale)}`;
 }
 
-/** One day, long: "Monday, January 5, 2026" / "Lundi 5 janvier 2026". */
-export function formatLongDay(date: Date, locale: Locale): string {
-  return upFirst(formatDay(dateFormat(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), date, locale));
+export interface InSentenceOptions {
+  /**
+   * The words sit inside a sentence ("depuis le jeudi 19 novembre 2026"): French keeps its weekdays and months in
+   * lower case, English stays capitalised ("since Thursday, November 19, 2026"). Default false: the text starts a
+   * heading, a title or a label, so its first letter is upper case in both languages.
+   */
+  inSentence?: boolean;
+}
+
+export interface DayHeadingOptions extends InSentenceOptions {
+  /** The year left out of the heading. Default the current year. */
+  thisYear?: number;
+}
+
+/** Intl's words as they read: first letter upper case at the start of a heading, as written inside a sentence. */
+function leading(text: string, options?: InSentenceOptions): string {
+  return options?.inSentence ? text : upFirst(text);
+}
+
+/**
+ * One day, long: "Monday, January 5, 2026" / "Lundi 5 janvier 2026". Inside a sentence pass `{ inSentence: true }`:
+ * "publiée le lundi 5 janvier 2026".
+ */
+export function formatLongDay(date: Date, locale: Locale, options?: InSentenceOptions): string {
+  const fmt = dateFormat(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  return leading(formatDay(fmt, date, locale), options);
 }
 
 /**
  * A day heading (the agenda, meeting days): "Monday, October 19" / "Lundi 19 octobre", with the year when it is not
- * `thisYear` ("Friday, January 1, 2027").
+ * `thisYear` ("Friday, January 1, 2027"). The third argument is `thisYear` or `{ thisYear, inSentence }`; inside a
+ * sentence it reads "au plus haut le lundi 19 octobre".
  */
-export function formatDayHeading(date: Date, locale: Locale, thisYear: number = new Date().getFullYear()): string {
+export function formatDayHeading(date: Date, locale: Locale, thisYearOrOptions?: number | DayHeadingOptions): string {
+  const opts: DayHeadingOptions = typeof thisYearOrOptions === 'number' ? { thisYear: thisYearOrOptions } : thisYearOrOptions ?? {};
   const options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long' };
-  if (date.getFullYear() !== thisYear) options.year = 'numeric';
-  return upFirst(formatDay(dateFormat(locale, options), date, locale));
+  if (date.getFullYear() !== (opts.thisYear ?? new Date().getFullYear())) options.year = 'numeric';
+  return leading(formatDay(dateFormat(locale, options), date, locale), opts);
 }
 
 /** One day, short: "Jan 5" / "5 janv.". */
@@ -92,18 +117,21 @@ export function formatShortDay(date: Date, locale: Locale): string {
   return formatDay(dateFormat(locale, { day: 'numeric', month: 'short' }), date, locale);
 }
 
-/** "January 2026" / "Janvier 2026". */
-export function formatMonthYear(date: Date, locale: Locale): string {
-  return upFirst(dateFormat(locale, { month: 'long', year: 'numeric' }).format(date));
+/** "January 2026" / "Janvier 2026"; inside a sentence (`{ inSentence: true }`) "depuis octobre 2026". */
+export function formatMonthYear(date: Date, locale: Locale, options?: InSentenceOptions): string {
+  return leading(dateFormat(locale, { month: 'long', year: 'numeric' }).format(date), options);
 }
 
-/** Seven weekday names starting Monday. `narrow` for the day picker, `short` for grids. */
-export function weekdayNames(locale: Locale, width: 'narrow' | 'short' | 'long' = 'short'): string[] {
+/**
+ * Seven weekday names starting Monday. `narrow` for the day picker, `short` for grids, both column heads. A `long`
+ * name inside a sentence takes `{ inSentence: true }`: "le mercredi".
+ */
+export function weekdayNames(locale: Locale, width: 'narrow' | 'short' | 'long' = 'short', options?: InSentenceOptions): string[] {
   const fmt = dateFormat(locale, { weekday: width });
   // 5 January 2026 is a Monday.
   return Array.from({ length: 7 }, (_, i) => {
     const name = fmt.format(new Date(2026, 0, 5 + i));
-    return width === 'short' ? upFirst(name.replace(/\.$/, '')) : upFirst(name);
+    return leading(width === 'short' ? name.replace(/\.$/, '') : name, options);
   });
 }
 

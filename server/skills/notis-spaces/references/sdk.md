@@ -233,9 +233,6 @@ question, a note) wraps and its rows grow, and `wrapHeaders` puts long headers
 The primary column never gets under its `minWidth` (120 px by default): the last
 columns that do not fit hide on their own.
 
-`formatDuration(ms, locale, { units, smallest })` writes "1 h 31 min" (FR "4 j 6
-h").
-
 `CalendarHeatmap` is a GitHub-style grid of days coloured by value (a habit,
 journal entries, a mood): `data` rows with `dateKey` and `valueKey` (default
 `date` and `value`; `valueKey={null}` counts rows), `from` and `to` (default
@@ -244,6 +241,28 @@ for good to bad data (`higherIsBetter={false}` swaps the colours), `levels`,
 `format`, `onSelect(day)` (cells become buttons; `day` is `{ date, key }`
 with `key` the ISO day, plus `value` and the day's `rows`), `title`, `legend`,
 `weekStartsOn`. It brings its tooltips, keys and data table.
+
+### Dates in words
+
+Write dates and durations with the `@notis/sdk/ui` helpers and the runtime
+locale: `formatLongDay(date, locale)` ("Monday, January 5, 2026" / "Lundi 5
+janvier 2026"), `formatDayHeading(date, locale)` ("Lundi 19 octobre", the year
+only when it is not this year), `formatShortDay`, `formatMonthYear`,
+`formatDateRange` ("17 mai au 15 juin 2026", never a dash), `weekdayNames(locale,
+width)` and `formatDuration(ms, locale, { units, smallest })` ("1 h 31 min", FR
+"4 j 6 h").
+
+By default `formatLongDay`, `formatDayHeading`, `formatMonthYear` and
+`weekdayNames` start with a capital: they head a title, a group, a column or a
+label. French writes weekdays and months in lower case everywhere else, so a
+date inside a sentence passes `{ inSentence: true }`: `formatLongDay(date,
+locale, { inSentence: true })`, `formatMonthYear(date, locale, { inSentence:
+true })`, `formatDayHeading(date, locale, { thisYear, inSentence: true })` and
+`weekdayNames(locale, 'long', { inSentence: true })` (the width always comes
+first). With it French
+reads "Publiée le lundi 9 novembre 2026" and English keeps its capitals
+("Published on Monday, November 9, 2026"). Never capitalise a French date in the
+middle of a sentence ("depuis le Jeudi 19 novembre").
 
 ## Comments
 

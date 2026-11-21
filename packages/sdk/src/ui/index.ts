@@ -31,7 +31,7 @@ export {
   dayNumberLabel, formatDateRange, formatDayHeading, formatDelta, formatDuration, formatLongDay, formatMonthYear, formatNumber,
   formatShortDay, formatValue, intlLocale, weekdayNames,
 } from './period/dateFormat';
-export type { Delta, DeltaTone, FormatDurationOptions } from './period/dateFormat';
+export type { DayHeadingOptions, Delta, DeltaTone, FormatDurationOptions, InSentenceOptions } from './period/dateFormat';
 export {
   CALENDAR_WORDS, CHART_WORDS, COMPARE_WORDS, HEATMAP_WORDS, PERIOD_WORDS, PRESET_WORDS, TIMELINE_WORDS, VS_WORDS,
 } from './period/dateWords';
