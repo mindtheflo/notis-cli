@@ -4,7 +4,7 @@ Context is a generic SDK capability. An app can share a selected passage, a note
 an image point, chart state, loaded records or any other JSON-serializable reference.
 It is not a feedback database or an instruction to execute work. Space comments
 are a different thing: Notis stores them and lists them in the host Comments panel
-([Comments](sdk.md#comments)); a context pill never becomes a comment.
+([Comments](comments.md)); a context pill never becomes a comment.
 
 ## Live context versus explicit pills
 
@@ -63,7 +63,7 @@ Every Space page offers a bar on selected text with no code: **Cite** adds the w
 as a selected-text pill to the chat composer (it sends nothing), and, where comments
 are on for the viewer, **Comment** opens the host Comments panel with the passage
 ready to comment on. That comment is stored by Notis, not by the app, and agents
-reach it through `LOCAL_NOTIS_SPACE_COMMENT_THREADS` ([Comments](sdk.md#comments)).
+reach it through `LOCAL_NOTIS_SPACE_COMMENT_THREADS` ([Comments](comments.md)).
 Never build your own comment box or selection bar for this.
 
 For an image point, chart state or another reference the person wants to bring to

@@ -3,7 +3,7 @@ name: notis-spaces
 description: Explain Notis Spaces, sharing, resource links and lifecycle; build or update their views and linked Skills, inspect a saved view with its current data, choose whether text, a view, a Notes page or a Space answers a request, or install or update a Space from the Store or a pasted Space share link (check it, ask, then install).
 mcp_resource: true
 mcp_tool_patterns: ["LOCAL_NOTIS_MANAGE_SPACE", "LOCAL_NOTIS_SPACE_VERSIONS", "LOCAL_NOTIS_DOCUMENT_VERSIONS", "LOCAL_NOTIS_FIND_VIEWS", "LOCAL_NOTIS_RENDER_VIEW", "LOCAL_NOTIS_SPACE_FUNCTIONS"]
-mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/fixtures.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md", "references/store.md"]
+mcp_references: ["references/release.md", "references/architecture.md", "references/design.md", "references/sdk.md", "references/comments.md", "references/fixtures.md", "references/views.md", "references/memory.md", "references/troubleshooting.md", "references/reading.md", "references/context.md", "references/reports.md", "references/store.md"]
 ---
 
 # Notis Spaces
@@ -93,7 +93,7 @@ user asked, and quote their words in `user_words`. The CLI equivalents are
 | Check a view in a browser with `agent-browser` (open it, click, compare 390 and 1440 px) | The notis-browser-control skill (hosted guide: `notis://docs/notis-browser-control`): which runtime, the profile, the saved state |
 | Save or revise a Notes report or interactive report | [Reports](references/reports.md) |
 | Choose a memory policy | [Memory](references/memory.md) |
-| Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md); rows and counts (`useNativeDocuments`, `useNativeCount`): [Records and declared reads](references/sdk.md#records-and-declared-reads) |
+| Data hooks, record pages and the toolkit pieces | [SDK](references/sdk.md); rows and counts (`useNativeDocuments`, `useNativeCount`): [Records and declared reads](references/sdk.md#records-and-declared-reads); comments on a page and the agents that answer them: [Comments](references/comments.md) |
 | Explain resources, sharing and lifecycle | [Platform boundaries](references/architecture.md) |
 | Diagnose a failed check or release | [Troubleshooting](references/troubleshooting.md) |
 | Publish or share a Space or its update in the Store | [Store publishing](references/store.md): you only prepare the submission and send its page; the person publishes there. No tool publishes |
