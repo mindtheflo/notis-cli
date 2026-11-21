@@ -143,3 +143,25 @@ test('the LR2 table: window, chat, Space, list and reader widths', () => {
     assert.equal(space - width, list, `${windowWidth} chat ${chat} list`);
   }
 });
+
+test('with the 320px open sidebar and the 420px chat, a 1440 window leaves a 700px Space: a 320 list beside a 380 reader', () => {
+  // The protected shell's open sidebar is 20rem (portal/src/lib/sidebarInset.ts PROTECTED_SIDEBAR_OPEN_WIDTH).
+  const OPEN_SIDEBAR_PX = 320;
+  const rows: Array<[window: number, space: number, list: number, reader: number]> = [
+    [1440, 700, 320, 380],
+    [1920, 1180, 700, 480],
+  ];
+  for (const [windowWidth, space, list, reader] of rows) {
+    assert.equal(windowWidth - OPEN_SIDEBAR_PX - CHAT_PANEL_DEFAULT_WIDTH_PX, space, `${windowWidth} space`);
+    assert.equal(splitFits(space), true, `${windowWidth} split`);
+    const width = clampReaderWidth(readerWantWidth(windowWidth), space);
+    assert.equal(width, reader, `${windowWidth} reader`);
+    assert.equal(space - width, list, `${windowWidth} list`);
+  }
+  // At 1280 the Space is 540, under the 680px split: one pane.
+  assert.equal(1280 - OPEN_SIDEBAR_PX - CHAT_PANEL_DEFAULT_WIDTH_PX, 540);
+  assert.equal(splitBreakpoint(), 680);
+  assert.equal(splitFits(540), false);
+  // At 1024 the 420px chat would leave the page 284px, so it floats 36px over the page's edge.
+  assert.equal(chatPanelOverlap(CHAT_PANEL_DEFAULT_WIDTH_PX, 1024 - OPEN_SIDEBAR_PX), 36);
+});
