@@ -28,7 +28,7 @@ export type { SpaceViewParam, SpaceViewParamType, SpaceViewFilter, SpaceShows, S
 export { SPACE_VIEWER_READ_OPERATIONS } from './space';
 export { SPACE_CLOUD_COMPUTER_OPERATIONS, spaceCloudComputerAllows } from './space';
 export { spaceCloudComputerAccess } from './space';
-export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudComputerStatus, SpaceCloudComputerRelease, SpaceCloudComputerRunInput,
+export type { SpaceCloudComputerLevel, SpaceCloudComputerOperation, SpaceCloudComputerStatus, SpaceCloudComputerRelease, SpaceCloudComputerCopy, SpaceCloudComputerRunInput,
   SpaceCloudComputerRunResult, SpaceCloudComputerUploadInput, SpaceCloudComputerUploadResult, SpaceCloudComputerTransport,
   SpaceCloudComputerDeclaration, SpaceCloudComputerService, SpaceCloudComputerJobOperation, SpaceCloudComputerJobInput,
   SpaceCloudComputerJobStatus, SpaceCloudComputerJobLogs, SpaceCloudComputerJobResult, SpaceCloudComputerLeaseInput,

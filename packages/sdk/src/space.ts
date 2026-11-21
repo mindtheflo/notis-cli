@@ -564,10 +564,24 @@ export const SPACE_TOOLKIT_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export interface SpaceCloudComputerStatus {
   level: SpaceCloudComputerLevel;
   approved: boolean;
-  /** Why it is not approved: never allowed yet, or the Space changed since you allowed it. */
-  reason: 'approval_required' | 'source_changed' | null;
+  /**
+   * Why it is not approved: never allowed yet, the Space changed since you allowed it, or a Store update
+   * asks for more than its installed copy was allowed.
+   */
+  reason: 'approval_required' | 'source_changed' | 'access_raised' | null;
   /** While not approved: the code asking, as the host prompt shows it. It informs the person and decides nothing. */
   release?: SpaceCloudComputerRelease;
+  /** While not approved, for code the Store installed for you: the installed copy one Allow covers. */
+  copy?: SpaceCloudComputerCopy;
+}
+/** An installed Store copy: one Allow covers its root and every Space installed with it, and the updates you apply. */
+export interface SpaceCloudComputerCopy {
+  /** The copy's root Space, by its name in your account; null when it has none. */
+  name: string | null;
+  /** The highest level its Spaces ask for. */
+  level: SpaceCloudComputerLevel | null;
+  /** The names of its Spaces that ask for the Cloud Computer. */
+  spaces: string[];
 }
 /** Who released the code asking into this Space, and whether it is an unreleased preview. */
 export interface SpaceCloudComputerRelease {
