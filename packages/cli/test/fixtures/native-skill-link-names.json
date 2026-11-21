@@ -1,0 +1,75 @@
+{
+  "_about": "Link-name cases shared by the CLI and Desktop sync (electron/tests/symlink-manager.test.ts) and the Cloud Computer link pass (server/tests/test_sandbox_skill_links.py), so the two implementations of the rule stay the same. names: the SKILL.md of a native-<id> folder and the readable link name it gets (null keeps native-<id>). plans: skill folders (native ones carry the name of their SKILL.md), entries already in the agent folder, and the agent folder afterwards (link name -> skill folder, null for an entry the sync does not manage).",
+  "names": [
+    {"markdown": "---\nname: notis-product-design\ndescription: test\n---\n\n# Design\n", "expected": "notis-product-design"},
+    {"markdown": "---\nname: \"notis-product-design\"\ndescription: \"test\"\n---\n", "expected": "notis-product-design"},
+    {"markdown": "---\nname: 'quoted'\n---\n", "expected": "quoted"},
+    {"markdown": "---\r\nname: crlf-skill\r\ndescription: test\r\n---\r\n", "expected": "crlf-skill"},
+    {"markdown": "---\ndescription: test\nname:   spaced-out   \n---\n", "expected": "spaced-out"},
+    {"markdown": "---\nname: Not A Skill Name\n---\n", "expected": null},
+    {"markdown": "---\nname: Upper\n---\n", "expected": null},
+    {"markdown": "---\nname: double--hyphen\n---\n", "expected": null},
+    {"markdown": "---\nname: -leading\n---\n", "expected": null},
+    {"markdown": "---\nname: dotted.name\n---\n", "expected": null},
+    {"markdown": "---\nname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n", "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"markdown": "---\nname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n", "expected": null},
+    {"markdown": "---\nname: notis-cli\n---\n", "expected": null},
+    {"markdown": "---\nname: notis-spaces\n---\n", "expected": null},
+    {"markdown": "---\nname: native-11111111-1111-4111-8111-111111111111\n---\n", "expected": null},
+    {"markdown": "# No frontmatter\nname: body-name\n", "expected": null},
+    {"markdown": "---\ndescription: no name\n---\n", "expected": null},
+    {"markdown": "", "expected": null}
+  ],
+  "plans": [
+    {
+      "label": "an old native-<id> link moves to the readable name",
+      "skills": [{"id": "8bc7bab5-b141-53ed-9cd1-f89dad1c4028", "name": "notis-product-design"}, {"folder": "beta"}],
+      "existing": {"links": {"native-8bc7bab5-b141-53ed-9cd1-f89dad1c4028": "native-8bc7bab5-b141-53ed-9cd1-f89dad1c4028", "beta": "beta"}},
+      "links": {"notis-product-design": "native-8bc7bab5-b141-53ed-9cd1-f89dad1c4028", "beta": "beta"}
+    },
+    {
+      "label": "collisions, an invalid name and a blocking folder keep native-<id>",
+      "skills": [
+        {"folder": "design"},
+        {"id": "8bc7bab5-b141-53ed-9cd1-f89dad1c4028", "name": "design"},
+        {"id": "11111111-1111-4111-8111-111111111111", "name": "twin"},
+        {"id": "22222222-2222-4222-8222-222222222222", "name": "twin"},
+        {"id": "33333333-3333-4333-8333-333333333333", "name": "solo"},
+        {"id": "44444444-4444-4444-8444-444444444444", "name": "Not A Skill Name"}
+      ],
+      "existing": {"folders": ["solo"]},
+      "links": {
+        "design": "design",
+        "native-8bc7bab5-b141-53ed-9cd1-f89dad1c4028": "native-8bc7bab5-b141-53ed-9cd1-f89dad1c4028",
+        "native-11111111-1111-4111-8111-111111111111": "native-11111111-1111-4111-8111-111111111111",
+        "native-22222222-2222-4222-8222-222222222222": "native-22222222-2222-4222-8222-222222222222",
+        "native-33333333-3333-4333-8333-333333333333": "native-33333333-3333-4333-8333-333333333333",
+        "native-44444444-4444-4444-8444-444444444444": "native-44444444-4444-4444-8444-444444444444",
+        "solo": null
+      }
+    },
+    {
+      "label": "a native Skill never takes a base skill name",
+      "skills": [{"folder": "notis-cli"}, {"id": "33333333-3333-4333-8333-333333333333", "name": "notis-cli"}],
+      "existing": {},
+      "links": {"notis-cli": "notis-cli", "native-33333333-3333-4333-8333-333333333333": "native-33333333-3333-4333-8333-333333333333"}
+    },
+    {
+      "label": "a renamed native Skill moves from its old readable name, and a collision moves the readable link back",
+      "skills": [
+        {"id": "11111111-1111-4111-8111-111111111111", "name": "renamed"},
+        {"id": "22222222-2222-4222-8222-222222222222", "name": "twin"},
+        {"id": "33333333-3333-4333-8333-333333333333", "name": "twin"}
+      ],
+      "existing": {"links": {
+        "old-name": "native-11111111-1111-4111-8111-111111111111",
+        "twin": "native-22222222-2222-4222-8222-222222222222"
+      }},
+      "links": {
+        "renamed": "native-11111111-1111-4111-8111-111111111111",
+        "native-22222222-2222-4222-8222-222222222222": "native-22222222-2222-4222-8222-222222222222",
+        "native-33333333-3333-4333-8333-333333333333": "native-33333333-3333-4333-8333-333333333333"
+      }
+    }
+  ]
+}
