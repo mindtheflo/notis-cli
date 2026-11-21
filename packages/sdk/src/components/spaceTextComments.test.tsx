@@ -246,3 +246,28 @@ test('Without the comment store a Space page draws no highlights and lists nothi
   await present(spaceRuntime());
   assert.equal(doc.querySelector('style[data-notis-comment-highlights]'), null);
 });
+
+test('a Space page reads its text highlights once the page goes idle, never during the open (SPC-859)', async () => {
+  const idle: Array<() => void> = [];
+  const win = dom.window as unknown as { requestIdleCallback?: unknown; cancelIdleCallback?: unknown };
+  const saved = { request: win.requestIdleCallback, cancel: win.cancelIdleCallback };
+  win.requestIdleCallback = (callback: () => void) => idle.push(callback);
+  win.cancelIdleCallback = () => {};
+  try {
+    const store = memoryCommentStore({ rows: ROWS, page: { recordKey: 'p1', view: 'board' } });
+    let reads = 0;
+    const transport = { ...store.transport, list: (input: Parameters<typeof store.transport.list>[0]) => {
+      reads += 1;
+      return store.transport.list(input);
+    } };
+    await present(spaceRuntime(transport));
+    assert.equal(reads, 0, 'the open does not read the highlights');
+    assert.equal(idle.length, 1, 'the read waits for the page to go idle');
+    await act(async () => { idle[0](); });
+    await settle();
+    assert.equal(reads, 1, 'once idle, the highlights read the page\'s comments');
+  } finally {
+    if (saved.request === undefined) delete win.requestIdleCallback; else win.requestIdleCallback = saved.request;
+    if (saved.cancel === undefined) delete win.cancelIdleCallback; else win.cancelIdleCallback = saved.cancel;
+  }
+});

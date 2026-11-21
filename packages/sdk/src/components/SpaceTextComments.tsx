@@ -144,10 +144,21 @@ function usePageTextComments(transport: SpaceCommentsTransport | undefined): Spa
         if (live && mine === seq) setRows(Array.isArray(answer?.comments) ? answer.comments : []);
       }, () => undefined);
     };
-    read();
+    // The first read waits for the page to go idle: a Space open never contends with the highlights' read and drawing
+    // (SPC-859). A change the host announces reads at once.
+    const idleWindow = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+      && typeof window.cancelIdleCallback === 'function' ? window : null;
+    const cancelIdle = idleWindow?.cancelIdleCallback;
+    const idleRead = idleWindow ? idleWindow.requestIdleCallback(read, { timeout: 1500 }) : null;
+    const timer = idleWindow ? null : setTimeout(read, 0);
     let stop: (() => void) | undefined;
     try { stop = store.subscribe({ page }, read); } catch { /* no live feed */ }
-    return () => { live = false; stop?.(); };
+    return () => {
+      live = false;
+      if (idleRead !== null) cancelIdle?.call(idleWindow, idleRead);
+      if (timer !== null) clearTimeout(timer);
+      stop?.();
+    };
   }, [hasTransport, page]);
   return useMemo(() => openTextComments(rows, view), [rows, view]);
 }
