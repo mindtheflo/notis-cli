@@ -111,7 +111,9 @@ export async function verifySpaceRelease(release, { capabilities, timeoutMs = 45
         return { ...where, mounted: false, status: 'failed', error: 'render_view_failed', loaded: false,
           message: `At ${place} the view's code failed before it showed anything${value.reason.reason ? `: ${value.reason.reason}` : '.'}` };
       }
-      if (!shot?.data_base64) return { ...where, mounted: false, status: 'failed', error: value.reason?.code || 'render_failed',
+      // A read the fixtures could not serve stops the render as a lost authority; offline, that is a missing fixture.
+      const fixtureMissing = value.reason?.code === 'render_access_changed' && item.broker.calls.some(call => !call.ok && call.error);
+      if (!shot?.data_base64) return { ...where, mounted: false, status: 'failed', error: fixtureMissing ? 'fixture_missing' : value.reason?.code || 'render_failed',
         ...(Array.isArray(value.reason?.blocked) && value.reason.blocked.length ? { blocked_calls: value.reason.blocked } : {}) };
       const png = Buffer.from(shot.data_base64, 'base64');
       screenshots.push({ ...where, png });

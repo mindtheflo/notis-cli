@@ -86,3 +86,69 @@ test('verify carries the specific fixture reason, not only the generic renderer 
   assert.match(fixtureErrors[0].message, /View "slide-page" reads the stored HTML page of record .*"html":"<h1>Fictional page<\/h1>"/);
   assert.equal(result.errors.at(-1).phase, 'renderer');
 });
+
+// A view whose list read sends params no shown fixture holds must learn the list, the exact params and the cases it
+// has; a param left at its declared default reads the {} case, as a view link leaves it out.
+const tasksCapabilities = { actions: {}, bindings: { tasks: { kind: 'database' } } };
+function shownRelease(fixtures, { read = { status: 'Done' } } = {}) {
+  const source = `export function SpaceView(){const R=window.React;const runtime=R.useContext(globalThis[Symbol.for('notis.sdk.runtime_context')]);`
+    + `const [rows,setRows]=R.useState(null);R.useEffect(()=>{runtime.shown('tasks',${JSON.stringify(read)}).then(value=>setRows(value.rows||[]))},[]);`
+    + `return R.createElement('p',null,rows?'Tasks: '+rows.length:'Loading')}`;
+  return {
+    manifest: { local_key: 'board', name: 'Board', kind: 'presentation', actions: {},
+      resources: { tasks: { kind: 'database', key: 'tasks' } },
+      params: { status: { type: 'string', default: 'To do', description: 'Only tasks in this status.' } },
+      shows: { tasks: { database: 'tasks', where: { field: { property: 'Status' }, op: 'equals', value: '{status}' } } },
+      bundle: { js: 'bundle/app.js' } },
+    files: { 'bundle/app.js': b(source) }, fixturePath: 'fixtures/board.json',
+    sourceFiles: { 'fixtures/board.json': b(fixtures) }, capabilities: tasksCapabilities,
+  };
+}
+
+test('a missing shown fixture names the view, the list, the exact params and the cases it has', () => {
+  const engine = createSpaceFixtureEngine(shownRelease({ actions: {}, shown: { tasks: [{ params: {}, result: { rows: [] } }] } }));
+  assert.throws(() => engine.executeShown('tasks', { status: 'Done', task: record }), error => {
+    assert.match(error.message, /^View "board" \(fixtures\/board\.json\): list "tasks" was read with params \{"status":"Done","task":"22222222-2222-4222-8222-222222222222"\}/);
+    assert.match(error.message, /\(it has \{\}\)/);
+    assert.match(error.message, /Add an explicit synthetic shown fixture for tasks and these params: \{"params": \{"status":"Done","task":"2222.*"\}, "result": \{"rows": \[\]\}\} in shown\.tasks of fixtures\/board\.json\.$/);
+    return true;
+  });
+});
+
+test('a shown param at its declared default reads the {} case; any other value still needs its own case', () => {
+  const rows = [{ record_key: record }];
+  const engine = createSpaceFixtureEngine(shownRelease({ actions: {}, shown: { tasks: [{ params: {}, result: { rows } }] } }));
+  assert.deepEqual(engine.executeShown('tasks', { status: 'To do' }).rows, rows);
+  assert.throws(() => engine.executeShown('tasks', { status: 'Done' }), /list "tasks" was read with params \{"status":"Done"\}/);
+  // An exact case still wins over the default-equivalent one.
+  const exact = createSpaceFixtureEngine(shownRelease({ actions: {}, shown: { tasks: [{ params: {}, result: { rows: [] } },
+    { params: { status: 'To do' }, result: { rows } }] } }));
+  assert.deepEqual(exact.executeShown('tasks', { status: 'To do' }).rows, rows);
+});
+
+test('an action fixture miss prints the inputs it could not match', () => {
+  const release = shownRelease({ actions: {} });
+  release.manifest.actions = { read: { tool: 'FIXTURE_READ', arguments: { database: { $asset: 'tasks' } },
+    inputs: { type: 'object', properties: { count: { type: 'integer', minimum: 1 } }, required: ['count'], additionalProperties: false } } };
+  const engine = createSpaceFixtureEngine(release);
+  assert.throws(() => engine.execute('read', { count: 2 }), /action read was read with inputs \{"count":2\}, which no actions fixture matches/);
+});
+
+test('verify reports a shown read no fixture matches as fixture_missing with its params, not an access change', async () => {
+  const release = shownRelease({ actions: {}, shown: { tasks: [{ params: {}, result: { rows: [] } }] } });
+  const result = await verifySpaceRelease(release, { capabilities: tasksCapabilities, loadRenderer });
+  assert.equal(result.status, 'failed', JSON.stringify(result));
+  const failedRenders = result.renders.filter(value => value.status === 'failed');
+  assert.ok(failedRenders.length, JSON.stringify(result.renders));
+  assert.deepEqual([...new Set(failedRenders.map(value => value.error))], ['fixture_missing']);
+  const fixtureErrors = result.errors.filter(value => value.phase === 'fixture');
+  assert.equal(fixtureErrors.length, 1, JSON.stringify(result.errors));
+  assert.equal(fixtureErrors[0].operation, 'shown');
+  assert.match(fixtureErrors[0].message, /list "tasks" was read with params \{"status":"Done"\}/);
+});
+
+test('verify passes when the only shown param sits at its declared default and the fixtures hold the {} case', async () => {
+  const release = shownRelease({ actions: {}, shown: { tasks: [{ params: {}, result: { rows: [] } }] } }, { read: { status: 'To do' } });
+  const result = await verifySpaceRelease(release, { capabilities: tasksCapabilities, loadRenderer });
+  assert.equal(result.status, 'passed', JSON.stringify(result.errors));
+});

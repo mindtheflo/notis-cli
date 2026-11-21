@@ -308,6 +308,9 @@ export function createSpaceFixtureEngine(release) {
     if(entry.operation==='html' && value.title!==undefined && value.title!==null && typeof value.title!=='string') throw usageError('HTML fixtures contain a record key, HTML and an optional title.');
     if(entry.operation==='report' && (typeof value.source!=='string' || typeof value.export_name!=='string')) throw usageError('Report fixtures contain an explicit readonly source and export.');
   }
+  const declaredParams=release.manifest.params || {};
+  const withoutDeclaredDefaults=params=>Object.fromEntries(Object.entries(params).filter(([key,value])=>!(object(declaredParams[key])
+    && Object.hasOwn(declaredParams[key],'default') && String(declaredParams[key].default)===String(value))));
   return { context:fixtures.context || {}, contexts, digest:[...images.values()].reduce((hash,image)=>hash.update(image.data_base64),createHash('sha256').update(JSON.stringify(fixtures))).digest('hex'),
     imageUrls:[...images.keys()],
     executeImage(url) {
@@ -333,24 +336,39 @@ export function createSpaceFixtureEngine(release) {
     executeShown(name,params,options={}) {
       if(!Object.hasOwn(declaredLists,name)) throw usageError('This view does not declare that list.');
       if(!object(params)) throw usageError('List params must be an object.');
-      const matched=shownCases[name]?.find(entry=>isDeepStrictEqual(entry.params,params));
-      if(!matched) throw usageError(`Add an explicit synthetic shown fixture for ${name} and these params.`);
+      const cases=shownCases[name] || [];
+      // A param left at its declared default is the same read as one without it (as a view link leaves it out),
+      // so {"status": "<its default>"} is served by the {} case. Any other param still needs its own case.
+      const matched=cases.find(entry=>isDeepStrictEqual(entry.params,params))
+        || cases.find(entry=>isDeepStrictEqual(withoutDeclaredDefaults(entry.params),withoutDeclaredDefaults(params)));
+      if(!matched) {
+        const have=cases.slice(0,5).map(entry=>fixtureJson(entry.params)).join(', ');
+        throw usageError(`${fixtureWhere} list ${JSON.stringify(name)} was read with params ${fixtureJson(params)}, which no shown fixture matches`
+          +` (${cases.length ? `it has ${have}${cases.length>5 ? ', ...' : ''}` : 'it has none'}). Add an explicit synthetic shown fixture for ${name} and these params:`
+          +` {"params": ${fixtureJson(params)}, "result": {"rows": []}} in shown.${name}${release.fixturePath ? ` of ${release.fixturePath}` : ''}.`);
+      }
       return shownPage(structuredClone(matched.result),options);
     },
     executeViewerRead(operation,input) {
       if(!Object.hasOwn(VIEWER_READS,operation) || !declaredReads.includes(VIEWER_READS[operation])) throw usageError('This Space does not declare that viewer read.');
       if(!object(input)) throw usageError('Viewer read inputs must be an object.');
       const matched=readCases[operation]?.find(entry=>isDeepStrictEqual(entry.input,input));
-      if(!matched) throw usageError(`Add an explicit synthetic viewer read fixture for ${operation} and this input.`);
+      if(!matched) throw usageError(`${fixtureWhere} viewer read ${operation} was called with input ${fixtureJson(input)}, which no viewerReads fixture matches. Add an explicit synthetic viewer read fixture for ${operation} and this input.`);
       return structuredClone(matched.result);
     },
     execute(name,inputs) {
       const validate=validators.get(name);
       if(!validate || !object(inputs) || !validate(inputs)) throw usageError('The action inputs do not match this Space declaration.');
       const matched=fixtures.actions[name]?.find(entry=>isDeepStrictEqual(entry.inputs,inputs));
-      if(!matched) throw usageError(`Add an explicit synthetic fixture for action ${name} and these inputs.`);
+      if(!matched) throw usageError(`${fixtureWhere} action ${name} was read with inputs ${fixtureJson(inputs)}, which no actions fixture matches. Add an explicit synthetic fixture for action ${name} and these inputs.`);
       return structuredClone(matched.result);
     } };
+}
+
+/** The params or inputs a fixture lacked, as JSON an author can paste (bounded, so a huge input stays readable). */
+function fixtureJson(value) {
+  const text=JSON.stringify(value) ?? String(value);
+  return text.length>600 ? `${text.slice(0,600)}...` : text;
 }
 
 /** The fixture context a render opens with: the named one of `contexts`, else the first (the only `context`). */
