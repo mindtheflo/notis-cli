@@ -128,16 +128,19 @@ test('the chat is 420 at every width; a Space reader wants 420 under a 1280 wind
   assert.equal(readerWantWidth(1920), 480);
 });
 
+// The protected shell's open sidebar is 20rem (portal/src/lib/sidebarInset.ts PROTECTED_SIDEBAR_OPEN_WIDTH).
+const OPEN_SIDEBAR_PX = 320;
+
 test('the LR2 table: window, chat, Space, list and reader widths', () => {
-  // The Space is the window minus the 256px sidebar and, when open, the 420px chat.
+  // The Space is the window minus the 320px open sidebar and, when open, the 420px chat.
   const rows: Array<[window: number, chat: boolean, space: number, list: number, reader: number]> = [
-    [1440, true, 764, 320, 444],
-    [1440, false, 1184, 704, 480],
-    [1920, true, 1244, 764, 480],
-    [1920, false, 1664, 1184, 480],
+    [1440, true, 700, 320, 380],
+    [1440, false, 1120, 640, 480],
+    [1920, true, 1180, 700, 480],
+    [1920, false, 1600, 1120, 480],
   ];
   for (const [windowWidth, chat, space, list, reader] of rows) {
-    assert.equal(windowWidth - 256 - (chat ? CHAT_PANEL_DEFAULT_WIDTH_PX : 0), space, `${windowWidth} chat ${chat}`);
+    assert.equal(windowWidth - OPEN_SIDEBAR_PX - (chat ? CHAT_PANEL_DEFAULT_WIDTH_PX : 0), space, `${windowWidth} chat ${chat}`);
     const width = clampReaderWidth(readerWantWidth(windowWidth), space);
     assert.equal(width, reader, `${windowWidth} chat ${chat} reader`);
     assert.equal(space - width, list, `${windowWidth} chat ${chat} list`);
@@ -145,8 +148,6 @@ test('the LR2 table: window, chat, Space, list and reader widths', () => {
 });
 
 test('with the 320px open sidebar and the 420px chat, a 1440 window leaves a 700px Space: a 320 list beside a 380 reader', () => {
-  // The protected shell's open sidebar is 20rem (portal/src/lib/sidebarInset.ts PROTECTED_SIDEBAR_OPEN_WIDTH).
-  const OPEN_SIDEBAR_PX = 320;
   const rows: Array<[window: number, space: number, list: number, reader: number]> = [
     [1440, 700, 320, 380],
     [1920, 1180, 700, 480],
