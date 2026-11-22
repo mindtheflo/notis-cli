@@ -187,3 +187,32 @@ test('a refused sign-in stops the upload instead of sending every other body', a
   await assert.rejects(pushChangedSkills('https://api.fixture.invalid', 'jwt', skills), error => error.status === 401);
   assert.equal(requests.length, 1);
 });
+
+// Night 2026-11-22: one desktop user's oversized Skill was pushed alone with no
+// ceiling; buffering it OOM-killed api-stable and every 502 made the client retry.
+test('a skill above the server body ceiling fails as skill_too_large and is never sent', async t => {
+  const root = home(t);
+  const skills = [localSkill(root, 'notes'), localSkill(root, 'huge', 3 * 1024 * 1024), localSkill(root, 'travel')];
+  const requests = stubFetch(t, body => Response.json({
+    skills: body.skills.map(skill => ({ id: `id-${skill.name}`, name: skill.name })),
+  }));
+
+  const result = await pushChangedSkills('https://api.fixture.invalid', 'jwt', skills, { maxSkillBytes: 2 * 1024 * 1024 });
+
+  const sent = requests.flatMap(request => request.body.skills.map(skill => skill.name));
+  assert.ok(!sent.includes('huge'), 'the oversized skill is never sent');
+  assert.deepEqual(result.skills.map(skill => skill.name).sort(), ['notes', 'travel']);
+  assert.equal(result.failed.length, 1);
+  const [failure] = result.failed;
+  assert.equal(failure.name, 'huge');
+  assert.equal(failure.code, 'skill_too_large');
+  assert.equal(failure.limit_bytes, 2 * 1024 * 1024);
+  assert.ok(failure.size_bytes > 3 * 1024 * 1024, `size ${failure.size_bytes}`);
+  assert.match(failure.error, /too large to sync/);
+});
+
+test('the default skill ceiling matches the server request body limit', async () => {
+  const { MAX_SYNC_PUSH_SKILL_BYTES, SERVER_REQUEST_BODY_MAX_BYTES } = await import('../dist/skill-sync/index.js');
+  assert.equal(SERVER_REQUEST_BODY_MAX_BYTES, 64 * 1024 * 1024);
+  assert.ok(MAX_SYNC_PUSH_SKILL_BYTES < SERVER_REQUEST_BODY_MAX_BYTES);
+});

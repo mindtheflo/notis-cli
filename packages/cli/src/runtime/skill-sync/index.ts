@@ -40,7 +40,7 @@ import {
 } from "./symlink-manager";
 import { getPushCandidates, selectCloudSkillsToApply } from "./sync-plan";
 import { writeCloudSkill } from "./write-cloud-skill";
-export { fetchSyncSettings, pushChangedSkills } from './cloud-client';
+export { fetchSyncSettings, MAX_SYNC_PUSH_SKILL_BYTES, pushChangedSkills, SERVER_REQUEST_BODY_MAX_BYTES } from './cloud-client';
 
 export interface RunSkillSyncResult {
   syncEnabled: boolean;

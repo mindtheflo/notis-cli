@@ -147,8 +147,11 @@ export interface SkillSyncFailure {
   error: string;
   /** HTTP status of a refused upload, when the push itself was answered non-2xx. */
   status?: number;
-  /** Classified cause (e.g. `edge_blocked`, `http_413`); never a response body. */
+  /** Classified cause (e.g. `edge_blocked`, `http_413`, `skill_too_large`); never a response body. */
   code?: string;
+  /** `skill_too_large`: the Skill's upload size and the largest size the server accepts. */
+  size_bytes?: number;
+  limit_bytes?: number;
 }
 
 export interface SyncPushResponse {

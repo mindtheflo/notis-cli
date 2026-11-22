@@ -82,6 +82,28 @@ async function skillPushPayload(skill: LocalSkill): Promise<Record<string, unkno
 /** The request body around the skills array, counted in every batch's size. */
 const SYNC_PUSH_ENVELOPE_BYTES = Buffer.byteLength(JSON.stringify({ skill_sync_protocol: 2, skills: [] }));
 
+/**
+ * The server refuses any request body above 64 MiB with 413 before reading it
+ * (server/lib/request_body_limit.py DEFAULT_REQUEST_BODY_MAX_BYTES, truth SKL-065).
+ * A Skill whose payload alone would exceed it is never sent.
+ */
+export const SERVER_REQUEST_BODY_MAX_BYTES = 64 * 1024 * 1024;
+export const MAX_SYNC_PUSH_SKILL_BYTES = SERVER_REQUEST_BODY_MAX_BYTES - SYNC_PUSH_ENVELOPE_BYTES;
+
+function mib(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function tooLargeFailure(name: string, sizeBytes: number, limitBytes: number): SkillSyncFailure {
+  return {
+    name,
+    error: `Skill is too large to sync (${mib(sizeBytes)}, the limit is ${mib(limitBytes)}); remove large files from its folder to sync it`,
+    code: 'skill_too_large',
+    size_bytes: sizeBytes,
+    limit_bytes: limitBytes,
+  };
+}
+
 function pushBatches(payloads: Record<string, unknown>[], maxBodyBytes: number): Record<string, unknown>[][] {
   const batches: Record<string, unknown>[][] = [];
   let batch: Record<string, unknown>[] = [];
@@ -118,18 +140,26 @@ function pushFailure(name: string, error: unknown): SkillSyncFailure {
 
 /**
  * Push changed skills in bodies of at most `maxBodyBytes` (one skill when it is
- * larger alone). A batch the server or the edge refuses fails only its own skills,
+ * larger alone). A skill above `maxSkillBytes` (the server's body ceiling) is
+ * never sent and fails as `skill_too_large` with its size and the limit. A batch the server or the edge refuses fails only its own skills,
  * recorded with the HTTP status, and the other batches still push.
  */
 export async function pushChangedSkills(
   serverUrl: string,
   jwt: string,
   changedSkills: LocalSkill[],
-  options: { maxBodyBytes?: number } = {},
+  options: { maxBodyBytes?: number; maxSkillBytes?: number } = {},
 ): Promise<SyncPushResponse> {
-  const payloadSkills = await Promise.all(changedSkills.map(skillPushPayload));
+  const maxSkillBytes = options.maxSkillBytes ?? MAX_SYNC_PUSH_SKILL_BYTES;
   const saved: unknown[] = [];
   const failed: SkillSyncFailure[] = [];
+  const payloadSkills: Record<string, unknown>[] = [];
+  for (const payload of await Promise.all(changedSkills.map(skillPushPayload))) {
+    // +1 for the comma between array items, as in pushBatches.
+    const bytes = Buffer.byteLength(JSON.stringify(payload)) + 1;
+    if (bytes > maxSkillBytes) failed.push(tooLargeFailure(String(payload.name), bytes, maxSkillBytes));
+    else payloadSkills.push(payload);
+  }
   for (const batch of pushBatches(payloadSkills, options.maxBodyBytes ?? MAX_SYNC_PUSH_BODY_BYTES)) {
     try {
       const result = await requestJson<SyncPushResponse>(`${serverUrl}/portal_skills/sync-push`, jwt, {
