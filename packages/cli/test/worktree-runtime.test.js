@@ -249,6 +249,91 @@ test('CLI still rejects a worktree supervisor missing with ESRCH', () => {
   assert.equal(JSON.parse(result.stdout).code, 'dev_runtime_unavailable');
 });
 
+/**
+ * A loopback backend in its own process (a dev stack in another pid
+ * namespace): the runtime probe blocks this test process while it runs.
+ */
+async function startLocalBackend(status) {
+  const source = `
+    import { createServer } from 'node:http';
+    const server = createServer((request, response) => {
+      response.writeHead(request.url === '/openapi.json' ? ${Number(status)} : 404, { 'content-type': 'application/json' });
+      response.end('{}');
+    });
+    server.listen(0, '127.0.0.1', () => console.log(server.address().port));
+  `;
+  const { spawn } = await import('node:child_process');
+  const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const port = await new Promise((resolvePort, reject) => {
+    child.once('error', reject);
+    child.stdout.once('data', (chunk) => resolvePort(Number(String(chunk).trim())));
+  });
+  return { port, stop: () => child.kill('SIGKILL') };
+}
+
+async function closedLoopbackPort() {
+  const { createServer } = await import('node:net');
+  const server = createServer();
+  await new Promise((ready) => server.listen(0, '127.0.0.1', ready));
+  const { port } = server.address();
+  await new Promise((closed) => server.close(closed));
+  return port;
+}
+
+test('CLI accepts a worktree supervisor in another pid namespace when its local API answers', async () => {
+  const expectedUserId = 'approved-test-user';
+  const hiddenPid = 424_244;
+  const backend = await startLocalBackend(200);
+  try {
+    const apiBase = `http://127.0.0.1:${backend.port}`;
+    const { root } = makeWorktree('notis-worktree-other-namespace-', {
+      expectedUserId,
+      devJwt: makeJwt(expectedUserId),
+      devPid: hiddenPid,
+      apiBase,
+    });
+
+    const result = runRuntimeProbeWithKillError(root, hiddenPid, 'ESRCH');
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      apiBase,
+      profileName: DEV_PROFILE,
+      profileSource: 'worktree',
+    });
+  } finally {
+    backend.stop();
+  }
+});
+
+test('CLI still rejects an invisible worktree supervisor when its local API does not answer', async () => {
+  const expectedUserId = 'approved-test-user';
+  const hiddenPid = 424_245;
+  const failing = await startLocalBackend(503);
+  try {
+    for (const apiBase of [
+      `http://127.0.0.1:${await closedLoopbackPort()}`,
+      `http://127.0.0.1:${failing.port}`,
+    ]) {
+      const { root } = makeWorktree('notis-worktree-other-namespace-dead-', {
+        expectedUserId,
+        devJwt: makeJwt(expectedUserId),
+        devPid: hiddenPid,
+        apiBase,
+      });
+
+      const result = runRuntimeProbeWithKillError(root, hiddenPid, 'ESRCH');
+
+      assert.equal(result.status, 4, result.stdout + result.stderr);
+      assert.equal(JSON.parse(result.stdout).code, 'dev_runtime_unavailable');
+    }
+  } finally {
+    failing.stop();
+  }
+});
+
 test('profile list includes the active lease-backed worktree profile without persisting it', () => {
   const expectedUserId = 'approved-test-user';
   const { root, home, configFile } = makeWorktree('notis-worktree-profile-list-', {

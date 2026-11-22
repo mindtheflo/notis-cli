@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -261,6 +262,52 @@ function processIsAlive(pid) {
   }
 }
 
+// A dev.sh started inside another pid namespace (a preview stack) has a
+// dev_pid this process cannot see at all: process.kill answers ESRCH exactly
+// as for a dead supervisor. Its loopback backend still answers, so the lease
+// counts as live when the lease's own API serves its schema, the readiness
+// probe dev.sh itself waits on. Nothing answering (or an error status) keeps
+// the refusal. The CLI resolves runtimes synchronously, so the probe runs in a
+// short child process.
+const RUNTIME_API_PROBE_TIMEOUT_MS = 1500;
+const RUNTIME_API_PROBE_SOURCE = `
+const target = process.argv[1].replace(/\\/+$/, '') + '/openapi.json';
+fetch(target, { redirect: 'manual', signal: AbortSignal.timeout(${RUNTIME_API_PROBE_TIMEOUT_MS}) })
+  .then((response) => {
+    response.body?.cancel().catch(() => {});
+    process.exit(response.ok ? 0 : 1);
+  })
+  .catch(() => process.exit(1));
+`;
+const runtimeApiProbeResults = new Map();
+
+function localRuntimeApiAnswers(apiBase) {
+  if (runtimeApiProbeResults.has(apiBase)) {
+    return runtimeApiProbeResults.get(apiBase);
+  }
+  let answered = false;
+  try {
+    const probe = spawnSync(process.execPath, ['-e', RUNTIME_API_PROBE_SOURCE, apiBase], {
+      env: { PATH: process.env.PATH || '' },
+      stdio: 'ignore',
+      timeout: RUNTIME_API_PROBE_TIMEOUT_MS + 2500,
+    });
+    answered = probe.status === 0;
+  } catch {
+    answered = false;
+  }
+  runtimeApiProbeResults.set(apiBase, answered);
+  return answered;
+}
+
+function devRuntimeIsAlive(pid, apiBase) {
+  if (processIsAlive(pid)) {
+    return true;
+  }
+  // A lease without a real supervisor pid was never written by dev.sh.
+  return Number.isInteger(pid) && pid > 0 && localRuntimeApiAnswers(apiBase);
+}
+
 export function resolveWorktreeRuntime(startDir = process.cwd()) {
   if (
     process.env.NODE_ENV === 'test' &&
@@ -308,7 +355,7 @@ export function resolveWorktreeRuntime(startDir = process.cwd()) {
     !isLocalApiBase(apiBase) ||
     !profile ||
     !devAccessToken ||
-    !processIsAlive(pid)
+    !devRuntimeIsAlive(pid, apiBase)
   ) {
     // Reported rather than thrown: an unusable lease must not stop someone
     // from listing profiles or switching to a live account from inside the
