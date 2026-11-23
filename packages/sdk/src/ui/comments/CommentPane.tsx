@@ -1,9 +1,9 @@
 /**
  * The comment pane and its pieces, rendered from a `useComments` controller:
  *
- * - `CommentPane`: the comments of the view in the host Comments panel beside the chat (the filter menu with Open, Done
- *   and All, the New comment button listing the Space's modes, Copy changes, the new comment box with its To chip, the
- *   thread cards and the Undo toast). It draws nothing inside the Space, and nothing at all while the host shows no
+ * - `CommentPane`: the comments of the view in the host Comments panel beside the chat (one header row with New comment,
+ *   the filter and the "..." menu holding Copy changes, the new comment box with its To chip, the thread cards and the
+ *   Undo toast). It draws nothing inside the Space, and nothing at all while the host shows no
  *   comments (`hostComments`). Threads come flat, newest first; on the Space home (no scope) they group by page. Pass
  *   `order` and `groupBy` to list them your way.
  * - `CommentPins`: the numbered pins and zones on the anchor element. Put it inside the element the comments sit on (a
@@ -14,9 +14,10 @@
  * - `CommentThreadCard`, `NewCommentBox` and `CommentAvatar`: the pane's own pieces, also drawn by the passage pane.
  *
  * A card archives (E) and unarchives (Shift+E) with an Undo toast (Z), edits your own comments in place and deletes at
- * once with Undo, as the viewer's rights allow. At its top, "Thread <title>" names the thread that owns it (or "Goes to"
- * the thread a reply would go to). Each signature names who wrote the comment; an agent's carries its harness logo, with
- * what it ran on in a hover card (`CommentAgentBadge`). A band name reads "Fred And The Machine" (`agentDisplayName`).
+ * once with Undo, as the viewer's rights allow. It starts with where it sits (the quoted words, or "Whole page", a point,
+ * the items, a moment), with Done and "..." at its top right. Each comment names who wrote it on two lines beside the
+ * avatar; an agent's avatar carries its app's logo, and its name opens a card with what it ran on. A band name reads
+ * "Fred And The Machine" (`agentDisplayName`). Where a reply goes is said once, by the reply box.
  *
  * Files: with an Attachments files column and a host that uploads (`runtime.spaceFiles`), a new comment and a reply take
  * pictures and files: paste, drop on the box or the paperclip (`commentFiles`). Otherwise the boxes take text only.
@@ -31,33 +32,42 @@ import React, {
 } from 'react';
 import type { KeySpec, Words } from '../../words';
 import { ActionToast } from '../actions/ActionToast';
-import { Badge, Button, EmptyState, SegmentedControl } from '../blocks';
+import { Badge, Button, EmptyState } from '../blocks';
 import { AttachmentGallery, ImageViewer } from '../gallery';
 import { ESCAPE_PRIORITY, type KeyboardEngineCore } from '../engine/core';
 import { useEngineCore, useEscapeLayer, useShortcutOwner } from '../engine/hooks';
 import { Icon } from '../icons';
-import { Tooltip } from '../overlay';
+import { Keycap } from '../keycap/Keycap';
+import { Menu, Tooltip } from '../overlay';
 import { fixedOrigin } from '../overlay/floating';
 import { LAYER_ROOT_ATTRIBUTE, findLayerRoot, usePinnedLayerRoot } from '../overlay/layerRoot';
 import { cx, useIsoLayoutEffect } from '../util';
-import { CommentAgentBadge, CommentAgentThreadName } from './agentRuntime';
+import {
+  COMMENT_HARNESS_NAMES, CommentAgentRuntimeCard, CommentHarnessLogo, commentAgentRuntimeView, isHarness, type CommentHarness,
+} from './agentRuntime';
 import {
   COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, agentDisplayName, clipCommentAnswer, commentAttachmentFor, commentBodyParts, commentRelativeTime, commentReplyRuns, formatCommentTime,
-  isCommentZone, scrollCommentIntoView, type CommentAnchor, type CommentAttachment, type CommentRecord, type CommentThread,
+  commentAnchorsOf, isCommentZone, scrollCommentIntoView, type CommentAnchor, type CommentAttachment, type CommentRecord, type CommentThread,
 } from './commentModel';
-import { commentDraftKey, useCommentDraftText } from './commentDrafts';
+import { commentDraftKey, readHostDraftFiles, useCommentDraftText, writeHostDraftFiles } from './commentDrafts';
 import { useRevealOnOpen } from './scrollReveal';
 import { usePassageChanged } from './textHighlights';
-import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles } from './commentFiles';
+import { useSwipeDownToDismiss } from '../../interactions/swipeDownToDismiss';
+import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles, type CommentFilesState } from './commentFiles';
 import { createPortal } from 'react-dom';
 import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
+import { useHostComposer, type HostComposerTo } from './hostPanel';
+import { useHandedPaneKey } from './handover';
+import { usePaneOutlet } from './paneOutlet';
+import { archiveThenNext, holdReviewRunKeys, notifyReviewRunAction, useNextCardComesIntoPlace, useReviewRunPane } from './reviewRun';
 import {
-  COMMENT_MODE_ICON, COMMENT_MODE_WORD, CommentFilterMenu, CommentGoesTo, commentGoesToShows, commentOutsideClaim,
-  commentOutsideName, commentOutsideUnread, CommentListLoading, CommentModeHint, CommentPaneKeys, CommentThreadList,
-  CommentToChip, NewCommentMenu, commentIdleHint, commentItemNames, commentPlaceMeta, useAtThreadPicker, usePaneFocusKeeper, useThreadScroller,
+  COMMENT_MODE_ICON, COMMENT_MODE_WORD, commentHarnessName, commentOutsideClaim, commentOutsideName, commentOutsideUnread,
+  commentThreadName, CommentListLoading, CommentListMore, CommentModeHint, CommentPaneKeys, CommentThreadList, CommentPaneBar, CommentToChip,
+  commentIdleHint, commentItemNames, useAtThreadPicker, usePaneFocusKeeper, useThreadScroller,
   type CommentListOptions,
 } from './paneParts';
-import type { CommentController } from './useComments';
+import { elsewhere, outsideClaim } from './useCommentRouting';
+import type { CommentController, CommentFile } from './useComments';
 
 // ---------------------------------------------------------------------------
 // Small pieces
@@ -128,18 +138,6 @@ function namedAction(controller: CommentController, key: Parameters<CommentContr
   comment: CommentRecord, vars: Readonly<Record<string, string>> = {}): string {
   const excerpt = commentExcerpt(comment);
   return excerpt ? controller.say(key, { ...vars, excerpt }) : short;
-}
-
-/** An ask's sentence ("Claude needs a choice") with the asker's name bold. */
-function AskLabel({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
-  const key = comment.needs === 'check' ? 'askCheck' : comment.needs === 'choice' ? 'askChoice' : 'askInput';
-  const mark = '\u0000';
-  const [before = '', after = ''] = controller.say(key, { who: mark }).split(mark);
-  return (
-    <p className="nui-comment-ask-label">
-      {before}<span className="nui-comment-ask-who">{agentDisplayName(comment.author)}</span>{after}
-    </p>
-  );
 }
 
 function answerLabel(controller: CommentController, answer: string): string {
@@ -252,10 +250,15 @@ function CommentAttachments({ controller, comment, choices = [], onAnswer }: {
 export interface CommentThreadCardProps {
   controller: CommentController;
   thread: CommentThread;
-  /** Name the anchor in the card's meta line (when the pane lists every anchor). */
+  /** Name the anchor where the card says where it sits (when the pane lists every anchor). */
   showAnchor?: boolean;
-  /** Show the quoted words of a text comment under its head. Default true; a passage pane shows them itself. */
-  quote?: boolean;
+  /** The words a passage pane quotes for this thread (default: the comment's own passage), and whether they are gone. */
+  passageQuote?: string | null;
+  passageGone?: boolean;
+  /** Where the thread sits when it quotes no words (default: its point, its moment, its items or "Whole page"). */
+  placeLabel?: string | null;
+  /** A press on the card. Default: `controller.selectThread(thread)`. */
+  onSelect?(thread: CommentThread): void;
 }
 
 /** Your own comment's text, edited in place: Enter saves, Shift+Enter adds a line, Escape cancels. */
@@ -280,7 +283,7 @@ function CommentEditBox({ controller, comment, onDone }: {
   };
   const label = controller.say('editComment');
   return (
-    <div className="nui-comment-edit" role="group" aria-label={label} onClick={stop}>
+    <div className="nui-comment-edit" data-swipe-dismiss="" role="group" aria-label={label} onClick={stop}>
       <textarea ref={ref} className="nui-comment-input" value={text} rows={2} aria-label={label}
         onChange={event => setText(event.target.value)}
         onKeyDown={event => {
@@ -302,29 +305,42 @@ function EditedMark({ controller, comment }: { controller: CommentController; co
   return comment.editedAt ? <span className="nui-comment-edited">{controller.say('edited')}</span> : null;
 }
 
-/**
- * The quoted words of a text comment on its card. When the page no longer has them (`SpaceTextComments` reports it)
- * the quote is struck through under Passage changed; the thread stays open.
- */
-function CommentQuote({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
-  const gone = usePassageChanged(comment.passage && !comment.passage.field ? comment.recordKey : null);
-  if (!comment.passage) return null;
-  return (
-    <div className="nui-passage-anchor nui-comment-quote-row" data-changed={gone ? '' : undefined}>
-      {gone ? <span className="nui-passage-field-name"><Badge tone="warning">{controller.say('textChanged')}</Badge></span> : null}
-      <p className="nui-passage-quote nui-comment-quote">{comment.passage.quote}</p>
-      {gone ? <span className="nui-passage-hint">{controller.say('textChangedHint')}</span> : null}
-    </div>
-  );
+/** The options of the first question of a thread still waiting for a pick, for the card's Enter and 1 to 9 keys. */
+export function commentWaitingChoices(thread: CommentThread): { comment: CommentRecord; options: string[]; recommended: string | null } | null {
+  for (const comment of [thread.root, ...thread.replies]) {
+    if (comment.status === 'Deleted' || comment.answer || (comment.needs !== 'choice' && comment.needs !== 'check')) continue;
+    const options = askChoices(comment).filter(option => !commentAttachmentFor(option, comment.attachments));
+    if (options.length) {
+      return { comment, options, recommended: comment.recommended && options.includes(comment.recommended) ? comment.recommended : null };
+    }
+  }
+  return null;
 }
 
 /**
- * An agent's question on a comment (Needs check, choice or input), the first comment or a reply: its label, the
- * answer once sent, else the way to answer. An input ask is answered from its own field: the answer goes back as a reply
- * and fills that comment's Answer.
+ * An agent's question on a comment (Needs check, choice or input), the first comment or a reply: the answer once sent,
+ * else the way to answer. The comment right above says who asks, so the question adds no line of its own.
+ *
+ * A check or a choice reads like a question in a conversation: one row per option, each with its number, a short line
+ * under it when the asker gave one (`optionDetails`) and the Recommended tag on the asker's pick (`recommended`), then
+ * Other, which opens the reply box for the person's own words. An input ask is answered from its own field: the answer
+ * goes back as a reply and fills that comment's Answer.
  */
-function CommentAsk({ controller, thread, comment }: { controller: CommentController; thread: CommentThread; comment: CommentRecord }) {
+function CommentAsk({ controller, thread, comment, onOther, enter, mark }: {
+  controller: CommentController; thread: CommentThread; comment: CommentRecord;
+  /** Other: the reply box takes the caret. */
+  onOther(): void;
+  /** The card is selected and this is its waiting question: Enter picks the recommended option. */
+  enter: boolean;
+  /** Shown after the sent answer (the read mark of a thread an agent outside Notis holds). */
+  mark?: React.ReactNode;
+}) {
   const { actions } = controller;
+  // An option picked answers the question; in a review run the next card then takes its place, or the answer stays.
+  const pick = (choice: string) => {
+    const saved = actions.answer(comment, choice);
+    notifyReviewRunAction({ kind: 'answered', key: thread.root.recordKey, saved });
+  };
   // The answer being typed is kept while the pane is away, like a reply (`commentDrafts`).
   const [answerText, setAnswerText] = useCommentDraftText(comment.needs === 'input' && !comment.answer
     ? commentDraftKey(controller.draftScope, `answer:${comment.recordKey}`) : null);
@@ -342,7 +358,7 @@ function CommentAsk({ controller, thread, comment }: { controller: CommentContro
   const answeredBelow = comment.needs === 'input' && Boolean(comment.answer) && thread.replies.some(reply =>
     reply.status !== 'Deleted' && !reply.agent && (reply.answerTo ? reply.answerTo === comment.recordKey
       : clipCommentAnswer(reply.body.trim()) === comment.answer.trim()));
-  // Options named like a picture are answered from under it, inside the ask; the row below keeps the others.
+  // Options named like a picture are answered from under it, inside the ask; the rows below keep the others.
   const rowChoices = choices.filter(option => !commentAttachmentFor(option, comment.attachments));
   const pictureAsk = rowChoices.length < choices.length;
   const canAnswer = Boolean(answerText.trim()) && !sending && controller.canWrite;
@@ -351,7 +367,7 @@ function CommentAsk({ controller, thread, comment }: { controller: CommentContro
     setSending(true);
     const ok = await actions.reply(thread, answerText.trim(), [], comment);
     setSending(false);
-    if (ok) setAnswerText('');
+    if (ok) { setAnswerText(''); notifyReviewRunAction({ kind: 'answered', key: thread.root.recordKey }); }
   };
   const attach = async (file: File | undefined) => {
     if (!file) return;
@@ -362,20 +378,20 @@ function CommentAsk({ controller, thread, comment }: { controller: CommentContro
     answerRef.current?.focus();
   };
   return (
-    <div className="nui-comment-ask" data-ask={comment.recordKey} onClick={stop} onKeyDown={stop}>
-      <AskLabel controller={controller} comment={comment} />
+    <div className="nui-comment-ask" data-ask={comment.recordKey} data-needs={comment.needs} onClick={stop} onKeyDown={stop}>
       {pictureAsk ? (
         <CommentAttachments controller={controller} comment={comment} choices={choices}
-          onAnswer={waiting ? answer => actions.answer(comment, answer) : undefined} />
+          onAnswer={waiting ? pick : undefined} />
       ) : null}
       {comment.answer ? (
         <p className="nui-comment-answer">
           <Icon name="check" />
           <span>{answeredBelow ? controller.say('answeredInput')
             : controller.say('sent', { answer: answerLabel(controller, comment.answer).replace(/[\s.,;:!?…]+$/, '') })}</span>
+          {mark ?? null}
         </p>
       ) : comment.needs === 'input' ? (
-        <div className="nui-comment-ask-answer">
+        <div className="nui-comment-ask-answer" data-swipe-dismiss="">
           <div className="nui-comment-compose">
             <textarea ref={answerRef} className="nui-comment-input" value={answerText} rows={1}
               placeholder={controller.say('answerPlaceholder')} aria-label={controller.say('answerPlaceholder')}
@@ -395,20 +411,173 @@ function CommentAsk({ controller, thread, comment }: { controller: CommentContro
           </div>
         </div>
       ) : rowChoices.length ? (
-        <div className="nui-comment-choices" role="group" aria-label={needsLabel}>
-          {rowChoices.map(choice => (
-            <Button key={choice} size="sm" variant="secondary" disabled={busy}
-              onClick={() => actions.answer(comment, choice)}>{answerLabel(controller, choice)}</Button>
-          ))}
+        <div className="nui-comment-options" role="group" aria-label={needsLabel}>
+          {rowChoices.map((choice, index) => {
+            const recommended = comment.recommended === choice;
+            const detail = comment.optionDetails?.[choice] ?? '';
+            return (
+              <button key={choice} type="button" className="nui-comment-option" disabled={busy || !controller.canWrite}
+                data-option={choice} data-recommended={recommended ? '' : undefined} data-detail={detail || recommended ? '' : undefined}
+                aria-keyshortcuts={recommended && enter ? 'Enter' : undefined}
+                onClick={() => pick(choice)}>
+                <span className="nui-comment-option-key" aria-hidden="true">{index + 1}</span>
+                <span className="nui-comment-option-text">
+                  <span className="nui-comment-option-head">
+                    <span className="nui-comment-option-label">{answerLabel(controller, choice)}</span>
+                    {recommended ? <span className="nui-comment-option-badge" data-part="recommended">{controller.say('recommended')}</span> : null}
+                  </span>
+                  {detail ? <span className="nui-comment-option-detail">{detail}</span> : null}
+                </span>
+                {recommended ? (
+                  <span className="nui-comment-option-enter" aria-hidden="true" data-shown={enter ? '' : undefined}><Keycap keys="enter" /></span>
+                ) : null}
+              </button>
+            );
+          })}
+          <button type="button" className="nui-comment-option" data-other="" data-detail="" disabled={busy || !controller.canWrite}
+            onClick={onOther}>
+            <span className="nui-comment-option-key" aria-hidden="true">{rowChoices.length + 1}</span>
+            <span className="nui-comment-option-text">
+              <span className="nui-comment-option-label">{controller.say('otherOption')}</span>
+              <span className="nui-comment-option-detail">{controller.say('otherOptionHint')}</span>
+            </span>
+          </button>
         </div>
       ) : null}
     </div>
   );
 }
 
-export function CommentThreadCard({ controller, thread, showAnchor = false, quote = true }: CommentThreadCardProps) {
-  const { root, replies, anchor } = thread;
-  const { actions, locale, now, isNew, me } = controller;
+/** The harness whose logo an agent's avatar carries: what it ran on, else the harness it declared. */
+function agentHarnessOf(comment: CommentRecord): CommentHarness | null {
+  const agent = comment.agent;
+  if (!agent) return null;
+  const harness = agent.runtime?.provider ?? agent.harness;
+  return isHarness(harness) ? harness : null;
+}
+
+/** A comment's avatar; an agent's carries its app's logo as a small badge. */
+function CommentEntryAvatar({ comment, me }: { comment: CommentRecord; me: string }) {
+  const harness = agentHarnessOf(comment);
+  return (
+    <span aria-hidden="true" className="nui-comment-avatar" data-me={comment.author === me ? '' : undefined}
+      data-harness={harness ?? undefined}>
+      {(agentDisplayName(comment.author).trim().slice(0, 1) || '?').toUpperCase()}
+      {harness ? <span className="nui-comment-avatar-badge"><CommentHarnessLogo harness={harness} className="" /></span> : null}
+    </span>
+  );
+}
+
+/**
+ * The writer's name. An agent's opens a card on hover and on keyboard focus (Tab reaches it; its accessible name says
+ * everything the card shows): what ran it, as the chat timeline's badge says it, or the app that runs an agent outside
+ * Notis and that it works outside Notis.
+ */
+function CommentAuthorName({ controller, comment }: { controller: CommentController; comment: CommentRecord }) {
+  const name = agentDisplayName(comment.author);
+  const agent = comment.agent;
+  const view = agent?.runtime ? commentAgentRuntimeView(controller.say, name, agent.runtime) : null;
+  const harness = agentHarnessOf(comment);
+  const outside = agent?.outside ? controller.say('outsideNotis') : '';
+  if (!agent || (!view && !harness && !outside)) return <span className="nui-comment-author">{name}</span>;
+  const runs = !view && harness ? controller.say('agentHarness', { harness: COMMENT_HARNESS_NAMES[harness] }) : '';
+  const label = view ? view.label : [name, runs, outside].filter(Boolean).join(' · ');
+  const card = view ? <CommentAgentRuntimeCard name={name} view={view} /> : (
+    <span className="nui-runtime-card">
+      <span className="nui-runtime-card-head">
+        <span className="nui-runtime-card-name">{name}</span>
+        {harness ? <span className="nui-runtime-glyphs"><CommentHarnessLogo harness={harness} /></span> : null}
+      </span>
+      {runs ? <span className="nui-runtime-card-line">{runs}</span> : null}
+      {outside ? <span className="nui-runtime-card-line">{outside}</span> : null}
+    </span>
+  );
+  return (
+    <Tooltip label={label} side="bottom" align="start" delay={200} card={card}>
+      <span className="nui-comment-author" tabIndex={0} role="img" aria-label={label}
+        data-part={view ? 'agent-runtime' : 'agent-harness'} data-harness={harness ?? undefined} onClick={stop}>{name}</span>
+    </Tooltip>
+  );
+}
+
+/**
+ * The mark a sent bubble carries after its time in a conversation: one check once sent, two once the agent has read it.
+ * On the person's latest word in a comment thread an agent outside Notis holds (SPC-536).
+ */
+function CommentReadMark({ read, label }: { read: boolean; label: string }) {
+  return (
+    <svg role="img" aria-label={label} className="nui-comment-read" data-part="read-mark" data-read={read ? '' : undefined}
+      width={read ? 18 : 14} height="14" viewBox={read ? '0 0 18 14' : '0 0 14 14'} fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      {read ? <><path d="M1 7.5L4 10.5L9 4" /><path d="M6 7.5L9 10.5L14 4" /></> : <path d="M3 7.5L6 10.5L11 4" />}
+    </svg>
+  );
+}
+
+/**
+ * Who holds a comment thread, as its reply box names it ("Reply to Claude"): the agent outside Notis that holds it, else
+ * what runs the thread a reply goes to. Null while that is not known or names nothing (the box then reads "Reply").
+ */
+export function commentThreadHolder(controller: CommentController, thread: CommentThread): {
+  who: string; outside: boolean; harness: string | null; to: string;
+} | null {
+  const { routing } = controller;
+  const rootKey = thread.root.recordKey;
+  if (!routing.links || rootKey.startsWith('draft-') || routing.lost?.(rootKey)) return null;
+  if (routing.known && !routing.known(rootKey)) return null;
+  const target = routing.goesTo(rootKey);
+  // A plain reply wakes an agent another person runs: no name rather than a thread it does not go to (SPC-467).
+  if (elsewhere(target)) return null;
+  if (target && outsideClaim(target)) {
+    const who = commentOutsideName(target);
+    return { who, outside: true, harness: target.harness ?? null, to: controller.say('toWho', { who }) };
+  }
+  const harness = target && !('newThread' in target) ? target.harness ?? null : null;
+  return { who: commentHarnessName(harness) || controller.say('notis'), outside: false, harness: harness ?? 'notis',
+    to: commentThreadName(controller, target).to };
+}
+
+/** Where a thread sits when it quotes no words: its point, its moment, its items or its item, else "Whole page". */
+function threadPlace(controller: CommentController, thread: CommentThread, showAnchor: boolean): string {
+  const { root, anchor } = thread;
+  const number = controller.numberOf(thread);
+  const item = anchor ? commentItemNames(controller, [anchor]) : '';
+  if (root.anchorIds.length > 1) {
+    return commentItemNames(controller, commentAnchorsOf(root, controller.anchors), root.anchorIds.length);
+  }
+  if (root.x != null && number > 0) {
+    return item && showAnchor ? controller.say('placePointOn', { n: number, item }) : controller.say('placePoint', { n: number });
+  }
+  if (root.time != null) {
+    const at = controller.say('placeTime', { time: formatCommentTime(root.time) });
+    return item && showAnchor ? `${at} · ${item}` : at;
+  }
+  // A comment on a whole item names the item; one on no item at all sits on the whole page.
+  return item || controller.say('placeWholePage');
+}
+
+/**
+ * One comment thread as a card, the same in every comments list:
+ *
+ * - First, where it sits: the quoted words on one or two lines ("Passage changed" once they are gone from the page), or
+ *   "Whole page", "Point 1 on <item>", the items, the moment.
+ * - Done (a check; Unarchive on an archived thread) and "..." at the top right: Copy link, Change who it goes to, Edit
+ *   and Delete. Quiet until the card is hovered, focused or selected; always shown on a touch screen.
+ * - Each comment starts with two lines beside its avatar: the name, then the agent's thread and the time in a quieter
+ *   line. Its words, pictures and question take the card's full width under that block. A reply keeps Copy link, Edit
+ *   and Delete in one "..." of its own.
+ * - No mark on a comment not read yet. The person's latest word in a thread an agent outside Notis holds carries the
+ *   chat bubble's check after its time: one until that agent has read it, two after.
+ * - Where a reply goes is said once, by the reply box ("Reply to The Paper Lanterns").
+ *
+ * While the card is selected and a question of it waits, Enter picks the recommended option and 1 to 9 an option by
+ * its position (the number after the last option is Other).
+ */
+export function CommentThreadCard({ controller, thread, showAnchor = false, passageQuote, passageGone, placeLabel, onSelect }: CommentThreadCardProps) {
+  const { root, replies } = thread;
+  // A swipe down in the reply field puts the keyboard away (swipeDownToDismiss).
+  useSwipeDownToDismiss();
+  const { actions, locale, now, me } = controller;
   // The reply being written, and its files, are kept while the pane is away (`commentDrafts`): another Space, a page
   // over the view or another brief unmounts the card, and the reply comes back with it.
   const replyKey = commentDraftKey(controller.draftScope, `reply:${root.recordKey}`);
@@ -418,15 +587,18 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
   draftNow.current = draft;
   const [sending, setSending] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  // The reply tapped last in this card: on a touch screen its buttons show instead of the comment's (SPC-488).
-  const [tappedReply, setTappedReply] = useState<string | null>(null);
   const files = useCommentFiles(controller, replyKey);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const resolved = root.status === 'Resolved';
   const selected = controller.threadKey === root.recordKey;
   const busy = controller.busy.has(root.recordKey);
-  const number = controller.numberOf(thread);
+  const isDraft = root.recordKey.startsWith('draft-');
+  const goneHere = usePassageChanged(root.passage && !root.passage.field ? root.recordKey : null);
+  const gone = passageGone ?? goneHere;
+  const quoteText = passageQuote || root.passage?.quote || null;
+  const place = quoteText ? '' : placeLabel || threadPlace(controller, thread, showAnchor);
 
   // In a pane's own scroller the pane scrolls the selected card into view (useThreadScroller); a card a Space lays out
   // itself scrolls its nearest scrolling box.
@@ -445,12 +617,47 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
     setDraft('');
     const ok = await actions.reply(thread, text, files.ready);
     setSending(false);
-    if (ok) files.clear(); else setDraft(draftNow.current.trim() ? `${text}\n${draftNow.current}` : text);
+    if (ok) { files.clear(); notifyReviewRunAction({ kind: 'replied', key: root.recordKey }); }
+    else setDraft(draftNow.current.trim() ? `${text}\n${draftNow.current}` : text);
   };
+  // Other on a question, and its number: the reply box takes the caret, whoever draws it.
+  const [focusToken, setFocusToken] = useState(0);
+  const openReply = () => { setFocusToken(value => value + 1); replyRef.current?.focus({ preventScroll: true }); };
+  // The review run's R key (and its number for Other) asks the card for its reply box.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return undefined;
+    card.addEventListener('notis-comment-reply', openReply);
+    return () => card.removeEventListener('notis-comment-reply', openReply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const answer = (comment: CommentRecord, choice: string) => {
+    const saved = actions.answer(comment, choice);
+    notifyReviewRunAction({ kind: 'answered', key: root.recordKey, saved });
+  };
+  // Done: in a review run the run archives and moves on; else the card archives and the next one takes the selection.
+  const done = () => { if (!notifyReviewRunAction({ kind: 'done', key: root.recordKey })) archiveThenNext(controller, root, cardRef.current); };
 
-  const select = () => controller.selectThread(thread);
+  const select = () => { if (onSelect) onSelect(thread); else controller.selectThread(thread); };
+  // A question waiting for a pick: while the card is selected, Enter picks the recommended option and 1 to 9 pick by
+  // position (the number after the last option is Other, which opens the reply box), as on a question in a conversation.
+  const asking = controller.canWrite ? commentWaitingChoices(thread) : null;
   const onCardKey = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget) return;
+    if (asking && selected && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+      if (event.key === 'Enter' && asking.recommended) {
+        event.preventDefault(); event.stopPropagation();
+        answer(asking.comment, asking.recommended);
+        return;
+      }
+      const position = /^[1-9]$/.test(event.key) ? Number(event.key) : 0;
+      if (position && position <= asking.options.length + 1) {
+        event.preventDefault(); event.stopPropagation();
+        if (position <= asking.options.length) answer(asking.comment, asking.options[position - 1]!);
+        else openReply();
+        return;
+      }
+    }
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); }
   };
   // Tabbing between cards moves the selected pin with the focus (the page does not move, nothing else changes).
@@ -458,195 +665,249 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
     if (event.target === event.currentTarget && controller.threadKey !== root.recordKey) controller.setThreadKey(root.recordKey);
   };
 
-  const pictureAsk = root.needs !== 'none' && pictureAskOf(root);
-  const meta = [
-    commentRelativeTime(root.createdAt, locale, now),
-    // A comment on several items names them all below, not only the first; one item is named by its title, like the
-    // group headings and the items of a comment on several (SPC-490), else the Space's label ("Task 3").
-    showAnchor && anchor && root.anchorIds.length < 2 ? commentItemNames(controller, [anchor]) : '',
-    number > 0 && root.x != null ? `#${number}` : '',
-    ...commentPlaceMeta(controller, thread),
-  ].filter(Boolean).join(' · ');
-  // SPC-535, SPC-536: a thread an agent outside Notis holds. The box says who reads the reply, and until that agent
-  // reads the thread after the person's latest word, the card says it has not read it yet.
+  // SPC-535, SPC-536: a thread an agent outside Notis holds. The box says who reads the reply, and the person's latest
+  // word carries the read mark: one check until that agent reads the thread after it, two once it has.
+  const holder = commentThreadHolder(controller, thread);
   const outside = commentOutsideClaim(controller, thread);
-  const outsideName = outside ? commentOutsideName(outside) : '';
   const outsideUnread = Boolean(outside) && commentOutsideUnread(thread, outside!);
-  const replyLabel = resolved ? controller.say('replyToReopen')
-    : outside ? controller.say('replyToWho', { who: outsideName }) : controller.say('reply');
-  // Unified comments (the host links comment threads to threads): the buttons are always shown, small and grey, the
-  // thread's at the end of its Thread line (on the name line when the card has none), each reply's on its name line.
-  const shownButtons = controller.routing.links;
-  const onThreadLine = shownButtons && commentGoesToShows(controller, thread);
+  let markOn: { key: string; where: 'comment' | 'answer' } | null = null;
+  if (outside) {
+    const stamp = (value: string | null | undefined) => { const at = Date.parse(value ?? ''); return Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at; };
+    let latest = Number.NEGATIVE_INFINITY;
+    for (const comment of [root, ...replies]) {
+      if (comment.status === 'Deleted') continue;
+      if (!comment.agent && stamp(comment.createdAt) >= latest) { latest = stamp(comment.createdAt); markOn = { key: comment.recordKey, where: 'comment' }; }
+      if (comment.answer && stamp(comment.answeredAt) > latest) { latest = stamp(comment.answeredAt); markOn = { key: comment.recordKey, where: 'answer' }; }
+    }
+  }
+  const readMark = outside ? (
+    <CommentReadMark read={!outsideUnread}
+      label={controller.say(outsideUnread ? 'outsideUnread' : 'outsideRead', { who: commentOutsideName(outside) })} />
+  ) : null;
+  const replyLabel = holder ? controller.say('replyToWho', { who: holder.who })
+    : resolved ? controller.say('replyToReopen') : controller.say('reply');
+  const canChange = Boolean(holder) && controller.routing.canLink;
+  // The reply box is the host's composer where the host draws comment boxes: one line at rest ("Reply to Claude"),
+  // then the To pill inside the field and the buttons on a line of their own.
+  const replyMarker = useRef<HTMLSpanElement>(null);
+  const replySlot = useHostComposer(replyMarker, !isDraft, {
+    kind: 'reply', placeholder: replyLabel, label: replyLabel, quote: null, place: null,
+    to: holder ? {
+      label: holder.to, outside: holder.outside, outsideLabel: controller.say('outsideNotis'), harness: holder.harness,
+      pick: canChange ? anchor => controller.routing.change(root.recordKey, anchor).then(() => true) : undefined,
+      pickLabel: controller.say('changeWho'),
+    } : null,
+    initialText: draft, onText: setDraft,
+    // The host's files are kept with the reply's text while the pane is away, until the reply is saved.
+    initialFiles: readHostDraftFiles(replyKey), onFiles: picked => writeHostDraftFiles(replyKey, picked),
+    send: (text, picked) => withUploads(controller, picked, async uploaded => {
+      setSending(true);
+      const ok = await actions.reply(thread, text.trim(), uploaded);
+      setSending(false);
+      if (ok) { setDraft(''); writeHostDraftFiles(replyKey, []); notifyReviewRunAction({ kind: 'replied', key: root.recordKey }); }
+      return ok;
+    }),
+    dismiss: () => undefined,
+    canWrite: controller.canWrite, attach: controller.attach === 'on', focusToken, autoFocus: false,
+  }, [replyLabel, holder?.to, holder?.outside, holder?.harness, canChange, controller.canWrite, controller.attach, focusToken]);
+  // The Notis thread a reply goes to, opened in Chat from "..." (never an agent outside Notis: it has none here).
+  const goesTo = holder && !holder.outside ? controller.routing.goesTo(root.recordKey) : null;
+  const openThreadId = goesTo?.threadId ?? null;
+  const openThread = controller.routing.open;
+  // The thread an agent's comment came from, for its quieter line: the one it declared (an agent outside Notis), else
+  // the title of the linked thread it ran in.
+  const linkTitles = new Map(controller.routing.links ? controller.routing.linksOf(root.recordKey).map(link => [link.threadId, link.title]) : []);
+  const threadNameOf = (comment: CommentRecord) => comment.agent?.threadName
+    || (comment.agent?.threadId ? linkTitles.get(comment.agent.threadId) : '') || '';
 
-  const newDot = (comment: CommentRecord) => isNew(comment)
-    ? <span className="nui-comment-new" role="img" aria-label={controller.say('newActivity')} /> : null;
-
-  const replyItem = (reply: CommentRecord) => (
-    <li key={reply.recordKey} className="nui-comment-reply" data-comment={reply.recordKey}
-      data-tapped={selected && tappedReply === reply.recordKey ? '' : undefined}>
-      <CommentAvatar author={reply.author} me={me} />
-      <div className="nui-comment-reply-text">
-        {/* The name line and the reply's buttons share one row, so the text starts right under it (no empty line). */}
-        <div className="nui-comment-reply-head">
-          <div className="nui-comment-who">
-            <span className="nui-comment-author">{agentDisplayName(reply.author)}</span>
-            <CommentAgentBadge controller={controller} comment={reply} />
-            <CommentAgentThreadName comment={reply} />
-            <span className="nui-comment-meta">{commentRelativeTime(reply.createdAt, locale, now)}</span>
-            <EditedMark controller={controller} comment={reply} />
-            {newDot(reply)}
-          </div>
-          {shownButtons || controller.canEdit(reply) || controller.canDelete(reply) ? (
-            <span className="nui-comment-reply-actions" onClick={stop} onKeyDown={stop}>
-              {/* Unified comments: every reply has its own Copy link, which opens its thread. */}
-              {shownButtons ? (
-                <IconAction label={controller.say('copyLink')} icon="link" disabled={root.recordKey.startsWith('draft-')}
-                  name={namedAction(controller, 'copyReplyLinkNamed', controller.say('copyLink'), reply)}
-                  onClick={() => void actions.copyLink(root, cardRef.current)} />
-              ) : null}
-              {controller.canEdit(reply) ? (
-                <IconAction label={controller.say('editReply')} icon="pencil-simple"
-                  name={namedAction(controller, 'editReplyNamed', controller.say('editReply'), reply)}
-                  disabled={controller.busy.has(reply.recordKey)} onClick={() => setEditing(reply.recordKey)} />
-              ) : null}
-              {controller.canDelete(reply) ? (
-                // The same reply reads the same on both buttons: "your reply" for the viewer's own, "{who}'s reply" else.
-                <IconAction label={controller.say('deleteComment')} icon="trash"
-                  name={controller.canEdit(reply)
-                    ? namedAction(controller, 'deleteYourReply', controller.say('deleteComment'), reply)
-                    : namedAction(controller, 'deleteReplyOf', controller.say('deleteComment'), reply, { who: agentDisplayName(reply.author) })}
-                  disabled={controller.busy.has(reply.recordKey)} onClick={() => actions.remove(reply)} />
-              ) : null}
-            </span>
-          ) : null}
-        </div>
-        {editing === reply.recordKey
-          ? <CommentEditBox controller={controller} comment={reply} onDone={() => setEditing(null)} />
-          : <CommentBody body={reply.body} />}
-        {reply.needs !== 'none' && pictureAskOf(reply) ? null : <CommentAttachments controller={controller} comment={reply} />}
-        {/* An agent's question in a reply is answered here too, like one on the first comment. */}
-        <CommentAsk controller={controller} thread={thread} comment={reply} />
-      </div>
-    </li>
+  const threadActions = (
+    <div className="nui-comment-actions" ref={actionsRef} onClick={stop} onKeyDown={stop}>
+      {resolved ? (
+        <Tooltip label={controller.say('reopen')} keys="shift+e">
+          <button type="button" className="nui-comment-act" disabled={busy} data-part="reopen"
+            aria-label={namedAction(controller, 'unarchiveThread', controller.say('reopen'), root)}
+            onClick={() => actions.unarchive(root)}><Icon name="tray-arrow-up" /></button>
+        </Tooltip>
+      ) : (
+        <Tooltip label={controller.say('markDone')} keys="e">
+          <button type="button" className="nui-comment-act" disabled={busy || isDraft} data-part="done"
+            aria-label={namedAction(controller, 'archiveThread', controller.say('resolve'), root)}
+            onClick={done}><Icon name="check" /></button>
+        </Tooltip>
+      )}
+      <Menu align="end" label={controller.words.threadMore} accelerators={false}
+        trigger={(
+          <button type="button" className="nui-comment-act" data-part="thread-more"
+            aria-label={namedAction(controller, 'threadMoreNamed', controller.say('threadMore'), root)}>
+            <Icon name="dots-three" />
+          </button>
+        )}>
+        {/* A link that opens this page with the thread revealed (comment=<root key>), for someone else. */}
+        <Menu.Item icon="link" disabled={isDraft} onSelect={() => void actions.copyLink(root, cardRef.current)}>
+          <span data-thread-action="copy-link">{controller.say('copyLink')}</span>
+        </Menu.Item>
+        {/* Where the host draws the card away from its page: the page opens with this thread shown on it. */}
+        {controller.showOnPage && !isDraft ? (
+          <Menu.Item icon="arrow-square-out" onSelect={() => controller.showOnPage?.(root.recordKey)}>
+            <span data-thread-action="show-on-page">{controller.say('showOnPage')}</span>
+          </Menu.Item>
+        ) : null}
+        {openThreadId && openThread ? (
+          <Menu.Item icon="chat-circle-text" onSelect={() => openThread(openThreadId)}>
+            <span data-thread-action="open-thread">{controller.say('openLinkedThread', { title: goesTo?.title || controller.say('goesToNew') })}</span>
+          </Menu.Item>
+        ) : null}
+        {canChange ? (
+          <Menu.Item icon="arrow-bend-up-right" disabled={controller.routing.saving?.(root.recordKey)}
+            onSelect={() => { if (actionsRef.current) void controller.routing.change(root.recordKey, actionsRef.current); }}>
+            <span data-thread-action="change">{controller.say('changeWho')}</span>
+          </Menu.Item>
+        ) : null}
+        {controller.canEdit(root) ? (
+          <Menu.Item icon="pencil-simple" disabled={busy} onSelect={() => setEditing(root.recordKey)}>
+            <span data-thread-action="edit">{controller.say('editRoot')}</span>
+          </Menu.Item>
+        ) : null}
+        {controller.canDelete(root) ? (
+          <Menu.Item icon="trash" tone="danger" disabled={busy} onSelect={() => actions.remove(root)}>
+            <span data-thread-action="delete">{controller.say('deleteThread')}</span>
+          </Menu.Item>
+        ) : null}
+      </Menu>
+    </div>
   );
 
-  const actionsBar = (
-    <div className="nui-comment-actions" onClick={stop} onKeyDown={stop}>
-      {resolved
-        ? <IconAction label={controller.say('reopen')} icon="tray-arrow-up" disabled={busy}
-            name={namedAction(controller, 'unarchiveThread', controller.say('reopen'), root)}
-            onClick={() => actions.unarchive(root)} />
-        : <IconAction label={controller.say('resolve')} icon="archive" disabled={busy}
-            name={namedAction(controller, 'archiveThread', controller.say('resolve'), root)}
-            onClick={() => actions.archive(root)} />}
-      {/* A link that opens this page with the thread revealed (comment=<root key>), for someone else. */}
-      <IconAction label={controller.say('copyLink')} icon="link" disabled={root.recordKey.startsWith('draft-')}
-        name={namedAction(controller, 'copyLinkNamed', controller.say('copyLink'), root)}
-        onClick={() => void actions.copyLink(root, cardRef.current)} />
-      {controller.canEdit(root) ? (
-        <IconAction label={controller.say('editRoot')} icon="pencil-simple" disabled={busy}
-          name={namedAction(controller, 'editRootNamed', controller.say('editRoot'), root)}
-          onClick={() => setEditing(root.recordKey)} />
-      ) : null}
-      {controller.canDelete(root) ? (
-        <IconAction label={controller.say('deleteThread')} icon="trash" disabled={busy}
-          name={namedAction(controller, 'deleteThreadNamed', controller.say('deleteThread'), root)}
-          onClick={() => actions.remove(root)} />
-      ) : null}
-    </div>
+  const replyMenu = (reply: CommentRecord) => (
+    <span className="nui-comment-entry-more" onClick={stop} onKeyDown={stop}>
+      <Menu align="end" label={controller.words.replyMore} accelerators={false}
+        trigger={(
+          <button type="button" className="nui-comment-act" data-part="reply-more"
+            aria-label={namedAction(controller, 'replyMoreNamed', controller.say('replyMore'), reply)}>
+            <Icon name="dots-three" />
+          </button>
+        )}>
+        {/* Every reply has its own Copy link, which opens its thread. */}
+        <Menu.Item icon="link" disabled={isDraft} onSelect={() => void actions.copyLink(root, cardRef.current)}>
+          <span data-reply-action="copy-link">{controller.say('copyLink')}</span>
+        </Menu.Item>
+        {controller.canEdit(reply) ? (
+          <Menu.Item icon="pencil-simple" disabled={controller.busy.has(reply.recordKey)} onSelect={() => setEditing(reply.recordKey)}>
+            <span data-reply-action="edit">{controller.say('editReply')}</span>
+          </Menu.Item>
+        ) : null}
+        {controller.canDelete(reply) ? (
+          <Menu.Item icon="trash" tone="danger" disabled={controller.busy.has(reply.recordKey)} onSelect={() => actions.remove(reply)}>
+            <span data-reply-action="delete">{controller.say('deleteComment')}</span>
+          </Menu.Item>
+        ) : null}
+      </Menu>
+    </span>
+  );
+
+  const entry = (comment: CommentRecord, isRoot: boolean) => (
+    <li key={comment.recordKey} className="nui-comment-entry" data-comment={comment.recordKey} data-root={isRoot ? '' : undefined}>
+      {/* Two lines beside the avatar: the name, then the agent's thread and the time in a quieter line. */}
+      <div className="nui-comment-entry-head">
+        <CommentEntryAvatar comment={comment} me={me} />
+        <div className="nui-comment-who">
+          <div className="nui-comment-name"><CommentAuthorName controller={controller} comment={comment} /></div>
+          <div className="nui-comment-sub" data-part="author-line-2">
+            {threadNameOf(comment) ? (
+              <span className="nui-comment-agent-thread" data-part="agent-thread-name" title={threadNameOf(comment)}>{threadNameOf(comment)}</span>
+            ) : null}
+            <span className="nui-comment-meta">{commentRelativeTime(comment.createdAt, locale, now)}</span>
+            <EditedMark controller={controller} comment={comment} />
+            {markOn?.key === comment.recordKey && markOn.where === 'comment' ? readMark : null}
+          </div>
+        </div>
+        {isRoot ? null : replyMenu(comment)}
+      </div>
+      {/* The words, the pictures and the question take the card's full width: nothing is indented under the avatar. */}
+      <div className="nui-comment-entry-main">
+        {isRoot && (root.example || resolved) ? (
+          <div className="nui-comment-badges">
+            {root.example ? <Badge>{controller.words.example}</Badge> : null}
+            {resolved ? <Badge>{controller.words.resolved}</Badge> : null}
+          </div>
+        ) : null}
+        {editing === comment.recordKey
+          ? <CommentEditBox controller={controller} comment={comment} onDone={() => setEditing(null)} />
+          : <CommentBody body={comment.body} />}
+        {comment.needs !== 'none' && pictureAskOf(comment) ? null : <CommentAttachments controller={controller} comment={comment} />}
+        {/* An agent's question in a reply is answered here too, like one on the first comment. */}
+        <CommentAsk controller={controller} thread={thread} comment={comment} onOther={openReply}
+          enter={selected && asking?.comment === comment}
+          mark={markOn?.key === comment.recordKey && markOn.where === 'answer' ? readMark : null} />
+      </div>
+    </li>
   );
 
   return (
     <article
       ref={cardRef}
       className="nui-comment-card"
-      data-buttons={shownButtons ? 'shown' : undefined}
       data-thread={root.recordKey}
       data-selected={selected ? '' : undefined}
       data-resolved={resolved ? '' : undefined}
+      data-outside={outside ? '' : undefined}
       aria-current={selected ? 'true' : undefined}
       aria-label={controller.say('pin', { who: agentDisplayName(root.author), body: root.body })}
       tabIndex={0}
-      onClick={event => {
-        const reply = (event.target as Element | null)?.closest?.('.nui-comment-reply')?.getAttribute('data-comment') ?? null;
-        setTappedReply(reply);
-        select();
-      }}
+      onClick={select}
       onKeyDown={onCardKey}
       onFocus={onCardFocus}
     >
-      {/* The quoted words first, like a passage thread's card, so every comments pane reads the same (SPC-489). */}
-      {quote && root.passage ? <CommentQuote controller={controller} comment={root} /> : null}
-      {/* The thread that owns this comment thread, once at the top; the signatures name only who wrote (SPC-114). */}
-      {onThreadLine ? (
-        // Unified comments: the thread's buttons end its Thread line, always shown and quiet (comment mode, card A).
-        <div className="nui-comment-thread-line">
-          <CommentGoesTo controller={controller} thread={thread} />
-          {actionsBar}
+      {/* In a review run the host's bar sits at the top of the selected card, above its quoted words (the `run-bar`
+          slot: the first one in the pane takes the bar, so the pane's foot keeps it only while no card is selected). */}
+      {selected ? <slot name="run-bar" /> : null}
+      {/* Where it sits, first, so every comments list reads the same (SPC-489), then the thread's two buttons. */}
+      <div className="nui-comment-top">
+        <div className="nui-comment-anchor" data-changed={gone ? '' : undefined}>
+          {quoteText ? (
+            <>
+              <p className="nui-comment-quote" data-part="quote">{quoteText}</p>
+              {/* Passage changed: the words are gone from the page. The old quote stays and the thread stays open. */}
+              {gone ? <span className="nui-comment-changed" data-part="passage-changed" title={controller.say('textChangedHint')}>{controller.say('textChanged')}</span> : null}
+            </>
+          ) : <span className="nui-comment-place" data-part="place">{place}</span>}
         </div>
-      ) : <CommentGoesTo controller={controller} thread={thread} />}
-      <header className="nui-comment-head">
-        <CommentAvatar author={root.author} me={me} />
-        <div className="nui-comment-who">
-          <span className="nui-comment-author">{agentDisplayName(root.author)}</span>
-          <CommentAgentBadge controller={controller} comment={root} />
-          <CommentAgentThreadName comment={root} />
-          <span className="nui-comment-meta">{meta}</span>
-          <EditedMark controller={controller} comment={root} />
-          {newDot(root)}
+        {threadActions}
+      </div>
+
+      <ol className="nui-comment-entries">
+        {entry(root, true)}
+        {commentReplyRuns(replies).map(run => run.deleted ? (
+          // Deleted replies leave one line per run, so the replies after them still read (SPC-127).
+          <li key={run.replies[0]!.recordKey} className="nui-comment-entry" data-deleted="">
+            <p className="nui-comment-deleted">{controller.say('commentDeleted')}</p>
+          </li>
+        ) : entry(run.reply, false))}
+      </ol>
+
+      {/* Where a reply goes is said once, here: "Reply to The Paper Lanterns". */}
+      <div className="nui-comment-reply-box" data-hosted={replySlot ? '' : undefined} onClick={stop} onKeyDown={stop}>
+        <span ref={replyMarker} className="nui-comment-box-marker" aria-hidden="true" />
+        {replySlot ? <slot name={replySlot} /> : (
+        <div className="nui-comment-compose-box" data-swipe-dismiss="" data-dragging={files.dragging ? '' : undefined} {...files.boxHandlers}>
+          <CommentFileChips controller={controller} files={files} />
+          <div className="nui-comment-compose">
+            <textarea
+              ref={replyRef}
+              className="nui-comment-input"
+              value={draft}
+              rows={1}
+              placeholder={replyLabel}
+              aria-label={replyLabel}
+              onChange={event => setDraft(event.target.value)}
+              onKeyDown={event => { if (sendsOnEnter(event)) { event.preventDefault(); void send(); } }}
+            />
+            <CommentAttachButton controller={controller} files={files} disabled={sending} />
+            <IconAction label={controller.say('send')} icon="paper-plane-right" disabled={!canSend}
+              onClick={() => void send()} />
+          </div>
+          <CommentDropVeil controller={controller} files={files} />
         </div>
-        {onThreadLine ? null : actionsBar}
-      </header>
-
-      {root.example || resolved ? (
-        <div className="nui-comment-badges">
-          {root.example ? <Badge>{controller.words.example}</Badge> : null}
-          {resolved ? <Badge>{controller.words.resolved}</Badge> : null}
-        </div>
-      ) : null}
-      {editing === root.recordKey
-        ? <CommentEditBox controller={controller} comment={root} onDone={() => setEditing(null)} />
-        : <CommentBody body={root.body} />}
-      {pictureAsk ? null : <CommentAttachments controller={controller} comment={root} />}
-
-      <CommentAsk controller={controller} thread={thread} comment={root} />
-
-      {replies.length ? (
-        <ol className="nui-comment-replies">
-          {commentReplyRuns(replies).map(run => run.deleted ? (
-            // Deleted replies leave one line per run, so the replies after them still read (SPC-127).
-            <li key={run.replies[0]!.recordKey} className="nui-comment-reply" data-deleted="">
-              <p className="nui-comment-deleted">{controller.say('commentDeleted')}</p>
-            </li>
-          ) : replyItem(run.reply))}
-        </ol>
-      ) : null}
-
-      {outsideUnread ? (
-        <p className="nui-comment-unread" data-part="outside-unread">
-          <Icon name="clock" />{controller.say('outsideUnread', { who: outsideName })}
-        </p>
-      ) : null}
-      <div className="nui-comment-compose-box" data-dragging={files.dragging ? '' : undefined} onClick={stop} onKeyDown={stop}
-        {...files.boxHandlers}>
-        <CommentFileChips controller={controller} files={files} />
-        <div className="nui-comment-compose">
-          <textarea
-            ref={replyRef}
-            className="nui-comment-input"
-            value={draft}
-            rows={1}
-            placeholder={replyLabel}
-            aria-label={replyLabel}
-            onChange={event => setDraft(event.target.value)}
-            onKeyDown={event => { if (sendsOnEnter(event)) { event.preventDefault(); void send(); } }}
-          />
-          <CommentAttachButton controller={controller} files={files} disabled={sending} />
-          <IconAction label={controller.say('send')} icon="paper-plane-right" disabled={!canSend}
-            onClick={() => void send()} />
-        </div>
-        <CommentDropVeil controller={controller} files={files} />
+        )}
       </div>
     </article>
   );
@@ -656,34 +917,181 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, quot
 // New comment
 // ---------------------------------------------------------------------------
 
+/** Uploads the host composer's files as the pane's own boxes do, then hands them to `save`. False when one fails. */
+async function withUploads(controller: CommentController, files: readonly File[],
+  save: (uploaded: CommentFile[]) => Promise<boolean>): Promise<boolean> {
+  // The host's field is switched off while it sends: the review run's keys stand still until it is back.
+  const release = holdReviewRunKeys();
+  try {
+    const uploaded: CommentFile[] = [];
+    for (const file of files) uploaded.push(await controller.uploadFile(file));
+    return await save(uploaded);
+  } catch (error) {
+    console.warn('[comments] upload failed', error);
+    controller.actions.notify(controller.words.saveError);
+    return false;
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Who a new comment goes to, as its box's first pill says it: the thread picked, else the best match, else "To a new
+ * thread"; "Choose a thread" when the best match could not be read. Null on a host without best matches or the picker.
+ */
+function newCommentTo(controller: CommentController): HostComposerTo | null {
+  const { routing } = controller;
+  if (!routing.hasBestMatch && !routing.canPick && !routing.newPick) return null;
+  const unread = !routing.newPick && routing.bestMatchLost === true;
+  if (unread && !routing.canPick) return null;
+  const pick = routing.newPick ?? routing.bestMatch;
+  const ref = pick && 'threadId' in pick ? pick : null;
+  const outside = outsideClaim(ref);
+  return {
+    label: outside ? controller.say('toWho', { who: commentOutsideName(ref!) })
+      : unread ? controller.say('toPick') : commentThreadName(controller, pick).to,
+    outside, outsideLabel: controller.say('outsideNotis'),
+    harness: ref?.harness ?? (pick && 'newThread' in pick ? pick.newThread : null),
+    pick: routing.canPick ? anchor => routing.pickForNew(anchor).then(picked => Boolean(picked)) : undefined,
+    pickLabel: controller.say('pickThread'),
+  };
+}
+
+export interface NewCommentFrameProps {
+  controller: CommentController;
+  /** The box's accessible name: what the new comment is on ("New comment on Slide 2"). */
+  label: string;
+  /** The words it quotes, or where it sits when it quotes none ("Whole page", the items, a moment). */
+  quote: string | null;
+  place: string | null;
+  /** Changes when the box starts another comment: it takes the caret and scrolls into view again. */
+  where: string | null;
+  body: string;
+  setBody(text: string): void;
+  files: CommentFilesState;
+  /** Saves the comment with its uploaded files. True once saved. */
+  save(text: string, files: CommentFile[]): Promise<boolean>;
+  /** Drops the new comment. */
+  cancel(): void;
+  /** The last save failed: the box says so. */
+  failed?: boolean;
+  sending?: boolean;
+  /**
+   * Where the box's draft is kept (`commentDrafts`): the files the host's composer holds are kept there too, so they
+   * come back after the pane was away or a save failed. Without it they live in the composer only.
+   */
+  draftKey?: string | null;
+}
+
+/**
+ * The box of a new comment, the same for a pin, items, a moment, the whole page and quoted words. It is the chat box's
+ * parts: where it goes is its first pill ("To Deck polish", which opens the picker), then the words it quotes or its
+ * place, inside the text field; no title, no grey quote box and no Cancel button. Escape drops an empty box (with text,
+ * the first Escape leaves the field); a touch screen, which has no Escape, has a small cross on the pill line.
+ *
+ * The host draws its own composer in the box when it draws comment boxes (`useHostComposer`); otherwise the pane keeps
+ * this plain box with the same parts, where an @ typed first opens the thread picker.
+ */
+export function NewCommentFrame({ controller, label, quote, place, where, body, setBody, files, save, cancel, failed = false,
+  sending = false, draftKey = null }: NewCommentFrameProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const marker = useRef<HTMLSpanElement>(null);
+  const atPicker = useAtThreadPicker(controller);
+  const drop = () => { files.clear(); writeHostDraftFiles(draftKey, []); cancel(); };
+  const to = newCommentTo(controller);
+  const slot = useHostComposer(marker, true, {
+    kind: 'new', placeholder: controller.say('commentPlaceholder'), label, to, quote, place,
+    initialText: body, onText: setBody,
+    // The host's files are kept with the text: a save that fails after the upload brings the box back with them.
+    initialFiles: readHostDraftFiles(draftKey), onFiles: picked => writeHostDraftFiles(draftKey, picked),
+    send: (text, picked) => withUploads(controller, picked, async (uploaded) => {
+      const ok = await save(text, uploaded);
+      if (ok) writeHostDraftFiles(draftKey, []);
+      return ok;
+    }),
+    dismiss: drop, canWrite: controller.canWrite, attach: controller.attach === 'on', focusToken: 0, autoFocus: true,
+  }, [where, label, to?.label, to?.outside, to?.harness, Boolean(to?.pick), quote, place, controller.canWrite, controller.attach]);
+  useEffect(() => { if (!slot) ref.current?.focus({ preventScroll: true }); }, [where, slot]);
+  // The box opens at the top of the list: a list scrolled down scrolls up to show it whole, with its pills.
+  useRevealOnOpen(boxRef, where);
+  // Escape drops the new comment: one step in the host's Escape chain. The engine leaves Escape to a focused text
+  // field, so the field handles its own Escape.
+  useEscapeLayer('comments.new', () => { drop(); return true; }, { priority: ESCAPE_PRIORITY.selection + 1 });
+
+  const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !sending && controller.canWrite;
+  const send = async () => {
+    if (!canSend) return;
+    // The new comment shows in the list at once, so the box empties at once too (the text never shows twice while the
+    // store answers); a failed save brings the text back, and the attached files stay.
+    const text = body;
+    setBody('');
+    if (await save(text, files.ready)) files.clear(); else setBody(text);
+  };
+  return (
+    <div ref={boxRef} className="nui-comment-new-box" data-swipe-dismiss="" role="group" aria-label={label} data-hosted={slot ? '' : undefined}
+      data-dragging={!slot && files.dragging ? '' : undefined} {...(slot ? {} : files.boxHandlers)}>
+      <span ref={marker} className="nui-comment-box-marker" aria-hidden="true" />
+      {slot ? <slot name={slot} /> : (
+        <>
+          {/* Where it goes, then what it is on: the pills of the box, never a title or a quote box of their own. */}
+          <div className="nui-comment-box-pills" data-part="box-pills">
+            <CommentToChip controller={controller} />
+            {quote ? (
+              <span className="nui-comment-pill" data-pill="quote" title={quote}><Icon name={COMMENT_MODE_ICON.text} /><span>{quote}</span></span>
+            ) : place ? (
+              <span className="nui-comment-pill" data-pill="place" title={place}><Icon name={COMMENT_MODE_ICON.page} /><span>{place}</span></span>
+            ) : null}
+            <button type="button" className="nui-comment-box-drop" data-part="discard" aria-label={controller.say('discardComment')}
+              onClick={drop}><Icon name="x" /></button>
+          </div>
+          <textarea
+            ref={ref}
+            className="nui-comment-input"
+            value={body}
+            rows={2}
+            placeholder={controller.say('commentPlaceholder')}
+            aria-label={controller.say('commentPlaceholder')}
+            disabled={sending}
+            onChange={event => setBody(atPicker(event.target.value, event.currentTarget, setBody))}
+            onKeyDown={event => {
+              if (sendsOnEnter(event)) { event.preventDefault(); void send(); }
+              if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                if (body.trim() || files.drafts.length) event.currentTarget.blur(); else drop();
+              }
+            }}
+          />
+          <CommentFileChips controller={controller} files={files} />
+          {failed ? <p className="nui-passage-error" role="alert">{controller.say('saveError')}</p> : null}
+          <div className="nui-comment-new-actions">
+            <CommentAttachButton controller={controller} files={files} disabled={sending} />
+            <span className="nui-comment-new-gap" />
+            <IconAction label={controller.say('send')} icon="paper-plane-right" disabled={!canSend} onClick={() => void send()} />
+          </div>
+          <CommentDropVeil controller={controller} files={files} />
+        </>
+      )}
+    </div>
+  );
+}
+
 export interface NewCommentBoxProps {
   controller: CommentController;
 }
 
-/**
- * The box for the comment `controller.draftPin` started. Takes focus when it opens. Its To chip names the thread the
- * comment goes to (the best match, or the one picked with the chip or by typing @ first).
- */
+/** The box for the comment `controller.draftPin` started: a pin, a zone, items, a moment or the whole page. */
 export function NewCommentBox({ controller }: NewCommentBoxProps) {
   const pin = controller.draftPin;
+  useSwipeDownToDismiss();
   // Text and files outlive the box while the pane is away (`commentDrafts`); the controller brings the pin back.
   const draftKey = commentDraftKey(controller.draftScope, 'new');
   const [body, setBody] = useCommentDraftText(pin ? draftKey : null);
   const [sending, setSending] = useState(false);
   const files = useCommentFiles(controller, draftKey);
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const cancel = () => { files.clear(); controller.cancelPin(); };
-  const atPicker = useAtThreadPicker(controller);
-  const where = pin ? `${pin.anchorKey ?? ''}|${pin.items?.length ?? ''}|${pin.time ?? ''}|${pin.text?.quote ?? ''}` : null;
-  useEffect(() => { ref.current?.focus({ preventScroll: true }); }, [where]);
-  // The box opens at the top of the list: a list scrolled down scrolls up to show it whole, with its To chip.
-  useRevealOnOpen(boxRef, where);
-  // Escape drops the new comment: one step in the host's Escape chain. The engine leaves Escape to a focused text
-  // field, so the textarea handles its own Escape below.
-  useEscapeLayer('comments.new', () => { cancel(); return true; },
-    { priority: ESCAPE_PRIORITY.selection + 1, enabled: pin != null });
-  if (!pin) return null;
+  // The new comment shows in the list at once, so the box goes at once too; a failed save brings it back.
+  if (!pin || sending) return null;
+  const where = `${pin.anchorKey ?? ''}|${pin.items?.length ?? ''}|${pin.time ?? ''}|${pin.text?.quote ?? ''}`;
   const anchor = controller.anchors.find(item => item.recordKey === pin.anchorKey);
   const heading = pin.text?.quote ? controller.say('newCommentText')
     : pin.time != null ? controller.say('newCommentTime', { time: formatCommentTime(pin.time) })
@@ -692,58 +1100,20 @@ export function NewCommentBox({ controller }: NewCommentBoxProps) {
     : anchor && pin.x == null ? sayOnAnchor(controller, 'newCommentWhole', anchor)
     : anchor ? sayOnAnchor(controller, 'newCommentOn', anchor)
     : controller.anchors.length ? controller.say('newCommentPage') : controller.say('newComment');
-  // Items the heading only counts are named under it (SPC-463).
-  const itemNames = pin.items?.length && (pin.items.length > 1 || !anchor) ? commentItemNames(controller, pin.items) : null;
-
-  const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !sending && controller.canWrite;
-  const send = async () => {
-    if (!canSend) return;
-    setSending(true);
-    // The new comment shows in the list at once, so the box goes at once too (the text no longer shows twice while the
-    // store answers); a failed save brings the box back with the text and the attached files.
-    const text = body.trim();
-    setBody('');
-    const ok = await controller.sendNew(text, files.ready);
-    setSending(false);
-    if (ok) files.clear(); else setBody(text);
-  };
-  if (sending) return null;
-
+  // Where it sits, as its pill says it: the items named (SPC-463), the moment, the item, else the whole page.
+  const place = pin.text?.quote ? null
+    : pin.items?.length && (pin.items.length > 1 || !anchor) ? commentItemNames(controller, pin.items)
+    : pin.time != null ? controller.say('placeTime', { time: formatCommentTime(pin.time) })
+    : anchor ? commentItemNames(controller, [anchor]) : controller.say('placeWholePage');
   return (
-    <div ref={boxRef} className="nui-comment-new-box" role="group" aria-label={heading}
-      data-dragging={files.dragging ? '' : undefined} {...files.boxHandlers}>
-      <div className="nui-comment-new-head">
-        <p className="nui-comment-new-title">{heading}</p>
-        <CommentToChip controller={controller} />
-      </div>
-      {itemNames ? <p className="nui-comment-new-items">{itemNames}</p> : null}
-      {pin.text?.quote ? <p className="nui-passage-quote nui-comment-quote">{pin.text.quote}</p> : null}
-      <textarea
-        ref={ref}
-        className="nui-comment-input"
-        value={body}
-        rows={2}
-        placeholder={controller.say('commentPlaceholder')}
-        aria-label={controller.say('commentPlaceholder')}
-        onChange={event => setBody(atPicker(event.target.value, event.currentTarget, setBody))}
-        onKeyDown={event => {
-          if (sendsOnEnter(event)) { event.preventDefault(); void send(); }
-          if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            if (body.trim() || files.drafts.length) event.currentTarget.blur(); else cancel();
-          }
-        }}
-      />
-      <CommentFileChips controller={controller} files={files} />
-      <div className="nui-comment-new-actions">
-        <CommentAttachButton controller={controller} files={files} disabled={sending} />
-        <span className="nui-comment-new-gap" />
-        <Button size="sm" variant="ghost" onClick={cancel}>{controller.words.cancel}</Button>
-        <Button size="sm" variant="primary" disabled={!canSend} icon="paper-plane-right"
-          onClick={() => void send()}>{controller.words.send}</Button>
-      </div>
-      <CommentDropVeil controller={controller} files={files} />
-    </div>
+    <NewCommentFrame controller={controller} label={heading} quote={pin.text?.quote ?? null} place={place} where={where}
+      body={body} setBody={setBody} files={files} draftKey={draftKey} cancel={() => controller.cancelPin()}
+      save={async (text, uploaded) => {
+        setSending(true);
+        const ok = await controller.sendNew(text.trim(), uploaded);
+        setSending(false);
+        return ok;
+      }} />
   );
 }
 
@@ -828,6 +1198,7 @@ function ShownCommentPins({ controller, anchorKey, onOpen }: CommentPinsProps) {
           key={thread.root.recordKey}
           type="button"
           className="nui-comment-pin"
+          data-pin={thread.root.recordKey}
           data-agent={thread.root.author !== controller.me ? '' : undefined}
           ref={thread.root.recordKey === controller.threadKey ? selectedPin : undefined}
           data-selected={thread.root.recordKey === controller.threadKey ? '' : undefined}
@@ -1134,75 +1505,62 @@ export const CommentPane = markHostPane(function CommentPane(props: CommentPaneP
   // What the host reads: the threads (its waiting count) and the new comment (it opens the panel for it).
   const target = useHostCommentSource('pins', controller, { title: props.title },
     [controller.threads, controller.draftPin, controller.threadKey, controller.commentMode]);
-  return target ? createPortal(<CommentPaneBody {...props} />, target) : null;
+  // A host that draws panes itself keeps this one's elements when a new version of the view replaces this view.
+  const key = useHandedPaneKey(controller, 'pins');
+  const body = <CommentPaneBody {...props} />;
+  const hosted = usePaneOutlet(target, key, body, !controller.loading);
+  return target && !hosted ? createPortal(body, target) : null;
 });
 
-function CommentPaneBody({ controller, title, showCopy = true, className, order, groupBy }: CommentPaneProps) {
+function CommentPaneBody({ controller, title, showCopy = true, className, order, groupBy, groupHeadings }: CommentPaneProps) {
   const rootRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useThreadScroller(controller, scrollRef);
   const heading = title ?? controller.say('comments');
-  const { visibleThreads, changes, draftPin, filter, statusFilter, anchors, anchorKey } = controller;
-  const emptyTitle = statusFilter === 'done' ? controller.say('emptyResolved')
+  const { visibleThreads, draftPin, filter, statusFilter, waitingFilter } = controller;
+  const emptyTitle = waitingFilter ? controller.say('emptyWaiting') : statusFilter === 'done' ? controller.say('emptyResolved')
     : filter === 'anchor' ? controller.say('emptyAnchor') : controller.say('emptyAll');
+  // The hint shows only on an empty list of open comments, where the Space takes comments on words.
+  const emptyHint = !waitingFilter && statusFilter !== 'done' && controller.modes.includes('text');
   usePaneFocusKeeper(rootRef, visibleThreads);
+  const run = useReviewRunPane({ controller, rootRef, threads: controller.threads, drafting: Boolean(draftPin), asking: commentWaitingChoices });
+  useNextCardComesIntoPlace(rootRef, `${controller.filter}|${controller.statusFilter}|${controller.waitingFilter}|${controller.anchorKey ?? ''}`);
 
   return (
     <CommentPaneKeys controller={controller} rootRef={rootRef}>
-      <aside ref={rootRef} className={cx('nui-comment-pane', className)} aria-label={heading}>
-        <div className="nui-comment-pane-head">
-          <h2 className="nui-comment-pane-title">{heading}</h2>
-          <NewCommentMenu controller={controller} />
-          <CommentFilterMenu controller={controller} />
-        </div>
+      <aside ref={rootRef} className={cx('nui-comment-pane', className)} aria-label={heading} {...run.attrs}>
+        <CommentPaneBar controller={controller} rootRef={rootRef} showCopy={showCopy} runCount={run.count} />
 
         {/* The pane scrolls its own list; the toast below stays at the bottom of what shows (C7). */}
         <div ref={scrollRef} className="nui-comment-pane-scroll" data-comment-scroll="">
-        {anchors.length ? (
-          <SegmentedControl
-            label={controller.words.scope}
-            value={filter}
-            onChange={value => controller.setFilter(value)}
-            options={[
-              { value: 'anchor', label: controller.words.thisAnchor, count: controller.scopeCounts.anchor },
-              { value: 'all', label: controller.words.allItems, count: controller.scopeCounts.all },
-            ]}
-          />
-        ) : null}
-
-        {showCopy ? (
-          <Button variant="secondary" className="nui-comment-copy" icon="copy"
-            disabled={!changes.length || controller.copying} onClick={() => void controller.copyChanges(rootRef.current)}>
-            <span className="nui-comment-copy-label">{controller.say('copy')}</span>
-            <span className="nui-comment-count">{changes.length}</span>
-          </Button>
-        ) : null}
-
-        {draftPin ? <NewCommentBox controller={controller} /> : anchors.length && controller.anchor ? (
-          <div className="nui-comment-start">
-            <Button variant="secondary" icon="chat-circle-text" onClick={() => controller.placePin(anchorKey, null, null)}>
-              {sayOnAnchor(controller, 'commentOnAnchor', controller.anchor)}
-            </Button>
-            <CommentModeHint controller={controller} />
-          </div>
-        ) : controller.commentMode ? (
+        {draftPin ? <NewCommentBox controller={controller} /> : controller.commentMode ? (
           <div className="nui-comment-start"><CommentModeHint controller={controller} /></div>
         ) : null}
 
         {visibleThreads.length ? (
-          <CommentThreadList controller={controller} threads={visibleThreads} order={order} groupBy={groupBy}>
+          <CommentThreadList controller={controller} threads={visibleThreads} order={order} groupBy={groupBy} groupHeadings={groupHeadings}>
             {thread => (
               <CommentThreadCard key={thread.root.recordKey} controller={controller} thread={thread}
                 showAnchor={filter === 'all'} />
             )}
           </CommentThreadList>
-        ) : draftPin ? null : controller.loading ? (
+        ) : draftPin ? null : controller.loading || controller.loadingMore ? (
           <CommentListLoading controller={controller} />
-        ) : (
-          <EmptyState className="nui-comment-empty" icon="chat-circle-text" title={emptyTitle} />
+        // Older Done threads are left to read: the list's end below reads them, and "No comments" waits for the last.
+        ) : controller.hasMore || (run.running && run.count !== null) ? null : (
+          // In a review run the host says what the empty list means (the next page, or "All caught up").
+          <EmptyState className="nui-comment-empty" icon="chat-circle-text" title={emptyTitle}
+            body={emptyHint ? controller.say('selectToComment') : undefined} />
         )}
+        {/* Older Done threads are read a page at a time, as the end of the list comes into view. */}
+        {controller.hasMore && !draftPin && (visibleThreads.length || !controller.loadingMore)
+          ? <CommentListMore controller={controller} /> : null}
+        {/* What the host adds after the last card (the review run's next page). */}
+        {draftPin ? null : <slot name="after-list" />}
         </div>
 
+        {/* The review run's bar when no card is selected (a page's last one was marked Done): the selected card holds it. */}
+        <slot name="run-bar" />
         <ActionToast toast={controller.toaster.toast} onUndo={() => void controller.toaster.undo()}
           onDismiss={controller.toaster.dismiss} />
       </aside>

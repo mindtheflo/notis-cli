@@ -77,9 +77,17 @@ Agents read and write comments only with `LOCAL_NOTIS_SPACE_COMMENT_THREADS`
 (`protocol` 2; operations `list`, `thread`, `comment`, `reply`, `edit`, `delete`,
 `restore`, `answer`, `links`, `link`, `unlink`, `waiting`, `best_match`,
 `viewer`, `page_link`; parameters `space`, `page` (a record key, `home` or
-`all`), `view`, `anchor`, `comment_id`, `body`, `needs`, `options`,
-`answer_to`, `answer`, `files`). Never query or upsert comments through a
-database tool. Agents never archive: that is the people's. An agent's
+`all`), `status`, `limit`, `before`, `view`, `anchor`, `comment_id`, `body`, `needs`, `options`,
+`recommended`, `option_details`, `answer_to`, `answer`, `files`). A question
+with choices (`needs: "choice"`) shows one row per option, like a question in
+a conversation: keep each option a short name, name the one you recommend in
+`recommended` (it gets the Recommended tag and Enter picks it) and say what
+an option means in one line with `option_details` (`{"<option>": "<line>"}`).
+`list` on a whole Space answers its open comment threads, newest first and
+each with its replies, 50 at a time (`status` `done` or `all` for the others,
+`next` back as `before` for the ones after, `counts` for the totals), never
+every comment the Space ever held.
+Never query or upsert comments through a database tool. Agents never archive: that is the people's. An agent's
 comment is signed with its band name and never wakes it; the Notis
 assistant never writes comments itself (`orchestrator_comments_refused`)
 and starts a sub-agent for comment work. Through the Notis CLI, every

@@ -22,13 +22,13 @@ import { Badge, Button, EmptyState, Notice } from '../blocks';
 import { ESCAPE_PRIORITY } from '../engine/core';
 import { useEscapeLayer } from '../engine/hooks';
 import { cx } from '../util';
-import { CommentThreadCard, NewCommentBox, sendsOnEnter } from './CommentPane';
+import { CommentThreadCard, NewCommentBox, NewCommentFrame, commentWaitingChoices } from './CommentPane';
+import { reviewRunKept, useNextCardComesIntoPlace, useReviewRunPane } from './reviewRun';
 import { commentDraftKey, useCommentDraftText } from './commentDrafts';
-import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles } from './commentFiles';
-import { useRevealOnOpen } from './scrollReveal';
+import { useCommentFiles } from './commentFiles';
 import type { CommentOrder, CommentThread } from './commentModel';
 import {
-  CommentFilterMenu, CommentListLoading, CommentModeHint, CommentPaneKeys, CommentThreadList, CommentToChip, NewCommentMenu, useAtThreadPicker,
+  CommentListLoading, CommentListMore, CommentModeHint, CommentPaneBar, CommentPaneKeys, CommentThreadList,
   usePaneFocusKeeper, useThreadScroller, type CommentListOptions,
 } from './paneParts';
 import {
@@ -36,6 +36,8 @@ import {
 } from './passageModel';
 import { createPortal } from 'react-dom';
 import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
+import { useHandedPaneKey } from './handover';
+import { usePaneOutlet } from './paneOutlet';
 import type { PassageCommentController } from './usePassageComments';
 
 // ---------------------------------------------------------------------------
@@ -512,6 +514,7 @@ function namesFields(comments: PassageCommentController): boolean {
   return comments.fields.filter(item => comments.group == null || item.group == null || item.group === comments.group).length > 1;
 }
 
+/** The box of a new comment on selected words: the shared new comment box, with the words as its quote pill. */
 function PassageCommentBox({ comments }: { comments: PassageCommentController }) {
   const { controller, draft } = comments;
   // The text is kept while the pane is away (`commentDrafts`); usePassageComments brings the passage back.
@@ -520,70 +523,15 @@ function PassageCommentBox({ comments }: { comments: PassageCommentController })
   // Pictures and files, like every comment box (SPC-131): paste, drop on the box or the paperclip; kept with the text
   // while the pane is away.
   const files = useCommentFiles(controller, draftKey);
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const atPicker = useAtThreadPicker(controller);
-  const { clear: clearFiles } = files;
-  const cancel = useCallback(() => { clearFiles(); comments.cancelDraft(); setBody(''); }, [comments, setBody, clearFiles]);
-  const where = draft ? `${draft.field}:${draft.quote}` : null;
-  useEffect(() => {
-    if (!where) return;
-    ref.current?.focus({ preventScroll: true });
-  }, [where]);
-  // A list scrolled down scrolls up to show the new box whole, with its quote and To chip, inside the pane only.
-  useRevealOnOpen(boxRef, where);
-  useEscapeLayer('comments.passage.new', () => { cancel(); return true; },
-    { priority: ESCAPE_PRIORITY.selection + 1, enabled: draft != null });
   if (!draft) return null;
   const label = namesFields(comments) ? comments.field(draft.field)?.label : undefined;
-  const canSend = (Boolean(body.trim()) || files.ready.length > 0) && files.settled && !comments.sending && controller.canWrite;
-  const send = async () => {
-    if (!canSend) return;
-    // The new comment shows at once, so the box empties at once too (the text never shows twice while the store
-    // answers); a failed save brings back the text, and the attached files stay.
-    const text = body;
-    setBody('');
-    if (await comments.send(text, files.ready)) files.clear(); else setBody(text);
-  };
   return (
-    <div ref={boxRef} className="nui-comment-new-box" role="group" aria-label={controller.say('newComment')}
-      data-dragging={files.dragging ? '' : undefined} {...files.boxHandlers}>
-      {/* The same head and quote chip as a new comment on words in Notes (SPC-489). */}
-      <div className="nui-comment-new-head">
-        <p className="nui-comment-new-title">
-          {label ? `${controller.say('newCommentText')} · ${pick(label, controller.locale)}` : controller.say('newCommentText')}
-        </p>
-        <CommentToChip controller={controller} />
-      </div>
-      <p className="nui-passage-quote nui-comment-quote">{draft.quote}</p>
-      <textarea
-        ref={ref}
-        className="nui-comment-input"
-        value={body}
-        rows={2}
-        placeholder={controller.say('commentPlaceholder')}
-        aria-label={controller.say('commentPlaceholder')}
-        disabled={comments.sending}
-        onChange={event => setBody(atPicker(event.target.value, event.currentTarget, setBody))}
-        onKeyDown={event => {
-          if (sendsOnEnter(event)) { event.preventDefault(); void send(); }
-          if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            if (body.trim() || files.drafts.length) event.currentTarget.blur(); else cancel();
-          }
-        }}
-      />
-      <CommentFileChips controller={controller} files={files} />
-      {comments.failed ? <p className="nui-passage-error" role="alert">{controller.say('saveError')}</p> : null}
-      <div className="nui-comment-new-actions">
-        <CommentAttachButton controller={controller} files={files} disabled={comments.sending} />
-        <span className="nui-comment-new-gap" />
-        <Button size="sm" variant="ghost" onClick={cancel}>{controller.words.cancel}</Button>
-        <Button size="sm" variant="primary" disabled={!canSend} icon="paper-plane-right"
-          onClick={() => void send()}>{controller.words.send}</Button>
-      </div>
-      <CommentDropVeil controller={controller} files={files} />
-    </div>
+    <NewCommentFrame controller={controller}
+      label={label ? `${controller.say('newCommentText')} · ${pick(label, controller.locale)}` : controller.say('newCommentText')}
+      quote={draft.quote} place={null} where={`${draft.field}:${draft.quote}`} body={body} setBody={setBody} files={files}
+      failed={comments.failed} sending={comments.sending} draftKey={draftKey}
+      cancel={() => { comments.cancelDraft(); setBody(''); }}
+      save={(text, uploaded) => comments.send(text, uploaded)} />
   );
 }
 
@@ -594,7 +542,10 @@ export interface PassageCommentPaneProps extends Omit<CommentListOptions, 'order
    * the order of the fields and their words), as panes beside a document often want.
    */
   order?: CommentOrder | 'reading';
-  /** Closes the pane: shows a close button in its heading. */
+  /**
+   * Kept for Spaces written before the host drew the Comments panel: the panel's own header row has the close button,
+   * so the pane draws none and never calls this.
+   */
   onClose?(): void;
   /** The heading. Default "Comments". */
   title?: string;
@@ -613,10 +564,14 @@ export const PassageCommentPane = markHostPane(function PassageCommentPane(props
   // What the host reads: the threads (its waiting count) and the new comment, on words or the page (it opens the panel).
   const target = useHostCommentSource('passage', comments, { title: props.title },
     [inner.threads, comments.draft, inner.draftPin, inner.threadKey, inner.commentMode]);
-  return target ? createPortal(<PassageCommentPaneBody {...props} />, target) : null;
+  // A host that draws panes itself keeps this one's elements when a new version of the view replaces this view.
+  const key = useHandedPaneKey(inner, 'passage');
+  const body = <PassageCommentPaneBody {...props} />;
+  const hosted = usePaneOutlet(target, key, body, !inner.loading);
+  return target && !hosted ? createPortal(body, target) : null;
 });
 
-function PassageCommentPaneBody({ comments, onClose, title, groups, onGroup, className, order = 'newest', groupBy }: PassageCommentPaneProps) {
+function PassageCommentPaneBody({ comments, title, groups, onGroup, className, order = 'newest', groupBy }: PassageCommentPaneProps) {
   const { controller, draft } = comments;
   const rootRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -626,10 +581,15 @@ function PassageCommentPaneBody({ comments, onClose, title, groups, onGroup, cla
   const open = threads.filter(thread => thread.root.status === 'Open');
   const resolved = threads.filter(thread => thread.root.status === 'Resolved');
   const status = controller.statusFilter;
-  const shown = status === 'all' ? threads : status === 'done' ? resolved : open;
+  const waiting = open.filter(controller.waits);
+  // Under "Waiting for you" a card answered while nothing moves by itself stays listed, showing its answer.
+  const shown = controller.waitingFilter ? open.filter(thread => controller.waits(thread) || reviewRunKept(thread.root.recordKey))
+    : status === 'all' ? threads : status === 'done' ? resolved : open;
   const draftGroup = draft ? comments.field(draft.field)?.group ?? null : null;
   const draftHere = draft && (comments.group == null || draftGroup == null || draftGroup === comments.group) ? draft : null;
   usePaneFocusKeeper(rootRef, shown);
+  const run = useReviewRunPane({ controller, rootRef, threads, drafting: Boolean(draftHere || controller.draftPin), asking: commentWaitingChoices });
+  useNextCardComesIntoPlace(rootRef, `${controller.filter}|${controller.statusFilter}|${controller.waitingFilter}|${controller.anchorKey ?? ''}`);
   const others = groups && onGroup ? Object.entries(groups).filter(([group]) => group !== comments.group).map(([group, label]) => ({
     group, label, count: comments.threads(group).filter(thread => thread.root.status === 'Open'
       && comments.passageOf(thread.root.recordKey) != null).length,
@@ -639,56 +599,44 @@ function PassageCommentPaneBody({ comments, onClose, title, groups, onGroup, cla
     const passage = comments.passageOf(thread.root.recordKey);
     const label = passage && namesFields(comments) ? comments.field(passage.field)?.label : undefined;
     const gone = comments.isChanged(thread.root.recordKey);
+    // The card itself starts with the quoted words (the field's name only when it quotes none), as every comments list.
     return (
-      <div key={thread.root.recordKey} className="nui-passage-thread" data-comment-thread={thread.root.recordKey}>
-        {passage ? (
-          // Passage changed: the words are gone from the text. The old quote stays and the thread stays open.
-          <button type="button" className="nui-passage-anchor" data-changed={gone ? '' : undefined}
-            onClick={() => comments.open(thread, 'quote')}>
-            <span className="nui-passage-field-name">
-              {label ? pick(label, controller.locale) : null}
-              {gone ? <Badge tone="warning">{controller.say('textChanged')}</Badge> : null}
-            </span>
-            <span className="nui-passage-quote">{passage.quote}</span>
-            {gone ? <span className="nui-passage-hint">{controller.say('textChangedHint')}</span> : null}
-          </button>
-        ) : null}
-        <CommentThreadCard controller={controller} thread={thread} quote={false} />
-      </div>
+      <CommentThreadCard key={thread.root.recordKey} controller={controller} thread={thread}
+        passageQuote={passage?.quote ?? null} passageGone={gone}
+        placeLabel={!passage && label ? pick(label, controller.locale) : null}
+        onSelect={picked => comments.open(picked, 'quote')} />
     );
   };
 
   let body: ReactNode = null;
   if (controller.error && !controller.hasData && !controller.loading) {
     body = <Notice tone="danger" onRetry={() => void controller.refetch()}>{controller.say('readError')}</Notice>;
-  } else if (!shown.length && !draftHere && !controller.draftPin && controller.loading) {
+  } else if (!shown.length && !draftHere && !controller.draftPin && (controller.loading || controller.loadingMore)) {
     body = <CommentListLoading controller={controller} />;
+  } else if (!shown.length && !draftHere && !controller.draftPin && controller.hasMore) {
+    // Older Done threads are left to read: the list's end below reads them, and "No comments" waits for the last.
+    body = null;
   } else if (!shown.length && !draftHere && !controller.draftPin && controller.hasData) {
-    body = (
+    // The hint shows only on an empty list of open comments.
+    // In a review run the host says what the empty list means (the next page, or "All caught up").
+    body = controller.waitingFilter ? (run.running && run.count !== null ? null : (
+      <EmptyState className="nui-comment-empty" icon="chat-circle-text" title={controller.say('emptyWaiting')} />
+    )) : (
       <EmptyState className="nui-comment-empty" icon="chat-circle-text"
-        title={status === 'done' ? controller.say('emptyResolved') : controller.say('emptyPassages')} />
+        title={status === 'done' ? controller.say('emptyResolved') : controller.say('emptyAll')}
+        body={status === 'done' ? undefined : controller.say('selectToComment')} />
     );
   }
 
   return (
     <CommentPaneKeys controller={controller} rootRef={rootRef}>
-      <aside ref={rootRef} className={cx('nui-comment-pane', className)} aria-label={heading}>
-        <div className="nui-comment-pane-head">
-          <h2 className="nui-comment-pane-title">{heading}</h2>
-          <NewCommentMenu controller={controller} />
-          <CommentFilterMenu controller={controller}
-            counts={{ open: open.length, done: resolved.length, all: threads.length }} />
-          {onClose ? (
-            <Button variant="ghost" size="sm" className="nui-comment-icon-btn" icon="x" aria-label={controller.say('closeComments')}
-              onClick={onClose} />
-          ) : null}
-        </div>
+      <aside ref={rootRef} className={cx('nui-comment-pane', className)} aria-label={heading} {...run.attrs}>
+        <CommentPaneBar controller={controller} rootRef={rootRef} showCopy={false} waitingCount={waiting.length} runCount={run.count} />
         {/* The pane scrolls its own list; the toast below stays at the bottom of what shows (C7). */}
         <div ref={scrollRef} className="nui-comment-pane-scroll" data-comment-scroll="">
         {draftHere ? <PassageCommentBox comments={comments} />
           : controller.draftPin ? <NewCommentBox controller={controller} />
-          : controller.commentMode ? <CommentModeHint controller={controller} />
-          : shown.length ? <p className="nui-passage-hint">{controller.say('selectToComment')}</p> : null}
+          : controller.commentMode ? <CommentModeHint controller={controller} /> : null}
         {body}
         {shown.length ? (
           <CommentThreadList controller={controller} threads={shown} order={order === 'reading' ? 'anchor' : order}
@@ -696,12 +644,19 @@ function PassageCommentPaneBody({ comments, onClose, title, groups, onGroup, cla
             {card}
           </CommentThreadList>
         ) : null}
+        {/* Older Done threads are read a page at a time, as the end of the list comes into view. */}
+        {controller.hasMore && !draftHere && !controller.draftPin && (shown.length || !controller.loadingMore)
+          ? <CommentListMore controller={controller} /> : null}
         {others.map(item => (
           <button key={item.group} type="button" className="nui-passage-other" onClick={() => onGroup?.(item.group)}>
             {controller.say('inGroup', { n: item.count, group: pick(item.label, controller.locale) })}
           </button>
         ))}
+        {/* What the host adds after the last card (the review run's next page). */}
+        {draftHere || controller.draftPin ? null : <slot name="after-list" />}
         </div>
+        {/* The review run's bar when no card is selected: the selected card holds it. */}
+        <slot name="run-bar" />
         <ActionToast toast={controller.toaster.toast} onUndo={() => void controller.toaster.undo()}
           onDismiss={controller.toaster.dismiss} />
       </aside>

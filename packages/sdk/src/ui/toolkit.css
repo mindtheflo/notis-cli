@@ -182,6 +182,8 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 .nui-row-tag { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; height: 22px; padding: 0 8px; border-radius: 6px; background: hsl(var(--foreground) / .06); font-size: 12px; line-height: 16px; color: hsl(var(--foreground) / .75); white-space: nowrap; }
 .nui-row-tag[data-removable] { padding-right: 2px; }
 .nui-row-tag-icon { display: inline-flex; flex-shrink: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
+/* Phone sizing (docs/portal-design-system.md): 13px tags, kept 24px tall so compact rows keep their height. */
+@media (max-width: 1023px) { .nui-row-tag { height: 24px; font-size: 13px; line-height: 18px; } .nui-row-tag-icon { font-size: 14px; } }
 .nui-row-tag-label { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .nui-row-tag-x { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; }
 .nui-row-tag-x:hover { background: hsl(var(--foreground) / .08); color: hsl(var(--foreground)); }
@@ -1301,9 +1303,37 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
    bottom of what shows, never inside the scrolled content. */
 .nui-comment-pane { position: relative; display: flex; flex-direction: column; box-sizing: border-box; height: 100%;
   min-width: 0; min-height: 0; overflow: hidden; font-size: 13px; line-height: 1.45; color: hsl(var(--foreground)); }
-/* The head stays on top of the list with the pane's background, so a scrolled card never shows through it. */
-.nui-comment-pane-head { position: relative; z-index: 2; display: flex; flex: none; flex-wrap: wrap; align-items: center;
-  justify-content: space-between; gap: 8px; padding: 16px 16px 0; background: hsl(var(--background)); }
+/* The pane's one header row: the host's Chat | Comments switch (the `lead` slot), New comment, Filter, "...", then the
+   host's close button (the `trail` slot). It stays on top of the list with the pane's background, so a scrolled card
+   never shows through it. The same row on a phone and a computer; a phone's buttons are 44px tall. */
+.nui-comment-bar { position: relative; z-index: 2; display: flex; flex: none; align-items: center; gap: 2px; box-sizing: border-box;
+  min-height: 57px; padding: 12px 12px 12px 16px; border-bottom: 1px solid hsl(var(--border) / .4); background: hsl(var(--background)); }
+.nui-comment-bar-gap { flex: 1 1 0; min-width: 4px; }
+.nui-comment-bar ::slotted(*) { flex: none; }
+.nui-comment-bar-btn { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: none; color: hsl(var(--foreground));
+  cursor: pointer; }
+.nui-comment-bar-btn:is(:hover, :focus-visible, [aria-expanded="true"]) { background: hsl(var(--muted)); }
+.nui-comment-bar-btn .nui-icon { width: 16px; height: 16px; }
+/* A filter that is not the usual one says so on its button (a dot) and on the row under it (a chip per choice). */
+.nui-comment-bar-btn[data-active]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 6px; height: 6px;
+  border-radius: 50%; background: hsl(var(--primary)); }
+.nui-comment-chips { display: flex; flex: none; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
+.nui-comment-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 10px; border: 0;
+  border-radius: 12px; background: hsl(var(--foreground) / .06); color: hsl(var(--muted-foreground)); font: inherit;
+  font-size: 12px; cursor: pointer; }
+.nui-comment-chip:is(:hover, :focus-visible) { background: hsl(var(--foreground) / .1); color: hsl(var(--foreground)); }
+.nui-comment-chip .nui-icon { width: 12px; height: 12px; margin: 0 2px; }
+@media (max-width: 1023px) {
+  /* 36px wide, 44px tall: the row fits a 390px phone in French with 16px from the last glyph to the edge. */
+  .nui-comment-bar { min-height: 60px; padding: 8px 8px 8px 16px; gap: 0; }
+  .nui-comment-bar-btn { width: 36px; height: 44px; border-radius: 18px; }
+  .nui-comment-bar-btn .nui-icon { width: 20px; height: 20px; }
+  .nui-comment-bar-btn[data-active]::after { top: 10px; right: 8px; width: 7px; height: 7px; }
+  .nui-comment-chips { gap: 8px; padding: 12px 16px 0; }
+  .nui-comment-chip { height: 36px; padding: 0 8px 0 14px; border-radius: 18px; font-size: 14px; }
+  .nui-comment-chip .nui-icon { width: 16px; height: 16px; }
+}
 .nui-comment-pane-scroll { display: flex; flex: 1 1 auto; flex-direction: column; gap: 12px; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 16px; }
 .nui-comment-pane > .nui-toast-wrap { position: static; flex: none; left: auto; right: auto; bottom: auto;
@@ -1314,11 +1344,10 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 :where(.nui-comment-pane) :is(.nui-toast-btn, .nui-toast-x) { font: inherit; color: inherit; background: none; border: 0;
   margin: 0; cursor: pointer; }
 :where(.nui-comment-pane) .nui-toast-x { color: hsl(var(--muted-foreground)); }
-.nui-comment-pane-title { margin: 0; font-size: 14px; font-weight: 600; }
-.nui-comment-copy { justify-content: space-between; width: 100%; }
-.nui-comment-copy-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
 .nui-comment-count { min-width: 20px; padding: 0 6px; border-radius: 999px; background: hsl(var(--foreground) / .08);
   font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+/* What waits for you is the one number that stands out, in the green that means "waits for you" on conversations. */
+.nui-comment-count[data-waiting] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-pill-success, 142 76% 24%)); }
 .nui-comment-list { display: flex; flex-direction: column; gap: 8px; }
 .nui-comment-empty { padding: 24px 8px; }
 .nui-comment-loading { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
@@ -1329,9 +1358,91 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
   background: hsl(var(--foreground) / .04); cursor: pointer; outline: none; scroll-margin: 12px; }
 .nui-comment-card:hover { background: hsl(var(--foreground) / .06); }
 .nui-comment-card[data-selected] { background: hsl(var(--foreground) / .08); }
-.nui-comment-card[data-resolved] > :not(.nui-comment-compose-box):not(.nui-comment-head) { opacity: .7; }
-.nui-comment-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.nui-comment-who { display: flex; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 0 6px; min-width: 0; }
+/* The card: where it sits first (the quoted words, or its place) with Done and "..." at the top right, then each
+   comment as two lines beside its avatar (the name, then the agent's thread and the time) with its words, pictures and
+   question on the card's full width, then the reply box. */
+.nui-comment-card { position: relative; gap: 10px; border-radius: 12px; }
+.nui-comment-card[data-resolved] > :is(.nui-comment-top, .nui-comment-entries) :is(.nui-comment-anchor, .nui-comment-body, .nui-comment-attachments) { opacity: .7; }
+.nui-comment-top { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+/* The review run's bar is the host's own element (slotted). At the top of the selected card it takes the card's width,
+   above the quoted words, with no line or background of its own; with no card selected it sits at the pane's foot,
+   under a line. While it is not drawn (out of a run, a phone's keyboard open) it leaves no gap and no line. */
+/* The host's page resets margins and borders on its own elements, and a page's rule wins over a slot's: hence !important. */
+.nui-comment-card > slot[name="run-bar"]::slotted(*) { margin: -6px -8px -4px !important; }
+.nui-comment-pane > slot[name="run-bar"]::slotted(*) { flex: none; border-top: 1px solid hsl(var(--border) / .4) !important; }
+slot[name="run-bar"]::slotted(:empty) { display: none !important; }
+/* A phone's comments sheet over the page: the host says the height it rests at (`data-sheet`). Low: the host draws its
+   one line and the pane nothing. Half: the selected card alone, flat on the sheet (`data-sheet-card`), or the box of
+   the comment being written (`data-sheet-drafting`); with neither, what the list holds. Full: the list, its header row
+   under the sheet's grabber. */
+.nui-comment-pane[data-sheet="low"] { display: none; }
+.nui-comment-pane[data-sheet="half"] > :is(.nui-comment-bar, .nui-comment-chips),
+.nui-comment-pane[data-sheet="half"] :is(.nui-comment-group, .nui-passage-other, .nui-comment-start),
+.nui-comment-pane[data-sheet="half"][data-sheet-card] .nui-comment-card:not([data-selected]),
+.nui-comment-pane[data-sheet="half"][data-sheet-card] slot[name="after-list"],
+.nui-comment-pane[data-sheet="half"][data-sheet-drafting] :is(.nui-comment-card, slot[name="after-list"]) { display: none; }
+.nui-comment-pane[data-sheet="half"] > .nui-comment-pane-scroll { gap: 0; padding: 0 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.nui-comment-pane[data-sheet="half"] .nui-comment-list { gap: 0; }
+.nui-comment-pane[data-sheet="half"][data-sheet-card] .nui-comment-card { padding: 0; border-radius: 0; background: none; }
+.nui-comment-pane[data-sheet="half"][data-sheet-card] .nui-comment-card > slot[name="run-bar"]::slotted(*) { margin: 0 -8px -2px !important; }
+/* The reply box sits right under a question's options: no "Other" row at half. */
+.nui-comment-pane[data-sheet="half"] .nui-comment-option[data-other] { display: none; }
+/* While the reply is written (the host marks itself `data-writing`) the sheet is the quoted words and the box, so the
+   keyboard leaves the page's words in view above it. */
+:host([data-writing]) .nui-comment-pane[data-sheet="half"] :is(.nui-comment-entries, .nui-comment-actions) { display: none; }
+.nui-comment-pane[data-sheet="full"] > .nui-comment-bar { padding-top: 16px; }
+.nui-comment-anchor { flex: 1 1 auto; min-width: 0; padding-top: 3px; }
+.nui-comment-quote { display: -webkit-box; margin: 0; padding: 0 0 0 10px; overflow: hidden; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; border-inline-start: 2px solid hsl(var(--foreground) / .22); color: hsl(var(--muted-foreground));
+  font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.nui-comment-anchor[data-changed] .nui-comment-quote { text-decoration: line-through;
+  text-decoration-color: hsl(var(--muted-foreground) / .5); }
+.nui-comment-changed { display: block; margin-top: 4px; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 500; }
+.nui-comment-place { display: block; overflow: hidden; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 500;
+  line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+/* Done and "...": quiet until the card is hovered, focused or selected; always there on a touch screen. */
+.nui-comment-actions { display: flex; flex: none; align-items: center; gap: 2px; margin: -2px -4px -2px 0; opacity: 0;
+  transition: opacity .12s; }
+.nui-comment-card:is(:hover, [data-selected], :focus-visible, :focus-within) .nui-comment-actions,
+.nui-comment-actions:has([aria-expanded="true"]) { opacity: 1; }
+.nui-comment-act { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px;
+  padding: 0; border: 0; border-radius: 6px; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.nui-comment-act:is(:hover, :focus-visible, [aria-expanded="true"]) { background: hsl(var(--foreground) / .1); color: hsl(var(--foreground)); }
+.nui-comment-act:disabled { opacity: .4; cursor: default; }
+.nui-comment-act .nui-icon { width: 14px; height: 14px; }
+.nui-comment-entries { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.nui-comment-entry { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.nui-comment-entry-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.nui-comment-who { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.nui-comment-name { display: flex; align-items: center; min-width: 0; line-height: 18px; white-space: nowrap; }
+.nui-comment-name > .nui-comment-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; outline: none; }
+.nui-comment-name > .nui-comment-author[tabindex] { cursor: default; }
+.nui-comment-sub { display: flex; align-items: center; min-width: 0; color: hsl(var(--muted-foreground)); font-size: 12px;
+  line-height: 16px; white-space: nowrap; }
+.nui-comment-sub > .nui-comment-agent-thread { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-comment-sub > :is(.nui-comment-meta, .nui-comment-edited) { flex: none; font-size: inherit; }
+.nui-comment-sub > .nui-comment-agent-thread + .nui-comment-meta::before { content: "\00B7"; margin-inline: 6px; }
+.nui-comment-sub > .nui-comment-edited { margin-inline-start: 6px; }
+/* The chat bubble's mark after the time of your latest word: one check until the agent outside Notis has read it, two after. */
+.nui-comment-read { display: inline-block; flex: none; margin-inline-start: 6px; vertical-align: middle; opacity: .7; }
+.nui-comment-entry-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nui-comment-entry-main:empty { display: none; }
+/* A reply's own "...": quiet until the reply is hovered or focused; always there on a touch screen. */
+.nui-comment-entry-more { display: inline-flex; flex: none; opacity: 0; transition: opacity .12s; }
+.nui-comment-entry:is(:hover, :focus-within) .nui-comment-entry-more, .nui-comment-entry-more:has([aria-expanded="true"]) { opacity: 1; }
+@media (hover: none) {
+  .nui-comment-actions, .nui-comment-entry-more { opacity: 1; }
+  /* A finger gets 36px by 44px on Done and each "...", as on the bar's buttons: a ring around the 24px button, so the
+     card keeps its height; the wider gap keeps the two rings of a card apart. */
+  .nui-comment-actions { gap: 12px; }
+  .nui-comment-act { position: relative; }
+  .nui-comment-act::before { content: ""; position: absolute; inset: -10px -6px; }
+}
+.nui-comment-reply-box { display: flex; flex-direction: column; min-width: 0; cursor: default; }
+/* A card's reply field is one quiet line ("Reply to Claude"); its paperclip and Send show once it has the focus, words or files. */
+.nui-comment-reply-box .nui-comment-compose-box:not(:focus-within):not(:hover):not(:has(.nui-comment-file))
+  .nui-comment-compose:has(> .nui-comment-input:placeholder-shown) > .nui-comment-icon-btn { display: none; }
+
 .nui-comment-author { font-weight: 600; }
 .nui-comment-meta { color: hsl(var(--muted-foreground)); font-size: 12px; }
 .nui-comment-agent { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 4px; border: 0;
@@ -1358,23 +1469,7 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   color: hsl(var(--popover-foreground, var(--foreground)) / .7); }
 .nui-runtime-card-line { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere;
   color: hsl(var(--popover-foreground, var(--foreground)) / .7); }
-.nui-comment-new { align-self: center; width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--nui-blue, 217 91% 60%)); }
-/* A comment's buttons float over the end of its name line as a small toolbar, so hidden ones take no room and the name
-   line never wraps for them. */
-.nui-comment-head, .nui-comment-reply-head { position: relative; }
-.nui-comment-actions, .nui-comment-head > .nui-comment-reply-actions, .nui-comment-reply-head > .nui-comment-reply-actions {
-  position: absolute; z-index: 1; top: 50%; inset-inline-end: 0; transform: translateY(-50%); padding: 2px;
-  border-radius: 8px; background: hsl(var(--popover)); box-shadow: var(--nui-elev, 0 1px 2px rgb(0 0 0 / .05), 0 4px 12px rgb(0 0 0 / .06)); }
-.nui-comment-actions { display: flex; gap: 2px; visibility: hidden; opacity: 0;
-  transition: opacity .12s, visibility .12s; }
-/* A comment's buttons show on hover, focus or the selected card; hidden ones are never tapped by mistake. On a touch
-   screen only the selected card shows them, so a list of comments is never a wall of buttons (mockup B, 2026-11-18). */
-.nui-comment-card:hover .nui-comment-actions, .nui-comment-card:is(:focus-visible, :has(:focus-visible:not(textarea, input))) .nui-comment-actions,
-.nui-comment-card[data-selected] .nui-comment-actions { visibility: visible; opacity: 1; }
-@media (hover: none) {
-  .nui-comment-card:hover .nui-comment-actions { visibility: hidden; opacity: 0; }
-  .nui-comment-card[data-selected] .nui-comment-actions { visibility: visible; opacity: 1; }
-}
+
 .nui-comment-icon-btn { flex: none; }
 .nui-comment-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .nui-comment-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1395,22 +1490,50 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-comment-avatar { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px;
   border-radius: 50%; background: hsl(var(--foreground) / .1); font-size: 11px; font-weight: 700; line-height: 1; }
 .nui-comment-avatar[data-me] { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+/* On a card the avatar is 32px, and an agent's carries its app's logo as a small badge. */
+.nui-comment-entry-head > .nui-comment-avatar { position: relative; width: 32px; height: 32px; font-size: 13px; }
+.nui-comment-avatar-badge { position: absolute; right: -4px; bottom: -4px; display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%; background: hsl(var(--background)); color: hsl(var(--foreground));
+  box-shadow: 0 0 0 1px hsl(var(--border)); }
+.nui-comment-avatar-badge > svg { width: 9px; height: 9px; }
 
-.nui-comment-ask { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 8px;
-  background: hsl(var(--nui-blue, 217 91% 60%) / .08); cursor: default; }
-.nui-comment-ask-label { margin: 0; }
-.nui-comment-ask-who { font-weight: 600; }
+/* An agent's question: the comment right above says who asks, so it has no line and no tinted box of its own. */
+.nui-comment-ask { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; cursor: default; }
+.nui-comment-ask:empty { display: none; }
+/* A check or a choice reads like a question in a conversation: one row per option, with its number, the Recommended tag
+   on the asker's pick and a line under an option when the asker gave one. */
+.nui-comment-options { display: flex; flex-direction: column; gap: 2px; margin: 0 -10px; }
+.nui-comment-option { display: flex; align-items: center; gap: 12px; box-sizing: border-box; width: 100%; min-height: 40px;
+  padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: hsl(var(--foreground)); font: inherit;
+  font-size: 13px; line-height: 20px; text-align: start; cursor: pointer; }
+.nui-comment-option[data-detail] { align-items: flex-start; }
+.nui-comment-option[data-recommended] { background: hsl(var(--accent) / .5); }
+.nui-comment-option:enabled:is(:hover, :focus-visible) { background: hsl(var(--accent) / .6); }
+.nui-comment-option:disabled { opacity: .6; cursor: default; }
+.nui-comment-option-key { display: flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px;
+  border: 1px solid hsl(var(--foreground) / .1); border-radius: 4px; background: hsl(var(--background));
+  color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.nui-comment-option-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.nui-comment-option-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.nui-comment-option-head:has(.nui-comment-option-badge) { margin-bottom: 3px; }
+.nui-comment-option-label { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.nui-comment-option-badge { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px;
+  background: hsl(var(--foreground)); color: hsl(var(--background)); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.nui-comment-option-detail { color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; text-wrap: pretty; }
+/* The Enter cap on the recommended option, while its card is selected (Enter then picks it). */
+.nui-comment-option-enter { display: flex; flex: none; align-items: center; height: 20px; visibility: hidden; }
+.nui-comment-option-enter[data-shown] { visibility: visible; }
+@media (hover: none) {
+  .nui-comment-option { min-height: 44px; }
+  .nui-comment-option-enter { display: none; }
+}
+
 .nui-comment-answer { display: flex; align-items: center; gap: 6px; margin: 0; color: hsl(var(--muted-foreground)); }
 /* An input ask's own answer field, with Attach and Paste under it. */
 .nui-comment-ask-answer { display: flex; flex-direction: column; gap: 6px; }
 .nui-comment-choices { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.nui-comment-replies { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.nui-comment-reply { display: flex; gap: 8px; min-width: 0; }
-.nui-comment-reply-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-/* A reply's name line and its buttons share one row: the buttons never wrap to a line of their own above the text. */
-.nui-comment-reply-head { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
-.nui-comment-reply-head > .nui-comment-reply-actions { flex: none; }
 
 .nui-comment-compose { display: flex; align-items: flex-end; gap: 2px; padding: 2px; border-radius: 8px;
   background: hsl(var(--foreground) / .05); cursor: default; }
@@ -1421,15 +1544,30 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 /* Inside a reply field the field itself holds the fill, with the paperclip and Send in it: one surface. */
 .nui-comment-compose > .nui-comment-input, .nui-comment-compose > .nui-comment-input:hover { min-height: 28px; padding: 4px 8px;
   border-radius: 6px; background: transparent; }
-/* A card's reply field is one quiet line ("Reply"); its paperclip and Send show once it has the focus, words or files. */
-.nui-comment-card .nui-comment-compose-box:not(:focus-within):not(:hover):not(:has(.nui-comment-file))
-  .nui-comment-compose:has(> .nui-comment-input:placeholder-shown) > .nui-comment-icon-btn { display: none; }
+
 .nui-comment-input::placeholder { color: hsl(var(--muted-foreground)); }
 
-.nui-comment-new-box { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
+.nui-comment-new-box { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px;
   background: hsl(var(--foreground) / .06); }
-.nui-comment-new-title { margin: 0; font-weight: 600; }
-.nui-comment-new-items { margin: -4px 0 0; overflow-wrap: anywhere; color: hsl(var(--muted-foreground)); font-size: 12px; }
+/* Where the host draws its own composer in the box, the box is only its place: the composer brings its surface. */
+.nui-comment-new-box[data-hosted] { padding: 0; background: none; }
+.nui-comment-box-marker { display: none; }
+/* The pills of a new comment: where it goes, then the words it quotes or its place. No title and no quote box. */
+.nui-comment-box-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.nui-comment-pill { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 2px 8px;
+  border-radius: 999px; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); font-size: 12px;
+  white-space: nowrap; }
+.nui-comment-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nui-comment-pill .nui-icon { width: 12px; height: 12px; flex: none; color: hsl(var(--muted-foreground)); }
+/* Escape drops a new comment; a touch screen has no Escape, so there the pill line ends with a small cross. */
+.nui-comment-box-drop { display: none; flex: none; align-items: center; justify-content: center; width: 28px; height: 28px;
+  margin: -4px -4px -4px auto; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--muted-foreground));
+  cursor: pointer; }
+.nui-comment-box-drop:is(:hover, :focus-visible) { background: hsl(var(--foreground) / .1); color: hsl(var(--foreground)); }
+.nui-comment-box-drop .nui-icon { width: 14px; height: 14px; }
+@media (hover: none) {
+  .nui-comment-box-drop { display: inline-flex; }
+}
 .nui-comment-new-actions, .nui-comment-dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .nui-comment-new-actions { align-items: center; }
 .nui-comment-new-gap { flex: 1; }
@@ -1455,7 +1593,8 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-comment-drop { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
   border-radius: 8px; background: hsl(var(--background) / .85); box-shadow: inset 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%));
   color: hsl(var(--foreground)); font-weight: 600; pointer-events: none; }
-@media (max-width: 480px) { .nui-comment-file-name { max-width: 120px; } }
+@media (max-width: 480px) { .nui-comment-file-name { max-width: 120px; }
+}
 
 /* A pin: a numbered drop whose point sits on the commented spot. Put CommentPins in a positioned element. */
 .nui-comment-pin { position: absolute; z-index: 2; display: flex; align-items: center; justify-content: center; width: 26px;
@@ -1500,7 +1639,8 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   animation: nui-passage-flash 1.2s ease-in-out .2s both;
 }
 /* A pin or zone picked from the pane pops once where it sits on the page. */
-@keyframes nui-comment-pop { 0%, 100% { scale: 1; } 40% { scale: 1.25; } }
+@keyframes nui-comment-pop { 0%, 100% { scale: 1; } 40% { scale: 1.25; }
+}
 .nui-comment-pin[data-selected] { animation: nui-comment-pop .45s cubic-bezier(.22, 1, .36, 1) .15s; }
 @media (prefers-reduced-motion: reduce) {
   .nui-passage-mark[data-state="flash"], .nui-passage-text-field[data-state="flash"], .nui-comment-pin[data-selected] { animation: none; }
@@ -1510,32 +1650,10 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-passage-pick { position: absolute; z-index: 10; white-space: nowrap; }
 /* Above the selection the button grows upward from the line's top, so it never covers the next line. */
 .nui-passage-pick[data-place="above"] { transform: translateY(-100%); }
-.nui-passage-thread { display: flex; flex-direction: column; gap: 6px; }
-/* A passage thread is one card: its field name and quote on top, then the comments (never a label floating between
-   cards). The card's own fill moves to this wrapper. */
-.nui-passage-thread:has(> .nui-passage-anchor) { gap: 2px; padding-top: 8px; border-radius: 10px;
-  background: hsl(var(--foreground) / .04); }
-.nui-passage-thread:has(> .nui-passage-anchor):hover { background: hsl(var(--foreground) / .06); }
-.nui-passage-thread:has(> .nui-passage-anchor):has(> .nui-comment-card[data-selected]) { background: hsl(var(--foreground) / .08); }
-.nui-passage-thread > .nui-passage-anchor { margin: 0 8px; }
-.nui-passage-thread > .nui-passage-anchor .nui-passage-quote { padding: 2px 6px; border-radius: 4px;
-  background: hsl(var(--primary) / .1); }
-.nui-passage-thread > .nui-passage-anchor + .nui-comment-card,
-.nui-passage-thread > .nui-passage-anchor + .nui-comment-card:hover,
-.nui-passage-thread > .nui-passage-anchor + .nui-comment-card[data-selected] { padding-top: 6px; background: transparent; }
-.nui-passage-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; padding: 2px 4px;
-  border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; }
-.nui-passage-anchor:hover { background: hsl(var(--foreground) / .06); }
-.nui-passage-field-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 12px;
-  color: hsl(var(--muted-foreground)); }
+
 .nui-passage-quote { display: -webkit-box; margin: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow-wrap: anywhere; }
-.nui-passage-anchor[data-changed] .nui-passage-quote { color: hsl(var(--muted-foreground)); text-decoration: line-through;
-  text-decoration-color: hsl(var(--muted-foreground) / .5); }
-/* The quoted words of a text comment, on its card and in its new comment box. */
-.nui-comment-quote { padding: 2px 6px; border-radius: 4px; background: hsl(var(--primary) / .1); font-size: 13px; }
-.nui-comment-quote-row { cursor: default; }
-.nui-comment-quote-row:hover { background: transparent; }
+
 .nui-passage-hint, .nui-passage-error { margin: 0; font-size: 12px; color: hsl(var(--muted-foreground)); }
 .nui-passage-error { color: hsl(var(--destructive, 0 72% 51%)); }
 .nui-passage-other { align-self: flex-start; padding: 0; border: 0; background: transparent; font: inherit; font-size: 12px;
@@ -1583,11 +1701,7 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 
 /* Unified comments (SPC-113 to SPC-133): filter, New comment, routing lines, edit and delete states, tool bar. */
 .nui-comment-new-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
-.nui-comment-filter { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px;
-  background: transparent; color: hsl(var(--muted-foreground)); font: inherit; font-size: 12px; cursor: pointer; }
-.nui-comment-filter:hover { background: hsl(var(--foreground) / .06); color: hsl(var(--foreground)); }
 .nui-comment-filter-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
-.nui-comment-new-btn { margin-inline-start: auto; }
 .nui-comment-hint-cancel { opacity: .75; }
 .nui-comment-to { display: inline-flex; align-self: flex-start; align-items: center; gap: 4px; min-width: 0; max-width: 100%;
   padding: 2px 8px; border: 0; border-radius: 999px; background: hsl(var(--foreground) / .06); color: hsl(var(--foreground));
@@ -1597,87 +1711,16 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 .nui-comment-to > .nui-icon { flex: none; }
 button.nui-comment-to { cursor: pointer; }
 button.nui-comment-to:hover { background: hsl(var(--foreground) / .1); }
-/* The card's header row (SPC-114): the thread that owns the comment thread, once, on one line above the comments, with
-   a hairline under it. A long title ends with an ellipsis; the icon, the label and Change always show. */
-.nui-comment-goes { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; margin: 0; min-width: 0;
-  color: hsl(var(--muted-foreground)); font-size: 12px; line-height: 16px;
-  white-space: nowrap; cursor: default; }
-.nui-comment-goes > .nui-icon { width: 12px; height: 12px; flex: none; }
-.nui-comment-goes-label, .nui-comment-goes-change { flex: none; }
-.nui-comment-goes-title { flex: 0 1 auto; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none;
-  color: hsl(var(--foreground)); font: inherit; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-button.nui-comment-goes-title { cursor: pointer; }
-button.nui-comment-goes-title:hover { text-decoration: underline; }
-.nui-comment-goes-change { margin-inline-start: auto; padding: 0 0 0 4px; border: 0; background: none;
-  color: hsl(var(--muted-foreground)); font: inherit; text-decoration: underline;
-  text-decoration-color: hsl(var(--muted-foreground) / .4); cursor: pointer; }
-.nui-comment-goes-change:hover { color: hsl(var(--foreground)); }
-.nui-comment-goes-change:disabled { cursor: default; opacity: .5; }
-/* SPC-535: a thread an agent outside Notis holds: its harness logo, its name, the thread it works in, quiet, and
-   "outside Notis". The agent's name keeps its width before the thread name gives way. */
-.nui-comment-goes-logo { width: 12px; height: 12px; flex: none; }
-.nui-comment-goes[data-outside] .nui-comment-goes-title { flex: 0 1 auto; min-width: 4em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.nui-comment-goes-outside, .nui-comment-goes-sep { flex: none; }
-/* An agent outside Notis's thread name after its name on a comment (SPC-537), quiet. */
-.nui-comment-agent-thread { min-width: 0; max-width: 100%; overflow: hidden; color: hsl(var(--muted-foreground));
-  font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-/* SPC-536: under the person's latest reply, until the agent outside Notis has read it. */
-.nui-comment-unread { display: flex; align-items: center; gap: 4px; margin: 0; color: hsl(var(--muted-foreground));
-  font-size: 12px; line-height: 16px; }
-.nui-comment-unread .nui-icon { width: 12px; height: 12px; flex: none; }
-/* Where it goes is still being read: a placeholder the width of a short title, on the text's line. */
-.nui-comment-goes-skel { align-self: center; width: 96px; height: 10px; }
-/* A pick being saved: named at once, quiet until the link is saved. */
-.nui-comment-goes[data-saving] .nui-comment-goes-title { opacity: .6; }
-.nui-comment-group { margin: 8px 0 0; padding: 0 4px; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 600; }
+
+.nui-comment-group { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; padding: 0 4px; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 600; }
+/* The group's name, then what its host slots after it (Open the page). */
+.nui-comment-group-name { flex: 1 1 auto; min-width: 0; }
 .nui-comment-group:first-child { margin-top: 0; }
 .nui-comment-edit { display: flex; flex-direction: column; gap: 6px; cursor: default; }
 .nui-comment-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .nui-comment-edited { color: hsl(var(--muted-foreground)); font-size: 12px; }
 .nui-comment-deleted { margin: 0; color: hsl(var(--muted-foreground)); font-size: 12px; font-style: italic; }
-/* One toolbar at a time in a card (SPC-488): a reply's buttons show only for the reply hovered or holding the focus.
-   Hidden, they are see-through and take no click, but Tab still reaches them, and the reply's focus shows them. The
-   comment's own buttons hide while a reply is hovered or focused. */
-.nui-comment-reply-actions { display: inline-flex; gap: 2px; opacity: 0; pointer-events: none; transition: opacity .12s; }
-.nui-comment-reply:hover .nui-comment-reply-actions, .nui-comment-reply:focus-within .nui-comment-reply-actions {
-  opacity: 1; pointer-events: auto; }
-.nui-comment-card:has(.nui-comment-reply:is(:hover, :focus-within)) .nui-comment-actions { visibility: hidden; opacity: 0; }
-/* On a touch screen the selected card shows its comment's buttons, and a tapped reply shows its own instead. */
-@media (hover: none) {
-  .nui-comment-reply:hover:not(:focus-within) .nui-comment-reply-actions { opacity: 0; pointer-events: none; }
-  .nui-comment-card[data-selected] .nui-comment-reply[data-tapped] .nui-comment-reply-actions { opacity: 1; pointer-events: auto; }
-  .nui-comment-card[data-selected]:has(.nui-comment-reply[data-tapped]) .nui-comment-actions { visibility: hidden; opacity: 0; }
-}
-/* Unified comments (comment mode, card A; the card sets data-buttons): the buttons stay in the flow at the end of their
-   line, always shown, small and grey: the thread's at the end of its Thread line (its name line when the card shows no
-   Thread line), each reply's at the end of its name line. The :is() list only lifts these rules above every hover, focus
-   and tapped rule above, so nothing hides them. Change shows beside the thread's name while the Thread line is hovered
-   or holds the focus, and on a touch screen's selected card. */
-.nui-comment-thread-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.nui-comment-thread-line > .nui-comment-goes { flex: 1 1 auto; }
-.nui-comment-card[data-resolved] > .nui-comment-thread-line { opacity: 1; }
-.nui-comment-card[data-resolved] > .nui-comment-thread-line > .nui-comment-goes { opacity: .7; }
-.nui-comment-card[data-buttons]:is(*, :has(.nui-comment-reply:is(:hover, :focus-within)), [data-selected]:has(.nui-comment-reply[data-tapped]))
-  :is(.nui-comment-actions, .nui-comment-reply-head > .nui-comment-reply-actions) {
-  position: static; transform: none; z-index: auto; flex: none; align-self: center; margin-block: -3px; margin-inline-start: auto;
-  padding: 0; gap: 0; visibility: visible; opacity: 1; pointer-events: auto; }
-/* Their floating chip is off. Kept out of the rule above, whose selector names a focus state: no rule on a focus state
-   sets a shadow (focus draws no ring, docs/portal-design-system.md), and only the chip's own rule sets one. */
-.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-head > .nui-comment-reply-actions) {
-  background: none; box-shadow: none; }
-.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn {
-  width: 22px; height: 22px; min-width: 22px; padding: 0; color: hsl(var(--muted-foreground)); opacity: .55; }
-.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn:is(:hover, :focus-visible) {
-  color: hsl(var(--foreground)); opacity: 1; }
-.nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-icon { width: 14px; height: 14px; }
-/* Change takes no room until the Thread line is hovered or focused (it stays focusable), so the name keeps it. */
-.nui-comment-thread-line .nui-comment-goes-change { margin-inline-start: 2px; padding: 0; max-width: 0; overflow: hidden;
-  opacity: 0; transition: opacity .12s; }
-.nui-comment-thread-line:is(:hover, :focus-within) .nui-comment-goes-change { max-width: 8em; padding: 0 2px; opacity: 1; }
-@media (hover: none) {
-  .nui-comment-card[data-selected] .nui-comment-thread-line .nui-comment-goes-change { max-width: 8em; padding: 0 2px; opacity: 1; }
-}
+
 .nui-comment-toolbar { display: inline-flex; align-items: center; gap: 2px; box-sizing: border-box; max-width: 100%; padding: 4px;
   border-radius: 999px;
   background: hsl(var(--popover, var(--background))); color: hsl(var(--popover-foreground, var(--foreground)));
@@ -1694,7 +1737,8 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
 .nui-comment-toolbar[data-place="overlay"] { position: absolute; top: 8px; left: 8px; z-index: 3; max-width: calc(100% - 16px); }
 .nui-comment-toolbar-slot { display: none; }
 /* "Esc cancels" means nothing without a keyboard: gone on touch screens and on narrow screens (a phone, a phone-width panel). */
-@media (hover: none), (max-width: 767px) { .nui-comment-hint-cancel { display: none; } }
+@media (hover: none), (max-width: 767px) { .nui-comment-hint-cancel { display: none; }
+}
 /* On a phone the hint wraps to two lines instead of running off the bar, and the idle hint (a keyboard tip) goes. The
    overlay bar never covers the card: it sits just above the card's top edge, and the card moves down by the bar's height
    and gap (`--nui-comment-toolbar-room`, which the bar measures) to make that room. */
@@ -1710,6 +1754,54 @@ button.nui-comment-goes-title:hover { text-decoration: underline; }
   .nui-comment-toolbar-hint { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
     white-space: normal; line-height: 1.3; }
   .nui-comment-toolbar-hint[data-idle] { display: none; }
+}
+/* Phone sizing (docs/portal-design-system.md, "Phone sizing"): under 1024px comments read like a phone chat, the same
+   sizes as a Notis conversation. Comment text 16px, secondary lines 15px, times and captions 13px, nothing under 12px;
+   32px avatars; every button a 40px circle (a reply's buttons and the card's on their line); the reply field a pill
+   like the chat composer, 48px tall for one line, with 16px text, which also keeps iOS from zooming into it. */
+@media (max-width: 1023px) {
+  .nui-comment-pane { font-size: 16px; line-height: 1.5; }
+  .nui-comment-pane-title { font-size: 17px; }
+  .nui-comment-pane-head { padding: 16px 16px 0; }
+  .nui-comment-pane-scroll { gap: 16px; padding: 12px 16px 16px; }
+  .nui-comment-list { gap: 12px; }
+  .nui-comment-card, .nui-comment-new-box { gap: 12px; padding: 16px; border-radius: 16px; }
+  /* Secondary lines 15px (the agent's name, who a reply goes to, the filter); meta 13px (times, captions, chips). */
+  :is(.nui-comment-agent, .nui-comment-to, .nui-comment-filter) {
+    font-size: 15px; line-height: 20px; }
+  :is(.nui-comment-meta, .nui-comment-agent-thread, .nui-comment-caption, .nui-comment-new-items, .nui-comment-group,
+    .nui-comment-edited, .nui-comment-deleted, .nui-comment-file, .nui-comment-toolbar-hint) { font-size: 13px; line-height: 18px; }
+  :is(.nui-comment-agent .nui-icon,
+    .nui-comment-caption .nui-icon, .nui-comment-pane .nui-runtime-logo, .nui-comment-pane .nui-runtime-glyph) { width: 16px; height: 16px; }
+  .nui-comment-count { min-width: 22px; padding: 0 7px; font-size: 12px; line-height: 22px; }
+  .nui-comment-avatar { width: 32px; height: 32px; font-size: 13px; }
+  .nui-comment-replies { gap: 16px; }
+  .nui-comment-reply { gap: 12px; }
+  .nui-comment-reply-text { gap: 4px; }
+  .nui-comment-ask { gap: 12px; padding: 14px; border-radius: 14px; }
+  .nui-comment-choices, .nui-comment-new-actions, .nui-comment-dialog-actions, .nui-comment-edit-actions { gap: 8px; }
+  /* Text buttons (choices, Send, Save, New comment) are 44px pills with 15px words. */
+  .nui-comment-pane .nui-btn:not(.nui-comment-icon-btn), .nui-comment-new-box .nui-btn:not(.nui-comment-icon-btn) {
+    height: 44px; padding: 0 16px; border-radius: 22px; font-size: 15px; }
+  .nui-comment-filter { height: 40px; padding: 0 12px; border-radius: 20px; }
+  .nui-comment-to { padding: 6px 12px; }
+  /* Icon buttons: 40px circles with a 20px glyph, kept on their line by a negative margin so a name line stays 20px tall. */
+  .nui-comment-icon-btn, .nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn {
+    width: 40px; height: 40px; min-width: 40px; padding: 0; border-radius: 50%; }
+  .nui-comment-icon-btn .nui-icon, .nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-icon {
+    width: 20px; height: 20px; }
+  .nui-comment-card[data-buttons]:is(*, :has(.nui-comment-reply:is(:hover, :focus-within)), [data-selected]:has(.nui-comment-reply[data-tapped]))
+    :is(.nui-comment-actions, .nui-comment-reply-head > .nui-comment-reply-actions) { margin-block: -10px; margin-inline-end: -10px; }
+  .nui-comment-card[data-buttons] :is(.nui-comment-actions, .nui-comment-reply-actions) .nui-comment-icon-btn { opacity: .7; }
+  /* The reply field: one pill, its paperclip and Send inside as 40px circles. */
+  .nui-comment-compose { gap: 4px; padding: 4px; border-radius: 24px; }
+  .nui-comment-compose > .nui-comment-input, .nui-comment-compose > .nui-comment-input:hover { min-height: 40px; padding: 8px 12px;
+    border-radius: 20px; }
+  .nui-comment-input { box-sizing: border-box; min-height: 44px; padding: 10px 14px; border-radius: 22px; font-size: 16px; }
+  .nui-comment-file { height: 44px; }
+  .nui-comment-file-btn { width: 40px; height: 40px; border-radius: 50%; }
+  .nui-comment-tool { width: 40px; height: 40px; }
+  .nui-comment-tool .nui-icon { width: 20px; height: 20px; }
 }
 
 /* == section: calendar heatmap (charts) == */

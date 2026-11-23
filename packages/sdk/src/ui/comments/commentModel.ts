@@ -38,6 +38,10 @@ export interface CommentRecord {
   thread: string; author: string; x: number | null; y: number | null; w: number | null; h: number | null; status: CommentStatus; needs: CommentNeeds;
   options: string[]; answer: string; answeredAt: string | null; change: CommentChange | null; changedAt: string | null;
   example: boolean; createdAt: string | null; attachments: CommentAttachment[];
+  /** A choice question's option its asker recommends: one of `options`, null when it names none. */
+  recommended?: string | null;
+  /** A choice question's line under an option, by option; an option without one is absent. */
+  optionDetails?: Readonly<Record<string, string>>;
   /** When the author edited the text, from the Edited at column (null: never, or the table has no such column). */
   editedAt?: string | null;
   /** Seconds into a recording, for a comment in time mode. */
@@ -249,6 +253,17 @@ export function storeStatusOf(status: CommentStatus): SpaceCommentStatus {
   return status === 'Resolved' ? 'archived' : status === 'Deleted' ? 'deleted' : 'open';
 }
 
+/** The lines under a choice question's options, from the store's `option_details`: only for options the comment has. */
+function commentOptionDetails(value: unknown, options: readonly string[]): Record<string, string> {
+  const lines: Record<string, string> = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return lines;
+  for (const option of options) {
+    const line = (value as Record<string, unknown>)[option];
+    if (typeof line === 'string' && line.trim()) lines[option] = line.trim();
+  }
+  return lines;
+}
+
 /**
  * One store row (`SpaceCommentRow`) as the comment the pane renders. An agent's comment reads as the agent (its stamped
  * name); a person's as the name the server set for them. A store `change` of `edited` reads as the comment's own
@@ -268,6 +283,8 @@ export function commentFromRow(input: SpaceCommentRow | Readonly<Record<string, 
   const pageKey = str(row.page_key);
   const anchorKeys = Array.isArray(row.anchor_keys) ? row.anchor_keys.filter((key): key is string => typeof key === 'string' && Boolean(key)) : [];
   const status = commentStatusOf(str(row.status));
+  const options = Array.isArray(row.options) ? row.options.filter((item): item is string => typeof item === 'string')
+    .map(option => option.trim()).filter(Boolean) : [];
   return {
     id, recordKey: id, revision: typeof row.revision === 'number' ? row.revision : 1,
     body: str(row.body),
@@ -275,8 +292,8 @@ export function commentFromRow(input: SpaceCommentRow | Readonly<Record<string, 
     author: agent ? (agent.name || str(authorOf?.name)) : str(authorOf?.name).trim() || 'Notis',
     x: num(row.x), y: num(row.y), w: num(row.w), h: num(row.h), status,
     needs: oneOf(row.needs, NEEDS, 'none'),
-    options: Array.isArray(row.options) ? row.options.filter((item): item is string => typeof item === 'string')
-      .map(option => option.trim()).filter(Boolean) : [],
+    options, recommended: options.includes(str(row.recommended).trim()) ? str(row.recommended).trim() : null,
+    optionDetails: commentOptionDetails(row.option_details, options),
     answer: str(row.answer), answeredAt: str(row.answered_at) || null,
     change, changedAt: str(row.changed_at) || null,
     example: row.example === true, createdAt: str(row.created_at) || null,

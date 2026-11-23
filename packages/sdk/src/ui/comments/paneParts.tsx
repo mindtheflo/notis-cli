@@ -1,26 +1,28 @@
 /**
- * Pieces both comment panes share (the pins pane `CommentPane` and the passage pane `PassageCommentPane`): the filter
- * menu (Open, Done, All with counts), the New comment button listing the Space's modes, the hint a mode shows, the
- * To chip of a new comment, the Goes to line under a reply, the ordered and grouped list, and E / Shift+E.
+ * Pieces both comment panes share (the pins pane `CommentPane` and the passage pane `PassageCommentPane`): the one
+ * header row (New comment, the filter with "Waiting for you" first, the "..." menu), the hint a mode shows, the To chip
+ * of a new comment, how a thread a comment goes to is named, the ordered and grouped list, and E / Shift+E.
  */
 
-import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
-import { Button } from '../blocks';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ShortcutScope } from '../engine/KeyboardEngine';
 import { useShortcuts } from '../engine/hooks';
+import { SHELL_WORDS } from '../../words';
 import { Icon } from '../icons';
-import { Menu } from '../overlay';
+import { Menu, Tooltip } from '../overlay';
 import {
   agentDisplayName, commentAnchorsOf, formatCommentTime, groupCommentThreads, orderCommentThreads, type CommentAnchor, type CommentGroup,
   type CommentOrder, type CommentThread,
 } from './commentModel';
 import type { SpaceCommentThreadRef } from '../../space';
 import type { CommentWordKey } from './commentWords';
+import { archiveThenNext, notifyReviewRunAction } from './reviewRun';
 import { revealInScroller } from './scrollReveal';
 import { elsewhere, outsideClaim } from './useCommentRouting';
 import { CommentHarnessLogo, isHarness } from './agentRuntime';
 import type { CommentMode } from './commentModel';
 import type { CommentController, CommentStatusView } from './useComments';
+import { commentsShadowHost, useWaitingCommentCount } from './hostPanel';
 
 export const COMMENT_MODE_ICON: Readonly<Record<CommentMode, string>> = {
   text: 'file-text', point: 'circle', box: 'square-center', items: 'copy', time: 'clock', page: 'file',
@@ -34,60 +36,157 @@ const MODE_HINT: Partial<Record<CommentMode, CommentWordKey>> = {
 
 function stop(event: { stopPropagation(): void }) { event.stopPropagation(); }
 
-/** Open (default), Done and All, each with its count, behind one menu (SPC-126). */
-export function CommentFilterMenu({ controller, counts = controller.counts }: {
+/** The filter's status choices under "Waiting for you", in the menu's order. */
+const STATUS_VIEWS = ['open', 'done', 'all'] as const;
+
+export interface CommentPaneBarProps {
   controller: CommentController;
-  /** The counts shown. Default: the controller's, for its anchor filter. */
-  counts?: Readonly<Record<CommentStatusView, number>>;
-}) {
-  // 'resolved' is an older name of Done.
-  const statusFilter: CommentStatusView = controller.statusFilter === 'resolved' ? 'done' : controller.statusFilter;
-  const label = (filter: CommentStatusView) => controller.say(filter === 'open' ? 'open' : filter === 'done' ? 'resolvedFilter' : 'all');
-  return (
-    <Menu align="end" label={controller.words.filter} accelerators={false}
-      trigger={(
-        <button type="button" className="nui-comment-filter" data-filter={statusFilter}
-          aria-label={controller.say('filterLabel', { filter: controller.say('filter'), status: label(statusFilter), n: counts[statusFilter] })}>
-          <span>{label(statusFilter)}</span>
-          <span className="nui-comment-count">{counts[statusFilter]}</span>
-          <Icon name="caret-down" />
-        </button>
-      )}>
-      {(['open', 'done', 'all'] as const).map(filter => (
-        <Menu.Item key={filter} checked={statusFilter === filter} onSelect={() => controller.setStatusFilter(filter)}>
-          <span className="nui-comment-filter-item" data-filter={filter}>
-            <span>{label(filter)}</span><span className="nui-comment-count">{counts[filter]}</span>
-          </span>
-        </Menu.Item>
-      ))}
-    </Menu>
-  );
+  /** The pane's root: Copy changes falls back to it when the clipboard needs an element. */
+  rootRef: RefObject<HTMLElement | null>;
+  /** Shows Copy changes behind "...". Default true. */
+  showCopy?: boolean;
+  /**
+   * What waits for the viewer in this pane. Default: the controller's count for its anchor filter. In the host panel
+   * the host's own number replaces it (`setWaitingCommentCount`): what waits in the Space on screen.
+   */
+  waitingCount?: number;
+  /**
+   * In a review run: what waits in the run's scope. The "Waiting for you" chip then reads "5 waiting" and counts down
+   * as the person goes (at none it reads "Waiting for you" again); a press on it shows every open comment again.
+   */
+  runCount?: number | null;
 }
 
-/** The pane header's New comment button: one mode starts at once, several open a menu of the Space's modes. */
-export function NewCommentMenu({ controller }: { controller: CommentController }) {
-  const { modes } = controller;
-  if (!modes.length) return null;
-  const label = controller.say('newCommentMenu');
-  if (modes.length === 1) {
-    const mode = modes[0]!;
-    return (
-      <Button size="sm" variant="ghost" className="nui-comment-new-btn" icon="plus" aria-label={label}
-        onClick={() => controller.startMode(mode)}>{label}</Button>
-    );
-  }
+/**
+ * The pane's one header row, the same on a phone and a computer: the host's Chat | Comments switch (`lead` slot), then
+ * New comment (+), Filter, the "..." menu of what the Space adds to its panel, then the host's close button (`trail`
+ * slot).
+ *
+ * - New comment starts the Space's one mode at once, or opens a menu of its modes, with "Comment on all of <item>"
+ *   first on a page with items.
+ * - Filter holds both choices: which comment threads ("Waiting for you" first, the only one with a number, then Open,
+ *   Done and All) and where (this item or all items, on a page with items). No totals.
+ * - A second row shows only while the filter is not the usual one (open threads, this item): one chip per choice that
+ *   differs, and a press on it puts that choice back.
+ */
+export function CommentPaneBar({ controller, rootRef, showCopy = true, waitingCount: listed = controller.waitingCount, runCount = null }: CommentPaneBarProps) {
+  // In the host panel the number is the host's own (what waits in the Space on screen), the same as on its switch.
+  const hostCount = useWaitingCommentCount();
+  const [hosted, setHosted] = useState(false);
+  useEffect(() => { setHosted(Boolean(commentsShadowHost(rootRef.current))); });
+  const waitingCount = hosted && hostCount !== null ? hostCount : listed;
+  const { modes, anchors, filter, changes, waitingFilter } = controller;
+  // Where the pane holds a part of the Space, the host counted the changes (`changeCount`).
+  const changeCount = controller.changeCount ?? changes.length;
+  const statusFilter: CommentStatusView = controller.statusFilter === 'resolved' ? 'done' : controller.statusFilter;
+  const statusLabel = (value: CommentStatusView) => controller.say(value === 'open' ? 'open' : value === 'done' ? 'resolvedFilter' : 'all');
+  const scoped = anchors.length > 0;
+  const widened = scoped && filter !== 'anchor';
+  const filtered = waitingFilter || statusFilter !== 'open' || widened;
+  const shownStatus = waitingFilter ? controller.say('waitingForYou') : statusLabel(statusFilter);
+  const newLabel = controller.say('newCommentMenu');
+  const wholeAnchor = scoped && controller.anchor ? controller.anchor : null;
+  const oneMode = modes.length === 1 && !wholeAnchor ? modes[0]! : null;
+  const newButton = (
+    <button type="button" className="nui-comment-bar-btn" aria-label={newLabel} data-part="new-comment-button"
+      onClick={oneMode ? () => controller.startMode(oneMode) : undefined}>
+      <Icon name="plus" />
+    </button>
+  );
   return (
-    <Menu align="end" label={controller.words.newCommentMenu} accelerators={false}
-      trigger={(
-        <Button size="sm" variant="ghost" className="nui-comment-new-btn" icon="plus" aria-label={label}>{label}</Button>
-      )}>
-      {modes.map(mode => (
-        <Menu.Item key={mode} icon={COMMENT_MODE_ICON[mode]} checked={controller.commentMode === mode ? true : undefined}
-          onSelect={() => controller.startMode(mode)}>
-          {controller.say(COMMENT_MODE_WORD[mode])}
-        </Menu.Item>
-      ))}
-    </Menu>
+    <>
+      <div className="nui-comment-bar" data-part="pane-bar">
+        <slot name="lead" />
+        <span className="nui-comment-bar-gap" />
+        {!modes.length && !wholeAnchor ? null : oneMode ? (
+          <Tooltip label={newLabel}>{newButton}</Tooltip>
+        ) : (
+          <Menu align="end" label={controller.words.newCommentMenu} accelerators={false} trigger={newButton}>
+            {wholeAnchor ? (
+              <Menu.Item icon="chat-circle-text" onSelect={() => controller.placePin(controller.anchorKey, null, null)}>
+                <span data-new-comment="anchor">
+                  {controller.say('commentOnAnchor', { n: wholeAnchor.order, anchor: controller.say('anchorLabel', { n: wholeAnchor.order }) })}
+                </span>
+              </Menu.Item>
+            ) : null}
+            {modes.map(mode => (
+              <Menu.Item key={mode} icon={COMMENT_MODE_ICON[mode]} checked={controller.commentMode === mode ? true : undefined}
+                onSelect={() => controller.startMode(mode)}>
+                {controller.say(COMMENT_MODE_WORD[mode])}
+              </Menu.Item>
+            ))}
+          </Menu>
+        )}
+        <Menu align="end" label={controller.words.filter} accelerators={false}
+          trigger={(
+            <button type="button" className="nui-comment-bar-btn" data-part="filter-button" data-active={filtered ? '' : undefined}
+              data-filter={waitingFilter ? 'waiting' : statusFilter}
+              aria-label={controller.say('filterLabel', { filter: controller.say('filter'), status: shownStatus })}>
+              <Icon name="funnel-simple" />
+            </button>
+          )}>
+          {/* The only entry with a number: what waits for you. Totals show nowhere. */}
+          <Menu.Item checked={waitingFilter} onSelect={() => controller.setWaitingFilter(true)}>
+            <span className="nui-comment-filter-item" data-filter="waiting">
+              <span>{controller.say('waitingForYou')}</span>
+              {waitingCount > 0 ? (
+                <span className="nui-comment-count" data-waiting=""
+                  aria-label={controller.say('waitingCount', { n: waitingCount })}>{waitingCount}</span>
+              ) : null}
+            </span>
+          </Menu.Item>
+          {STATUS_VIEWS.map(value => (
+            <Menu.Item key={value} checked={!waitingFilter && statusFilter === value} onSelect={() => controller.setStatusFilter(value)}>
+              <span className="nui-comment-filter-item" data-filter={value}><span>{statusLabel(value)}</span></span>
+            </Menu.Item>
+          ))}
+          {scoped ? <Menu.Separator /> : null}
+          {scoped ? (['anchor', 'all'] as const).map(value => (
+            <Menu.Item key={`scope-${value}`} checked={filter === value} onSelect={() => controller.setFilter(value)}>
+              <span className="nui-comment-filter-item" data-scope={value}>
+                <span>{controller.say(value === 'anchor' ? 'thisAnchor' : 'allItems')}</span>
+              </span>
+            </Menu.Item>
+          )) : null}
+        </Menu>
+        {showCopy ? (
+          <Menu align="end" label={controller.words.paneMore} accelerators={false}
+            trigger={(
+              <button type="button" className="nui-comment-bar-btn" data-part="more-button" aria-label={controller.say('paneMore')}>
+                <Icon name="dots-three" />
+              </button>
+            )}>
+            <Menu.Item icon="copy" disabled={!changeCount || controller.copying}
+              onSelect={() => void controller.copyChanges(rootRef.current)}>
+              <span className="nui-comment-filter-item" data-part="copy-changes">
+                <span>{controller.say('copy')}</span>
+                {changeCount ? <span className="nui-comment-count">{changeCount}</span> : null}
+              </span>
+            </Menu.Item>
+          </Menu>
+        ) : null}
+        <slot name="trail" />
+      </div>
+      {filtered ? (
+        <div className="nui-comment-chips" data-part="filter-chips">
+          {waitingFilter || statusFilter !== 'open' ? (
+            <button type="button" className="nui-comment-chip" data-chip={waitingFilter ? 'waiting' : statusFilter}
+              aria-label={controller.say('removeFilter', { filter: shownStatus })}
+              onClick={() => controller.setStatusFilter('open')}>
+              <span data-part="chip-label">{waitingFilter && runCount ? controller.say('waitingCount', { n: runCount }) : shownStatus}</span>
+              <Icon name="x" />
+            </button>
+          ) : null}
+          {widened && !(waitingFilter && runCount != null) ? (
+            <button type="button" className="nui-comment-chip" data-chip="all-items"
+              aria-label={controller.say('removeFilter', { filter: controller.say('allItems') })}
+              onClick={() => controller.setFilter('anchor')}>
+              <span>{controller.say('allItems')}</span><Icon name="x" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -184,102 +283,12 @@ export function useAtThreadPicker(controller: CommentController) {
   }, [routing]);
 }
 
-/**
- * Whether a card shows its Thread line (CommentGoesTo renders one): the line that carries the thread's buttons under
- * unified comments. Mirrors CommentGoesTo's own conditions, so the buttons fall back to the name line when it shows none.
- */
-export function commentGoesToShows(controller: CommentController, thread: CommentThread): boolean {
-  const { routing } = controller;
-  const rootKey = thread.root.recordKey;
-  if (!routing.links || rootKey.startsWith('draft-') || routing.lost?.(rootKey)) return false;
-  if (routing.known && !routing.known(rootKey)) return true;
-  return !elsewhere(routing.goesTo(rootKey));
-}
-
-/**
- * At the top of a comment thread's card, the thread that owns it: "Thread <title>" (its first linked thread), else
- * "Goes to <best match>" or "Goes to a new thread", with Change, which opens the @ thread picker and links the pick
- * (SPC-114). The signatures below it name only who wrote each comment. Nothing when the host does not link threads;
- * "Goes to" and a quiet placeholder (no name, no Change) while where it goes is still being read.
- */
-export function CommentGoesTo({ controller, thread }: { controller: CommentController; thread: CommentThread }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const { routing } = controller;
-  const rootKey = thread.root.recordKey;
-  if (!routing.links || rootKey.startsWith('draft-')) return null;
-  // Its links (or best match) could not be read and nothing is kept: no line rather than a destination it does not know.
-  if (routing.lost?.(rootKey)) return null;
-  // Still being read: a neutral line in the same place, never a guess that turns into another thread a moment later.
-  if (routing.known && !routing.known(rootKey)) {
-    return (
-      <p className="nui-comment-goes" data-part="goes-to" data-loading="" aria-busy="true" onClick={stop} onKeyDown={stop}>
-        <span className="nui-comment-goes-label">{controller.say('goesTo')}</span>{' '}
-        <span className="nui-skel nui-comment-goes-skel" aria-hidden="true" />
-        <span className="nui-sr-only">{controller.say('goesToLoading')}</span>
-      </p>
-    );
-  }
-  const target = routing.goesTo(rootKey);
-  // A plain reply wakes an agent another person runs: no line rather than a thread it does not go to (SPC-467).
-  if (elsewhere(target)) return null;
-  // SPC-535: an agent outside Notis holds this thread, so a reply stays with it and Notis wakes nobody. The line names
-  // it with its harness logo (the thread it said it works in is on its signature and in the hover title); Change hands
-  // the thread to a Notis thread.
-  if (target && outsideClaim(target)) {
-    const name = commentOutsideName(target);
-    return (
-      <p className="nui-comment-goes" data-part="goes-to" data-outside="" title={[controller.say('outsideAgentTitle', { name }), target.threadName].filter(Boolean).join(' · ')}
-        onClick={stop} onKeyDown={stop}>
-        {isHarness(target.harness) ? <CommentHarnessLogo harness={target.harness} className="nui-comment-goes-logo" />
-          : <Icon name="chat-circle-text" />}
-        <span className="nui-comment-goes-label">{controller.say('goesTo')}</span>{' '}
-        <span className="nui-comment-goes-title">{name}</span>
-        <span className="nui-comment-goes-sep" aria-hidden="true">·</span>
-        <span className="nui-comment-goes-outside">{controller.say('outsideNotis')}</span>
-        {routing.canLink ? (
-          <>
-            {' '}
-            <button ref={ref} type="button" className="nui-comment-goes-change" aria-label={controller.say('changeThread')}
-              onClick={() => { if (ref.current) void routing.change(rootKey, ref.current); }}>{controller.say('change')}</button>
-          </>
-        ) : null}
-      </p>
-    );
-  }
-  const named = commentThreadName(controller, target);
-  const linked = Boolean(target?.threadId) && routing.linksOf(rootKey).some(link => link.threadId === target!.threadId);
-  const title = named.pending ? named.title : target?.title || controller.say('goesToNew');
-  const open = routing.open;
-  const threadId = target?.threadId ?? null;
-  // A pick being linked shows at once, quiet until it is saved (a failure puts the line back and says so).
-  const saving = routing.saving?.(rootKey) ?? false;
-  return (
-    <p className="nui-comment-goes" data-part="goes-to" data-pending={named.pending ? '' : undefined}
-      data-saving={saving ? '' : undefined} aria-busy={saving || undefined} title={saving ? controller.say('linking') : undefined}
-      onClick={stop} onKeyDown={stop}>
-      <Icon name="chat-circle-text" />
-      <span className="nui-comment-goes-label">{controller.say(linked ? 'ownerThread' : 'goesTo')}</span>{' '}
-      {threadId && open ? (
-        <button type="button" className="nui-comment-goes-title" data-thread-id={threadId}
-          aria-label={controller.say('openLinkedThread', { title })} onClick={() => open(threadId)}>{title}</button>
-      ) : <span className="nui-comment-goes-title">{title}</span>}
-      {routing.canLink ? (
-        <>
-          {' '}
-          <button ref={ref} type="button" className="nui-comment-goes-change" aria-label={controller.say('changeThread')}
-            disabled={saving} onClick={() => { if (ref.current) void routing.change(rootKey, ref.current); }}>{controller.say('change')}</button>
-        </>
-      ) : null}
-    </p>
-  );
-}
-
 /** The name of the agent outside Notis a `claimed` ref names, as its comments sign it. */
 export function commentOutsideName(ref: SpaceCommentThreadRef): string {
   return agentDisplayName(ref.agentName || ref.title || ref.subagent || '');
 }
 
-/** The agent outside Notis that holds this comment thread (SPC-535), when the Goes to line names one; else null. */
+/** The agent outside Notis that holds this comment thread (SPC-535), else null. */
 export function commentOutsideClaim(controller: CommentController, thread: CommentThread): SpaceCommentThreadRef | null {
   const { routing } = controller;
   const rootKey = thread.root.recordKey;
@@ -333,16 +342,6 @@ export function commentItemNames(controller: Pick<CommentController, 'say'>, ite
   return rest > 0 ? controller.say('moreItems', { items: shown, n: rest }) : shown;
 }
 
-/** A thread's place, for the card meta line: a moment ("0:24") and the items it is on, named. */
-export function commentPlaceMeta(controller: CommentController, thread: CommentThread): string[] {
-  const parts: string[] = [];
-  if (thread.root.time != null) parts.push(formatCommentTime(thread.root.time));
-  if (thread.root.anchorIds.length > 1) {
-    parts.push(commentItemNames(controller, commentAnchorsOf(thread.root, controller.anchors), thread.root.anchorIds.length));
-  }
-  return parts;
-}
-
 export interface CommentListOptions {
   /**
    * The order of the threads (SPC-116). Default 'newest': the newest thread first, by when its first comment was
@@ -355,24 +354,141 @@ export interface CommentListOptions {
    * function to group your way (by slide, by time, by status), or false for a flat list.
    */
   groupBy?: ((thread: CommentThread) => CommentGroup | null) | false;
+  /**
+   * 'always': a heading over every group, also when there is only one (a host that lists a part of a Space's comments
+   * names the page of each). Default 'auto': headings only when there is more than one group.
+   */
+  groupHeadings?: 'auto' | 'always';
+}
+
+/** The slot a group's heading leaves for its host, after the group's name (Open the page). */
+export function commentGroupSlot(groupKey: string): string {
+  return `group:${groupKey}`;
 }
 
 /** The threads in order, under group headings when there is more than one group. */
-export function CommentThreadList({ controller, threads, order = 'newest', groupBy, children }: CommentListOptions & {
+export function CommentThreadList({ controller, threads, order = 'newest', groupBy, groupHeadings = 'auto', children }: CommentListOptions & {
   controller: CommentController; threads: readonly CommentThread[]; children: (thread: CommentThread) => ReactNode;
 }) {
   const ordered = orderCommentThreads(threads, order);
   const by = groupBy === false ? null : groupBy ?? (controller.wholeSpace ? controller.groupOf : null);
   const groups = by ? groupCommentThreads(ordered, by) : [{ group: null, threads: ordered }];
-  const titled = groups.length > 1;
+  const titled = groups.length > 1 || groupHeadings === 'always';
   return (
     <div className="nui-comment-list">
       {groups.map(({ group, threads: items }, index) => (
         <React.Fragment key={group?.key ?? `none-${index}`}>
-          {titled && group ? <h3 className="nui-comment-group" data-group={group.key}>{group.label}</h3> : null}
+          {titled && group ? (
+            <h3 className="nui-comment-group" data-group={group.key}>
+              <span className="nui-comment-group-name">{group.label}</span>
+              <slot name={commentGroupSlot(group.key)} />
+            </h3>
+          ) : null}
           {items.map(children)}
         </React.Fragment>
       ))}
+    </div>
+  );
+}
+
+/** The keys that scroll a list. */
+const LIST_SCROLL_KEYS = new Set(['PageDown', 'ArrowDown', 'End', ' ']);
+
+/** The nearest box around `node` that scrolls up and down (through shadow roots), or null when nothing scrolls it. */
+function scrollBoxOf(node: Element): HTMLElement | null {
+  const view = node.ownerDocument.defaultView;
+  let current: Node | null = node.parentNode;
+  while (current) {
+    if (current instanceof (view?.ShadowRoot ?? ShadowRoot)) { current = (current as ShadowRoot).host; continue; }
+    const element = current as HTMLElement;
+    if (element.nodeType === 1 && element.clientHeight > 0 && element.scrollHeight > element.clientHeight + 1) {
+      const overflow = view?.getComputedStyle(element).overflowY ?? '';
+      if (overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') return element;
+    }
+    current = current.parentNode;
+  }
+  return null;
+}
+
+/**
+ * The end of a list that has older Done threads left to read (`controller.hasMore`). It shows as one loading card.
+ * The next page is read when the end is in view and the reader moved the list since the last page (a wheel, a
+ * finger, a scroll key, the scroll bar), never page after page by itself: a card kept in view at the end of the list
+ * (the comment a link opened) would otherwise pull every page of the Space. A list too short to scroll reads on
+ * until it can. Where the browser cannot watch the end, the pages are read one after the other.
+ */
+export function CommentListMore({ controller }: {
+  controller: Pick<CommentController, 'say' | 'loadMore' | 'loadingMore'>;
+  /** @deprecated The end is watched against what the window shows, whatever box scrolls the list. */
+  scrollRef?: RefObject<HTMLElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const latest = useRef(controller);
+  latest.current = controller;
+  const state = useRef({ inView: false, moved: false });
+  const tryLoad = useCallback(() => {
+    const node = ref.current;
+    const { loadMore, loadingMore } = latest.current;
+    if (!node || !loadMore || loadingMore || !state.current.inView) return;
+    if (!state.current.moved && scrollBoxOf(node)) return;
+    state.current.moved = false;
+    loadMore();
+  }, []);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const doc = node.ownerDocument;
+    const view = doc.defaultView;
+    if (!view || typeof view.IntersectionObserver === 'undefined') {
+      state.current.inView = true;
+      state.current.moved = true;
+      tryLoad();
+      return undefined;
+    }
+    const watch = new view.IntersectionObserver((entries) => {
+      state.current.inView = entries.some(entry => entry.isIntersecting);
+      tryLoad();
+    });
+    watch.observe(node);
+    // The reader's own hand on the list: the page that follows is theirs to ask for.
+    const moved = () => {
+      state.current.moved = true;
+      view.setTimeout(tryLoad, 0);
+    };
+    const key = (event: Event) => {
+      const target = event.composedPath()[0] as HTMLElement | undefined;
+      if (!LIST_SCROLL_KEYS.has((event as KeyboardEvent).key) || target?.isContentEditable || target?.matches?.('input, textarea, select')) return;
+      moved();
+    };
+    // A press on the scroll bar reaches the box that scrolls, not a card in it.
+    const bar = (event: Event) => { if (event.composedPath()[0] === scrollBoxOf(node)) moved(); };
+    doc.addEventListener('wheel', moved, { capture: true, passive: true });
+    doc.addEventListener('touchmove', moved, { capture: true, passive: true });
+    doc.addEventListener('keydown', key, true);
+    doc.addEventListener('pointerdown', bar, true);
+    return () => {
+      watch.disconnect();
+      doc.removeEventListener('wheel', moved, true);
+      doc.removeEventListener('touchmove', moved, true);
+      doc.removeEventListener('keydown', key, true);
+      doc.removeEventListener('pointerdown', bar, true);
+    };
+  }, [tryLoad]);
+  // A page landed: a list still too short to scroll reads the next one.
+  const { loadingMore } = controller;
+  useEffect(() => {
+    if (loadingMore) return;
+    if (typeof ref.current?.ownerDocument.defaultView?.IntersectionObserver === 'undefined') state.current.moved = true;
+    tryLoad();
+  }, [loadingMore, tryLoad]);
+  return (
+    <div ref={ref} className="nui-comment-loading" role="status" aria-busy="true" data-part="loading-more">
+      <span className="nui-sr-only">{controller.say('loadingComments')}</span>
+      <div className="nui-comment-loading-card" aria-hidden="true">
+        <span className="nui-skel nui-skel-head" />
+        <span className="nui-skel nui-skel-line" />
+        <span className="nui-skel nui-skel-line nui-comment-loading-short" />
+      </div>
     </div>
   );
 }
@@ -425,6 +541,9 @@ function focusInside(root: HTMLElement | null): boolean {
   return Boolean(active && root.contains(active));
 }
 
+/** The pane's Undo key goes before the other keys of its scope, whichever was registered last. */
+const PANE_UNDO_BOOST = 10;
+
 function PaneKeys({ controller, rootRef }: { controller: CommentController; rootRef: RefObject<HTMLElement | null> }) {
   const target = () => {
     const root = rootRef.current;
@@ -440,7 +559,13 @@ function PaneKeys({ controller, rootRef }: { controller: CommentController; root
       when: () => focusInside(rootRef.current),
       run: () => {
         const thread = target();
-        if (thread?.root.status === 'Open') controller.actions.archive(thread.root);
+        if (thread?.root.status !== 'Open') return true;
+        // Done moves on: in a review run the run takes it; else the card that takes its place gets the selection.
+        if (!notifyReviewRunAction({ kind: 'done', key: thread.root.recordKey })) {
+          const card = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-thread]') ?? [])]
+            .find(item => item.dataset.thread === thread.root.recordKey) ?? null;
+          archiveThenNext(controller, thread.root, card);
+        }
         return true;
       },
     },
@@ -452,6 +577,15 @@ function PaneKeys({ controller, rootRef }: { controller: CommentController; root
         if (thread?.root.status === 'Resolved') controller.actions.unarchive(thread.root);
         return true;
       },
+    },
+    {
+      // The toast's own Z waits at route scope (ActionToast). Beside a conversation (the Manager), that conversation's
+      // Z sits above it and would take the key to undo nothing here: with the focus in the pane and its toast
+      // offering Undo, Z is this pane's. A review run keeps its own Z (it selects the card again, reviewRun.ts).
+      id: 'comments.undo', keys: 'z', scope: 'detail', label: SHELL_WORDS.undo, boost: PANE_UNDO_BOOST,
+      when: () => Boolean(controller.toaster.toast?.undo) && !controller.waitingFilter && focusInside(rootRef.current),
+      // A running Undo keeps the key: a second press neither undoes twice nor reaches the conversation.
+      run: () => { if (!controller.toaster.toast?.undoing) void controller.toaster.undo(); return true; },
     },
   ], [controller]);
   return null;

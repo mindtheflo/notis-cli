@@ -16,7 +16,36 @@ export const COMMENT_WORDS = Object.freeze({
   resolved: w('Done', 'Terminé'),
   resolvedFilter: w('Done', 'Terminés'),
   filter: w('Show comments', 'Afficher les commentaires'),
-  filterLabel: w('{filter}: {status}, {n}', `{filter}${NNBSP}: {status}, {n}`),
+  filterLabel: w('{filter}: {status}', `{filter}${NNBSP}: {status}`),
+  // The filter's first choice and the only one with a number: what waits for the viewer (a mention, an agent's
+  // question, a reply in a comment thread they started or replied to). Never a total.
+  waitingForYou: w('Waiting for you', 'En attente de toi'),
+  waitingCount: w('{n} waiting', '{n} en attente'),
+  emptyWaiting: w('Nothing waits for you here.', 'Rien ne t’attend ici.'),
+  removeFilter: w('Remove the filter: {filter}', `Retirer le filtre${NNBSP}: {filter}`),
+  // The "..." of the pane's header row: what the Space adds to its panel (Copy changes since last turn).
+  paneMore: w('More', 'Plus'),
+  // The card. Done is the check at its top right (the thread is archived and reads Done); "..." holds the rest.
+  markDone: w('Done', 'Terminé'),
+  threadMore: w('More', 'Plus'),
+  threadMoreNamed: w('More for the comment thread: {excerpt}', `Plus pour le fil de commentaires${NNBSP}: {excerpt}`),
+  replyMore: w('More', 'Plus'),
+  replyMoreNamed: w('More for the reply: {excerpt}', `Plus pour la réponse${NNBSP}: {excerpt}`),
+  changeWho: w('Change who it goes to', 'Changer le destinataire'),
+  // Where a card sits when it quotes no words.
+  placeWholePage: w('Whole page', 'Page entière'),
+  placePoint: w('Point {n}', 'Point {n}'),
+  placePointOn: w('Point {n} on {item}', 'Point {n} sur {item}'),
+  placeTime: w('At {time}', 'À {time}'),
+  // A question with choices reads like a question in a conversation: the asker's pick, and a way to answer otherwise.
+  recommended: w('Recommended', 'Recommandé'),
+  otherOption: w('Other', 'Autre'),
+  otherOptionHint: w('Write your own answer', 'Écris ta propre réponse'),
+  // Who a reply box names when a Notis thread holds the comment thread and nothing says what runs it.
+  notis: w('Notis', 'Notis'),
+  toWho: w('To {who}', 'À {who}'),
+  // The cross on a new comment's pill line, where there is no Escape key (a phone).
+  discardComment: w('Discard this comment', 'Abandonner ce commentaire'),
   status: w('Status', 'Statut'),
   scope: w('Show', 'Afficher'),
   copy: w('Copy changes since last turn', 'Copier les changements depuis le dernier tour'),
@@ -44,7 +73,7 @@ export const COMMENT_WORDS = Object.freeze({
   unarchiveThread: w('Unarchive the comment thread: {excerpt}', `Désarchiver le fil de commentaires${NNBSP}: {excerpt}`),
   deleteThreadNamed: w('Delete the comment thread: {excerpt}', `Supprimer le fil de commentaires${NNBSP}: {excerpt}`),
   copyLinkNamed: w('Copy the link to the comment thread: {excerpt}', `Copier le lien du fil de commentaires${NNBSP}: {excerpt}`),
-  // A reply's own Copy link (unified comments): the link opens the reply's comment thread.
+  // A reply's own Copy link: the link opens the reply's comment thread.
   copyReplyLinkNamed: w('Copy the link to the reply: {excerpt}', `Copier le lien de la réponse${NNBSP}: {excerpt}`),
   // The viewer's own reply reads "your reply" on both its buttons; someone else's reads "{who}’s reply".
   deleteReplyOf: w('Delete {who}’s reply: {excerpt}', `Supprimer la réponse de {who}${NNBSP}: {excerpt}`),
@@ -55,6 +84,7 @@ export const COMMENT_WORDS = Object.freeze({
   unarchived: w('Comment thread back in Open.', 'Fil de commentaires de retour dans Ouverts.'),
   delete: w('Delete', 'Supprimer'),
   copyLink: w('Copy link', 'Copier le lien'),
+  showOnPage: w('Show on page', 'Voir sur la page'),
   linkCopied: w('Link copied', 'Lien copié'),
   linkCopyFailed: w('The link could not be copied.', 'Le lien n’a pas pu être copié.'),
   deleteThread: w('Delete the comment thread', 'Supprimer le fil de commentaires'),
@@ -145,8 +175,6 @@ export const COMMENT_WORDS = Object.freeze({
   textChangedHint: w('These words are no longer in the text. The comment stays open.',
     'Ces mots ne sont plus dans le texte. Le commentaire reste ouvert.'),
   selectToComment: w('Select a passage to comment on it.', 'Sélectionne un passage pour le commenter.'),
-  emptyPassages: w('No comments yet. Select a passage to comment on it.',
-    'Aucun commentaire pour le moment. Sélectionne un passage pour le commenter.'),
   inGroup: w('{n} on {group}', '{n} sur {group}'),
   closeComments: w('Close comments', 'Fermer les commentaires'),
   readError: w('Comments could not be read.', 'Impossible de lire les commentaires.'),
@@ -163,6 +191,7 @@ export const COMMENT_WORDS = Object.freeze({
     '{name} travaille hors de Notis et lit les réponses quand il les consulte'),
   replyToWho: w('Reply to {who}', 'Répondre à {who}'),
   outsideUnread: w('{who} has not read it yet', 'Pas encore lu par {who}'),
+  outsideRead: w('Read by {who}', 'Lu par {who}'),
   agentHarness: w('Runs on {harness}', 'Tourne sur {harness}'),
   // Read out while the Goes to line is still loading (no destination shown yet).
   goesToLoading: w('Finding where this goes', 'Recherche de la destination'),

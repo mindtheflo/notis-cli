@@ -45,3 +45,9 @@ export type { ShortcutHint, ShortcutHintsProps } from './components/ShortcutHint
 
 export { useLongPressSelection } from './hooks/useLongPressSelection';
 export { isInteractionElementVisible } from './interactions/visibility';
+export {
+  SWIPE_DISMISS_ATTRIBUTE,
+  SWIPE_DISMISS_DISTANCE,
+  installSwipeDownToDismiss,
+  useSwipeDownToDismiss,
+} from './interactions/swipeDownToDismiss';

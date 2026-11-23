@@ -4,11 +4,12 @@
  * in-memory store seeded with `rows` (writes succeed without a server); the viewer is Flo, who can edit the Space;
  * `routing` adds the host's threads (links, best match, the @ picker) from fixtures.
  */
-import { createContext, useCallback, useContext, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   NotisProvider, type NotisRuntime, type SpaceCommentPage, type SpaceCommentRow, type SpaceCommentSource,
   type SpaceCommentsTransport, type SpaceCommentThreadRef,
 } from '../../src';
+import { CommentPaneOutlet, registerPaneOutlet } from '../../src/ui/index';
 import { memoryCommentStore } from '../runtime/memoryComments';
 
 const THREADS: Record<string, SpaceCommentThreadRef> = {
@@ -65,8 +66,25 @@ export function HostCommentsProvider({ runtime, routing, rows, page, upload, mor
 /**
  * Where the host Comments panel sits beside the page. Like the host (C7), it gives the pane its full height and never
  * scrolls itself: the pane scrolls its own list and keeps its toasts at the bottom of what shows.
+ *
+ * `hostDrawn`: the host draws the pane itself, in its own React tree (`registerPaneOutlet`, `CommentPaneOutlet`), as the
+ * Portal's Comments panel does, so the pane's elements stay when a newer version of the page takes the place of the
+ * one on screen.
  */
-export function HostPanelSlot({ style }: { style?: CSSProperties }) {
+export function HostPanelSlot({ style, hostDrawn = false }: { style?: CSSProperties; hostDrawn?: boolean }) {
   const setSlot = useContext(SlotContext);
-  return <div ref={setSlot} style={{ minWidth: 0, minHeight: 0, height: '100%', overflow: 'hidden', ...style }} />;
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  const unregister = useRef<(() => void) | null>(null);
+  const ref = useCallback((node: HTMLElement | null) => {
+    unregister.current?.();
+    // Said before the element is handed to a source, so the pane never portals into it first.
+    unregister.current = node && hostDrawn ? registerPaneOutlet(node) : null;
+    setTarget(node);
+    setSlot?.(node);
+  }, [setSlot, hostDrawn]);
+  return (
+    <div ref={ref} style={{ minWidth: 0, minHeight: 0, height: '100%', overflow: 'hidden', ...style }}>
+      {hostDrawn ? <CommentPaneOutlet target={target} /> : null}
+    </div>
+  );
 }

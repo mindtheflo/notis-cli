@@ -12,7 +12,7 @@ import type { NotisRuntime } from '../../runtime';
 import {
   CommentPane, CommentPins, applyCommentPatches, commentAnchorOfDraft, commentAttachmentFor, commentBodyParts,
   commentChangesSince, commentDigest, commentDraftOfAnchor, commentFromRow, commentRelativeTime, commentStatusOf, commentThreads,
-  isCommentZone, storeStatusOf, useComments,
+  commentGroupSlot, isCommentZone, storeStatusOf, useComments,
   type CommentAnchor, type CommentController, type CommentPaneProps, type CommentRecord,
   type UseCommentsOptions,
 } from '.';
@@ -21,6 +21,11 @@ import {
   SpaceFileError, type SpaceCommentRow, type SpaceCommentsTransport, type SpaceCommentThreadRef, type SpaceCommentViewer,
 } from '../../space';
 import { clearCommentDrafts } from './commentDrafts';
+import { listHostComposers, registerHostComposerHost, setWaitingCommentCount, setWaitingCommentThreads } from './hostPanel';
+import {
+  REVIEW_RUN_TRAVEL_MS, cardThatTookThePlace, reviewRunCommands, reviewRunHost, reviewRunPane, resetReviewRunAnswered, setReviewRunHost,
+  subscribeReviewRunEvents, type ReviewRunEvent,
+} from './reviewRun';
 import { clearCommentRoutingCache } from './useCommentRouting';
 import { commentRow, memoryCommentStore, type MemoryCommentOp, type MemoryCommentStore } from '../../../design-system/runtime/memoryComments';
 
@@ -288,13 +293,13 @@ test.after(async () => {
   root = null;
 });
 
-function Harness(props: UseCommentsOptions & { pins?: boolean } & Pick<CommentPaneProps, 'order' | 'groupBy'>) {
-  const { pins = true, order, groupBy, ...options } = props;
+function Harness(props: UseCommentsOptions & { pins?: boolean } & Pick<CommentPaneProps, 'order' | 'groupBy' | 'groupHeadings'>) {
+  const { pins = true, order, groupBy, groupHeadings, ...options } = props;
   controller = useComments(options);
   return (
     <div>
       {pins ? <div className="anchor" style={{ position: 'relative' }}><CommentPins controller={controller} /></div> : null}
-      <CommentPane controller={controller} order={order} groupBy={groupBy} />
+      <CommentPane controller={controller} order={order} groupBy={groupBy} groupHeadings={groupHeadings} />
     </div>
   );
 }
@@ -381,25 +386,88 @@ async function type(el: HTMLTextAreaElement, value: string) {
 const button = (label: string) => [...doc.querySelectorAll('button')].find(el =>
   el.getAttribute('aria-label') === label || el.textContent?.trim() === label) as HTMLButtonElement | undefined;
 const cards = () => [...doc.querySelectorAll('.nui-comment-card')].map(card => card.getAttribute('data-thread'));
+/** A question's option rows: their labels in order, and the row of one label. */
+const optionLabels = (root: ParentNode = doc) => [...root.querySelectorAll('.nui-comment-options .nui-comment-option:not([data-other]) .nui-comment-option-label')]
+  .map(el => el.textContent);
+const option = (label: string, root: ParentNode = doc) => [...root.querySelectorAll('.nui-comment-option')]
+  .find(el => el.querySelector('.nui-comment-option-label')?.textContent === label) as HTMLButtonElement | undefined;
 
-/** Opens the filter menu (unless it is open) and picks Open, Done or All. */
+/** A button of the pane's one header row: `new-comment-button`, `filter-button` or `more-button`. */
+const barButton = (part: string) => doc.querySelector(`.nui-comment-bar [data-part="${part}"]`) as HTMLButtonElement | null;
+/** Opens the filter menu (unless it is open) and picks Waiting for you, Open, Done or All. */
 async function openFilterMenu() {
-  if (!doc.querySelector('.nui-comment-filter-item')) await click(doc.querySelector('.nui-comment-filter')!);
+  if (!doc.querySelector('.nui-comment-filter-item[data-filter]')) await click(barButton('filter-button')!);
 }
-async function pickFilter(filter: 'open' | 'done' | 'all') {
+/** Picks This item or All items in the filter menu. */
+async function pickScope(scope: 'anchor' | 'all') {
+  await openFilterMenu();
+  const item = doc.querySelector(`[role^="menuitem"] .nui-comment-filter-item[data-scope="${scope}"]`)?.closest('[role^="menuitem"]');
+  assert.ok(item, `the filter menu offers the scope ${scope}`);
+  await click(item!);
+}
+/** Opens the New comment menu and picks the entry with these words. */
+async function pickNewComment(label: string) {
+  await click(barButton('new-comment-button')!);
+  const item = [...doc.querySelectorAll('[role^="menuitem"]')].find(el => el.textContent?.trim() === label);
+  assert.ok(item, `the New comment menu offers "${label}"`);
+  await click(item!);
+}
+async function pickFilter(filter: 'waiting' | 'open' | 'done' | 'all') {
   await openFilterMenu();
   const item = doc.querySelector(`[role^="menuitem"] .nui-comment-filter-item[data-filter="${filter}"]`)?.closest('[role^="menuitem"]');
   assert.ok(item, `the filter menu offers ${filter}`);
   await click(item!);
 }
-const filterCounts = async () => {
+/** Shuts an open menu. */
+async function closeMenu() { await key(doc.activeElement ?? doc.body, 'Escape'); }
+/** Opens a card's "..." and returns its entries by action: copy-link, change, edit, delete. */
+async function threadMenu(threadKey: string): Promise<Record<string, HTMLElement>> {
+  await click(doc.querySelector(`[data-thread="${threadKey}"] [data-part="thread-more"]`)!);
+  return Object.fromEntries([...doc.querySelectorAll('[role="menu"] [data-thread-action]')].map(el =>
+    [el.getAttribute('data-thread-action')!, el.closest('[role^="menuitem"]') as HTMLElement]));
+}
+/** Opens a reply's "..." and returns its entries by action: copy-link, edit, delete. */
+async function replyMenu(commentKey: string): Promise<Record<string, HTMLElement>> {
+  await click(doc.querySelector(`[data-comment="${commentKey}"] [data-part="reply-more"]`)!);
+  return Object.fromEntries([...doc.querySelectorAll('[role="menu"] [data-reply-action]')].map(el =>
+    [el.getAttribute('data-reply-action')!, el.closest('[role^="menuitem"]') as HTMLElement]));
+}
+/** What a card's "..." (or a reply's) offers, read and closed again. */
+async function threadActions(threadKey: string): Promise<string[]> {
+  const names = Object.keys(await threadMenu(threadKey));
+  await closeMenu();
+  return names;
+}
+async function replyActions(commentKey: string): Promise<string[]> {
+  const names = Object.keys(await replyMenu(commentKey));
+  await closeMenu();
+  return names;
+}
+/** Picks one entry of a card's "..." (or of a reply's). */
+async function threadAction(threadKey: string, action: string) {
+  const entry = (await threadMenu(threadKey))[action];
+  assert.ok(entry, `the thread's "..." offers ${action}`);
+  await click(entry!);
+}
+async function replyAction(commentKey: string, action: string) {
+  const entry = (await replyMenu(commentKey))[action];
+  assert.ok(entry, `the reply's "..." offers ${action}`);
+  await click(entry!);
+}
+
+/** The filter menu's entries in order, each with the number it shows (null: none). */
+const filterEntries = async () => {
   await openFilterMenu();
-  const counts = Object.fromEntries([...doc.querySelectorAll('.nui-comment-filter-item')].map(el =>
-    [el.getAttribute('data-filter'), Number(el.querySelector('.nui-comment-count')!.textContent)]));
+  const entries = [...doc.querySelectorAll('.nui-comment-filter-item')].map(el =>
+    [el.getAttribute('data-filter') ?? `scope:${el.getAttribute('data-scope')}`, el.querySelector('.nui-comment-count')?.textContent ?? null]);
   await key(doc.activeElement ?? doc.body, 'Escape');
-  return counts;
+  return entries;
 };
 const toastUndo = () => doc.querySelector('.nui-toast-btn') as HTMLButtonElement | null;
+/** Who a card's reply box names ("Reply to Claude", or plain "Reply" while nobody is known): where a reply goes. */
+const replyTo = (key: string) => doc.querySelector(`[data-thread="${key}"] .nui-comment-reply-box textarea`)!.getAttribute('placeholder');
+/** The thread a reply in this comment thread goes to, as the routing knows it (its title; null: none or not known). */
+const goesToTitle = (key: string) => (controller!.routing.known?.(key) === false ? null : controller!.routing.goesTo(key)?.title ?? null);
 /** The writes of one kind. */
 const writes = (calls: Call[], op: MemoryCommentOp) => calls.filter(call => call.op === op);
 const scope = { id: 'deck-1', recordKey: PAGE, name: 'Q4 review', checkpoint: '2026-10-20T00:00:00.000Z' };
@@ -410,35 +478,93 @@ test('CommentPane: threads of this anchor, pins, replies and the asks', async ()
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
   assert.deepEqual(cards(), ['c2', 'c1'], 'open threads of slide 1, the newest thread first');
   const pins = [...doc.querySelectorAll('.nui-comment-pin')];
+  assert.deepEqual(pins.map(pin => pin.getAttribute('data-pin')).sort(), ['c1', 'c2'],
+    'each pin names its comment thread, so the list can follow the page to it');
   assert.deepEqual(pins.map(pin => pin.textContent), ['3', '4'],
     'numbered per page (the deck) by creation: c4 and c5, older, keep 1 and 2 though archived and deleted');
   assert.ok(pins[1]!.hasAttribute('data-agent'), 'a pin by someone else is marked');
   assert.equal(pins[0]!.getAttribute('aria-label'), 'Flo: Tighten the title');
-  assert.equal(doc.querySelectorAll('.nui-comment-reply').length, 1);
-  assert.ok(doc.querySelector('[data-thread="c2"] .nui-comment-new'), 'Claude comment after the checkpoint is new');
-  assert.ok(!doc.querySelector('[data-thread="c1"] > header .nui-comment-new'), 'my own comment is never new');
+  assert.equal(doc.querySelectorAll('.nui-comment-entry:not([data-root])').length, 1, 'one reply');
+  const rootOf = (key: string) => controller!.threads.find(thread => thread.root.recordKey === key)!.root;
+  assert.ok(controller!.isNew(rootOf('c2')), 'Claude comment after the checkpoint is new');
+  assert.ok(!controller!.isNew(rootOf('c1')), 'my own comment is never new');
+  assert.equal(doc.querySelector('.nui-comment-new'), null, 'a comment not read yet carries no mark on its card');
+  // The comment above says who asks: the question adds no line of its own, only its option rows.
+  const ask = doc.querySelector('[data-thread="c2"] .nui-comment-ask')!;
+  assert.equal(doc.querySelector('.nui-comment-ask-label'), null);
+  assert.doesNotMatch(ask.textContent!, /needs/);
+  assert.deepEqual(optionLabels(ask), ['Looks good', 'Undo']);
   // The check ask answers through the store's answer.
-  await click(button('Looks good')!);
+  await click(option('Looks good')!);
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'c2', answer: 'Looks good' } });
   assert.match(doc.querySelector('[data-thread="c2"] .nui-comment-answer')!.textContent!, /Looks good, sent to the agent/);
-  assert.equal(doc.querySelector('[data-thread="c2"] > header .nui-comment-new'), null, 'an answered ask is no longer new');
-  assert.equal(doc.querySelector('[data-thread="c2"] .nui-comment-ask-label')!.textContent,
-    'Claude needs your check on the change', 'one sentence, the kind in lower case');
+  assert.ok(!controller!.isNew(rootOf('c2')), 'an answered ask is no longer new');
 });
 
-test('CommentPane: filters (this item, all; the Open, Done and All menu with counts) and an empty state', async () => {
+test('CommentPane: one header row; the filter holds Waiting for you (the only number), Open, Done, All and the scope; a chip says an unusual filter', async () => {
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  assert.deepEqual(await filterCounts(), { open: 2, done: 0, all: 2 }, 'counts of this item');
-  await click([...doc.querySelectorAll('.nui-seg button, [role="radio"]')].find(el => el.textContent?.startsWith('All'))!);
+  // The one row: the host's switch (lead slot), New comment, Filter, "...", then the host's close button (trail slot).
+  const bar = doc.querySelector('.nui-comment-bar')!;
+  assert.deepEqual([...bar.children].map(el => el.tagName === 'SLOT' ? `slot:${el.getAttribute('name')}` : el.getAttribute('data-part') ?? el.className),
+    ['slot:lead', 'nui-comment-bar-gap', 'new-comment-button', 'filter-button', 'more-button', 'slot:trail']);
+  assert.equal(doc.querySelector('.nui-comment-chips'), null, 'no second row while the filter is the usual one');
+  assert.equal(barButton('filter-button')!.hasAttribute('data-active'), false);
+  assert.deepEqual(await filterEntries(),
+    [['waiting', '1'], ['open', null], ['done', null], ['all', null], ['scope:anchor', null], ['scope:all', null]],
+    'Waiting for you comes first and is the only entry with a number: no totals');
+  assert.equal(controller!.waitingCount, 1, 'the open question of slide 1');
+
+  // Where: all items.
+  await pickScope('all');
   assert.deepEqual(cards(), ['c3', 'c2', 'c1'], 'flat, the newest thread first (a new reply does not move c1)');
-  assert.deepEqual(await filterCounts(), { open: 3, done: 1, all: 4 }, 'deleted threads are never counted');
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => [el.getAttribute('data-chip'), el.textContent]), [['all-items', 'All items']],
+    'one line says the filter is not the usual one');
+  assert.ok(barButton('filter-button')!.hasAttribute('data-active'));
+  // Which: Done, All, Waiting for you.
   await pickFilter('done');
   assert.deepEqual(cards(), ['c4'], 'deleted threads never show');
-  assert.match(doc.querySelector('.nui-comment-filter')!.textContent!, /Done/);
+  assert.equal(barButton('filter-button')!.getAttribute('aria-label'), 'Show comments: Done');
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => el.textContent), ['Done', 'All items']);
   await pickFilter('all');
   assert.deepEqual(cards(), ['c3', 'c2', 'c1', 'c4']);
+  await pickFilter('waiting');
+  assert.deepEqual(cards(), ['c3', 'c2'], 'only what waits for you, on every item while All items is on');
+  assert.equal(controller!.statusFilter, 'open');
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => el.getAttribute('data-chip')), ['waiting', 'all-items']);
+  // A press on a chip removes that choice.
+  await click(doc.querySelector('.nui-comment-chip[data-chip="waiting"]')!);
+  assert.equal(controller!.waitingFilter, false);
+  assert.deepEqual(cards(), ['c3', 'c2', 'c1']);
+  await click(doc.querySelector('.nui-comment-chip[data-chip="all-items"]')!);
+  assert.equal(doc.querySelector('.nui-comment-chips'), null, 'the usual filter again: the second row goes');
+  assert.deepEqual(cards(), ['c2', 'c1']);
+
   await mount(<Harness {...base} anchorKey="nothing" />, fakeRuntime(ROWS, []));
   assert.match(doc.querySelector('.nui-comment-empty')!.textContent!, /No comments here yet/);
+});
+
+test('Waiting for you lists what the host says waits (a mention, a question, a reply in your thread), and empties in its own words', async () => {
+  setWaitingCommentThreads(['c1', 'c3']);
+  try {
+    await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
+    assert.equal(controller!.waitingCount, 1, 'c1 on this item; c3 sits on another');
+    assert.deepEqual((await filterEntries())[0], ['waiting', '1']);
+    await pickFilter('waiting');
+    assert.deepEqual(cards(), ['c1'], "the host's list wins over the pane's own guess (c2's open question)");
+    await pickScope('all');
+    assert.deepEqual(cards(), ['c3', 'c1']);
+    await act(async () => { setWaitingCommentThreads([]); });
+    await settle();
+    assert.deepEqual(cards(), []);
+    assert.match(doc.querySelector('.nui-comment-empty')!.textContent!, /Nothing waits for you here/);
+    // A thread picked from the page that does not wait shows: the filter steps aside.
+    await act(async () => { controller!.revealThread(controller!.threads.find(thread => thread.root.recordKey === 'c2')!); });
+    await settle();
+    assert.equal(controller!.waitingFilter, false);
+    assert.ok(cards().includes('c2'));
+  } finally {
+    setWaitingCommentThreads(null);
+  }
 });
 
 test('CommentPane: a reply sends on Enter, Shift+Enter keeps writing, and an archived thread stays archived', async () => {
@@ -515,7 +641,7 @@ test('Undo of an archive unarchives, Undo of a delete restores, each on the comm
   assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'c2' } }, 'Undo brings the thread back');
   assert.equal(storeOf(runtime).rows.find(item => item.id === 'c2')!.status, 'open');
 
-  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
+  await threadAction('c1', 'delete');
   assert.deepEqual(calls.at(-1), { op: 'remove', input: { id: 'c1' } }, 'one delete, on the first comment alone');
   assert.equal(storeOf(runtime).rows.find(item => item.id === 'r1')!.status, 'open', 'its reply is left to the server');
   assert.deepEqual(cards(), ['c2'], 'the thread leaves the list');
@@ -531,7 +657,7 @@ test('Delete at once with Undo: the first comment deletes the thread, a later on
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
   assert.equal(doc.querySelector('dialog'), null);
   // A reply: only that comment, with a "Comment deleted" line in its place.
-  await click(doc.querySelector('[data-comment="r1"] button[aria-label^="Delete "][aria-label*="reply: "]')!);
+  await replyAction('r1', 'delete');
   assert.equal(doc.querySelector('dialog[open]'), null, 'no confirmation dialog');
   assert.deepEqual(calls.at(-1), { op: 'remove', input: { id: 'r1' } });
   assert.match(doc.querySelector('[data-thread="c1"] .nui-comment-deleted')!.textContent!, /Comment deleted/);
@@ -541,7 +667,7 @@ test('Delete at once with Undo: the first comment deletes the thread, a later on
 
   // The first comment: the whole thread goes with it, in one delete (the server keeps the replies for the Bin).
   calls.length = 0;
-  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
+  await threadAction('c1', 'delete');
   assert.deepEqual(calls, [{ op: 'remove', input: { id: 'c1' } }]);
   assert.deepEqual(cards(), ['c2']);
   assert.match(doc.body.textContent!, /Comment thread deleted/);
@@ -559,22 +685,20 @@ test('Delete rights: your own comments; a whole thread or someone else\'s needs 
   ];
   const viewer = { name: 'Flo', canEditSpace: false };
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer } }));
-  assert.ok(doc.querySelector('[data-comment="m3"] button[aria-label^="Delete "][aria-label*="reply: "]'), 'your own reply');
-  // The viewer's own reply reads "your reply" on both its buttons, never "Flo's reply" beside "Edit your reply".
-  assert.ok(doc.querySelector('[data-comment="m3"] button[aria-label="Edit your reply: Mine again"]'));
-  assert.ok(doc.querySelector('[data-comment="m3"] button[aria-label="Delete your reply: Mine again"]'));
-  assert.equal(doc.querySelector('[data-comment="m2"] button[aria-label^="Delete "][aria-label*="reply: "]'), null, 'not someone else\'s');
-  assert.equal(doc.querySelector('[data-thread="m1"] button[aria-label^="Delete the comment thread: "]'), null,
-    'a thread with someone else\'s reply needs edit rights');
-  assert.ok(doc.querySelector('[data-thread="o1"] button[aria-label^="Delete the comment thread: "]'), 'a thread all yours');
-  assert.equal(doc.querySelector('[data-comment="m2"] button[aria-label^="Edit your reply: "]'), null, 'never edit someone else\'s');
+  // Each reply keeps Copy link, Edit and Delete in one "..." of its own, named after the reply.
+  assert.equal(doc.querySelector('[data-comment="m3"] [data-part="reply-more"]')!.getAttribute('aria-label'), 'More for the reply: Mine again');
+  assert.deepEqual(await replyActions('m3'), ['copy-link', 'edit', 'delete'], 'your own reply');
+  assert.deepEqual(await replyActions('m2'), ['copy-link'], 'not someone else\'s: no Edit, no Delete');
+  assert.deepEqual(await threadActions('m1'), ['copy-link', 'edit'], 'a thread with someone else\'s reply needs edit rights to delete');
+  assert.deepEqual(await threadActions('o1'), ['copy-link', 'edit', 'delete'], 'a thread all yours');
 
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer: { name: 'Flo', canEditSpace: true } } }));
-  assert.ok(doc.querySelector('[data-comment="m2"] button[aria-label="Delete Claude’s reply: Agreed"]'), 'an editor deletes anyone\'s');
-  assert.ok(doc.querySelector('[data-thread="m1"] button[aria-label^="Delete the comment thread: "]'));
+  assert.deepEqual(await replyActions('m2'), ['copy-link', 'delete'], 'an editor deletes anyone\'s, and edits only their own');
+  assert.deepEqual(await threadActions('m1'), ['copy-link', 'edit', 'delete']);
 
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer: undefined } }));
-  assert.equal(doc.querySelectorAll('button[aria-label^="Delete"], button[aria-label^="Edit"]').length, 0, 'no viewer, no Delete or Edit');
+  assert.deepEqual(await threadActions('m1'), ['copy-link'], 'no viewer, no Delete or Edit');
+  assert.deepEqual(await replyActions('m3'), ['copy-link']);
 });
 
 test('Your comments are told by the store (author.you), not the name: a renamed person keeps Edit and Delete', async () => {
@@ -587,19 +711,16 @@ test('Your comments are told by the store (author.you), not the name: a renamed 
   ];
   const viewer = { name: 'Flo', canEditSpace: false, id: 'user-flo' };
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer } }));
-  const edit = (key: string) => Boolean(doc.querySelector(`[data-thread="${key}"] button[aria-label^="Edit "]`));
-  const del = (key: string) => Boolean(doc.querySelector(`[data-thread="${key}"] button[aria-label^="Delete the comment thread: "]`));
-  assert.ok(edit('a1') && del('a1'), 'the store says you wrote it: Edit and Delete, whatever the old name');
-  assert.equal(edit('a2'), false, 'the same name is not enough when the store says someone else wrote it');
-  assert.equal(del('a2'), false);
+  assert.deepEqual(await threadActions('a1'), ['copy-link', 'edit', 'delete'], 'the store says you wrote it: Edit and Delete, whatever the old name');
+  assert.deepEqual(await threadActions('a2'), ['copy-link'], 'the same name is not enough when the store says someone else wrote it');
 });
 
 test('Edit your own comment in place: it saves the text through the store and reads edited', async () => {
   const calls: Call[] = [];
   const runtime = fakeRuntime(ROWS, calls);
   await mount(<Harness {...base} />, runtime);
-  assert.equal(doc.querySelector('[data-comment="r1"] button[aria-label^="Edit your reply: "]'), null, 'Claude\'s reply is not yours');
-  await click(doc.querySelector('[data-thread="c1"] > header button[aria-label^="Edit your comment: "]')!);
+  assert.ok(!(await replyActions('r1')).includes('edit'), 'Claude\'s reply is not yours');
+  await threadAction('c1', 'edit');
   const field = doc.querySelector('[data-thread="c1"] .nui-comment-edit textarea') as HTMLTextAreaElement;
   assert.equal(field.value, 'Tighten the title');
   await type(field, 'Tighten the title, please');
@@ -607,17 +728,17 @@ test('Edit your own comment in place: it saves the text through the store and re
   assert.deepEqual(calls.at(-1), { op: 'edit', input: { id: 'c1', body: 'Tighten the title, please' } });
   assert.equal(doc.querySelector('[data-thread="c1"] .nui-comment-edit'), null);
   assert.match(doc.querySelector('[data-thread="c1"] .nui-comment-body')!.textContent!, /Tighten the title, please/);
-  assert.equal(doc.querySelector('[data-thread="c1"] > header .nui-comment-edited')!.textContent, 'edited');
+  assert.equal(doc.querySelector('[data-comment="c1"] .nui-comment-sub .nui-comment-edited')!.textContent, 'edited', 'after its time, on the quieter line');
   assert.equal(storeOf(runtime).rows.find(item => item.id === 'c1')!.body, 'Tighten the title, please');
 
-  await click(doc.querySelector('[data-thread="c1"] > header button[aria-label^="Edit your comment: "]')!);
+  await threadAction('c1', 'edit');
   const again = doc.querySelector('[data-thread="c1"] .nui-comment-edit textarea') as HTMLTextAreaElement;
   await type(again, 'Shorter title');
   await click(button('Save')!);
   assert.deepEqual(calls.at(-1), { op: 'edit', input: { id: 'c1', body: 'Shorter title' } }, 'Save sends it too');
 });
 
-test('Owning thread: the linked thread once at the top of the card (Thread), else Goes to the best match; Change picks another and links it; the title opens it', async () => {
+test('Where a reply goes is said once, by the reply box; "..." opens that thread and changes who it goes to', async () => {
   const linked: unknown[] = [];
   const opened: string[] = [];
   const picks: unknown[] = [];
@@ -630,32 +751,38 @@ test('Owning thread: the linked thread once at the top of the card (Thread), els
     openThread: threadId => { opened.push(threadId); },
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
-  const line = () => doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!;
-  assert.match(line().textContent!, /Thread Deck polish/);
+  const box = (key: string) => doc.querySelector(`[data-thread="${key}"] .nui-comment-reply-box textarea`)!;
+  assert.equal(box('c1').getAttribute('placeholder'), 'Reply to Claude', 'the linked thread runs on Claude');
+  assert.equal(box('c1').getAttribute('aria-label'), 'Reply to Claude');
+  assert.equal(box('c2').getAttribute('placeholder'), 'Reply to Notis', 'no link yet: the best match, a Notis thread');
   const card = doc.querySelector('[data-thread="c1"]')!;
-  assert.ok(card.firstElementChild!.contains(line()), 'once, at the top of the card, above the first comment');
-  assert.equal(card.querySelectorAll('[data-part="goes-to"]').length, 1, 'never repeated on the replies');
-  assert.equal(card.querySelector('.nui-comment-compose-box [data-part="goes-to"]'), null, 'not under the reply box');
-  assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /Goes to Q4 deck/,
-    'no link yet: the best match');
-  await click(line().querySelector('.nui-comment-goes-title')!);
+  assert.equal(card.querySelector('[data-part="goes-to"]'), null, 'no Thread or Goes to line on the card');
+  assert.doesNotMatch(card.textContent!, /Deck polish|Goes to/, 'the thread is not named on the card');
+  // "..." opens the thread a reply goes to, and changes it.
+  assert.deepEqual(await threadActions('c1'), ['copy-link', 'open-thread', 'change', 'edit', 'delete']);
+  assert.match((await threadMenu('c1'))['open-thread']!.textContent!, /Open Deck polish in the chat/);
+  await closeMenu();
+  await threadAction('c1', 'open-thread');
   assert.deepEqual(opened, ['t-1']);
-  await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
+  await threadAction('c1', 'change');
   assert.deepEqual(picks, ['t-1']);
   assert.deepEqual(linked, [{ rootId: 'c1', pick: { threadId: 't-2', title: 'Chart work' }, primary: true }]);
-  assert.match(line().textContent!, /Thread Chart work/);
+  assert.equal(box('c1').getAttribute('placeholder'), 'Reply to Notis', 'the pick shows at once');
+  assert.match((await threadMenu('c1'))['open-thread']!.textContent!, /Open Chart work in the chat/);
+  await closeMenu();
 
   // A pick the host could not link says so instead of silently staying on the old thread.
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments: { ...comments, link: async () => null } }));
-  await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
-  assert.match(line().textContent!, /Thread Deck polish/);
+  await threadAction('c1', 'change');
+  assert.equal(box('c1').getAttribute('placeholder'), 'Reply to Claude');
   assert.match(doc.body.textContent!, /Could not save that change/);
 
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  assert.equal(doc.querySelector('[data-part="goes-to"]'), null, 'a host without links shows no Goes to line');
+  assert.equal(box('c1').getAttribute('placeholder'), 'Reply', 'a host without links names nobody');
+  assert.deepEqual(await threadActions('c1'), ['copy-link', 'edit', 'delete'], 'and offers no thread to open or change');
 });
 
-test('Unified comments: the thread\'s buttons end its Thread line and every reply has its own, always shown; flag off keeps them on hover', async () => {
+test('The card: where it sits first with Done and "..." at its top right, two lines beside each avatar, the words on its full width', async () => {
   const rows = [
     row('m1', { body: 'Mine', slide: 'slide-1', createdAt: '2026-10-21T09:00:00.000Z' }),
     row('m2', { body: 'Agreed', author: 'Claude', slide: 'slide-1', thread: 'm1', createdAt: '2026-10-21T10:00:00.000Z' }),
@@ -668,47 +795,46 @@ test('Unified comments: the thread\'s buttons end its Thread line and every repl
   };
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: linked }));
   const card = doc.querySelector('[data-thread="m1"]')!;
-  assert.equal(card.getAttribute('data-buttons'), 'shown');
-  const threadLine = card.querySelector(':scope > .nui-comment-thread-line')!;
-  assert.ok(threadLine.querySelector('[data-part="goes-to"]'), 'the Thread line');
-  const bar = threadLine.querySelector(':scope > .nui-comment-actions')!;
-  assert.ok(bar, 'the thread\'s buttons sit on the Thread line, after it');
-  assert.equal(threadLine.lastElementChild, bar, 'at its right end');
-  assert.deepEqual([...bar.querySelectorAll('button')].map(item => item.getAttribute('aria-label')!.split(':')[0]),
-    ['Archive the comment thread', 'Copy the link to the comment thread', 'Edit your comment']);
-  assert.equal(card.querySelector(':scope > header .nui-comment-actions'), null, 'no longer on the name line');
+  assert.deepEqual([...card.children].map(el => el.className), ['nui-comment-top', 'nui-comment-entries', 'nui-comment-reply-box']);
+  // The top row: where it sits, then the thread's two buttons.
+  const top = card.querySelector(':scope > .nui-comment-top')!;
+  assert.deepEqual([...top.children].map(el => el.className), ['nui-comment-anchor', 'nui-comment-actions']);
+  assert.equal(top.querySelector('[data-part="place"]')!.textContent, 'Intro', 'a comment on a whole item: the item, by its title');
+  assert.deepEqual([...top.querySelectorAll('.nui-comment-actions > button, .nui-comment-actions [data-part]')].map(item => item.getAttribute('data-part')),
+    ['done', 'thread-more']);
+  assert.equal(top.querySelector('[data-part="done"]')!.getAttribute('aria-label'), 'Archive the comment thread: Mine');
+  assert.equal(top.querySelector('[data-part="thread-more"]')!.getAttribute('aria-label'), 'More for the comment thread: Mine');
+  // Each comment: the avatar, then two lines (the name, then the time), then its "..." on a reply.
+  const entry = (key: string) => card.querySelector(`[data-comment="${key}"]`)!;
+  assert.deepEqual([...entry('m1').children].map(el => el.className), ['nui-comment-entry-head', 'nui-comment-entry-main']);
+  assert.deepEqual([...entry('m1').querySelector('.nui-comment-entry-head')!.children].map(el => el.className.split(' ')[0]),
+    ['nui-comment-avatar', 'nui-comment-who'], 'the first comment has no menu of its own: the thread\'s is at the top');
+  assert.deepEqual([...entry('m2').querySelector('.nui-comment-entry-head')!.children].map(el => el.className.split(' ')[0]),
+    ['nui-comment-avatar', 'nui-comment-who', 'nui-comment-entry-more']);
+  assert.deepEqual([...entry('m2').querySelector('.nui-comment-who')!.children].map(el => el.className), ['nui-comment-name', 'nui-comment-sub']);
+  assert.equal(entry('m2').querySelector('.nui-comment-name')!.textContent, 'Claude');
+  assert.equal(entry('m2').querySelector('.nui-comment-entry-main .nui-comment-body')!.textContent, 'Agreed',
+    'the words sit under the block, on the card\'s full width');
+  // No mark on a comment not read yet: no dot, no bar.
+  assert.equal(card.querySelector('.nui-comment-new, [data-unread]'), null);
   // Every reply: Copy link; Edit and Delete only on your own (this viewer cannot edit the Space).
-  const labels = (key: string) => [...card.querySelectorAll(`[data-comment="${key}"] .nui-comment-reply-head > .nui-comment-reply-actions button`)]
-    .map(item => item.getAttribute('aria-label'));
-  assert.deepEqual(labels('m2'), ['Copy the link to the reply: Agreed'], 'someone else\'s reply: Copy link only');
-  assert.deepEqual(labels('m3'), ['Copy the link to the reply: Mine again', 'Edit your reply: Mine again', 'Delete your reply: Mine again']);
-  // Always shown and quiet: the stylesheet puts them in the flow, seen, and greys their 22px buttons.
+  assert.deepEqual(await replyActions('m2'), ['copy-link'], 'someone else\'s reply: Copy link only');
+  assert.deepEqual(await replyActions('m3'), ['copy-link', 'edit', 'delete']);
+  // Quiet until the card is hovered, focused or selected; always there where nothing hovers (a phone).
   const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
-  const rule = css.slice(css.indexOf('.nui-comment-card[data-buttons]:is('), css.indexOf('}', css.indexOf('.nui-comment-card[data-buttons]:is(')));
-  assert.match(rule, /:is\(\.nui-comment-actions, \.nui-comment-reply-head > \.nui-comment-reply-actions\)/);
-  assert.match(rule, /position: static/);
-  assert.match(rule, /visibility: visible; opacity: 1; pointer-events: auto/);
-  assert.match(css, /\.nui-comment-card\[data-buttons\] :is\(\.nui-comment-actions, \.nui-comment-reply-actions\) \.nui-comment-icon-btn \{\s*width: 22px; height: 22px;[^}]*opacity: \.55/);
-  assert.match(css, /\.nui-comment-thread-line \.nui-comment-goes-change \{[^}]*max-width: 0; overflow: hidden;/,
-    'Change takes no room on the Thread line until it is hovered or focused');
-  assert.match(css, /\.nui-comment-thread-line:is\(:hover, :focus-within\) \.nui-comment-goes-change \{ max-width: 8em; padding: 0 2px; opacity: 1; \}/,
-    'Change shows on hover or focus of the Thread line');
+  assert.match(css, /\.nui-comment-actions \{[^}]*opacity: 0;/);
+  assert.match(css, /\.nui-comment-card:is\(:hover, \[data-selected\], :focus-visible, :focus-within\) \.nui-comment-actions,\n\.nui-comment-actions:has\(\[aria-expanded="true"\]\) \{ opacity: 1; \}/);
+  assert.match(css, /\.nui-comment-entry-more \{[^}]*opacity: 0;/);
+  assert.match(css, /@media \(hover: none\) \{\s*\.nui-comment-actions, \.nui-comment-entry-more \{ opacity: 1; \}/);
 
-  // French: the reply's own Copy link reads in French too.
+  // French: the menus read in French too.
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: linked, locale: 'fr' }), 'fr');
-  assert.ok(doc.querySelector('[data-comment="m2"] button[aria-label="Copier le lien de la réponse : Agreed"]'));
-
-  // Flag off (no links from the host): nightly's card, the buttons on the name line and no Copy link on replies.
-  await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: { viewer: linked.viewer } }));
-  const off = doc.querySelector('[data-thread="m1"]')!;
-  assert.equal(off.hasAttribute('data-buttons'), false);
-  assert.equal(off.querySelector('.nui-comment-thread-line'), null);
-  assert.ok(off.querySelector(':scope > header .nui-comment-actions'));
-  assert.equal(off.querySelector('[data-comment="m2"] .nui-comment-reply-actions'), null, 'no buttons on someone else\'s reply');
-  assert.equal(off.querySelector('button[aria-label^="Copy the link to the reply"]'), null);
+  assert.equal(doc.querySelector('[data-comment="m2"] [data-part="reply-more"]')!.getAttribute('aria-label'), 'Plus pour la réponse\u202f: Agreed');
+  assert.equal((await replyMenu('m2'))['copy-link']!.textContent, 'Copier le lien');
+  await closeMenu();
 });
 
-test('An agent signs with its band name read out and its harness logo; the logo opens its runtime card on keyboard focus', async () => {
+test('An agent signs with its band name read out and its app\'s logo on its avatar; its name opens its runtime card on keyboard focus', async () => {
   const codex = { provider: 'codex', label: 'Codex', model: 'gpt-5.5-codex', intelligence: 'high', effort: null, speed: 'priority' };
   const notis = { provider: 'notis', label: null, model: 'claude-opus-5.5', intelligence: null, effort: null, speed: null };
   const rows = [
@@ -726,9 +852,10 @@ test('An agent signs with its band name read out and its harness logo; the logo 
   assert.equal(reply.querySelector('.nui-comment-avatar')!.textContent, 'F');
   assert.equal(doc.querySelector('.nui-comment-agent'), null, 'no From line on a signature: the card names its thread once');
   const badge = reply.querySelector('[data-part="agent-runtime"]') as HTMLElement;
+  assert.ok(badge.classList.contains('nui-comment-author'), 'the name itself opens the card');
   assert.equal(badge.getAttribute('data-harness'), 'codex');
   assert.equal(badge.getAttribute('tabindex'), '0', 'keyboard reachable');
-  assert.equal(badge.querySelector('svg')!.getAttribute('data-harness'), 'codex', 'the Codex logo, inline');
+  assert.equal(reply.querySelector('.nui-comment-avatar-badge svg')!.getAttribute('data-harness'), 'codex', 'the Codex logo, on the avatar');
   assert.equal(badge.getAttribute('aria-label'),
     'Fred And The Machine · Codex · Intelligence: High · Speed: Fast · Model: gpt-5.5-codex');
   // A keyboard user tabs to it (the card shows at once on keyboard focus, not on a click's focus).
@@ -740,7 +867,7 @@ test('An agent signs with its band name read out and its harness logo; the logo 
   };
   await tabTo(badge);
   const tip = doc.querySelector('[role="tooltip"]')!;
-  assert.equal(tip.id, badge.getAttribute('aria-describedby'), 'the card describes the logo');
+  assert.equal(tip.id, badge.getAttribute('aria-describedby'), 'the card describes the name');
   assert.ok(tip.classList.contains('nui-tip-card'), 'the runtime card, not a one-line pill');
   assert.equal(tip.querySelector('.nui-runtime-card-name')!.textContent, 'Fred And The Machine');
   assert.deepEqual([...tip.querySelectorAll('.nui-runtime-glyphs svg')].map(svg => svg.getAttribute('data-harness') ?? svg.getAttribute('data-glyph')),
@@ -769,7 +896,8 @@ test('An agent signs with its band name read out and its harness logo; the logo 
   const plain = doc.querySelector('[data-thread="c3"]')!;
   assert.equal(plain.querySelector('.nui-comment-author')!.textContent, 'John Trash');
   assert.equal(plain.querySelector('[data-part="agent-runtime"]'), null);
-  assert.equal(doc.querySelector('[data-thread="c1"] > header [data-part="agent-runtime"]'), null, 'a person: no logo');
+  assert.equal(plain.querySelector('.nui-comment-avatar-badge'), null);
+  assert.equal(doc.querySelector('[data-comment="c1"] [data-part="agent-runtime"], [data-comment="c1"] .nui-comment-avatar-badge'), null, 'a person: no logo');
 
   // French: the Portal's words.
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
@@ -777,7 +905,7 @@ test('An agent signs with its band name read out and its harness logo; the logo 
     'Fred And The Machine · Codex · Intelligence : Élevé · Vitesse : Rapide · Modèle : gpt-5.5-codex');
 });
 
-test('An agent outside Notis holds its thread: Goes to names it outside Notis, the box replies to it, and the card says it has not read the reply yet (SPC-535, SPC-536, SPC-537)', async () => {
+test('An agent outside Notis holds its thread: the box replies to it, and your reply carries the chat bubble\'s check until it has read it (SPC-535, SPC-536, SPC-537)', async () => {
   const outside = { name: 'Velvet Margin Echo', thread_name: 'PR #3851', harness: 'claude_code', outside: true };
   const rows = [
     { ...row('c1', { body: 'Which slide?', author: 'Velvet Margin Echo', slide: 'slide-1', createdAt: '2026-10-21T09:00:00.000Z' }),
@@ -795,39 +923,46 @@ test('An agent outside Notis holds its thread: Goes to names it outside Notis, t
   });
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport(null) }));
   const card = () => doc.querySelector('[data-thread="c1"]')!;
-  const line = () => card().querySelector('[data-part="goes-to"]')!;
-  assert.ok(line().hasAttribute('data-outside'));
-  assert.equal(line().querySelector('svg')!.getAttribute('data-harness'), 'claude_code', 'its harness logo');
-  assert.equal(line().textContent, 'Goes to Velvet Margin Echo·outside Notis Change');
+  const mark = () => card().querySelector('[data-part="read-mark"]');
+  assert.ok(card().hasAttribute('data-outside'));
   const box = card().querySelector('textarea')!;
   assert.equal(box.getAttribute('placeholder'), 'Reply to Velvet Margin Echo');
-  assert.equal(card().querySelector('[data-part="outside-unread"]')!.textContent, 'Velvet Margin Echo has not read it yet');
-  // The signature: its band name, its harness logo and, quiet, the thread it works in.
-  const head = card().querySelector('header')!;
-  assert.equal(head.querySelector('[data-part="agent-harness"]')!.getAttribute('aria-label'), 'Runs on Claude');
-  assert.equal(head.querySelector('[data-part="agent-thread-name"]')!.textContent, 'PR #3851');
+  // Your reply carries the mark after its time: one check while the agent has not read it.
+  assert.equal(mark()!.closest('[data-comment]')!.getAttribute('data-comment'), 'r1', 'on your latest word');
+  assert.ok(mark()!.closest('.nui-comment-sub'), 'after its time');
+  assert.equal(mark()!.getAttribute('aria-label'), 'Velvet Margin Echo has not read it yet');
+  assert.equal(mark()!.hasAttribute('data-read'), false);
+  assert.equal(mark()!.querySelectorAll('path').length, 1, 'one check');
+  assert.equal(card().querySelector('[data-part="outside-unread"]'), null, 'no "has not read it yet" line');
+  // The signature: its band name with its app's logo on the avatar and, quiet, the thread it works in.
+  const first = card().querySelector('[data-comment="c1"]')!;
+  assert.equal(first.querySelector('.nui-comment-avatar-badge svg')!.getAttribute('data-harness'), 'claude_code');
+  assert.equal(first.querySelector('[data-part="agent-harness"]')!.getAttribute('aria-label'), 'Velvet Margin Echo · Runs on Claude · outside Notis');
+  assert.equal(first.querySelector('.nui-comment-sub [data-part="agent-thread-name"]')!.textContent, 'PR #3851');
 
-  // Read after the reply: no line. The agent wrote last: no line either.
+  // Read after the reply: two checks. The agent wrote last and nobody answered: no mark.
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport('2026-10-21T11:00:00.000Z') }));
-  assert.equal(card().querySelector('[data-part="outside-unread"]'), null);
+  assert.ok(mark()!.hasAttribute('data-read'));
+  assert.equal(mark()!.querySelectorAll('path').length, 2, 'two checks once read');
+  assert.equal(mark()!.getAttribute('aria-label'), 'Read by Velvet Margin Echo');
   await mount(<Harness {...base} />, fakeRuntime([rows[0]], [], { comments: transport(null) }));
-  assert.equal(card().querySelector('[data-part="outside-unread"]'), null);
+  assert.equal(mark(), null);
   assert.equal(card().querySelector('textarea')!.getAttribute('placeholder'), 'Reply to Velvet Margin Echo');
 
-  // Change hands the thread to a Notis thread: the claim goes, the box says Reply again.
+  // Change hands the thread to a Notis thread: the claim goes, the box says who gets the reply now.
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport(null) }));
-  await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
+  assert.ok(!(await threadActions('c1')).includes('open-thread'), 'an agent outside Notis has no thread to open here');
+  await threadAction('c1', 'change');
   assert.deepEqual(linked, [{ rootId: 'c1', pick: { threadId: 't-2', title: 'Chart work' }, primary: true }]);
-  assert.match(line().textContent!, /Thread Chart work/);
-  assert.equal(line().hasAttribute('data-outside'), false);
-  assert.equal(card().querySelector('[data-part="outside-unread"]'), null);
+  assert.equal(card().querySelector('textarea')!.getAttribute('placeholder'), 'Reply to Notis');
+  assert.equal(card().hasAttribute('data-outside'), false);
+  assert.equal(mark(), null);
 
   // French: tu, and a narrow no-break space before a colon.
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: transport(null), locale: 'fr' }), 'fr');
-  assert.equal(line().textContent, 'Va à Velvet Margin Echo·hors de Notis Changer');
   assert.equal(card().querySelector('textarea')!.getAttribute('placeholder'), 'Répondre à Velvet Margin Echo');
-  assert.equal(card().querySelector('[data-part="outside-unread"]')!.textContent, 'Pas encore lu par Velvet Margin Echo');
-  assert.equal(card().querySelector('[data-part="agent-harness"]')!.getAttribute('aria-label'), 'Tourne sur Claude');
+  assert.equal(mark()!.getAttribute('aria-label'), 'Pas encore lu par Velvet Margin Echo');
+  assert.equal(card().querySelector('[data-part="agent-harness"]')!.getAttribute('aria-label'), 'Velvet Margin Echo · Tourne sur Claude · hors de Notis');
 });
 
 test('commentFromRow reads an agent outside Notis: its thread name, its harness and that it is outside', () => {
@@ -916,6 +1051,51 @@ test('The Space home (no scope) groups threads by page; a scoped pane lists them
   assert.equal(doc.querySelectorAll('.nui-comment-group').length, 0, 'a scoped pane is flat');
 });
 
+test('A part of a Space\'s comments: only the threads named are listed, counted and walked, each page under a heading with the host\'s slot', async () => {
+  const rows = [
+    row('g1', { body: 'On deck one', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('g2', { body: 'On deck two', createdAt: '2026-10-21T12:00:00.000Z', page: 'deck-2' }),
+    row('g3', { body: 'Deck one again', createdAt: '2026-10-21T10:00:00.000Z', needs: 'check', author: 'Claude' }),
+    row('g4', { body: 'Done on deck one', status: 'Resolved', createdAt: '2026-10-21T08:00:00.000Z' }),
+    row('g5', { body: 'Done, of another conversation', status: 'Resolved', createdAt: '2026-10-21T07:00:00.000Z' }),
+  ];
+  // A host that lists one conversation's comments names their first comments (`only`).
+  await mount(<Harness pins={false} only={['g1', 'g4']} groupHeadings="always" scopeNames={{ [PAGE]: 'Q4 review' }} />, fakeRuntime(rows, []));
+  assert.deepEqual(cards(), ['g1'], 'the other threads of the Space are not listed');
+  assert.deepEqual(controller!.threads.map(thread => thread.root.recordKey).sort(), ['g1', 'g4']);
+  assert.deepEqual({ ...controller!.counts }, { open: 1, done: 1, all: 2 }, 'nor counted');
+  assert.equal(controller!.waitingCount, 0, 'the question of another thread does not wait here');
+  // One page only, and still its heading: the host says which page each card is on, and adds its own action after it.
+  const heading = doc.querySelector('.nui-comment-group')!;
+  assert.equal(heading.querySelector('.nui-comment-group-name')!.textContent, 'Q4 review');
+  assert.equal(heading.querySelector('slot')!.getAttribute('name'), commentGroupSlot(`page:${PAGE}`));
+  assert.equal(commentGroupSlot('space'), 'group:space');
+  await act(async () => { controller!.setStatusFilter('done'); });
+  assert.deepEqual(cards(), ['g4'], 'Done lists the named thread only');
+  // An empty list names nothing; with no `only` every thread is back, and one page alone has no heading.
+  await mount(<Harness pins={false} only={[]} groupHeadings="always" />, fakeRuntime(rows, []));
+  assert.deepEqual(cards(), []);
+  await mount(<Harness pins={false} />, fakeRuntime(rows.filter(item => item.page_key === PAGE), []));
+  assert.deepEqual(cards(), ['g3', 'g1']);
+  assert.equal(doc.querySelectorAll('.nui-comment-group').length, 0, 'the usual pane: no heading over a single page');
+});
+
+test('Show on page: a card drawn away from its page offers it when the host can open the page, and passes the thread', async () => {
+  const shown: string[] = [];
+  const rows = [row('g1', { body: 'On deck one' })];
+  await mount(<Harness pins={false} />, fakeRuntime(rows, [], { comments: { showOnPage: ({ rootId }) => { shown.push(rootId); } } }));
+  await threadAction('g1', 'show-on-page');
+  assert.deepEqual(shown, ['g1']);
+  assert.equal(doc.querySelector('[role="menu"]'), null, 'the menu closed');
+  // Beside the page itself the host gives no such call: a tap on the card already shows its place.
+  await mount(<Harness pins={false} />, fakeRuntime(rows, []));
+  assert.ok(!(await threadActions('g1')).includes('show-on-page'));
+  // In French.
+  await mount(<Harness pins={false} />, fakeRuntime(rows, [], { locale: 'fr', comments: { showOnPage: () => {} } }), 'fr');
+  assert.equal((await threadMenu('g1'))['show-on-page']!.textContent, 'Voir sur la page');
+  await closeMenu();
+});
+
 test('A link to one comment: the comment view param opens its thread and widens to every item', async () => {
   const picked: string[] = [];
   await mount(<Harness {...base} onSelectThread={thread => picked.push(thread.root.recordKey)} />,
@@ -1000,7 +1180,7 @@ test('At 390 px the New comment menu opens right under its button inside the pan
     };
     await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
     const slide = doc.getElementById('slide')!;
-    const trigger = slide.shadowRoot!.querySelector('.nui-comment-new-btn') as HTMLElement;
+    const trigger = slide.shadowRoot!.querySelector('[data-part="new-comment-button"]') as HTMLElement;
     assert.ok(trigger, 'the pane draws in the panel');
     trigger.getBoundingClientRect = () => box(BUTTON.top, BUTTON.height, BUTTON.left, BUTTON.width)();
     await click(trigger);
@@ -1037,9 +1217,10 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
   }
   await mount(<ModesHarness />, fakeRuntime(ROWS, calls));
   assert.deepEqual(controller!.modes, ['point', 'box', 'items', 'time', 'page'], 'a box needs no column any more');
-  await click(doc.querySelector('.nui-comment-new-btn')!);
+  await click(barButton('new-comment-button')!);
   assert.deepEqual([...doc.querySelectorAll('[role^="menuitem"]')].map(el => el.textContent),
-    ['On a point', 'On a box', 'On items', 'At this moment', 'On the whole page']);
+    ['Comment on all of Item 1', 'On a point', 'On a box', 'On items', 'At this moment', 'On the whole page'],
+    'the whole item first, then the modes');
   await key(doc.activeElement ?? doc.body, 'Escape');
 
   assert.equal(doc.querySelector('.nui-comment-toolbar'), null);
@@ -1059,7 +1240,7 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
   assert.match(doc.querySelector('.nui-comment-toolbar')!.textContent!, /Pick the items to comment on/);
   await act(async () => { controller!.startItems([ANCHORS[0]!, ANCHORS[1]!]); });
   await settle();
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on 2 items');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on 2 items');
   let field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Same fix on both');
   await key(field, 'Enter');
@@ -1069,7 +1250,7 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
   assert.equal(calls.at(-1)!.input.page_key, PAGE);
 
   await click(doc.querySelector('.nui-comment-toolbar [data-mode="time"]')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment at 1:24');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment at 1:24');
   field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Cut here');
   await key(field, 'Enter');
@@ -1077,7 +1258,7 @@ test('Comment modes: the New comment menu lists the modes, the tool bar toggles 
   assert.equal(calls.at(-1)!.input.time_start, 84.5);
 
   await click(doc.querySelector('.nui-comment-toolbar [data-mode="page"]')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on the whole page');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on the whole page');
   field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Overall too long');
   await key(field, 'Enter');
@@ -1125,17 +1306,16 @@ test('An items comment shows right after sending, under each of its items, and n
   await act(async () => { controller!.startItems([tasks[1]!, tasks[2]!, tasks[0]!]); });
   await settle();
   assert.equal(controller!.filter, 'anchor', 'the task shown is one of the items: This item lists the comment');
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on 3 items', 'SPC-338 heading kept');
-  assert.equal(doc.querySelector('.nui-comment-new-items')!.textContent, 'Book the room, Task 3, Write the brief');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on 3 items', 'SPC-338 heading kept');
+  assert.equal(doc.querySelector('.nui-comment-new-box [data-pill="place"]')!.textContent, 'Book the room, Task 3, Write the brief');
   let field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Same owner for these');
   await key(field, 'Enter');
   assert.deepEqual(calls.at(-1)!.input.anchor_keys, ['tk2', 'tk3', 'tk1']);
   const sent = String(doc.querySelector('.nui-comment-card')!.getAttribute('data-thread'));
   assert.deepEqual(cards(), [sent], 'the new thread shows under This item at once');
-  const meta = doc.querySelector(`[data-thread="${sent}"] .nui-comment-meta`)?.textContent
-    ?? doc.querySelector(`[data-thread="${sent}"]`)!.textContent!;
-  assert.match(meta, /Write the brief, Book the room, Task 3/, 'the thread names its items, in item order');
+  const meta = doc.querySelector(`[data-thread="${sent}"] [data-part="place"]`)!.textContent!;
+  assert.match(meta, /Write the brief, Book the room, Task 3/, 'the card says where it sits first: its items, in item order');
   assert.doesNotMatch(meta, /3 items/);
   for (const key of ['tk1', 'tk2', 'tk3']) {
     assert.equal(controller!.threadsOn(key).length, 1, `listed under ${key}`);
@@ -1147,7 +1327,7 @@ test('An items comment shows right after sending, under each of its items, and n
   await act(async () => { controller!.startItems([tasks[0]!, tasks[1]!, tasks[3]!, tasks[4]!]); });
   await settle();
   assert.equal(controller!.filter, 'all', 'the task shown is not one of the items');
-  assert.equal(doc.querySelector('.nui-comment-new-items')!.textContent,
+  assert.equal(doc.querySelector('.nui-comment-new-box [data-pill="place"]')!.textContent,
     'Write the brief, Book the room, Send the invites to every speak… +1', 'three names, long ones cut, then +N');
   field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Later');
@@ -1158,24 +1338,25 @@ test('An items comment shows right after sending, under each of its items, and n
 test('Anchor words use the Space\'s own anchor label, in English and French; an old {n} override still reads (SPC-462)', async () => {
   const words = { anchorLabel: { en: 'Slide {n}', fr: 'Diapo {n}' } };
   await mount(<Harness {...base} words={words} />, fakeRuntime(ROWS, []));
-  assert.ok(button('Comment on all of Slide 1'), 'the whole-item button names the slide');
+  await click(barButton('new-comment-button')!);
+  assert.equal(doc.querySelector('[role^="menuitem"]')!.textContent, 'Comment on all of Slide 1', 'the whole-item entry leads the New comment menu and names the slide');
+  await key(doc.activeElement ?? doc.body, 'Escape');
   await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
   await settle();
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on Slide 1');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on Slide 1');
   await act(async () => { controller!.cancelPin(); });
-  await click(button('Comment on all of Slide 1')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on all of Slide 1');
+  await pickNewComment('Comment on all of Slide 1');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on all of Slide 1');
 
   await mount(<Harness {...base} words={words} />, fakeRuntime(ROWS, [], { locale: 'fr' }), 'fr');
-  assert.ok(button('Commenter Diapo 1 en entier'));
-  await click(button('Commenter Diapo 1 en entier')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'Nouveau commentaire sur Diapo 1 en entier');
+  await pickNewComment('Commenter Diapo 1 en entier');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'Nouveau commentaire sur Diapo 1 en entier');
 
   const old = { ...words, newCommentOn: { en: 'New note on slide {n}', fr: 'Nouvelle note sur la diapo {n}' } };
   await mount(<Harness {...base} words={old} />, fakeRuntime(ROWS, []));
   await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
   await settle();
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New note on slide 1', 'an override with {n} keeps working');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New note on slide 1', 'an override with {n} keeps working');
 });
 
 test('Add comment mode: Escape leaves it; a pin opens the new comment box, Escape drops it, Enter sends', async () => {
@@ -1192,7 +1373,7 @@ test('Add comment mode: Escape leaves it; a pin opens the new comment box, Escap
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   assert.ok(field);
   assert.equal(doc.activeElement, field, 'the new comment box takes focus');
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on Item 1');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on Item 1');
   assert.ok(doc.querySelector('.nui-comment-pin[data-draft]'));
   await key(field, 'Escape');
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'Escape in an empty box drops it');
@@ -1261,15 +1442,22 @@ test('Copy changes: copies the digest, records the checkpoint and empties the co
   });
   const checkpoints: string[] = [];
   await mount(<Harness {...base} onCheckpoint={async at => { checkpoints.push(at); }} />, fakeRuntime(ROWS, []));
-  const copy = doc.querySelector('.nui-comment-copy') as HTMLButtonElement;
+  // Copy changes sits behind the header row's "..." menu, with the number of changes it would copy.
+  const copyItem = async () => {
+    await click(barButton('more-button')!);
+    return doc.querySelector('[data-part="copy-changes"]')!.closest('[role^="menuitem"]') as HTMLButtonElement;
+  };
+  let copy = await copyItem();
+  assert.match(copy.textContent!, /Copy changes since last turn/);
   assert.equal(copy.querySelector('.nui-comment-count')!.textContent, '1');
   await click(copy);
   assert.equal(written.length, 1);
   assert.match(written[0]!, /^# Slide comments: Q4 review/);
   assert.equal(checkpoints.length, 1);
-  assert.equal(copy.querySelector('.nui-comment-count')!.textContent, '0');
-  assert.equal(copy.disabled, true);
   assert.match(doc.body.textContent!, /Copied 1 change/);
+  copy = await copyItem();
+  assert.equal(copy.querySelector('.nui-comment-count'), null, 'nothing left to copy: no number');
+  assert.ok(copy.disabled || copy.getAttribute('aria-disabled') === 'true');
 });
 
 test('Copy link: a card copies the link that reveals its thread, from the host or the page address, with a toast', async () => {
@@ -1282,9 +1470,10 @@ test('Copy link: a card copies the link that reveals its thread, from the host o
     commentLink: ({ rootId: rootKey }) => { asked.push(rootKey); return `https://app.notis.ai/spaces/s1?page=dk1&comment=${rootKey}`; },
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
-  const copy = () => doc.querySelector('[data-thread="c1"] button[aria-label^="Copy the link to the comment thread"]') as HTMLButtonElement;
-  assert.ok(copy(), 'every card has Copy link, named after its comment');
-  await click(copy());
+  const copy = () => threadAction('c1', 'copy-link');
+  assert.equal((await threadMenu('c1'))['copy-link']!.textContent, 'Copy link', 'every card has Copy link, behind its "..."');
+  await closeMenu();
+  await copy();
   assert.deepEqual(asked, ['c1']);
   assert.deepEqual(written, ['https://app.notis.ai/spaces/s1?page=dk1&comment=c1']);
   assert.match(doc.querySelector('.nui-toast')!.textContent!, /Link copied/);
@@ -1292,7 +1481,7 @@ test('Copy link: a card copies the link that reveals its thread, from the host o
   // Without a host address: the page's own address with comment=<root key> in place of an earlier one.
   dom.window.history.replaceState(null, '', '/page?page=dk1&comment=old#top');
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  await click(copy());
+  await copy();
   assert.equal(written.at(-1), 'http://localhost/page?page=dk1&comment=c1');
   dom.window.history.replaceState(null, '', '/page');
 
@@ -1303,7 +1492,9 @@ test('Copy link: a card copies the link that reveals its thread, from the host o
   const execCommand = doc.execCommand;
   doc.execCommand = () => false;
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { locale: 'fr' }), 'fr');
-  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Copier le lien du fil de commentaires"]')!);
+  assert.equal((await threadMenu('c1'))['copy-link']!.textContent, 'Copier le lien');
+  await closeMenu();
+  await copy();
   assert.match(doc.querySelector('.nui-toast')!.textContent!, /Le lien n’a pas pu être copié/);
   doc.execCommand = execCommand;
   assert.equal(ui.commentWords().linkCopied.fr, 'Lien copié');
@@ -1320,8 +1511,8 @@ test('Copy link: a link the host works out later (the thread on its own page) is
     commentLink: input => { asked.push(input); return Promise.resolve(page); },
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
-  const copy = () => doc.querySelector('[data-thread="c1"] button[aria-label^="Copy the link to the comment thread"]') as HTMLButtonElement;
-  await click(copy());
+  const copy = () => threadAction('c1', 'copy-link');
+  await copy();
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
   // The host finds the thread's page from the comment itself.
   assert.deepEqual(asked, [{ rootId: 'c1' }]);
@@ -1341,7 +1532,7 @@ test('Copy link: a link the host works out later (the thread on its own page) is
     assert.equal(await (await items[0]!).text(), 'https://app.notis.ai/l');
     // No link from the host: nothing is copied and the toast says so.
     page = null;
-    await click(copy());
+    await copy();
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     assert.match(doc.querySelector('.nui-toast')!.textContent!, /could not be copied/i);
   } finally {
@@ -1352,9 +1543,12 @@ test('Copy link: a link the host works out later (the thread on its own page) is
 test('French words through the SDK words mechanism, and a Space wording override', async () => {
   await mount(<Harness {...base} words={{ thisAnchor: { en: 'This slide', fr: 'Cette diapositive' } }} />,
     fakeRuntime(ROWS, [], { locale: 'fr' }), 'fr');
-  const text = doc.body.textContent!;
-  assert.match(text, /Commentaires/);
-  assert.match(text, /Cette diapositive/);
+  assert.equal(doc.querySelector('.nui-comment-pane')!.getAttribute('aria-label'), 'Commentaires');
+  assert.equal(barButton('filter-button')!.getAttribute('aria-label'), 'Afficher les commentaires\u202f: Ouverts');
+  await openFilterMenu();
+  assert.match(doc.body.textContent!, /En attente de toi/);
+  assert.match(doc.body.textContent!, /Cette diapositive/, 'the Space names its own scope in the filter');
+  await key(doc.activeElement ?? doc.body, 'Escape');
   assert.ok(doc.querySelector('button[aria-label^="Archiver le fil de commentaires"]'));
   assert.ok(doc.querySelector('textarea[aria-label="Répondre"]'));
 });
@@ -1428,10 +1622,9 @@ test('Zones: a saved zone draws its rectangle beside its numbered pin', async ()
 test('Comment on the whole item: no pin, its own heading, and no X or Y', async () => {
   const calls: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
-  await click(button('Comment on all of Item 1')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on all of Item 1');
+  await pickNewComment('Comment on all of Item 1');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on all of Item 1');
   assert.equal(doc.querySelector('.nui-comment-pin[data-draft]'), null);
-  assert.equal(button('Comment on all of Item 1'), undefined, 'the button gives way to the new comment box');
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Too many words on this slide');
   await key(field, 'Enter');
@@ -1447,7 +1640,7 @@ test('Comments on a whole record (no anchors): the pane starts one itself', asyn
   const project = { id: 'project-1', recordKey: 'pk1', name: 'Launch', checkpoint: null };
   await mount(<Harness scope={project} pins={false} />, fakeRuntime([], calls));
   await click(button('New comment')!);
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment');
   assert.equal(doc.querySelectorAll('.nui-comment-new-box').length, 1, 'the header button opens one new comment box');
   const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
   await type(field, 'Cut the first hello');
@@ -1572,8 +1765,7 @@ test('CommentPane: a choice is answered from under its picture or its larger vie
   await mount(<Harness {...base} />, fakeRuntime(rows, calls));
   const figures = [...doc.querySelectorAll('.nui-comment-figure')];
   assert.deepEqual(figures.map(figure => figure.querySelector('button.nui-btn')?.textContent), ['A', 'B']);
-  assert.deepEqual([...doc.querySelectorAll('.nui-comment-choices button')].map(el => el.textContent), ['Neither'],
-    'the row keeps only the options no picture names');
+  assert.deepEqual(optionLabels(), ['Neither'], 'the rows keep only the options no picture names');
   await click(button('Open B larger')!);
   assert.equal(doc.querySelector('.nui-viewer img')!.getAttribute('src'), AFTER);
   await click([...doc.querySelectorAll('.nui-viewer-bar button')].find(el => el.textContent === 'B')!);
@@ -1586,9 +1778,80 @@ test('CommentPane: a choice is answered from under its picture or its larger vie
 
   await mount(<Harness {...base} />, fakeRuntime([row('p3', { body: 'Pick', author: 'Claude', slide: 'slide-1', needs: 'choice',
     options: 'A | B', files: [{ name: 'A.png', url: BEFORE }, { name: 'B.png', url: AFTER }] })], calls));
-  assert.equal(doc.querySelector('.nui-comment-choices'), null, 'no empty row when every option has its picture');
+  assert.equal(doc.querySelector('.nui-comment-options'), null, 'no rows when every option has its picture');
   await click([...doc.querySelectorAll('.nui-comment-figure button.nui-btn')].find(el => el.textContent === 'A')!);
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'p3', answer: 'A' } });
+});
+
+test('A question with choices reads like a question in a conversation: one row per option, Recommended, a line under an option, Other', async () => {
+  const calls: Call[] = [];
+  const asked = (fields: Partial<SpaceCommentRow> = {}) => [{ ...row('q1', { body: 'The press kit lands the same week. Which date?', author: 'Claude',
+    slide: 'slide-1', needs: 'choice', options: 'Keep the date | Move it | Cancel' }),
+  recommended: 'Keep the date', option_details: { 'Keep the date': 'The kit ships a day early.', Elsewhere: 'not an option' }, ...fields }];
+  await mount(<Harness {...base} />, fakeRuntime(asked(), calls));
+  const card = () => doc.querySelector('[data-thread="q1"]') as HTMLElement;
+  const rows = () => [...card().querySelectorAll('.nui-comment-option')];
+  assert.deepEqual(rows().map(el => [el.querySelector('.nui-comment-option-key')!.textContent, el.querySelector('.nui-comment-option-label')!.textContent]),
+    [['1', 'Keep the date'], ['2', 'Move it'], ['3', 'Cancel'], ['4', 'Other']], 'one row per option, numbered, then Other');
+  assert.deepEqual(rows().map(el => el.querySelector('[data-part="recommended"]')?.textContent ?? null), ['Recommended', null, null, null],
+    'the asker\'s pick carries the tag');
+  assert.deepEqual(rows().map(el => el.querySelector('.nui-comment-option-detail')?.textContent ?? null),
+    ['The kit ships a day early.', null, null, 'Write your own answer'], 'a line under an option when the asker gave one');
+  assert.equal(card().querySelector('.nui-comment-ask-label'), null, 'no "Claude needs a choice" line: the comment above says who asks');
+  // The Enter cap shows on the recommended row once the card is selected.
+  const cap = () => card().querySelector('.nui-comment-option[data-recommended] .nui-comment-option-enter')!;
+  assert.equal(cap().hasAttribute('data-shown'), false);
+  card().focus();
+  await settle();
+  assert.equal(controller!.threadKey, 'q1');
+  assert.ok(cap().hasAttribute('data-shown'));
+  assert.equal(card().querySelector('.nui-comment-option[data-recommended]')!.getAttribute('aria-keyshortcuts'), 'Enter');
+  // Enter picks the recommended option.
+  await key(card(), 'Enter');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q1', answer: 'Keep the date' } });
+  assert.match(card().querySelector('.nui-comment-answer')!.textContent!, /Keep the date, sent to the agent/);
+  assert.equal(card().querySelector('.nui-comment-options'), null, 'an answered question offers no more rows');
+
+  // A number picks by position; the number after the last option is Other, which gives the reply box the caret.
+  calls.length = 0;
+  await mount(<Harness {...base} />, fakeRuntime(asked(), calls));
+  card().focus();
+  await settle();
+  await key(card(), '4');
+  assert.equal(calls.length, 0, 'Other answers nothing');
+  assert.equal(doc.activeElement, card().querySelector('.nui-comment-reply-box textarea'), 'it opens the reply box');
+  card().focus();
+  await key(card(), '5');
+  assert.equal(calls.length, 0, 'a number past Other does nothing');
+  await key(card(), '2');
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q1', answer: 'Move it' } });
+
+  // A press on Other opens the reply box too; a row answers on a press.
+  calls.length = 0;
+  await mount(<Harness {...base} />, fakeRuntime(asked(), calls));
+  await click(card().querySelector('.nui-comment-option[data-other]')!);
+  assert.equal(doc.activeElement, card().querySelector('.nui-comment-reply-box textarea'));
+  await click(option('Cancel')!);
+  assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q1', answer: 'Cancel' } });
+
+  // No recommended option (or one that is not an option): no tag, and Enter only selects the card.
+  calls.length = 0;
+  await mount(<Harness {...base} />, fakeRuntime(asked({ recommended: 'Elsewhere', option_details: {} }), calls));
+  assert.equal(card().querySelector('[data-part="recommended"]'), null);
+  assert.equal(controller!.threads[0]!.root.recommended, null);
+  card().focus();
+  await key(card(), 'Enter');
+  assert.equal(calls.length, 0);
+  // A comment written before these fields existed reads as a plain list of rows.
+  await mount(<Harness {...base} />, fakeRuntime([row('q1', { body: 'Which?', author: 'Claude', slide: 'slide-1', needs: 'choice', options: 'A | B' })], calls));
+  assert.deepEqual(optionLabels(), ['A', 'B']);
+  assert.equal(card().querySelector('[data-part="recommended"], .nui-comment-option:not([data-other]) .nui-comment-option-detail'), null);
+
+  // French.
+  await mount(<Harness {...base} />, fakeRuntime(asked(), calls, { locale: 'fr' }), 'fr');
+  assert.equal(card().querySelector('[data-part="recommended"]')!.textContent, 'Recommandé');
+  assert.equal(card().querySelector('.nui-comment-option[data-other] .nui-comment-option-label')!.textContent, 'Autre');
+  assert.equal(card().querySelector('.nui-comment-option[data-other] .nui-comment-option-detail')!.textContent, 'Écris ta propre réponse');
 });
 
 test('CommentPane: a check offers the labels its author gave, and Looks good or Undo without them', async () => {
@@ -1596,12 +1859,11 @@ test('CommentPane: a check offers the labels its author gave, and Looks good or 
   const rows = [row('k1', { body: 'Keep the spacing fix?', author: 'Codex', slide: 'slide-1', needs: 'check',
     options: 'Approve exact change | Hold' })];
   await mount(<Harness {...base} />, fakeRuntime(rows, calls));
-  assert.deepEqual([...doc.querySelectorAll('.nui-comment-choices button')].map(el => el.textContent), ['Approve exact change', 'Hold']);
-  await click(button('Hold')!);
+  assert.deepEqual(optionLabels(), ['Approve exact change', 'Hold']);
+  await click(option('Hold')!);
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'k1', answer: 'Hold' } });
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  assert.deepEqual([...doc.querySelectorAll('[data-thread="c2"] .nui-comment-choices button')].map(el => el.textContent),
-    ['Looks good', 'Undo']);
+  assert.deepEqual(optionLabels(doc.querySelector('[data-thread="c2"]')!), ['Looks good', 'Undo']);
 });
 
 test('Replies show their pictures and links too, and French words', async () => {
@@ -1611,7 +1873,7 @@ test('Replies show their pictures and links too, and French words', async () => 
       files: [{ name: 'Après.png', url: AFTER }], createdAt: '2026-10-21T12:00:00.000Z' }),
   ];
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
-  const reply = doc.querySelector('.nui-comment-reply')!;
+  const reply = doc.querySelector('.nui-comment-entry:not([data-root])')!;
   assert.equal(reply.querySelector('.nui-comment-link')!.getAttribute('href'), 'https://x.example/v2');
   assert.equal(reply.querySelector('.nui-comment-attachments')!.getAttribute('aria-label'), 'Images et fichiers');
   assert.ok(button('Agrandir Après'));
@@ -1708,17 +1970,17 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'the page is gone');
   await rerender(<Harness {...base} />, runtime);
   assert.equal((doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement).value, 'Half a new comment');
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment on Item 1', 'its pin came back too');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment on Item 1', 'its pin came back too');
   const chip = doc.querySelector('.nui-comment-new-box .nui-comment-file')!;
   assert.equal(chip.getAttribute('data-state'), 'ready', 'the uploaded picture is still attached');
   assert.equal(files.uploads.length, 1, 'and not uploaded again');
   assert.equal(reply().value, 'Half a reply');
   assert.equal(answer().value, 'Half an answer');
 
-  // Sending forgets the draft; Cancel forgets the new comment.
+  // Sending forgets the draft; dropping the new comment (the cross on its pill line, or Escape) forgets it.
   await click(doc.querySelector('[data-thread="c1"] .nui-comment-compose-box button[aria-label="Send"]')!);
   await settle();
-  await click(button('Cancel')!);
+  await click(doc.querySelector('.nui-comment-new-box [data-part="discard"]')!);
   await rerender(<div />, runtime);
   await rerender(<Harness {...base} />, runtime);
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'a cancelled new comment stays gone');
@@ -1728,6 +1990,92 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   await act(async () => { controller!.placePin('sk1', 0.2, 0.2); });
   assert.equal((doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement).value, '', 'a new comment starts empty');
   assert.equal(doc.querySelector('.nui-comment-new-box .nui-comment-file'), null);
+});
+
+test('The host\'s comment box keeps its files: a reply\'s after the page leaves, a new comment\'s after a save that fails', async () => {
+  const calls: Call[] = [];
+  const files = fakeFiles();
+  let refuse = true;
+  const runtime = withFiles(fakeRuntime(ROWS, calls, { comments: runPanel }), files);
+  const extra = (runtime as unknown as { commentsExtra: Partial<SpaceCommentsTransport> }).commentsExtra;
+  const insert = storeOf(runtime).transport.insert;
+  // The store takes a moment to answer, as a real one does: the new comment's box goes while it sends.
+  extra.insert = async (input) => {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    if (refuse) throw new Error('offline');
+    return insert(input);
+  };
+  const stopHost = registerHostComposerHost();
+  // The host's composer of a box: the reply box of a card, or the new comment's.
+  const boxOf = (kind: 'new' | 'reply', thread?: string) => listHostComposers().find(item => item.props().kind === kind
+    && (!thread || runRoot().querySelector(`[data-thread="${thread}"] slot[name="${item.id}"]`)))!;
+  try {
+    await mount(<Harness {...base} />, runtime);
+    const shot = picture();
+    const notes = pdf();
+    // The host says what its reply box holds, as the Portal's composer does each time a file is attached or removed.
+    assert.deepEqual(boxOf('reply', 'c1').props().initialFiles, []);
+    await act(async () => { boxOf('reply', 'c1').props().onText('Half a reply'); boxOf('reply', 'c1').props().onFiles([shot, notes]); });
+
+    // Another page opens and this one comes back: the box is a new one, with the text and both files.
+    await rerender(<div />, runtime);
+    assert.equal(listHostComposers().length, 0, 'the page is gone, and its boxes with it');
+    await rerender(<Harness {...base} />, runtime);
+    assert.equal(boxOf('reply', 'c1').props().initialText, 'Half a reply');
+    assert.deepEqual([...boxOf('reply', 'c1').props().initialFiles], [shot, notes], 'the files come back with the text');
+    assert.deepEqual(boxOf('reply', 'c2').props().initialFiles, [], 'in their own box only');
+    assert.equal(files.uploads.length, 0, 'nothing is uploaded before Send');
+
+    // Sent: the files go up, and the draft is forgotten.
+    let ok = false;
+    await act(async () => { ok = await boxOf('reply', 'c1').props().send('Half a reply', [shot, notes]); });
+    await settle();
+    assert.equal(ok, true);
+    assert.equal(files.uploads.length, 2);
+    assert.equal(writes(calls, 'reply').length, 1);
+    await rerender(<div />, runtime);
+    await rerender(<Harness {...base} />, runtime);
+    assert.deepEqual(boxOf('reply', 'c1').props().initialFiles, [], 'a sent reply brings no file back');
+    assert.equal(boxOf('reply', 'c1').props().initialText, '');
+
+    // A new comment whose save fails after its file was uploaded: the box comes back with the text and the file.
+    await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+    await settle();
+    await act(async () => { boxOf('new').props().onText('With a picture'); boxOf('new').props().onFiles([shot]); });
+    const first = boxOf('new').id;
+    let sending: Promise<boolean> = Promise.resolve(true);
+    await act(async () => { sending = boxOf('new').props().send('With a picture', [shot]); });
+    await settle();
+    await act(async () => { ok = await sending; });
+    await settle();
+    assert.equal(ok, false, 'the save failed');
+    assert.equal(files.uploads.length, 3, 'after the upload');
+    assert.notEqual(boxOf('new').id, first, 'the box went while it sent and is back');
+    assert.equal(boxOf('new').props().initialText, 'With a picture');
+    assert.deepEqual([...boxOf('new').props().initialFiles], [shot], 'with its file');
+
+    // The save works this time: nothing is kept for the next new comment.
+    refuse = false;
+    const held = boxOf('new').props();
+    await act(async () => { sending = held.send('With a picture', [shot]); });
+    await settle();
+    // Sent: the host's composer empties its field, as the Portal's does.
+    await act(async () => { ok = await sending; if (ok) held.onText(''); });
+    await settle();
+    assert.equal(ok, true);
+    await act(async () => { controller!.placePin('sk1', 0.2, 0.2); });
+    await settle();
+    assert.equal(boxOf('new').props().initialText, '');
+    assert.deepEqual(boxOf('new').props().initialFiles, [], 'a new comment starts with no file');
+    // Dropped with a file in it: forgotten too.
+    await act(async () => { boxOf('new').props().onFiles([notes]); });
+    await act(async () => { boxOf('new').props().dismiss(); });
+    await act(async () => { controller!.placePin('sk1', 0.2, 0.2); });
+    await settle();
+    assert.deepEqual(boxOf('new').props().initialFiles, []);
+  } finally {
+    stopHost();
+  }
 });
 
 test('Drafts on two pages keep their own files when the mounted box moves from one page to the other', async () => {
@@ -1997,7 +2345,7 @@ test('Author is the signed-in viewer under the host: Send waits until the viewer
   assert.equal('author' in insert!.input, false, 'the server signs it with the viewer, never the me option');
 });
 
-test('Goes to: a failed links read is tried again, and a late answer is kept after the host hands a new transport', async () => {
+test('Where a reply goes: a failed links read is tried again, and a late answer is kept after the host hands a new transport', async () => {
   let tries = 0;
   const flaky: Partial<SpaceCommentsTransport> = {
     links: async () => {
@@ -2010,12 +2358,13 @@ test('Goes to: a failed links read is tried again, and a late answer is kept aft
   console.warn = () => {};
   try {
     await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments: flaky }));
-    const line = () => doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!.textContent!;
-    assert.equal(line(), 'Goes to Finding where this goes', 'while the read is tried again, no destination is named');
+    assert.equal(replyTo('c1'), 'Reply', 'while the read is tried again, nobody is named');
+    assert.equal(goesToTitle('c1'), null);
     await act(async () => { await sleep(1700); });
     await settle();
     assert.equal(tries, 2, 'read again once');
-    assert.match(line(), /Thread Deck polish/);
+    assert.equal(goesToTitle('c1'), 'Deck polish');
+    assert.equal(replyTo('c1'), 'Reply to Notis');
   } finally {
     console.warn = warn;
   }
@@ -2033,10 +2382,11 @@ test('Goes to: a failed links read is tried again, and a late answer is kept aft
   await act(async () => { answer({ c1: [{ threadId: 't-1', title: 'Deck polish' }] }); });
   await settle();
   assert.equal(asked, 1, 'a new transport object reads nothing again');
-  assert.match(doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!.textContent!, /Thread Deck polish/);
+  assert.equal(goesToTitle('c1'), 'Deck polish');
+  assert.equal(replyTo('c1'), 'Reply to Notis');
 });
 
-test('Goes to: names nothing while it loads, and a page shown again names its threads at once (QA5)', async () => {
+test('Where a reply goes: nobody is named while it loads, and a page shown again knows its threads at once (QA5)', async () => {
   const answers: Array<(value: Record<string, SpaceCommentThreadRef[]>) => void> = [];
   const bests: Array<(value: SpaceCommentThreadRef | null) => void> = [];
   const comments: Partial<SpaceCommentsTransport> = {
@@ -2047,41 +2397,42 @@ test('Goes to: names nothing while it loads, and a page shown again names its th
   };
   const runtime = withHostPanel(fakeRuntime(ROWS, [], { comments }));
   await mount(<Harness {...base} />, runtime);
-  const line = (key: string) => doc.querySelector(`[data-thread="${key}"] [data-part="goes-to"]`) as HTMLElement;
   for (const key of ['c1', 'c2']) {
-    assert.ok(line(key).hasAttribute('data-loading'), `${key} loads`);
-    assert.equal(line(key).getAttribute('aria-busy'), 'true');
-    assert.equal(line(key).textContent, 'Goes to Finding where this goes', 'no guess: neither a new thread nor a best match');
-    assert.equal(line(key).querySelector('.nui-comment-goes-change'), null, 'no Change while loading');
-    assert.equal(line(key).querySelector('.nui-skel')!.getAttribute('aria-hidden'), 'true');
+    assert.equal(controller!.routing.known?.(key), false, `${key} loads`);
+    assert.equal(replyTo(key), 'Reply', 'no guess: neither a new thread nor a best match');
+    assert.ok(!(await threadActions(key)).includes('change'), 'no Change while loading');
   }
   await act(async () => { answers[0]!({ c1: [{ threadId: 't-1', title: 'Deck polish' }] }); });
   await settle();
-  assert.match(line('c1').textContent!, /^Thread Deck polish/, 'a linked thread names its link at once');
-  assert.ok(line('c2').hasAttribute('data-loading'), 'no link: loading until the best match answers');
+  assert.equal(goesToTitle('c1'), 'Deck polish', 'a linked thread names its link at once');
+  assert.equal(replyTo('c1'), 'Reply to Notis');
+  assert.equal(controller!.routing.known?.('c2'), false, 'no link: loading until the best match answers');
+  assert.equal(replyTo('c2'), 'Reply');
   await act(async () => { bests[0]!({ threadId: 't-best', title: 'Q4 deck' }); });
   await settle();
-  assert.match(line('c2').textContent!, /^Goes to Q4 deck/);
+  assert.equal(goesToTitle('c2'), 'Q4 deck');
+  assert.equal(replyTo('c2'), 'Reply to Notis');
 
   // Another page, then this one again: the session's last answers show at once while they are read again.
   await rerender(<span />, runtime);
   await rerender(<Harness {...base} />, runtime);
   assert.equal(answers.length, 2, 'read again');
-  assert.match(line('c1').textContent!, /^Thread Deck polish/, 'the kept link, at once');
-  assert.match(line('c2').textContent!, /^Goes to Q4 deck/, 'the kept best match, at once');
+  assert.equal(goesToTitle('c1'), 'Deck polish', 'the kept link, at once');
+  assert.equal(goesToTitle('c2'), 'Q4 deck', 'the kept best match, at once');
   await act(async () => { answers[1]!({ c1: [{ threadId: 't-2', title: 'Chart work' }] }); });
   await settle();
-  assert.match(line('c1').textContent!, /^Thread Chart work/, 'the new answer wins');
+  assert.equal(goesToTitle('c1'), 'Chart work', 'the new answer wins');
 
   // Another viewer keeps nothing of Flo's.
   const host = (runtime as unknown as { spaceComments: SpaceCommentsTransport }).spaceComments;
   await rerender(<span />, runtime);
   await rerender(<Harness {...base} />,
     { ...runtime, spaceComments: { ...host, viewer: { name: 'Ana', canEditSpace: true } } } as NotisRuntime);
-  assert.ok(line('c1').hasAttribute('data-loading'), 'another viewer reads their own');
+  assert.equal(controller!.routing.known?.('c1'), false, 'another viewer reads their own');
+  assert.equal(replyTo('c1'), 'Reply');
 });
 
-test('Goes to: a failed best match names nothing and the To chip asks to choose, never "a new thread" (SPC-467)', async () => {
+test('Where a reply goes: a failed best match names nobody and the To chip asks to choose, never "a new thread" (SPC-467)', async () => {
   let fail = true;
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => ({ c1: [{ threadId: 't-1', title: 'Deck polish' }] }),
@@ -2094,10 +2445,11 @@ test('Goes to: a failed best match names nothing and the To chip asks to choose,
   try {
     await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
     await settle();
-    const line = (key: string) => doc.querySelector(`[data-thread="${key}"] [data-part="goes-to"]`);
-    assert.match(line('c1')!.textContent!, /^Thread Deck polish/, 'a linked thread still names its link');
-    assert.equal(line('c2'), null, 'no link and no best match read: no line, never "a new thread"');
+    assert.equal(goesToTitle('c1'), 'Deck polish', 'a linked thread still names its link');
+    assert.equal(replyTo('c1'), 'Reply to Notis');
+    assert.equal(replyTo('c2'), 'Reply', 'no link and no best match read: nobody is named, never "a new thread"');
     assert.equal(controller!.routing.lost?.('c2'), true);
+    assert.ok(!(await threadActions('c2')).includes('change'));
     await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
     await settle();
     const chip = doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!;
@@ -2110,10 +2462,11 @@ test('Goes to: a failed best match names nothing and the To chip asks to choose,
   fail = false;
   await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
   await settle();
-  assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /^Goes to Q4 deck/);
+  assert.equal(goesToTitle('c2'), 'Q4 deck');
+  assert.equal(replyTo('c2'), 'Reply to Notis');
 });
 
-test('Goes to: a reply that wakes another person\'s agent names no line, and is not read again (SPC-467)', async () => {
+test('Where a reply goes: a reply that wakes another person\'s agent names nobody, and is not read again (SPC-467)', async () => {
   let reads = 0;
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => {
@@ -2124,16 +2477,17 @@ test('Goes to: a reply that wakes another person\'s agent names no line, and is 
   };
   await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
   await settle();
-  assert.equal(doc.querySelector('[data-thread="c1"] [data-part="goes-to"]'), null,
-    'neither the viewer\'s own link nor the best match is named');
+  assert.equal(replyTo('c1'), 'Reply', 'neither the viewer\'s own link nor the best match is named');
+  assert.deepEqual(await threadActions('c1'), ['copy-link', 'edit', 'delete'], 'no thread to open or change from this card');
   assert.deepEqual(controller!.routing.linksOf('c1').map(link => link.threadId), ['t-1'], 'the link itself stays listed');
-  assert.match(doc.querySelector('[data-thread="c2"] [data-part="goes-to"]')!.textContent!, /^Goes to Q4 deck/);
+  assert.equal(replyTo('c2'), 'Reply to Notis');
+  assert.equal(goesToTitle('c2'), 'Q4 deck');
   const before = reads;
   for (let i = 0; i < 4; i += 1) await act(async () => { await sleep(1_000); });
   assert.equal(reads, before, 'a settled answer is not read again');
 });
 
-test('The pane in the host panel: no browser button borders, quiet replies, buttons only where used (SPC-451, mockup B)', () => {
+test('The pane in the host panel: no browser button borders, quiet buttons, one-line reply field (SPC-451)', () => {
   const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
   const rule = (selector: string) => {
     const at = css.indexOf(`${selector} {`);
@@ -2142,34 +2496,25 @@ test('The pane in the host panel: no browser button borders, quiet replies, butt
   };
   // The panes draw in the host panel's shadow root, outside .nui-root: they need the same button reset.
   assert.match(css, /:where\([^)]*\.nui-comment-pane[^)]*\) button \{ font: inherit; color: inherit; background: none; border: 0;/);
-  // Hidden buttons are hidden, not only transparent: nothing invisible is tapped, and they float, taking no room.
-  assert.match(rule('.nui-comment-actions'), /visibility: hidden;/);
-  assert.match(css, /\.nui-comment-actions, \.nui-comment-head > \.nui-comment-reply-actions, \.nui-comment-reply-head > \.nui-comment-reply-actions \{\s*position: absolute;/);
-  assert.match(css, /@media \(hover: none\) \{\s*\.nui-comment-card:hover \.nui-comment-actions \{ visibility: hidden; opacity: 0; \}\s*\.nui-comment-card\[data-selected\] \.nui-comment-actions \{ visibility: visible; opacity: 1; \}/,
-    'on touch only the selected card shows its buttons');
+  // A card's two buttons and each reply's "..." are quiet (see-through) until hovered, focused or selected: they keep
+  // their room, so nothing moves when they show, and Tab still reaches them.
+  assert.match(rule('.nui-comment-actions'), /opacity: 0;/);
+  assert.doesNotMatch(rule('.nui-comment-actions'), /position: absolute|visibility: hidden/);
+  assert.match(rule('.nui-comment-entry-more'), /opacity: 0;/);
+  assert.match(css, /\.nui-comment-entry:is\(:hover, :focus-within\) \.nui-comment-entry-more, \.nui-comment-entry-more:has\(\[aria-expanded="true"\]\) \{ opacity: 1; \}/,
+    'a reply shows its own "..." only, and keeps it while its menu is open');
+  assert.match(css, /@media \(hover: none\) \{\s*\.nui-comment-actions, \.nui-comment-entry-more \{ opacity: 1; \}/, 'always there on a touch screen');
+  // No mark on a comment not read yet, and no line naming a thread.
+  assert.doesNotMatch(css, /\.nui-comment-new \{|\.nui-comment-goes|\.nui-comment-thread-line|\.nui-comment-unread/);
   // A card's reply field is one quiet line; the paperclip and Send show once it is used.
-  assert.match(css, /\.nui-comment-card \.nui-comment-compose-box:not\(:focus-within\):not\(:hover\):not\(:has\(\.nui-comment-file\)\)\s+\.nui-comment-compose:has\(> \.nui-comment-input:placeholder-shown\) > \.nui-comment-icon-btn \{ display: none; \}/,
+  assert.match(css, /\.nui-comment-reply-box \.nui-comment-compose-box:not\(:focus-within\):not\(:hover\):not\(:has\(\.nui-comment-file\)\)\s+\.nui-comment-compose:has\(> \.nui-comment-input:placeholder-shown\) > \.nui-comment-icon-btn \{ display: none; \}/,
     'shown on hover too, so a click never lands on a button that hid as the focus moved (Safari)');
   assert.match(rule('.nui-comment-compose > .nui-comment-input, .nui-comment-compose > .nui-comment-input:hover'), /background: transparent;/,
     'the reply field holds its buttons: one surface');
-  assert.match(rule('.nui-comment-input'), /background: hsl\(var\(--foreground\) \/ \.05\);/, 'an edit or new comment field keeps its fill');
-  // A reply's own buttons are reachable from the keyboard: hidden, they are see-through and take no click but Tab
-  // reaches them, and the focus shows them, for that reply only.
-  assert.match(css, /\.nui-comment-reply-actions \{ display: inline-flex; gap: 2px; opacity: 0; pointer-events: none;/);
-  assert.match(css, /\.nui-comment-reply:hover \.nui-comment-reply-actions, \.nui-comment-reply:focus-within \.nui-comment-reply-actions \{\s*opacity: 1; pointer-events: auto; \}/);
-  assert.doesNotMatch(css, /\.nui-comment-card(?:(?!\.nui-comment-reply)[^{,])*\s\.nui-comment-reply-actions \{\s*(visibility: visible|opacity: 1)/,
-    'nothing about the card (its focus, a sent answer) shows every reply\'s buttons at once (C2 recording)');
-  assert.doesNotMatch(css, /\.nui-comment-card:is\(:focus-visible[^{]*\.nui-comment-reply-actions \{/,
-    'keyboard focus in the card never shows every reply\'s buttons');
-  // One toolbar at a time (SPC-488): a click or a selected card never shows the replies' buttons too, and the comment's
-  // own buttons hide while a reply is hovered.
-  const pointerCss = css.replace(/@media \(hover: none\) \{[^}]*\}[^}]*\}\s*\}/g, '');
-  assert.doesNotMatch(pointerCss, /\.nui-comment-card(:focus-within|\[data-selected\]) \.nui-comment-reply-actions[^{]*\{\s*visibility: visible/,
-    'outside touch screens');
-  assert.match(css, /\.nui-comment-card:has\(\.nui-comment-reply:is\(:hover, :focus-within\)\) \.nui-comment-actions \{ visibility: hidden; opacity: 0; \}/);
-  assert.doesNotMatch(rule('.nui-comment-goes'), /border-bottom/, 'the Goes to line has no rule under it');
-  // A passage thread is one card: its field name and quote inside, never floating between cards.
-  assert.match(rule('.nui-passage-thread:has(> .nui-passage-anchor)'), /background: hsl\(var\(--foreground\) \/ \.04\);/);
+  assert.match(rule('.nui-comment-input'), /background: hsl\(var\(--foreground\) \/ \.05\);/, 'an edit field keeps its fill');
+  // A question has no tinted box: its options are rows, the asker's pick tinted.
+  assert.doesNotMatch(rule('.nui-comment-ask'), /background/);
+  assert.match(rule('.nui-comment-option[data-recommended]'), /background: hsl\(var\(--accent\) \/ \.5\);/);
 });
 
 test('All items: a comment on one item names it by its title, like a comment on several, else the Space label (SPC-490)', async () => {
@@ -2184,7 +2529,7 @@ test('All items: a comment on one item names it by its title, like a comment on 
   ], []));
   await act(async () => { controller!.setFilter('all'); });
   await settle();
-  const meta = (key: string) => doc.querySelector(`[data-thread="${key}"] .nui-comment-meta`)!.textContent!;
+  const meta = (key: string) => doc.querySelector(`[data-thread="${key}"] [data-part="place"]`)!.textContent!;
   assert.match(meta('i1'), /Record the product demo/);
   assert.doesNotMatch(meta('i1'), /Task 1/);
   assert.match(meta('i2'), /Task 2/, 'an item with no title keeps the Space label');
@@ -2196,13 +2541,18 @@ test('A text comment card starts with its quote, like a passage thread, so every
   await mount(<Harness scope={scope} anchors={ANCHORS} />, fakeRuntime([text], []));
   const card = doc.querySelector('[data-thread="t1"]')!;
   assert.ok(card, 'the text comment is listed');
-  const parts = [...card.children].map(el => el.matches('.nui-comment-quote-row') ? 'quote'
-    : el.matches('[data-part="goes-to"]') ? 'goes-to' : el.matches('header') ? 'head' : null).filter(Boolean);
-  assert.equal(parts[0], 'quote', `the quote first, then who wrote: ${parts.join(', ')}`);
-  assert.ok(parts.indexOf('head') > 0);
+  const top = card.firstElementChild!;
+  assert.equal(top.className, 'nui-comment-top');
+  assert.equal(top.querySelector('[data-part="quote"]')!.textContent, 'second Monday', 'the quoted words first, then who wrote');
+  assert.equal(top.nextElementSibling!.className, 'nui-comment-entries');
+  // A comment that quotes nothing says where it sits instead: every card starts with its place.
+  await mount(<Harness scope={scope} anchors={ANCHORS} />, fakeRuntime([row('w1', { body: 'Overall, good', page: PAGE })], []));
+  assert.equal(doc.querySelector('[data-thread="w1"] .nui-comment-top [data-part="place"]')!.textContent, 'Whole page');
+  await mount(<Harness scope={scope} anchors={ANCHORS} />, fakeRuntime([row('w1', { body: 'Overall, good', page: PAGE })], [], { locale: 'fr' }), 'fr');
+  assert.equal(doc.querySelector('[data-thread="w1"] .nui-comment-top [data-part="place"]')!.textContent, 'Page entière');
 });
 
-test('Goes to: links that keep failing name nothing once given up, never "a new thread" (SPC-467)', async () => {
+test('Where a reply goes: links that keep failing name nobody once given up, never "a new thread" (SPC-467)', async () => {
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => { tries += 1; throw new Error('57014'); },
     bestMatch: async () => null,
@@ -2216,14 +2566,14 @@ test('Goes to: links that keep failing name nothing once given up, never "a new 
     for (let i = 0; i < 12; i += 1) await act(async () => { await sleep(1_000); });
     assert.equal(tries, 4);
     await settle();
-    assert.equal(doc.querySelector('[data-thread="c1"] [data-part="goes-to"]'), null);
+    assert.equal(replyTo('c1'), 'Reply');
     assert.equal(controller!.routing.lost?.('c1'), true);
   } finally {
     console.warn = warn;
   }
 });
 
-test('Goes to: the agent thread a reply wakes is named ahead of the links, but it is no link (SPC-467)', async () => {
+test('Where a reply goes: the agent thread a reply wakes comes ahead of the links, but it is no link (SPC-467)', async () => {
   const linked: unknown[] = [];
   const picks: Array<string | null> = [];
   const comments: Partial<SpaceCommentsTransport> = {
@@ -2237,34 +2587,31 @@ test('Goes to: the agent thread a reply wakes is named ahead of the links, but i
   };
   await mount(<Harness {...base} />, withHostPanel(fakeRuntime(ROWS, [], { comments })));
   await settle();
-  const line = (key: string) => doc.querySelector(`[data-thread="${key}"] [data-part="goes-to"]`)!;
-  assert.match(line('c1').textContent!, /^Goes to Desk work/, 'the replying agent\'s thread, not the best match');
+  assert.equal(goesToTitle('c1'), 'Desk work', 'the replying agent\'s thread, not the best match');
   assert.deepEqual(controller!.routing.linksOf('c1'), [], 'it is no link');
-  assert.match(line('c2').textContent!, /^Goes to Agent work/, 'the first comment\'s agent wins over the link');
+  assert.equal(goesToTitle('c2'), 'Agent work', 'the first comment\'s agent wins over the link');
   assert.deepEqual(controller!.routing.linksOf('c2').map(ref => ref.threadId), ['t-1']);
   // Change on c1 links a thread: a link beats the agent that only replied.
-  await click(line('c1').querySelector('.nui-comment-goes-change')!);
+  await threadAction('c1', 'change');
   await settle();
   assert.deepEqual(picks, [null], 'the picker marks no link as current');
-  assert.match(line('c1').textContent!, /^Thread Chart work/);
+  assert.equal(goesToTitle('c1'), 'Chart work');
   // Change on c2: the first comment's agent still takes replies.
-  await click(line('c2').querySelector('.nui-comment-goes-change')!);
+  await threadAction('c2', 'change');
   await settle();
   assert.deepEqual(picks, [null, 't-1']);
-  assert.match(line('c2').textContent!, /^Goes to Agent work/);
+  assert.equal(goesToTitle('c2'), 'Agent work');
   assert.deepEqual(controller!.routing.linksOf('c2').map(ref => ref.threadId), ['t-2', 't-1']);
 });
 
-test('Goes to: a pending thread reads "a new <harness> thread" and opens nothing', async () => {
+test('Where a reply goes: a pending thread names its harness and opens nothing', async () => {
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => ({ c1: [{ threadId: null, title: '', harness: 'claude', status: 'pending' }] }),
     openThread: () => { throw new Error('nothing to open'); },
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
-  const line = doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!;
-  assert.match(line.textContent!, /Goes to a new Claude thread/);
-  assert.ok(line.hasAttribute('data-pending'));
-  assert.equal(line.querySelector('button.nui-comment-goes-title'), null);
+  assert.equal(replyTo('c1'), 'Reply to Claude', 'the harness the new thread will run on');
+  assert.ok(!(await threadActions('c1')).includes('open-thread'), 'no thread yet: nothing to open');
 });
 
 test('Older Spaces keep working: deleting, cancelDelete, confirmDelete and the resolved filter name', async () => {
@@ -2320,7 +2667,7 @@ test('A delete the store refuses: the thread comes back, the pane says so, and n
   const runtime = fakeRuntime(ROWS, calls);
   await mount(<Harness {...base} />, runtime);
   storeOf(runtime).fail('remove', 'comment_forbidden');
-  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
+  await threadAction('c1', 'delete');
   await settle();
   assert.deepEqual(cards(), ['c2', 'c1'], 'the thread is back');
   assert.match(doc.body.textContent!, /Could not save that change/);
@@ -2399,17 +2746,13 @@ test('Tool bar and empty states: the idle hint follows the modes, Done is empty 
   assert.match(doc.querySelector('.nui-comment-empty')!.textContent!, /No done comments\./);
 });
 
-test('On a touch screen a tapped reply shows its own buttons instead of the comment\'s (SPC-488)', async () => {
+test('A tap anywhere on a card selects it; each reply keeps its own "..." beside its name, so no tap is needed to reach it', async () => {
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  const reply = () => doc.querySelector('[data-thread="c1"] .nui-comment-reply[data-comment="r1"]')!;
-  await click(reply().querySelector('.nui-comment-reply-text')!);
-  assert.equal(controller!.threadKey, 'c1', 'the tap selects the card');
-  assert.ok(reply().hasAttribute('data-tapped'), 'and marks the reply tapped');
-  await click(doc.querySelector('[data-thread="c1"] > .nui-comment-body')!);
-  assert.ok(!reply().hasAttribute('data-tapped'), 'a tap on the comment itself gives its buttons back');
-  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
-  assert.match(css, /\.nui-comment-card\[data-selected\] \.nui-comment-reply\[data-tapped\] \.nui-comment-reply-actions \{ opacity: 1; pointer-events: auto; \}/);
-  assert.match(css, /\.nui-comment-card\[data-selected\]:has\(\.nui-comment-reply\[data-tapped\]\) \.nui-comment-actions \{ visibility: hidden; opacity: 0; \}/);
+  const reply = () => doc.querySelector('[data-thread="c1"] .nui-comment-entry[data-comment="r1"]')!;
+  await click(reply().querySelector('.nui-comment-body')!);
+  assert.equal(controller!.threadKey, 'c1', 'a tap on a reply selects the card');
+  assert.ok(reply().querySelector('.nui-comment-entry-head [data-part="reply-more"]'), 'its "..." sits on its name line');
+  assert.equal(reply().hasAttribute('data-tapped'), false, 'no tapped state: the menu is always in reach on a touch screen');
 });
 
 test('Two comment tool bars on screen at once never clash: C toggles the one whose view shows (SPC-491)', async () => {
@@ -2590,10 +2933,28 @@ test('At 390 px the overlay tool bar draws in the layer root, so a card that cli
   }
 });
 
+test('On a touch screen a card\'s Done and "..." take a finger: 36px by 44px around the 24px button, the card no taller', () => {
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  const button = /\n\.nui-comment-act \{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(button, /width: 24px; height: 24px;/, 'the button itself stays 24px, so the card keeps its height');
+  const touch = css.split('@media (hover: none) {').slice(1).map(part => part.slice(0, part.indexOf('\n}\n')))
+    .find(part => part.includes('.nui-comment-act::before')) ?? '';
+  const ring = /\.nui-comment-act::before \{([^}]*)\}/.exec(touch)?.[1] ?? '';
+  assert.match(ring, /content: ""; position: absolute; inset: -10px -6px;/, 'a ring 10px above and below, 6px each side');
+  // 24 + 2 x 10 = 44 tall, 24 + 2 x 6 = 36 wide: the size of the bar's buttons on a phone.
+  assert.match(css, /\.nui-comment-bar-btn \{ width: 36px; height: 44px;/);
+  assert.match(touch, /\.nui-comment-act \{ position: relative; \}/);
+  const gap = Number(/\.nui-comment-actions \{ gap: (\d+)px; \}/.exec(touch)?.[1]);
+  assert.ok(gap >= 12, 'two rings 6px wide each side never overlap: the buttons sit at least 12px apart');
+  assert.match(touch, /\.nui-comment-actions, \.nui-comment-entry-more \{ opacity: 1; \}/, 'and they are always shown');
+});
+
 test('Scope chips count the threads of the status filter, and the scope reads All items', async () => {
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
   assert.deepEqual(controller!.scopeCounts, { anchor: 2, all: 3 });
-  assert.ok([...doc.querySelectorAll('button, [role="radio"]')].some(el => el.textContent?.startsWith('All items')));
+  await openFilterMenu();
+  assert.equal(doc.querySelector('.nui-comment-filter-item[data-scope="all"]')!.textContent, 'All items');
+  await key(doc.activeElement ?? doc.body, 'Escape');
   await pickFilter('done');
   assert.deepEqual(controller!.scopeCounts, { anchor: 0, all: 1 });
   await pickFilter('all');
@@ -2724,7 +3085,8 @@ test('A reply of yours marks the agent replies before it in that thread seen; a 
     row('t2', { body: 'Check the chart', slide: 'slide-1', createdAt: at(9) }),
     row('t2a', { body: 'Fixed the axis', author: 'Claude', slide: 'slide-1', thread: 't2', createdAt: at(10) }),
   ];
-  const dot = (key: string) => Boolean(doc.querySelector(`[data-comment="${key}"] .nui-comment-new`));
+  // What counts as new since the last turn (Copy changes reads it); the card itself carries no mark for it.
+  const dot = (key: string) => controller!.isNew(controller!.comments.find(comment => comment.recordKey === key)!);
   await mount(<Harness {...base} />, fakeRuntime(rows, []));
   assert.ok(dot('t1a') && dot('t2a'), 'both agent replies start new');
 
@@ -2734,7 +3096,8 @@ test('A reply of yours marks the agent replies before it in that thread seen; a 
   await mount(<Harness {...base} />, fakeRuntime(later, []));
   assert.equal(dot('t1a'), false, 'your later reply in the thread marks the agent reply seen');
   assert.ok(dot('t1c'), 'an agent reply after yours is still new');
-  assert.ok(dot('t2a'), 'another thread keeps its dot');
+  assert.ok(dot('t2a'), 'another thread keeps its own');
+  assert.equal(doc.querySelector('.nui-comment-new'), null, 'no dot and no bar on a card');
 });
 
 test('Consecutive deleted replies read as one Comment deleted line', async () => {
@@ -2755,9 +3118,11 @@ test('French: the filter label keeps a narrow space before its colon, and conver
     links: async () => ({ c1: [{ threadId: null, title: '', harness: 'claude', status: 'pending' }] }),
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { locale: 'fr', comments }), 'fr');
-  assert.match(doc.querySelector('.nui-comment-filter')!.getAttribute('aria-label')!, / : .+, 2$/);
+  assert.match(barButton('filter-button')!.getAttribute('aria-label')!, / : Ouverts$/);
+  await click(barButton('more-button')!);
   assert.match(doc.body.textContent!, /Copier les changements depuis le dernier tour/);
-  assert.match(doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!.textContent!, /une nouvelle conversation Claude/);
+  await key(doc.activeElement ?? doc.body, 'Escape');
+  assert.equal(replyTo('c1'), 'Répondre à Claude', 'a pending Claude thread: the reply box names who gets it');
 });
 
 test('The host hears of thread and draft changes, not of every pointer move', async () => {
@@ -2786,10 +3151,38 @@ test('The host hears of thread and draft changes, not of every pointer move', as
   assert.ok(notified > before, 'the new comment does');
 });
 
+test('Z undoes a Done from the pane even when the host holds Z at the same scope (a conversation beside it)', async () => {
+  const calls: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
+  // The Manager's own Undo: Z at the detail scope, with nothing of its own to undo here.
+  let hostUndo = 0;
+  const card = doc.querySelector('[data-thread="c1"]') as HTMLElement;
+  card.focus();
+  await key(card, 'e');
+  assert.deepEqual(calls.at(-1), { op: 'archive', input: { root_id: 'c1' } });
+  assert.ok(toastUndo(), 'an Undo toast is offered');
+  // Registered after the pane's keys, as a host that renders again registers its own: the latest of a scope goes first.
+  const off = engine.registry.register({ id: 'host.undo', keys: 'z', scope: 'detail', label: { en: 'Undo', fr: 'Annuler' }, run: () => { hostUndo += 1; } }, 'host');
+  try {
+    const pane = doc.querySelector('#panel .nui-comment-pane') as HTMLElement;
+    const home = pane.getRootNode() as Document;
+    assert.ok(home.activeElement && pane.contains(home.activeElement), 'the focus stayed in the pane when the card left');
+    await key(home.activeElement!, 'z');
+    assert.deepEqual(calls.at(-1), { op: 'unarchive', input: { root_id: 'c1' } }, 'Z is the toast\'s Undo');
+    assert.equal(hostUndo, 0, 'the host\'s Z never ran');
+    assert.deepEqual(cards(), ['c2', 'c1']);
+    // With no Undo offered, or the focus outside the pane, Z is the host's again.
+    await key(home.activeElement ?? doc.body, 'z');
+    assert.equal(hostUndo, 1, 'nothing to undo here: the host takes Z');
+  } finally {
+    off?.();
+  }
+});
+
 test('E and Shift+E are taken by the pane while focus is in it, even with no card focused', async () => {
   const calls: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
-  const filter = doc.querySelector('.nui-comment-filter') as HTMLElement;
+  const filter = barButton('filter-button') as HTMLElement;
   filter.focus();
   for (const shift of [false, true]) {
     const event = new dom.window.KeyboardEvent('keydown', { key: shift ? 'E' : 'e', shiftKey: shift, bubbles: true, cancelable: true });
@@ -2820,7 +3213,10 @@ test('The pane scrolls its own list: the toast sits under it, outside the scroll
   assert.ok(toast, 'Undo shows');
   assert.equal(toast.parentElement, pane, 'the toast is a child of the pane itself');
   assert.equal(toast.closest('[data-comment-scroll]'), null, 'never inside the scrolled content');
-  assert.equal(list!.nextElementSibling, toast, 'right under the list');
+  // Between the list and the toast: only the slot that shows the host's review run bar while no card is selected.
+  const foot = list!.nextElementSibling!;
+  assert.equal(`${foot.tagName}:${foot.getAttribute('name')}`, 'SLOT:run-bar');
+  assert.ok(foot.nextElementSibling === toast, 'the toast right under the list and the foot');
 });
 
 /**
@@ -2975,8 +3371,8 @@ test('New comment while the list is scrolled down scrolls the list up to show th
     };
     await act(async () => { controller!.startMode('page'); });
     await settle();
-    const head = doc.querySelector('.nui-comment-new-box .nui-comment-new-head');
-    assert.ok(head?.querySelector('.nui-comment-to'), 'the box has its To chip');
+    const head = doc.querySelector('.nui-comment-new-box [data-part="box-pills"]');
+    assert.ok(head?.querySelector('.nui-comment-to'), 'the box has its To chip, first on its pill line');
     assert.equal(model.state.scrollTop, 52, 'the list scrolled up to the box, 8 px above it');
     assert.equal(doc.activeElement, doc.querySelector('.nui-comment-new-box textarea'), 'and its field has focus');
   } finally {
@@ -3063,7 +3459,7 @@ test('A late failed-delete notice never replaces a newer Undo', async () => {
   await mount(<Harness {...base} />, runtime);
   storeOf(runtime).fail('remove', 'comment_forbidden');
   const held = storeOf(runtime).hold('remove');
-  await click(doc.querySelector('[data-thread="c1"] button[aria-label^="Delete the comment thread: "]')!);
+  await threadAction('c1', 'delete');
   const c2 = controller!.threads.find(thread => thread.root.recordKey === 'c2')!.root;
   await act(async () => { controller!.actions.archive(c2); });
   await settle();
@@ -3098,7 +3494,7 @@ async function withFastRereads(body: () => Promise<void>) {
   try { await body(); } finally { globalThis.setTimeout = real; }
 }
 
-test('Goes to names the real thread once the wake starts it: a pending link and a sent reply read the links again', async () => {
+test('Where a reply goes: the real thread once the wake starts it; a pending link and a sent reply read the links again', async () => {
   await withFastRereads(async () => {
     const asked: string[][] = [];
     const comments: Partial<SpaceCommentsTransport> = {
@@ -3113,10 +3509,10 @@ test('Goes to names the real thread once the wake starts it: a pending link and 
     };
     await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
     await settle();
-    const line = () => doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!.textContent!;
     assert.deepEqual(asked.slice(0, 2).map(keys => keys.includes('c1')), [true, true]);
     assert.deepEqual(asked[1], ['c1'], 'the pending root alone is read again');
-    assert.match(line(), /Thread Title pass/, 'the pending link is read again until it names the thread');
+    assert.equal(goesToTitle('c1'), 'Title pass', 'the pending link is read again until it names the thread');
+    assert.equal(replyTo('c1'), 'Reply to Claude');
     const reads = asked.length;
     await settle();
     assert.equal(asked.length, reads, 'a settled link is not read again');
@@ -3160,9 +3556,9 @@ test('Two pending new threads for different harnesses stay two links', async () 
     link: async () => ({ threadId: null, title: '', harness: 'codex', status: 'pending' }),
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
-  const line = () => doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!;
-  await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
-  assert.match(line().textContent!, /Goes to a new Codex thread/);
+  assert.equal(replyTo('c1'), 'Reply to Claude');
+  await threadAction('c1', 'change');
+  assert.equal(replyTo('c1'), 'Reply to Codex', 'the new Codex thread gets the reply');
   assert.deepEqual(controller!.routing.linksOf('c1').map(ref => ref.harness), ['codex', 'claude']);
 });
 
@@ -3174,16 +3570,16 @@ test('A pick shows at once while it is saved, and goes back with a notice when i
     link: () => new Promise(resolve => { finish = resolve; }),
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
-  const line = () => doc.querySelector('[data-thread="c1"] [data-part="goes-to"]')!;
-  await click(line().querySelector('button[aria-label="Change the thread this goes to"]')!);
-  assert.match(line().textContent!, /Thread Chart work/, 'the pick shows before the host answers');
-  assert.ok(line().hasAttribute('data-saving'));
-  assert.equal(line().getAttribute('aria-busy'), 'true');
-  assert.equal((line().querySelector('button[aria-label="Change the thread this goes to"]') as HTMLButtonElement).disabled, true);
+  await threadAction('c1', 'change');
+  assert.equal(goesToTitle('c1'), 'Chart work', 'the pick shows before the host answers');
+  assert.equal(controller!.routing.saving?.('c1'), true);
+  const change = (await threadMenu('c1')).change as HTMLButtonElement;
+  assert.ok(change.disabled || change.getAttribute('aria-disabled') === 'true', 'no second change while it is saved');
+  await closeMenu();
   await act(async () => { finish(null); });
   await settle();
-  assert.match(line().textContent!, /Thread Deck polish/, 'a failed link goes back');
-  assert.equal(line().hasAttribute('data-saving'), false);
+  assert.equal(goesToTitle('c1'), 'Deck polish', 'a failed link goes back');
+  assert.equal(controller!.routing.saving?.('c1'), false);
   assert.match(doc.body.textContent!, /Could not save that change/);
 });
 
@@ -3198,7 +3594,7 @@ test('An agent question in a reply gets its answer controls, and the answer goes
   ];
   await mount(<Harness {...base} />, fakeRuntime(rows, calls));
   assert.ok(doc.querySelector('[data-thread="q1"] [data-ask="q2"]'), 'the choice ask shows under its reply');
-  await click([...doc.querySelectorAll('[data-ask="q2"] button')].find(el => el.textContent === 'Green')!);
+  await click(option('Green', doc.querySelector('[data-ask="q2"]')!)!);
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q2', answer: 'Green' } });
   const field = doc.querySelector('[data-ask="q3"] textarea') as HTMLTextAreaElement;
   await type(field, 'Revenue');
@@ -3235,13 +3631,20 @@ test('An edit keeps a Change of resolved, and Copy changes reports the edit from
 test('Accessible names say whose comment and which thread, in English and French', async () => {
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
   assert.ok(button('Archive the comment thread: Tighten the title'));
-  assert.ok(button('Delete the comment thread: Tighten the title'));
-  assert.ok(button('Edit your comment: Tighten the title'));
-  assert.ok(button('Delete Claude’s reply: Done'));
+  assert.ok(button('More for the comment thread: Tighten the title'), 'the thread\'s "..." names the thread');
+  assert.ok(button('More for the reply: Done'), 'a reply\'s "..." names the reply');
+  const names = async (open: Promise<Record<string, HTMLElement>>) => {
+    const read = Object.fromEntries(Object.entries(await open).map(([action, entry]) => [action, entry.textContent]));
+    await closeMenu();
+    return read;
+  };
+  assert.deepEqual(await names(threadMenu('c1')), { 'copy-link': 'Copy link', edit: 'Edit comment', delete: 'Delete the comment thread' });
+  assert.deepEqual(await names(replyMenu('r1')), { 'copy-link': 'Copy link', delete: 'Delete this comment' });
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { locale: 'fr' }), 'fr');
-  assert.ok(button('Archiver le fil de commentaires : Tighten the title'));
-  assert.ok(button('Supprimer la réponse de Claude : Done'));
-  assert.ok(button('Modifier ton commentaire : Tighten the title'));
+  assert.ok(button('Archiver le fil de commentaires\u202f: Tighten the title'));
+  assert.ok(button('Plus pour le fil de commentaires\u202f: Tighten the title'));
+  assert.ok(button('Plus pour la réponse\u202f: Done'));
+  assert.deepEqual(await names(threadMenu('c1')), { 'copy-link': 'Copier le lien', edit: 'Modifier le commentaire', delete: 'Supprimer le fil de commentaires' });
 });
 
 test('A new transport object from the host keeps the pane where it is, with a reply being typed', async () => {
@@ -3269,4 +3672,505 @@ test('A new transport object from the host keeps the pane where it is, with a re
   assert.equal(shows, 2, 'the new one listed the source');
   assert.equal(doc.querySelector('#panel .nui-comment-pane'), pane, 'the same pane, never torn down');
   assert.equal(reply().value, 'Half a thought', 'the typed reply is kept');
+});
+
+// ---------------------------------------------------------------------------
+// The review run: one comment after the other
+// ---------------------------------------------------------------------------
+
+/** The host panel as the Portal builds it: a shadow root whose mount the pane draws in. */
+const runPanel: Partial<SpaceCommentsTransport> = {
+  attach(source) {
+    const host = doc.getElementById('panel')!;
+    const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+    const target = shadow.querySelector('[data-notis-comments-mount]')
+      ?? shadow.appendChild(Object.assign(doc.createElement('div'), { className: 'mount' }));
+    target.setAttribute('data-notis-comments-mount', '');
+    source.show(target as HTMLElement);
+    return () => source.show(null);
+  },
+};
+const runRoot = () => doc.getElementById('panel')!.shadowRoot!;
+const runCards = () => [...runRoot().querySelectorAll('.nui-comment-card')].map(card => card.getAttribute('data-thread'));
+
+/**
+ * Runs `body` with a review run going in the host panel: the host says which threads wait, whether the person's setting
+ * moves on after an answer and whether another page follows. What the pane reports lands in `events`.
+ */
+async function withRun(options: { waiting: string[]; advance: boolean; hasNext?: boolean; rows?: readonly SpaceCommentRow[]; calls?: Call[];
+  /** Writes the test answers itself (one that waits, one the server refuses), over the store's own. */
+  transport?: (store: SpaceCommentsTransport) => Partial<SpaceCommentsTransport> },
+  body: (events: ReviewRunEvent[]) => Promise<void>) {
+  const events: ReviewRunEvent[] = [];
+  const stop = subscribeReviewRunEvents(event => { events.push(event); });
+  // The test DOM lays nothing out: the pane counts as on screen.
+  const rects = dom.window.HTMLElement.prototype.getClientRects;
+  dom.window.HTMLElement.prototype.getClientRects = function shownRects() { return [{}] as unknown as DOMRectList; };
+  setWaitingCommentThreads(options.waiting);
+  resetReviewRunAnswered();
+  try {
+    const runtime = fakeRuntime(options.rows ?? ROWS, options.calls ?? [], { comments: runPanel });
+    if (options.transport) {
+      (runtime as unknown as { commentsExtra: Partial<SpaceCommentsTransport> }).commentsExtra = { ...runPanel, ...options.transport(storeOf(runtime).transport) };
+    }
+    await mount(<Harness {...base} />, runtime);
+    await act(async () => {
+      setReviewRunHost({ active: true, startToken: reviewRunHost().startToken + 1, startKey: null, scopeCount: options.waiting.length,
+        hasNext: options.hasNext === true, advance: options.advance });
+    });
+    await settle();
+    await settle();
+    await body(events);
+  } finally {
+    stop();
+    await act(async () => { setReviewRunHost({ active: false, startKey: null, scopeCount: null, hasNext: false, advance: false, sheet: null }); });
+    resetReviewRunAnswered();
+    setWaitingCommentThreads(null);
+    dom.window.HTMLElement.prototype.getClientRects = rects;
+  }
+}
+
+test('Review run: it opens on what waits with the first card selected, and J, K and the bar step through the cards', async () => {
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false, hasNext: true }, async (events) => {
+    assert.equal(controller!.waitingFilter, true, 'the run turns "Waiting for you" on');
+    assert.equal(controller!.filter, 'all', 'for every item of the page');
+    assert.deepEqual(runCards(), ['c3', 'c2', 'c1']);
+    assert.equal(controller!.threadKey, 'c3', 'the first card, never the second');
+    assert.deepEqual(events.at(-1), { type: 'selected', key: 'c3', direction: 'next', by: 'start' });
+    const { words: about, ...shown } = reviewRunPane()!;
+    assert.deepEqual(shown, { waiting: true, keys: ['c3', 'c2', 'c1'], waitingKeys: ['c3', 'c2', 'c1'], selected: 'c3', drafting: false });
+    assert.equal(about, runRoot().querySelector('.nui-comment-card[data-selected] :is([data-part="quote"], [data-part="place"])')!.textContent,
+      'and what the selected card is about, for the one line of a phone\'s sheet');
+    assert.equal(runRoot().querySelector('.nui-comment-pane')!.hasAttribute('data-run'), true);
+    assert.equal(runRoot().querySelector('.nui-comment-chip[data-chip="waiting"]')!.textContent, '3 waiting',
+      'the chip says how many wait in the run, and counts down');
+    // The Filter's Waiting for you shows the host's own number (what waits in the Space), the same as on its switch.
+    await act(async () => { setWaitingCommentCount(7); });
+    await click(runRoot().querySelector('.nui-comment-bar [data-part="filter-button"]')!);
+    assert.equal(runRoot().querySelector('.nui-comment-filter-item[data-filter="waiting"] .nui-comment-count')!.textContent, '7',
+      'one meaning: the number on the switch, never the count of this page alone');
+    await key(runRoot().activeElement ?? doc.body, 'Escape');
+    await act(async () => { setWaitingCommentCount(null); });
+
+    await key(doc.body, 'j');
+    assert.equal(controller!.threadKey, 'c2', 'J: the next one, wherever the focus is');
+    assert.deepEqual(events.at(-1), { type: 'selected', key: 'c2', direction: 'next', by: 'step' });
+    await key(doc.body, 'k');
+    assert.equal(controller!.threadKey, 'c3', 'K: the previous one');
+    await act(async () => { reviewRunCommands()!.step(1); });
+    await settle();
+    await act(async () => { reviewRunCommands()!.step(1); });
+    await settle();
+    assert.equal(controller!.threadKey, 'c1', "the bar's arrows step the same way");
+    events.length = 0;
+    await key(doc.body, 'j');
+    assert.deepEqual(events, [{ type: 'end', advance: false }], "past the page's last card the host crosses to the next page");
+    assert.equal(controller!.threadKey, 'c1');
+
+    await key(doc.body, 'Escape');
+    assert.deepEqual(events.at(-1), { type: 'leave' }, 'Escape leaves the run');
+    assert.equal(controller!.waitingFilter, true, 'the panel stays as it is');
+  });
+});
+
+test('Review run: the bar sits at the top of the selected card, above its quoted words; the pane\'s foot keeps it while none is selected', async () => {
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false, hasNext: true }, async () => {
+    const barSlots = () => [...runRoot().querySelectorAll('slot[name="run-bar"]')];
+    const inCard = () => runRoot().querySelector('.nui-comment-card > slot[name="run-bar"]');
+    assert.equal(controller!.threadKey, 'c3');
+    // The selected card starts with the slot: it comes before where the card sits (its quoted words or its place).
+    const card = runRoot().querySelector('.nui-comment-card[data-thread="c3"]')!;
+    assert.equal(inCard()?.parentElement, card, 'only the selected card holds it');
+    assert.equal(card.firstElementChild, inCard(), 'at the top of the card');
+    assert.equal(inCard()!.nextElementSibling?.className, 'nui-comment-top', 'above the quoted words');
+    assert.equal(runRoot().querySelectorAll('.nui-comment-card > slot[name="run-bar"]').length, 1);
+    // The first slot of the name in the tree takes the host's bar: the card's comes before the pane's foot.
+    assert.equal(barSlots()[0], inCard());
+    assert.equal(barSlots().at(-1)!.parentElement, runRoot().querySelector('.nui-comment-pane'), 'the foot keeps its slot');
+    // It follows the selection.
+    await key(doc.body, 'j');
+    assert.equal(inCard()?.parentElement?.getAttribute('data-thread'), 'c2');
+    // No card selected (a page's last one was marked Done, Escape on a card): only the foot's slot is left.
+    await act(async () => { controller!.setThreadKey(null); });
+    await settle();
+    assert.equal(inCard(), null);
+    assert.equal(barSlots().length, 1);
+    assert.equal(barSlots()[0]!.parentElement, runRoot().querySelector('.nui-comment-pane'));
+  });
+  // In the card the host's bar takes the card's width with no line; at the foot the pane draws its line; while the
+  // bar is not drawn (out of a run, a phone's keyboard open) neither place keeps a gap or a line.
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  // (!important: the host page's own reset of margins and borders would otherwise win over a slot's rule.)
+  assert.match(css, /\.nui-comment-card > slot\[name="run-bar"\]::slotted\(\*\) \{ margin: -6px -8px -4px !important; \}/);
+  assert.match(css, /\.nui-comment-pane > slot\[name="run-bar"\]::slotted\(\*\) \{ flex: none; border-top: 1px solid hsl\(var\(--border\) \/ \.4\) !important; \}/);
+  assert.match(css, /slot\[name="run-bar"\]::slotted\(:empty\) \{ display: none !important; \}/);
+});
+
+test('A phone\'s comments sheet: the host says its height, and at half the pane shows the selected card alone', async () => {
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false }, async () => {
+    const pane = () => runRoot().querySelector('.nui-comment-pane')!;
+    assert.equal(pane().hasAttribute('data-sheet'), false, 'no sheet: a computer, or a phone with no page beside');
+    await act(async () => { setReviewRunHost({ sheet: 'half' }); });
+    await settle();
+    assert.equal(pane().getAttribute('data-sheet'), 'half');
+    assert.equal(pane().hasAttribute('data-sheet-card'), true, 'a card is selected: it is the sheet');
+    assert.equal(pane().hasAttribute('data-sheet-drafting'), false);
+    // Nothing selected: the pane says so, and the list (or what ends it) shows instead.
+    await act(async () => { controller!.setThreadKey(null); });
+    await settle();
+    assert.equal(pane().hasAttribute('data-sheet-card'), false);
+    await act(async () => { setReviewRunHost({ sheet: 'low' }); });
+    await settle();
+    assert.equal(pane().getAttribute('data-sheet'), 'low');
+    await act(async () => { setReviewRunHost({ sheet: null }); });
+    await settle();
+    assert.equal(pane().hasAttribute('data-sheet'), false);
+  });
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  // Low: the host draws its one line. Half: only the selected card, flat, no header row, no Other row.
+  assert.match(css, /\.nui-comment-pane\[data-sheet="low"\] \{ display: none; \}/);
+  assert.match(css, /\.nui-comment-pane\[data-sheet="half"\] > :is\(\.nui-comment-bar, \.nui-comment-chips\),[\s\S]*?\.nui-comment-pane\[data-sheet="half"\]\[data-sheet-card\] \.nui-comment-card:not\(\[data-selected\]\),[\s\S]*?\{ display: none; \}/);
+  assert.match(css, /\.nui-comment-pane\[data-sheet="half"\]\[data-sheet-card\] \.nui-comment-card \{ padding: 0; border-radius: 0; background: none; \}/);
+  assert.match(css, /\.nui-comment-pane\[data-sheet="half"\] \.nui-comment-option\[data-other\] \{ display: none; \}/);
+  // While the reply is written: the quoted words and the box.
+  assert.match(css, /:host\(\[data-writing\]\) \.nui-comment-pane\[data-sheet="half"\] :is\(\.nui-comment-entries, \.nui-comment-actions\) \{ display: none; \}/);
+});
+
+test('Review run: a page that holds the focus keeps its keys, and a closed or inert panel takes none', async () => {
+  const calls: Call[] = [];
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: true, calls }, async (events) => {
+    assert.equal(controller!.threadKey, 'c3');
+    // A Space page with keys of its own (j, k, E and digits, as the Reviews Space has) holds the focus.
+    const page = doc.body.appendChild(Object.assign(doc.createElement('div'), { tabIndex: 0 }));
+    const heard: string[] = [];
+    const onPageKey = (event: KeyboardEvent) => { if (!event.defaultPrevented) heard.push(event.key); };
+    page.addEventListener('keydown', onPageKey as EventListener);
+    try {
+      page.focus();
+      assert.equal(doc.activeElement, page);
+      events.length = 0;
+      for (const name of ['j', 'k', 'e', 'r', 'z', '1', '2', 'Enter', 'Escape']) await key(page, name);
+      assert.deepEqual(heard, ['j', 'k', 'e', 'r', 'z', '1', '2', 'Enter', 'Escape'], 'the page hears every key, untouched');
+      assert.deepEqual(calls.filter(call => ['answer', 'archive', 'reply'].includes(call.op)), [], 'nothing is answered or archived');
+      assert.equal(controller!.threadKey, 'c3', 'the selection stays');
+      assert.deepEqual(events, [], 'and the run reports nothing');
+
+      // The focus back on the body (a card that left the list no longer holds it): the keys are the run's again.
+      page.blur();
+      assert.equal(doc.activeElement, doc.body);
+      await key(doc.body, 'j');
+      assert.equal(controller!.threadKey, 'c2');
+      await key(doc.body, 'k');
+      assert.equal(controller!.threadKey, 'c3');
+
+      // The right panel closed (it keeps its width, inert), or showing Chat: the run goes on out of sight and takes no key.
+      const panel = doc.getElementById('panel')!;
+      panel.setAttribute('inert', '');
+      // A browser takes the focus out of what turns inert; the test DOM does not.
+      (runRoot().activeElement as HTMLElement | null)?.blur();
+      assert.equal(doc.activeElement, doc.body);
+      heard.length = 0;
+      doc.body.addEventListener('keydown', onPageKey as EventListener);
+      for (const name of ['e', '1', 'Enter', 'j', 'z']) await key(doc.body, name);
+      doc.body.removeEventListener('keydown', onPageKey as EventListener);
+      assert.deepEqual(heard, ['e', '1', 'Enter', 'j', 'z'], 'the page keeps them');
+      assert.deepEqual(calls.filter(call => ['answer', 'archive', 'reply'].includes(call.op)), [], 'no write to a thread out of sight');
+      assert.equal(controller!.threadKey, 'c3');
+      panel.removeAttribute('inert');
+      await key(doc.body, 'e');
+      assert.equal(writes(calls, 'archive').length, 1, 'open again, E marks the selected one Done');
+    } finally {
+      doc.getElementById('panel')!.removeAttribute('inert');
+      page.remove();
+    }
+  });
+});
+
+test('Review run: Enter held, or pressed again while a reply sends through the host\'s box, never answers the card', async () => {
+  const calls: Call[] = [];
+  const rows = ROWS.map(item => item.id === 'c3' ? { ...item, recommended: 'Bar' } : item);
+  let saved: () => void = () => {};
+  const stopHost = registerHostComposerHost();
+  try {
+    await withRun({ waiting: ['c3'], advance: false, calls, rows,
+      // The reply is saved only once the test says so: the box stays "sending" meanwhile.
+      transport: store => ({ reply: async input => { await new Promise<void>(resolve => { saved = resolve; }); return store.reply(input); } }),
+    }, async () => {
+      assert.equal(controller!.threadKey, 'c3');
+      const request = listHostComposers().find(item => item.props().kind === 'reply'
+        && runRoot().querySelector(`[data-thread="c3"] slot[name="${item.id}"]`));
+      assert.ok(request, "the card's reply box is the host's composer");
+      // The host's field as it is while a reply sends: switched off (`contenteditable="false"`).
+      const field = request.box.appendChild(doc.createElement('div'));
+      field.setAttribute('role', 'textbox');
+      field.setAttribute('contenteditable', 'false');
+      const held = (el: Element, name: string) => act(async () => {
+        el.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: name, repeat: true, bubbles: true, cancelable: true }));
+      });
+
+      let sent: Promise<boolean> = Promise.resolve(false);
+      await act(async () => { sent = request.props().send('On it', []); });
+      // Enter again while it sends: from the switched-off field, or from the page once the field lost the focus.
+      await key(field, 'Enter');
+      await key(doc.body, 'Enter');
+      await key(doc.body, '1');
+      await held(doc.body, 'Enter');
+      assert.equal(writes(calls, 'answer').length, 0, 'no option is picked while the reply sends');
+      await act(async () => { saved(); await sent; });
+      await settle();
+      assert.equal(writes(calls, 'reply').length, 1, 'the reply went, once');
+
+      // Sent: the card stays (the setting is off) and its question still waits for a pick.
+      await held(doc.body, 'Enter');
+      await held(doc.body, '2');
+      assert.equal(writes(calls, 'answer').length, 0, 'a key still held down from the send picks nothing');
+      await key(field, 'Enter');
+      assert.equal(writes(calls, 'answer').length, 0, 'a switched-off field is still a field');
+      await key(doc.body, 'Enter');
+      assert.deepEqual(writes(calls, 'answer').map(call => (call.input as { answer: string }).answer), ['Bar'],
+        'a new press of Enter picks the recommended option');
+    });
+  } finally {
+    stopHost();
+  }
+});
+
+test('Review run: an answer the server refuses was never given: the card waits again and the numbers come back', async () => {
+  const refuse = (): Partial<SpaceCommentsTransport> => ({ answer: async () => { throw new Error('conflict'); } });
+  // Setting off: the answer would stay in view on its card.
+  let calls: Call[] = [];
+  await withRun({ waiting: ['c2', 'c3'], advance: false, calls, transport: refuse }, async (events) => {
+    assert.equal(controller!.threadKey, 'c3');
+    assert.equal(controller!.waitingCount, 2);
+    events.length = 0;
+    await key(doc.body, '1');
+    await settle();
+    assert.deepEqual(events.filter(event => event.type !== 'selected'), [{ type: 'answered', key: 'c3' }, { type: 'restored', key: 'c3' }],
+      'the host hears the answer, then that it was taken back');
+    assert.deepEqual(reviewRunPane()!.waitingKeys, ['c3', 'c2'], 'the card waits again');
+    assert.equal(controller!.waitingCount, 2, 'and counts again');
+    assert.equal(controller!.threads.find(thread => thread.root.recordKey === 'c3')!.root.answer, '', 'no answer shows on it');
+    assert.ok(runRoot().querySelector('.nui-toast') ?? doc.querySelector('.nui-toast'), 'the failure is said');
+  });
+  // Setting on, the last card: the run had reached its end when the refusal came.
+  calls = [];
+  await withRun({ waiting: ['c3'], advance: true, calls, transport: refuse }, async (events) => {
+    events.length = 0;
+    await key(doc.body, '2');
+    await settle();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    assert.deepEqual(events.map(event => event.type), ['end', 'answered', 'restored', 'selected']);
+    assert.deepEqual(runCards(), ['c3'], 'the card is listed again, never "All caught up" on a refused answer');
+    assert.deepEqual(reviewRunPane()!.waitingKeys, ['c3']);
+    assert.equal(controller!.threadKey, 'c3', 'and selected again');
+  });
+});
+
+test('Review run, setting off: an answer stays in view on its card and no longer counts; Done always moves on; Z undoes', async () => {
+  const calls: Call[] = [];
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false, calls }, async (events) => {
+    assert.equal(controller!.threadKey, 'c3');
+    await key(doc.body, '2');
+    assert.deepEqual(writes(calls, 'answer').length, 1, 'the second option, by its position');
+    assert.deepEqual(runCards(), ['c3', 'c2', 'c1'], 'the answered card stays listed');
+    assert.equal(controller!.threadKey, 'c3', 'and selected: the answer stays in view');
+    assert.deepEqual(reviewRunPane()!.waitingKeys, ['c2', 'c1'], 'it no longer waits');
+    assert.ok(events.some(event => event.type === 'answered' && event.key === 'c3'));
+    assert.equal(controller!.waitingCount, 2);
+
+    await key(doc.body, 'j');
+    assert.equal(controller!.threadKey, 'c2');
+    await key(doc.body, 'k');
+    assert.equal(controller!.threadKey, 'c3', 'back on the kept card');
+    assert.equal(controller!.waitingFilter, true, 'the filter stays on');
+    await key(doc.body, 'j');
+
+    await key(doc.body, 'e');
+    assert.equal(writes(calls, 'archive').length, 1, 'E marks it Done');
+    assert.deepEqual(runCards(), ['c3', 'c1']);
+    assert.equal(controller!.threadKey, 'c1', 'Done moves on whatever the setting says');
+
+    await key(doc.body, 'z');
+    assert.deepEqual(runCards(), ['c3', 'c2', 'c1'], 'Z brings it back');
+    await settle();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    assert.equal(controller!.threadKey, 'c2', 'selected again');
+    assert.ok(events.some(event => event.type === 'restored' && event.key === 'c2'));
+  });
+});
+
+test('Review run: Z is the toast\'s Undo and nothing else: after an answer it changes nothing, and it never reports the wrong card', async () => {
+  const calls: Call[] = [];
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false, calls }, async (events) => {
+    // An option picked has no undo: Z after it lists nothing again, counts nothing again and writes nothing.
+    await key(doc.body, '1');
+    assert.equal(writes(calls, 'answer').length, 1);
+    assert.deepEqual(reviewRunPane()!.waitingKeys, ['c2', 'c1']);
+    const before = calls.length;
+    events.length = 0;
+    let passed = false;
+    const onPage = (event: KeyboardEvent) => { if (event.key === 'z' && !event.defaultPrevented) passed = true; };
+    doc.body.addEventListener('keydown', onPage as EventListener);
+    await key(doc.body, 'z');
+    doc.body.removeEventListener('keydown', onPage as EventListener);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    assert.equal(passed, true, 'Z is not taken: there is nothing to undo');
+    assert.equal(calls.length, before, 'no write');
+    assert.deepEqual(events, [], 'nothing is reported restored');
+    assert.deepEqual(reviewRunPane()!.waitingKeys, ['c2', 'c1'], 'the answered card does not wait again');
+    assert.equal(controller!.waitingCount, 2);
+  });
+
+  // Done on one card, an answer on another, then Z: the Done is undone, and it is the Done's card that comes back.
+  const again: Call[] = [];
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false, calls: again }, async (events) => {
+    await key(doc.body, 'j');
+    assert.equal(controller!.threadKey, 'c2');
+    await key(doc.body, 'e');
+    assert.equal(writes(again, 'archive').length, 1, 'Done on c2');
+    assert.equal(controller!.threadKey, 'c1');
+    await key(doc.body, 'k');
+    assert.equal(controller!.threadKey, 'c3');
+    await key(doc.body, '2');
+    assert.equal(writes(again, 'answer').length, 1, 'an answer on c3');
+    events.length = 0;
+    await key(doc.body, 'z');
+    await settle();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    assert.equal(writes(again, 'unarchive').length, 1, 'Z undoes the Done');
+    assert.deepEqual(events.filter(event => event.type === 'restored'), [{ type: 'restored', key: 'c2' }],
+      'the card that came back is the one reported, never the answered one');
+    assert.deepEqual(reviewRunPane()!.waitingKeys, ['c2', 'c1'], 'the answer on c3 stands');
+    assert.equal(controller!.threadKey, 'c2', 'the card that came back is selected');
+  });
+});
+
+test('Review run: removing the "n waiting" chip, or picking another filter, leaves the run', async () => {
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false }, async (events) => {
+    assert.equal(controller!.waitingFilter, true);
+    events.length = 0;
+    await click(runRoot().querySelector('.nui-comment-chip[data-chip="waiting"]')!);
+    assert.equal(controller!.waitingFilter, false, 'a tap on the chip shows all comments again');
+    assert.deepEqual(events, [{ type: 'leave' }], 'and the host hears that the run is left');
+  });
+  await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false }, async (events) => {
+    events.length = 0;
+    await act(async () => { controller!.setStatusFilter('all'); });
+    assert.equal(controller!.waitingFilter, false);
+    assert.deepEqual(events, [{ type: 'leave' }], 'another filter leaves it too');
+    // Out of a run the filter goes on and off without a word to the host.
+    await act(async () => { setReviewRunHost({ active: false }); });
+    events.length = 0;
+    await act(async () => { controller!.setWaitingFilter(true); });
+    await act(async () => { reviewRunCommands()!.setWaiting(false); });
+    assert.deepEqual(events, []);
+  });
+});
+
+test('Review run, setting on: an answer and a sent reply move to the next card, and the last one hands over to the host', async () => {
+  const calls: Call[] = [];
+  await withRun({ waiting: ['c1', 'c3'], advance: true, calls }, async (events) => {
+    assert.deepEqual(runCards(), ['c3', 'c1']);
+    await key(doc.body, '1');
+    assert.equal(writes(calls, 'answer').length, 1);
+    assert.deepEqual(runCards(), ['c1'], 'the answered card leaves the list');
+    assert.equal(controller!.threadKey, 'c1', 'the next one takes its place, selected');
+    assert.deepEqual(events.filter(event => event.type === 'selected').at(-1), { type: 'selected', key: 'c1', direction: 'next', by: 'answer' });
+
+    // R opens the reply box; a sent reply answers the card.
+    await key(doc.body, 'r');
+    const box = runRoot().querySelector('[data-thread="c1"] .nui-comment-reply-box textarea') as HTMLTextAreaElement;
+    assert.ok(box, 'R opens the reply box of the selected card');
+    await type(box, 'On it');
+    await key(box, 'Enter');
+    await settle();
+    assert.equal(writes(calls, 'reply').length, 1);
+    assert.deepEqual(runCards(), [], 'the last card left');
+    assert.deepEqual(events.at(-2), { type: 'end', advance: true }, 'the host takes over: the next page, or the end');
+    assert.equal(controller!.threadKey, null);
+    assert.equal(runRoot().querySelector('.nui-comment-empty'), null, 'the host says how the run ends, the pane adds no empty state');
+  });
+});
+
+test('Review run: a list that fills in after the start still starts on its first card', async () => {
+  await withRun({ waiting: ['c1'], advance: false }, async () => {
+    assert.deepEqual(runCards(), ['c1']);
+    assert.equal(controller!.threadKey, 'c1');
+    // The host's read of what waits lands a moment later and puts another card first.
+    await act(async () => { setWaitingCommentThreads(['c1', 'c3']); });
+    await settle();
+    assert.deepEqual(runCards(), ['c3', 'c1']);
+    assert.equal(controller!.threadKey, 'c3', 'the first card is selected, never the second');
+    // Once the person moved, a later change leaves their card alone.
+    await key(doc.body, 'j');
+    assert.equal(controller!.threadKey, 'c1');
+    await act(async () => { setWaitingCommentThreads(['c1', 'c2', 'c3']); });
+    await settle();
+    assert.equal(controller!.threadKey, 'c1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Animations: the next card comes into place
+// ---------------------------------------------------------------------------
+
+test('the card that takes the place of one that left is found only when nothing else changed', () => {
+  assert.equal(cardThatTookThePlace(['a', 'b', 'c'], ['a', 'c']), 'c', 'b left: c takes its place');
+  assert.equal(cardThatTookThePlace(['a', 'b', 'c'], ['b', 'c']), 'b');
+  assert.equal(cardThatTookThePlace(['a', 'b', 'c'], ['a', 'b']), null, 'the last card left: nothing takes its place');
+  assert.equal(cardThatTookThePlace(['a', 'b'], ['a', 'b']), null);
+  assert.equal(cardThatTookThePlace(['a', 'b'], ['a', 'b', 'c']), null, 'a new comment, or Undo: no move');
+  assert.equal(cardThatTookThePlace(['a', 'b', 'c'], ['c', 'a']), null, 'another order: another list');
+  assert.equal(cardThatTookThePlace(['a', 'b', 'c', 'd'], ['a', 'd']), null, 'a filter took several out');
+});
+
+test('After Done or Delete the next card comes into place; a filter change or Undo moves nothing', async () => {
+  type Move = { key: string | null; frames: Keyframe[]; duration: number };
+  const moves: Move[] = [];
+  const proto = dom.window.HTMLElement.prototype as HTMLElement & { animate?: unknown };
+  const before = proto.animate;
+  proto.animate = function animate(this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
+    if (this.classList.contains('nui-comment-card')) moves.push({ key: this.getAttribute('data-thread'), frames, duration: Number(options.duration) });
+    return { cancel() {}, finished: Promise.resolve() } as unknown as Animation;
+  } as never;
+  try {
+    const calls: Call[] = [];
+    await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
+    assert.deepEqual(cards(), ['c2', 'c1']);
+    assert.deepEqual([...moves], [], 'a list that opens moves nothing');
+    await click(doc.querySelector('[data-thread="c2"] [data-part="done"]')!);
+    assert.deepEqual(cards(), ['c1']);
+    assert.deepEqual(moves.map(move => move.key), ['c1'], 'the card that takes the place of the one marked Done');
+    assert.equal(moves[0]!.duration, REVIEW_RUN_TRAVEL_MS, 'as long as the next conversation takes');
+    assert.deepEqual(moves[0]!.frames, [{ transform: 'translateY(28px)', opacity: 0 }, { transform: 'none', opacity: 1 }], 'from below');
+    // Undo brings the card back: nothing slides.
+    moves.length = 0;
+    await click(toastUndo()!);
+    assert.deepEqual(cards(), ['c2', 'c1']);
+    assert.deepEqual([...moves], []);
+    // Another filter is another list.
+    await pickScope('all');
+    await pickFilter('all');
+    assert.deepEqual([...moves], []);
+    // Delete: the next card comes into place too.
+    await pickFilter('open');
+    assert.deepEqual(cards(), ['c3', 'c2', 'c1']);
+    moves.length = 0;
+    await threadAction('c1', 'delete');
+    await settle();
+    assert.deepEqual(cards(), ['c3', 'c2'], 'the last card left: nothing takes its place');
+    assert.deepEqual([...moves], []);
+    await threadAction('c2', 'delete');
+    await settle();
+    assert.deepEqual(cards(), ['c3']);
+    assert.deepEqual([...moves], [], 'again the last one');
+    await click(toastUndo()!);
+    await settle();
+    assert.deepEqual(cards(), ['c3', 'c2']);
+    moves.length = 0;
+    await click(doc.querySelector('[data-thread="c3"] [data-part="done"]')!);
+    assert.deepEqual(moves.map(move => move.key), ['c2']);
+  } finally {
+    if (before) proto.animate = before as never; else Reflect.deleteProperty(proto, 'animate');
+  }
 });

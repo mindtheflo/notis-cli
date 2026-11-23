@@ -16,7 +16,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEve
 import { useNotisRuntime } from '../../provider';
 import {
   SPACE_FILE_MAX_BYTES, SpaceFileError, type SpaceCommentAnchor, type SpaceCommentFile, type SpaceCommentInsert,
-  type SpaceCommentPageKey, type SpaceCommentRow, type SpaceCommentsTransport, type SpaceCommentViewer,
+  type SpaceCommentPageKey, type SpaceCommentRow, type SpaceCommentsTransport, type SpaceCommentThreadsAnswer,
+  type SpaceCommentViewer,
 } from '../../space';
 import { fillWords, pick, type Locale, type Words } from '../../words';
 import { useToast, type ToastController } from '../actions/useToast';
@@ -30,7 +31,10 @@ import {
 } from './commentModel';
 import { commentDraftKey, forgetCommentDraft, hasDraftContent, readCommentDraft, writeCommentDraft } from './commentDrafts';
 import { commentCopiedWords, commentWords, type CommentWordKey, type CommentWords } from './commentWords';
+import { inheritedCommentState, useCommentHandover } from './handover';
 import { COMMENT_FOCUS_PARAM, useCommentFocusParam } from './hostComments';
+import { useWaitingCommentThreads } from './hostPanel';
+import { reviewRunAnswered, reviewRunKept, useReviewRunAnswered } from './reviewRun';
 import { useCommentRouting, type CommentRouting } from './useCommentRouting';
 
 /** Which threads the pane lists: the current anchor's, or every thread in the scope. */
@@ -84,8 +88,8 @@ export interface CommentActions {
    * when a reply waits for someone). True once saved.
    */
   reply(thread: CommentThread, body: string, files?: readonly CommentFile[], answers?: CommentRecord): Promise<boolean>;
-  /** Answers a check or choice ask. */
-  answer(root: CommentRecord, answer: string): void;
+  /** Answers a check or choice ask with one of its options. The answer shows at once; true once saved, false when refused. */
+  answer(root: CommentRecord, answer: string): Promise<boolean>;
   /** Archives (Resolved) or brings back (Open) a thread without a toast. People archive with `archive` and `unarchive`. */
   setStatus(root: CommentRecord, status: 'Open' | 'Resolved'): void;
   /** Archives an open thread (Done) with a 6-second Undo toast; Z undoes. */
@@ -152,6 +156,17 @@ export interface UseCommentsOptions {
   currentTime?(): number | null | undefined;
   /** Names of the pages (scope records, by record key) the Space home groups comments under. */
   scopeNames?: Readonly<Record<string, string>>;
+  /**
+   * A comment a link names, when the caller opens it itself (`focusKey` null): where the controller covers a whole
+   * Space its thread is read whatever its status, so the caller finds it among `threads`.
+   */
+  linkKey?: string | null;
+  /**
+   * Only these comment threads (the ids of their first comments): the others of the scope are not listed, counted or
+   * walked. For a host that shows a part of a Space's comments (those linked to one conversation). Default: every
+   * thread of the scope.
+   */
+  only?: readonly string[] | null;
 }
 
 export interface CommentController {
@@ -185,6 +200,19 @@ export interface CommentController {
   counts: Readonly<Record<CommentStatusView, number>>;
   /** Threads per anchor filter ("This item", "All items"), for the current status filter. */
   scopeCounts: Readonly<Record<CommentAnchorFilter, number>>;
+  /**
+   * "Waiting for you" is on: the pane lists only the open threads that wait for the viewer (`waits`), for the current
+   * anchor filter. Picking Open, Done or All turns it off; turning it on goes back to open threads.
+   */
+  waitingFilter: boolean;
+  setWaitingFilter(on: boolean): void;
+  /**
+   * Whether an open thread waits for the viewer: the host's own list when it gave one (a mention, an agent's question,
+   * a reply in a thread they started or replied to), else an agent's unanswered question.
+   */
+  waits(thread: CommentThread): boolean;
+  /** The open threads that wait for the viewer, for the current anchor filter: the one number the filter shows. */
+  waitingCount: number;
   /** True when the controller covers the whole Space (no scope record): the pane groups threads by page. */
   wholeSpace: boolean;
   /** The page a thread sits on, for grouping on the Space home: its page, else its anchor, else the Space. */
@@ -305,10 +333,29 @@ export interface CommentController {
   signed<T>(write: (author: string | null) => Promise<T>): Promise<T>;
   /** Opens an agent's thread in the side chat; undefined on hosts without one. */
   openThread?: (threadId: string) => void;
+  /**
+   * Opens the thread's page with the thread shown on it; undefined beside the page itself (the host gives it where it
+   * draws comments away from their page, `spaceComments.showOnPage`).
+   */
+  showOnPage?: (rootKey: string) => void;
   loading: boolean;
   hasData: boolean;
   error: Error | null;
   refetch(): Promise<unknown>;
+  /**
+   * How many changes Copy changes would copy. Where the pane holds a part of the Space (its home), the host counts
+   * them; default `changes.length`.
+   */
+  changeCount?: number;
+  /**
+   * True while older Done threads are left to read, where the pane shows a whole Space and its Filter shows Done
+   * threads: they come a page at a time. The pane asks for the next page (`loadMore`) when its list's end is in view.
+   */
+  hasMore?: boolean;
+  /** Reads the next page of Done threads. Does nothing while a page is on its way. */
+  loadMore?(): void;
+  /** True while Done threads the Filter asked for are on their way: the list says it is loading, never "No comments". */
+  loadingMore?: boolean;
 }
 
 /** A comment inserted here, shown until its stored row comes back. */
@@ -430,29 +477,71 @@ function errorCode(error: unknown): string {
   return typeof code === 'string' ? code : '';
 }
 
+/** How many Done threads a pane that shows a whole Space asks for at a time. */
+export const COMMENT_DONE_PAGE = 50;
+
+/**
+ * What a pane that shows a whole Space reads (`SpaceCommentsTransport.threads`): the open threads always, `done` Done
+ * threads once the Filter asks for them, only the threads named (`only`), and the thread of a linked comment.
+ */
+interface CommentWindow {
+  done: number;
+  only: readonly string[] | null;
+  include: string | null;
+}
+
+/** What the host counted for a pane that holds a part of the Space; null with `list` (the pane holds every comment). */
+type CommentWindowFacts = Pick<SpaceCommentThreadsAnswer, 'counts' | 'numbers' | 'changes' | 'moreDone'> & {
+  /** How many Done threads the answer was asked for. */
+  done: number;
+};
+
 /**
  * The store reader: the rows of `page`, listed again whenever the host signals a change. Results that come back out
  * of order are dropped (only the latest list counts). Without a transport: nothing, never loading.
+ *
+ * With `wanted` (a whole Space) and a host that reads by thread, only the threads the pane lists are read
+ * (`threads`); the host says null when its server cannot, and the reader goes back to `list` for good.
  */
-function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCommentPageKey, live: boolean) {
-  const [state, setState] = useState<{ key: string; rows: SpaceCommentRow[]; hasData: boolean; error: Error | null }>(
-    { key: '', rows: [], hasData: false, error: null });
+function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCommentPageKey, live: boolean,
+  wanted: CommentWindow | null = null) {
+  const [state, setState] = useState<{ key: string; rows: SpaceCommentRow[]; hasData: boolean; error: Error | null;
+    facts: CommentWindowFacts | null }>({ key: '', rows: [], hasData: false, error: null, facts: null });
   const [listing, setListing] = useState(false);
   const pageKey = page === null ? '\u0000home' : page;
   const seq = useRef(0);
   const hostRef = useRef(host);
   hostRef.current = host;
   const hasHost = Boolean(host);
+  // The whole page, as before the bounded read: a host without it, or one whose server refused it.
+  const [whole, setWhole] = useState(false);
+  const bounded = Boolean(wanted) && !whole && typeof host?.threads === 'function';
+  const wantedRef = useRef(wanted);
+  wantedRef.current = wanted;
+  const wantedKey = bounded && wanted ? `${wanted.done}|${wanted.include ?? ''}|${wanted.only ? wanted.only.join('\n') : '\u0000'}` : '';
   const relist = useCallback(async () => {
     const transport = hostRef.current;
     if (!transport) return undefined;
     const mine = ++seq.current;
     setListing(true);
     try {
+      const asked = bounded ? wantedRef.current : null;
+      if (asked && transport.threads) {
+        const answer = await transport.threads({ done: asked.done, only: asked.only, include: asked.include ? [asked.include] : [] });
+        if (answer) {
+          if (mine !== seq.current) return answer;
+          setState({ key: pageKey, rows: Array.isArray(answer.comments) ? answer.comments : [], hasData: true, error: null,
+            facts: { counts: answer.counts ?? null, numbers: answer.numbers ?? {}, changes: answer.changes ?? null,
+              moreDone: answer.moreDone === true, done: asked.done } });
+          return answer;
+        }
+        // The server does not know this read: every comment of the page, as before.
+        setWhole(true);
+      }
       const answer = await transport.list({ page });
       if (mine !== seq.current) return answer;
       const rows = Array.isArray(answer?.comments) ? answer.comments : [];
-      setState({ key: pageKey, rows, hasData: true, error: null });
+      setState({ key: pageKey, rows, hasData: true, error: null, facts: null });
       return answer;
     } catch (error) {
       if (mine === seq.current) {
@@ -465,7 +554,7 @@ function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCom
     }
   // `page` is read through `pageKey`.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageKey]);
+  }, [pageKey, bounded]);
   useEffect(() => {
     if (!hasHost) return undefined;
     void relist();
@@ -480,7 +569,15 @@ function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCom
     return () => { stop?.(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHost, relist, live]);
+  // What the pane lists changed (the Filter asks for Done threads, more of them, other threads): read again.
+  const readKey = useRef(wantedKey);
+  useEffect(() => {
+    if (readKey.current === wantedKey) return;
+    readKey.current = wantedKey;
+    if (hasHost && wantedKey) void relist();
+  }, [wantedKey, hasHost, relist]);
   const current = state.key === pageKey;
+  const facts = current && bounded ? state.facts : null;
   return {
     rows: current ? state.rows : [],
     hasData: current && state.hasData,
@@ -489,7 +586,21 @@ function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCom
     loading: hasHost && !(current && (state.hasData || state.error)),
     listing,
     relist,
+    /** What the host counted, when the pane holds a part of the Space; null when it holds every comment. */
+    facts,
+    /** True while Done threads the pane asked for have not been answered yet. */
+    doneAwaited: Boolean(bounded && wanted && wanted.done > 0 && !wanted.only && (!facts || facts.done < wanted.done) && !(current && state.error)),
   };
+}
+
+/** What a comment controller hands the controller of the view that replaces its own (`handover`). */
+interface CommentPaneHandover {
+  filter: CommentAnchorFilter;
+  statusFilter: CommentStatusView;
+  waitingFilter: boolean;
+  revealRequest: number;
+  threadKey: string | null;
+  draftPin: CommentDraftPin | null;
 }
 
 export function useComments(options: UseCommentsOptions = {}): CommentController {
@@ -518,11 +629,28 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   const openThread = useMemo(() => threadTransport
     ? (threadId: string) => { void threadTransport.open(threadId).catch(() => undefined); }
     : undefined, [threadTransport]);
+  const hostShowOnPage = host?.showOnPage;
+  const showOnPage = useMemo(() => hostShowOnPage
+    ? (rootKey: string) => { hostShowOnPage({ rootId: rootKey }); }
+    : undefined, [hostShowOnPage]);
   const latest = useRef(options);
   latest.current = options;
 
-  // The Space home lists every comment of the Space; a page lists its own.
-  const store = useCommentRows(host, scope ? scope.recordKey : 'all', live);
+  // A page lists its own comments. The Space home lists the Space's threads: the open ones, the Done ones a page at a
+  // time once the Filter shows them, only the ones named (`only`), and the one a link opens, never every comment of
+  // the Space (a host without that read answers them all, as before).
+  const [doneWanted, setDoneWanted] = useState(0);
+  const urlFocus = useCommentFocusParam();
+  const focusKey = options.focusKey === undefined ? urlFocus : options.focusKey;
+  const linkKey = focusKey ?? options.linkKey ?? null;
+  const onlyThreads = options.only ?? null;
+  const onlyKey = onlyThreads ? onlyThreads.join('\n') : null;
+  const wholeSpaceRead = scope == null;
+  const wanted = useMemo<CommentWindow | null>(() => (wholeSpaceRead
+    ? { done: doneWanted, only: onlyKey === null ? null : onlyKey ? onlyKey.split('\n') : [], include: linkKey } : null),
+  [wholeSpaceRead, doneWanted, onlyKey, linkKey]);
+  const store = useCommentRows(host, scope ? scope.recordKey : 'all', live, wanted);
+  const facts = store.facts;
   const refetch = store.relist;
   const refetchRef = useRef(refetch);
   refetchRef.current = refetch;
@@ -570,8 +698,13 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     // The scope is compared by identity of its record, not of the object a render builds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [comments, scopeKey]);
-  const threads = useMemo(() => commentThreads(inScope, anchors).filter(thread => thread.root.status !== 'Deleted'),
-    [inScope, anchors]);
+  // `only` is compared by what it lists, not by the array a render builds (`onlyKey`).
+  const threads = useMemo(() => {
+    const listed = commentThreads(inScope, anchors).filter(thread => thread.root.status !== 'Deleted');
+    if (onlyKey === null) return listed;
+    const kept = new Set(onlyKey ? onlyKey.split('\n') : []);
+    return listed.filter(thread => kept.has(thread.root.recordKey));
+  }, [inScope, anchors, onlyKey]);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const anchorsRef = useRef(anchors);
@@ -595,6 +728,10 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     return saved;
   }, [scope?.checkpoint, marker]);
   const changes = useMemo(() => commentChangesSince(inScope, checkpoint, me), [inScope, checkpoint, me]);
+  // A pane that holds a part of the Space, before its first copy: the host counted what Copy changes reports of the
+  // whole Space. After a copy only what changed since counts, and every change since the pane opened is held.
+  const hostChanges = facts && facts.changes != null && onlyKey === null && !checkpoint ? facts.changes : null;
+  const changeCount = hostChanges === null ? changes.length : Math.max(hostChanges, changes.length);
 
   // Written by the viewer: the server says so (`author.you`), else its creator id is the viewer's; a draft is theirs.
   const byViewer = useCallback((comment: CommentRecord) => {
@@ -644,15 +781,27 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     }
     return numbers;
   }, [comments]);
-  const numberOf = useCallback((thread: CommentThread) => pinNumbers.get(thread.root.recordKey) ?? 0, [pinNumbers]);
+  // A pane that holds a part of the Space cannot count the first comments before a pin: the host's number wins.
+  const hostNumbers = facts?.numbers ?? null;
+  const numberOf = useCallback((thread: CommentThread) => hostNumbers?.[thread.root.recordKey]
+    ?? pinNumbers.get(thread.root.recordKey) ?? 0, [pinNumbers, hostNumbers]);
   const anchor = useMemo(() => anchors.find(item => item.recordKey === anchorKey), [anchors, anchorKey]);
 
-  const [filter, setFilter] = useState<CommentAnchorFilter>('anchor');
-  const [statusFilter, setStatusFilterState] = useState<CommentStatusView>('open');
-  const setStatusFilter = useCallback((value: CommentStatusFilter) =>
-    setStatusFilterState(value === 'resolved' ? 'done' : value), []);
-  const [revealRequest, setRevealRequest] = useState(0);
-  const [threadKey, setThreadKey] = useState<string | null>(null);
+  // What the pane shows is handed over when a newer version of the view replaces this one (`handover`): the filters,
+  // the selected thread and the new comment being placed never go back to their defaults under the reader.
+  const viewToken = host?.viewToken ?? null;
+  const handoverId = `comments\u0000${draftScope}`;
+  const handed = useRef(inheritedCommentState<CommentPaneHandover>(viewToken, handoverId)).current;
+  const [filter, setFilter] = useState<CommentAnchorFilter>(handed?.filter ?? 'anchor');
+  const [statusFilter, setStatusFilterState] = useState<CommentStatusView>(handed?.statusFilter ?? 'open');
+  const [waitingFilter, setWaitingFilterState] = useState(handed?.waitingFilter ?? false);
+  const setStatusFilter = useCallback((value: CommentStatusFilter) => {
+    setStatusFilterState(value === 'resolved' ? 'done' : value);
+    // Open, Done and All are the other choices of the same menu: picking one leaves "Waiting for you".
+    setWaitingFilterState(false);
+  }, []);
+  const [revealRequest, setRevealRequest] = useState(handed?.revealRequest ?? 0);
+  const [threadKey, setThreadKey] = useState<string | null>(handed?.threadKey ?? null);
   // A new comment being written outlives the pane (another Space, a page over the view): its pin comes back with the
   // text and files its box kept (`commentDrafts`), and a draft with nothing in it does not.
   const newDraftKey = commentDraftKey(draftScope, 'new');
@@ -660,15 +809,31 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     const stored = readCommentDraft(key);
     return hasDraftContent(stored) && stored?.place ? stored.place as CommentDraftPin : null;
   };
-  const [draftPin, setDraftPin] = useState<CommentDraftPin | null>(() => restoredPin(newDraftKey));
+  const [draftPin, setDraftPin] = useState<CommentDraftPin | null>(() => (handed ? handed.draftPin : restoredPin(newDraftKey)));
+  useCommentHandover<CommentPaneHandover>(viewToken, handoverId,
+    () => ({ filter, statusFilter, waitingFilter, revealRequest, threadKey, draftPin }),
+    (state) => {
+      setFilter(state.filter);
+      setStatusFilterState(state.statusFilter);
+      setWaitingFilterState(state.waitingFilter);
+      setRevealRequest(state.revealRequest);
+      setThreadKey(state.threadKey);
+      setDraftPin(state.draftPin);
+    });
   const pinKeyRef = useRef(newDraftKey);
+  // A controller that never held a place writes none: a view prepared out of sight (the next version of the page)
+  // must not forget the place of the comment the reader is writing in the view on screen.
+  const pinHeld = useRef(false);
   useEffect(() => {
     if (pinKeyRef.current !== newDraftKey) {
       // Another page: its own new comment, if one was left there.
       pinKeyRef.current = newDraftKey;
+      pinHeld.current = false;
       setDraftPin(restoredPin(newDraftKey));
       return;
     }
+    if (!draftPin && !pinHeld.current) return;
+    pinHeld.current = Boolean(draftPin);
     writeCommentDraft(newDraftKey, { place: draftPin ?? undefined });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newDraftKey, draftPin]);
@@ -681,24 +846,71 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   const effectiveFilter: CommentAnchorFilter = anchors.length ? filter : 'all';
   const scoped = useMemo(() => effectiveFilter === 'anchor' ? threadsOn(anchorKey) : threads,
     [effectiveFilter, threadsOn, anchorKey, threads]);
-  const counts = useMemo(() => ({
+  // The Filter shows Done threads (Done, All): the pane then reads them too, a page at a time (`loadMore`).
+  const wantsDone = !waitingFilter && statusFilter !== 'open';
+  // How many Done threads were asked for, and how many of them the host answered: a page is asked for only once
+  // the one before it is answered, whoever asks (the Filter, the end of the list).
+  const doneAsked = useRef(doneWanted);
+  const doneAnswered = useRef(0);
+  doneAnswered.current = facts?.done ?? 0;
+  const askDone = useCallback(() => {
+    if (doneAsked.current > doneAnswered.current) return;
+    doneAsked.current += COMMENT_DONE_PAGE;
+    setDoneWanted(doneAsked.current);
+  }, []);
+  useEffect(() => { if (wantsDone && !doneAsked.current) askDone(); }, [wantsDone, askDone]);
+  // The Space's totals as the host counted them, where the pane holds a part of the Space and lists all of it.
+  const hostCounts = effectiveFilter === 'all' && onlyKey === null ? facts?.counts ?? null : null;
+  const counts = useMemo(() => (hostCounts ? { open: hostCounts.open, done: hostCounts.done, all: hostCounts.open + hostCounts.done } : {
     open: scoped.filter(thread => thread.root.status === 'Open').length,
     done: scoped.filter(thread => thread.root.status === 'Resolved').length,
     all: scoped.length,
-  }), [scoped]);
-  const visibleThreads = useMemo(() => statusFilter === 'all' ? scoped
-    : scoped.filter(thread => thread.root.status === (statusFilter === 'done' ? 'Resolved' : 'Open')), [statusFilter, scoped]);
+  }), [scoped, hostCounts]);
+  // "Waiting for you": the host's list of what waits (as its numbers count it), else what the pane sees for itself.
+  const waitingIds = useWaitingCommentThreads();
+  // A thread answered here a moment ago no longer waits, before the host's list says so (`reviewRun`).
+  const answeredHere = useReviewRunAnswered();
+  const waits = useCallback((thread: CommentThread) => thread.root.status === 'Open' && !reviewRunAnswered(thread.root.recordKey)
+    && (waitingIds ? waitingIds.has(thread.root.recordKey)
+      : [thread.root, ...thread.replies].some(comment => comment.needs !== 'none' && !comment.answer && comment.status !== 'Deleted')),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [waitingIds, answeredHere]);
+  const waitsRef = useRef(waits);
+  waitsRef.current = waits;
+  const setWaitingFilter = useCallback((on: boolean) => {
+    setWaitingFilterState(on);
+    if (on) setStatusFilterState('open');
+  }, []);
+  const waitingCount = useMemo(() => scoped.filter(waits).length, [scoped, waits]);
+  // Under "Waiting for you" a card answered while nothing moves by itself stays listed, showing its answer.
+  const visibleThreads = useMemo(() => waitingFilter
+    ? scoped.filter(thread => waits(thread) || (thread.root.status === 'Open' && reviewRunKept(thread.root.recordKey)))
+    : statusFilter === 'all' ? scoped
+      : scoped.filter(thread => thread.root.status === (statusFilter === 'done' ? 'Resolved' : 'Open')),
+  [waitingFilter, waits, statusFilter, scoped]);
   const scopeCounts = useMemo(() => {
     const shown = (thread: CommentThread) => statusFilter === 'all'
       || thread.root.status === (statusFilter === 'done' ? 'Resolved' : 'Open');
-    return { anchor: threadsOn(anchorKey).filter(shown).length, all: threads.filter(shown).length };
-  }, [statusFilter, threadsOn, anchorKey, threads]);
+    const all = hostCounts ? (statusFilter === 'all' ? hostCounts.open + hostCounts.done : statusFilter === 'done' ? hostCounts.done : hostCounts.open)
+      : threads.filter(shown).length;
+    return { anchor: threadsOn(anchorKey).filter(shown).length, all };
+  }, [statusFilter, threadsOn, anchorKey, threads, hostCounts]);
+  // Older Done threads are left to read: the pane asks for the next page when the reader brings its list's end into
+  // view. Until the first page is answered the list says it is loading.
+  const boundedDone = Boolean(facts) && wantsDone && onlyKey === null;
+  const doneRead = facts?.done ?? 0;
+  const hasMore = boundedDone && Boolean(facts?.moreDone) && doneRead > 0;
+  const loadMore = askDone;
+  const loadingMore = boundedDone && (store.doneAwaited || (doneRead === 0 && Boolean(facts?.moreDone)));
 
   const selectThread = useCallback((thread: CommentThread) => {
     setThreadKey(thread.root.recordKey);
     setDraftPin(null);
     setCommentMode(null);
     setStatusFilterState(current => current === 'all' ? current : thread.root.status === 'Resolved' ? 'done' : 'open');
+    // A thread picked from the page that does not wait for the viewer shows: "Waiting for you" would hide it (a card
+    // kept in view after its answer is still listed there).
+    if (!waitsRef.current(thread) && !reviewRunKept(thread.root.recordKey)) setWaitingFilterState(false);
     latest.current.onSelectThread?.(thread);
   }, []);
   const revealThread = useCallback((thread: CommentThread) => {
@@ -707,20 +919,28 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   }, [selectThread]);
 
   // A link to one comment (a push, a chat pill): open its thread once it is read, in the host panel (a reveal), and the
-  // pane scrolls it into view.
-  const urlFocus = useCommentFocusParam();
-  const focusKey = options.focusKey === undefined ? urlFocus : options.focusKey;
+  // pane scrolls it into view. (`focusKey` is read above: the pane asks for that thread whatever its status.)
   const focused = useRef<string | null>(null);
+  const doneUnread = Boolean(facts) && onlyKey === null && (facts?.done ?? 0) === 0;
+  const readFailed = Boolean(store.error);
   useEffect(() => {
     // A link the host took away is forgotten, so a later link to the same comment opens it again.
     if (!focusKey) { focused.current = null; return; }
     if (focused.current === focusKey) return;
     const thread = threads.find(item => item.root.recordKey === focusKey || item.replies.some(reply => reply.recordKey === focusKey));
     if (!thread) return;
+    // Its thread is Done and the pane has not read the Done threads yet (it holds a part of the Space): the Filter
+    // goes to Done first, and the card is revealed once the ones listed around it are there, so it is scrolled to
+    // where it stays. A read that failed reveals it at once, alone.
+    if (thread.root.status === 'Resolved' && doneUnread && !readFailed) {
+      setStatusFilterState(current => current === 'all' ? current : 'done');
+      setWaitingFilterState(false);
+      return;
+    }
     focused.current = focusKey;
     if (anchors.length && !isCommentOnAnchor(thread.root.anchorIds, anchorKey, anchors)) setFilter('all');
     revealThread(thread);
-  }, [focusKey, threads, anchors, anchorKey, revealThread]);
+  }, [focusKey, threads, anchors, anchorKey, revealThread, doneUnread, readFailed]);
 
   // Grouping on the Space home: the page a thread is on, numbered in the order pages first come.
   const wholeSpace = scope == null;
@@ -959,7 +1179,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     },
     answer: (root, answer) => {
       const at = new Date().toISOString();
-      void write(root, { answer, answeredAt: at, change: 'answered', changedAt: at },
+      return write(root, { answer, answeredAt: at, change: 'answered', changedAt: at },
         transport => transport.answer({ id: root.recordKey, answer }));
     },
     setStatus: (root, status) => { void writeStatus(root, status); },
@@ -1010,6 +1230,8 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       return isCommentOnAnchor(keys, anchorKeyRef.current, anchorsRef.current) ? current : 'all';
     });
     setStatusFilterState(current => current === 'done' ? 'open' : current);
+    // A new comment asks nothing of its writer: it would not show under "Waiting for you".
+    setWaitingFilterState(false);
   }, []);
 
   const placePin = useCallback((key: string | null, x: number | null, y: number | null,
@@ -1207,11 +1429,25 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   }, []);
 
   const copyChanges = useCallback(async (element: HTMLElement | null) => {
-    if (!changes.length || copying) return false;
+    if (!changeCount || copying) return false;
     setCopying(true);
     const at = new Date().toISOString();
-    const count = changes.length;
-    const text = commentDigest({ scope: scope ? { ...scope, checkpoint } : null, comments: inScope, anchors, changes, nowIso: at,
+    let all = inScope;
+    let list = changes;
+    if (hostChanges !== null && hostRef.current) {
+      // The digest of a whole Space with no checkpoint reports every comment of it: read once, when it is asked for.
+      try {
+        const answer = await hostRef.current.list({ page: 'all' });
+        all = applyCommentPatches((Array.isArray(answer?.comments) ? answer.comments : []).map(row => commentFromRow(row)), patchesRef.current);
+        list = commentChangesSince(all, checkpoint, me);
+      } catch (error) {
+        fail(error);
+        setCopying(false);
+        return false;
+      }
+    }
+    const count = list.length;
+    const text = commentDigest({ scope: scope ? { ...scope, checkpoint } : null, comments: all, anchors, changes: list, nowIso: at,
       since: checkpoint }, { me, ...(latest.current.digest ?? {}) });
     const ok = await writeCommentClipboard(text, element);
     if (!ok) { notify(words.copyFailed, { tone: 'danger' }); setCopying(false); return false; }
@@ -1227,12 +1463,13 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       setCopying(false);
     }
     return true;
-  }, [changes, copying, scope, checkpoint, inScope, anchors, me, notify, words, marker, fail]);
+  }, [changes, changeCount, hostChanges, copying, scope, checkpoint, inScope, anchors, me, notify, words, marker, fail]);
 
   return {
     comments: inScope, threads, visibleThreads, changes, checkpoint, isNew, threadsOn, numberOf,
     scope, anchors, anchorKey, anchor,
-    filter: effectiveFilter, setFilter, statusFilter, setStatusFilter, counts, scopeCounts, wholeSpace, groupOf,
+    filter: effectiveFilter, setFilter, statusFilter, setStatusFilter, counts, scopeCounts, waitingFilter, setWaitingFilter, waits, waitingCount,
+    wholeSpace, groupOf,
     threadKey, setThreadKey, selectThread, revealThread, revealRequest,
     actions, viewer, canEdit, canDelete, canWrite, routing,
     modes, commentMode, startMode, cancelMode, startItems, placeText, startAnchor, toolBar, setToolBar,
@@ -1241,7 +1478,8 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     attach, maxFileBytes, uploadFile, refreshFiles,
     zones, dragZone, zoneHandlers,
     copyChanges, copying,
-    busy, now, toaster: shownToaster, words, say, locale, me, signed, openThread,
+    busy, now, toaster: shownToaster, words, say, locale, me, signed, openThread, showOnPage,
     loading: store.loading, hasData: store.hasData, error: store.error, refetch,
+    changeCount, hasMore, loadMore, loadingMore,
   };
 }

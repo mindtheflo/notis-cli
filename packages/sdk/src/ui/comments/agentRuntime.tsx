@@ -193,15 +193,6 @@ export function CommentAgentRuntimeCard({ name, view }: { name: string; view: Co
 }
 
 /**
- * After an agent outside Notis's name on its comment: the thread it said it works in ("PR #3851"), quiet (SPC-537).
- */
-export function CommentAgentThreadName({ comment }: { comment: CommentRecord }) {
-  const threadName = comment.agent?.threadName;
-  if (!threadName) return null;
-  return <span className="nui-comment-agent-thread" data-part="agent-thread-name" title={threadName}>{threadName}</span>;
-}
-
-/**
  * After an agent's name on its comment: the harness logo, with the runtime card on hover and on keyboard focus (Tab
  * reaches it; its accessible name says everything the card shows). An agent outside Notis has no recorded runtime: its
  * harness logo shows when it said which harness runs it (SPC-537), named on hover. Nothing on a person's comment or an

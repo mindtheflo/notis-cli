@@ -318,6 +318,10 @@ export interface SpaceCommentRow {
   status: SpaceCommentStatus;
   needs: SpaceCommentNeeds;
   options: string[];
+  /** A choice question's option its asker recommends (one of `options`). Absent or null: none. */
+  recommended?: string | null;
+  /** A choice question's line under an option, by option. Absent: none. */
+  option_details?: Readonly<Record<string, string>>;
   answer: string | null;
   answered_at: string | null;
   answer_to: string | null;
@@ -342,6 +346,46 @@ export interface SpaceCommentRow {
  */
 export type SpaceCommentPageKey = string | null | 'all';
 
+/**
+ * Which comment threads of the Space a pane reads (`SpaceCommentsTransport.threads`). The open threads always come,
+ * whole. Deleted threads never come.
+ */
+export interface SpaceCommentThreadsInput {
+  /**
+   * How many Done threads the pane wants too, newest first (0 or absent: none). The host reads them a page at a time
+   * and answers every one it holds; `moreDone` says whether older ones are left.
+   */
+  done?: number;
+  /**
+   * Only these threads (the ids of their first comments), whatever their status: nothing else of the Space is read.
+   * For a host that shows a part of a Space's comments (those linked to one conversation).
+   */
+  only?: readonly string[] | null;
+  /** Comments whose threads come too, whatever their status and their place in the list (a link to one comment). */
+  include?: readonly string[];
+}
+
+/** What a bounded read answers. */
+export interface SpaceCommentThreadsAnswer {
+  /** The comments of the threads read, in no particular order: every thread whole. */
+  comments: SpaceCommentRow[];
+  revision: number;
+  /**
+   * How many threads the Space holds by status, counted by the server (deleted ones left out), so a pane that holds a
+   * part of the Space still knows the totals. Null with `only`, and while the server has not said.
+   */
+  counts: { open: number; done: number } | null;
+  /**
+   * The pin number of the first comments that sit on a point or a zone, by comment id, counted by the server among
+   * every first comment of their page (deleted ones keep theirs).
+   */
+  numbers: Readonly<Record<string, number>>;
+  /** How many comments Copy changes would report with no checkpoint, counted by the server. Null when not known. */
+  changes: number | null;
+  /** True while Done threads older than the ones answered are left to read. */
+  moreDone: boolean;
+}
+
 /** The page the host shows: its record (null on the Space home), the view slug, and its name when known. */
 export interface SpaceCommentPage { recordKey: string | null; view?: string | null; name?: string | null }
 
@@ -352,6 +396,9 @@ export interface SpaceCommentInsert extends SpaceCommentAnchor {
   body: string;
   needs?: SpaceCommentNeeds;
   options?: readonly string[];
+  /** With `needs: 'choice'`: the option recommended, and a line under an option (by option). */
+  recommended?: string | null;
+  option_details?: Readonly<Record<string, string>>;
   attachments?: readonly SpaceCommentFile[];
   id?: string;
   request_id: string;
@@ -367,6 +414,8 @@ export interface SpaceCommentReply {
   answer_to?: string | null;
   needs?: SpaceCommentNeeds;
   options?: readonly string[];
+  recommended?: string | null;
+  option_details?: Readonly<Record<string, string>>;
   attachments?: readonly SpaceCommentFile[];
   id?: string;
   request_id: string;
@@ -375,12 +424,11 @@ export interface SpaceCommentReply {
 /**
  * Space-only host Comments panel and comment store: the comment threads of the page sit in the host's right panel,
  * beside the chat, instead of a pane inside the Space, and every read and write goes through the host to the Space's
- * one comment store (`portal_comments`). Absent while comments are off for the viewer (`unified_comments`), on Sites,
- * links, previews and older hosts: a Space then shows no comments at all (no pane, no pins, no highlights, no Comment
- * on a selection; Cite stays).
+ * one comment store (`portal_comments`). Absent on Sites, links, previews and older hosts: a Space then shows no
+ * comments at all (no pane, no pins, no highlights, no Comment on a selection; Cite stays).
  *
  * Every write resolves with the stored row (the server stamps author, dates, `change` and `revision`) or rejects with
- * an Error whose `code` is the server's (`feature_disabled`, `revision_conflict`, `comment_not_found`, ...).
+ * an Error whose `code` is the server's (`comment_forbidden`, `revision_conflict`, `comment_not_found`, ...).
  */
 export interface SpaceCommentsTransport {
   /** Lists a source in the Comments panel until the returned call-back runs. */
@@ -402,6 +450,14 @@ export interface SpaceCommentsTransport {
    * asks the server for changes only merges them into its copy and answers with the whole page.
    */
   list(input: { page: SpaceCommentPageKey; since_revision?: number }): Promise<{ comments: SpaceCommentRow[]; revision: number }>;
+  /**
+   * A bounded read of the Space's comment threads, for a pane that shows the whole Space: only the threads it lists,
+   * each whole (its first comment and its replies), instead of every comment of the Space (`list` with 'all'). See
+   * `SpaceCommentThreadsInput`. The host keeps its own copy and asks the server only for what the copy lacks and for
+   * what changed since. Resolves null when the server cannot answer this read: the reader then uses `list`. Absent
+   * on older hosts: `list` is used. `subscribe` with 'all' says when to read again.
+   */
+  threads?(input: SpaceCommentThreadsInput): Promise<SpaceCommentThreadsAnswer | null>;
   /**
    * Calls `listener` whenever the comments of `page` may have changed (a write here or elsewhere, the window coming
    * back into focus, the host's poll): the reader lists them again. Returns the call-back that stops it.
@@ -464,6 +520,12 @@ export interface SpaceCommentsTransport {
   /** Opens a manager thread in the chat (the panel switches to Chat). */
   openThread?(threadId: string): void;
   /**
+   * Opens the page of one comment thread with that thread shown on it, for a host that draws the comments where their
+   * page is not open (every Space's open comments, a conversation's comments): each card's "..." then offers Show on
+   * page. Absent beside the page itself, where a tap on the card already shows its place.
+   */
+  showOnPage?(input: { rootId: string }): void;
+  /**
    * The link that opens the Space page of one comment thread with it revealed (`comment=<root id>`, the link a push
    * or a chat pill opens), as a full address another person can open: Copy link on a thread card copies it. The host
    * may answer later (a promise). Null when there is no shareable address; without it the pane copies the page's own
@@ -477,6 +539,12 @@ export interface SpaceCommentsTransport {
    * does not cover the page ignores it.
    */
   showPage?(): void;
+  /**
+   * Names the mounted view this transport serves, the same object for its whole life. When a newer version of the
+   * view takes its place, the host hands what the comments show (the selected thread, the filters, a new comment
+   * being placed) from the old view's token to the new one's (`handOverCommentState`). Absent: nothing is handed.
+   */
+  viewToken?: object;
 }
 /**
  * The viewer as comments see them. `id` (their user id), when the host gives it, tells their comments by the row's

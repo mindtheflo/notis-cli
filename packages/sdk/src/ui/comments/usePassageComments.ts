@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SpaceCommentAnchor } from '../../space';
 import { commentDraftKey, forgetCommentDraft, hasDraftContent, readCommentDraft, writeCommentDraft } from './commentDrafts';
+import { inheritedCommentState, useCommentHandover, useCommentViewToken } from './handover';
 import type { CommentThread } from './commentModel';
 import { useCommentFocusParam } from './hostComments';
 import { useComments, type CommentController, type CommentFile, type UseCommentsOptions } from './useComments';
@@ -110,8 +111,9 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     ...options,
     anchors: undefined,
     anchorKey: null,
-    // This controller opens a linked comment itself, with its passage flash.
+    // This controller opens a linked comment itself, with its passage flash; its thread is still read for it.
     focusKey: null,
+    linkKey: focusKey,
     modes: options.modes ?? PASSAGE_MODES,
     onSelectThread: (thread) => {
       const passage = passagesRef.current.get(thread.root.recordKey);
@@ -196,16 +198,26 @@ export function usePassageComments(options: UsePassageCommentsOptions): PassageC
     const stored = readCommentDraft(key);
     return hasDraftContent(stored) && stored?.place ? stored.place as PassageAnchor : null;
   };
-  const [draft, setDraft] = useState<PassageAnchor | null>(() => restoredPassage(draftKey));
+  // A newer version of the view taking this one's place gets the passage being commented (`handover`).
+  const viewToken = useCommentViewToken();
+  const handoverId = `passage\u0000${controller.draftScope}`;
+  const handed = useRef(inheritedCommentState<{ draft: PassageAnchor | null }>(viewToken, handoverId)).current;
+  const [draft, setDraft] = useState<PassageAnchor | null>(() => (handed ? handed.draft : restoredPassage(draftKey)));
+  useCommentHandover<{ draft: PassageAnchor | null }>(viewToken, handoverId, () => ({ draft }), state => setDraft(state.draft));
   const passageKeyRef = useRef(draftKey);
+  // A controller that never held a passage writes none (a view prepared out of sight, see `useComments`).
+  const passageHeld = useRef(false);
   useEffect(() => {
     if (passageKeyRef.current !== draftKey) {
       // Another page (record A to B while mounted): its own passage comes back, if one was left there, and A's passage
       // is never saved under B's key.
       passageKeyRef.current = draftKey;
+      passageHeld.current = false;
       setDraft(restoredPassage(draftKey));
       return;
     }
+    if (!draft && !passageHeld.current) return;
+    passageHeld.current = Boolean(draft);
     writeCommentDraft(draftKey, { place: draft ?? undefined });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, draft]);

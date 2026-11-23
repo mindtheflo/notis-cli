@@ -242,6 +242,44 @@ test('Every Space page highlights its open text comments, reports the gone ones,
   });
 });
 
+test('On the Space home the highlights read the Space\'s open threads, as its pane does, never every comment of the home', async () => {
+  await withRangeBoxes(async () => {
+    const reported: Array<{ page: string | null; ids: readonly string[] }> = [];
+    const asked: unknown[] = [];
+    const home = ROWS.map(row => ({ ...row, page_key: null }));
+    const elsewhere = { ...ROWS[0]!, id: 'other-page', page_key: 'p9', quote: 'Tuesday' };
+    const store = memoryCommentStore({ rows: [...home, elsewhere], page: { recordKey: null, view: 'board' }, extra: {
+      passagesChanged: input => { reported.push({ page: input.page, ids: [...input.ids] }); },
+    } });
+    const open = () => store.rows.filter(row => (row.thread_root_id ? store.rows.find(root => root.id === row.thread_root_id)?.status : row.status) === 'open');
+    const threads = async (input: unknown) => {
+      asked.push(input);
+      return { comments: open(), revision: 1, counts: null, numbers: {}, changes: null, moreDone: false };
+    };
+    await present(spaceRuntime({ ...store.transport, threads }));
+    assert.deepEqual(asked, [{}], 'the open threads are asked for');
+    assert.equal(store.reads(), 0, 'the home is not listed');
+    assert.ok(doc.querySelector('style[data-notis-comment-highlights]'), 'the highlight style is drawn');
+    assert.deepEqual(reported.at(-1), { page: null, ids: ['t2'] }, 'as on a page: the words of t2 are gone, and a comment of another page is not the home\'s');
+
+    // A host whose server cannot read by thread answers null: the home is listed, as before.
+    reported.length = 0;
+    const older = memoryCommentStore({ rows: home, page: { recordKey: null, view: 'board' }, extra: {
+      passagesChanged: input => { reported.push({ page: input.page, ids: [...input.ids] }); },
+    } });
+    await present(spaceRuntime({ ...older.transport, threads: async () => null }));
+    assert.equal(older.reads(), 1);
+    assert.deepEqual(reported.at(-1), { page: null, ids: ['t2'] });
+
+    // A record page reads its own comments, as before.
+    const paged = memoryCommentStore({ rows: ROWS, page: { recordKey: 'p1', view: 'board' } });
+    asked.length = 0;
+    await present(spaceRuntime({ ...paged.transport, threads }));
+    assert.deepEqual(asked, []);
+    assert.equal(paged.reads(), 1);
+  });
+});
+
 test('Without the comment store a Space page draws no highlights and lists nothing', async () => {
   await present(spaceRuntime());
   assert.equal(doc.querySelector('style[data-notis-comment-highlights]'), null);

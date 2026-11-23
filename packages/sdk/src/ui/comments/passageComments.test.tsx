@@ -228,19 +228,21 @@ async function fire(el: Element, event: Event) {
 
 const button = (label: string) => [...doc.querySelectorAll('button')].find(el =>
   el.getAttribute('aria-label') === label || el.textContent?.trim() === label) as HTMLButtonElement | undefined;
-const quotes = () => [...doc.querySelectorAll('.nui-passage-anchor .nui-passage-quote')].map(el => el.textContent);
+/** Each card starts with the words it quotes (the card itself draws them, as every comments list). */
+const quotes = () => [...doc.querySelectorAll('.nui-comment-card .nui-comment-top [data-part="quote"]')].map(el => el.textContent);
 
 test('PassageCommentPane: quotes of the group on screen in reading order, Passage changed, and the other group', async () => {
   await mount(<Harness />, fakeRuntime(ROWS, []));
   assert.deepEqual(quotes(), ['Notis Hub', 'three new things', 'words that were removed'],
     'Subject before Body, the passage no longer in the text last');
-  const changed = [...doc.querySelectorAll('.nui-passage-anchor')].filter(el => el.hasAttribute('data-changed'))
-    .map(el => el.querySelector('.nui-passage-quote')?.textContent);
+  const changed = [...doc.querySelectorAll('.nui-comment-anchor')].filter(el => el.hasAttribute('data-changed'))
+    .map(el => el.querySelector('[data-part="quote"]')?.textContent);
   assert.deepEqual(changed, ['words that were removed']);
-  assert.match(doc.body.textContent ?? '', /Passage changed/);
-  assert.match(doc.body.textContent ?? '', /The comment stays open/);
-  const gone = doc.querySelector('[data-comment-thread="c3"]')!;
-  assert.equal(gone.querySelector('.nui-passage-quote')!.textContent, 'words that were removed', 'the old quote stays');
+  const gone = doc.querySelector('[data-thread="c3"]')!;
+  assert.equal(gone.querySelector('[data-part="passage-changed"]')!.textContent, 'Passage changed');
+  assert.match(gone.querySelector('[data-part="passage-changed"]')!.getAttribute('title')!, /The comment stays open/);
+  assert.equal(gone.querySelector('[data-part="quote"]')!.textContent, 'words that were removed', 'the old quote stays');
+  assert.equal(doc.querySelector('.nui-passage-thread, .nui-passage-anchor'), null, 'no quote button above the card: the card starts with it');
   assert.ok(gone.querySelector('button[aria-label^="Archive the comment thread: "]'), 'the thread stays open (Archive, not Unarchive)');
   assert.equal(current!.controller.counts.open, 4, 'nothing closed it');
   const other = button('1 on the French copy');
@@ -410,8 +412,8 @@ test('On a Space page whose selection bar takes comments, the bar shows Comment 
   assert.equal(current!.draft?.quote, 'this week');
   assert.equal(current!.draft?.field, 'bodyEn');
   // The new comment box reads like the one in Notes: its title, then the words as the quote chip (SPC-489).
-  assert.match(doc.querySelector('.nui-comment-new-box .nui-comment-new-title')!.textContent!, /^New comment on these words/);
-  assert.equal(doc.querySelector('.nui-comment-new-box .nui-comment-quote')!.textContent, 'this week');
+  assert.match(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label')!, /^New comment on these words/);
+  assert.equal(doc.querySelector('.nui-comment-new-box [data-pill="quote"]')!.textContent, 'this week');
 });
 
 test('Opening a thread from its quote selects it and shows its group', async () => {
@@ -430,7 +432,7 @@ test('Opening a thread from its quote selects it and shows its group', async () 
     return <PassageCommentPane comments={current} />;
   }
   await mount(<Opener />, fakeRuntime(ROWS, []));
-  const anchor = [...doc.querySelectorAll('.nui-passage-anchor')].find(el => el.textContent?.includes('three new things'))!;
+  const anchor = [...doc.querySelectorAll('.nui-comment-card [data-part="quote"]')].find(el => el.textContent?.includes('three new things'))!;
   await fire(anchor, new dom.window.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(opened, ['c1:quote']);
   assert.equal(current!.controller.threadKey, 'c1');
@@ -456,7 +458,7 @@ test('PassageCommentPane: newest first by default, New comment on words or the w
   await mount(<Plain />, fakeRuntime(rows, calls));
   assert.deepEqual(quotes(), ['Notis Hub', 'three new things'], 'the newest thread first');
   assert.deepEqual(current!.controller.modes, ['text', 'page']);
-  await fire(doc.querySelector('.nui-comment-new-btn')!, new dom.window.MouseEvent('click', { bubbles: true }));
+  await fire(doc.querySelector('[data-part="new-comment-button"]')!, new dom.window.MouseEvent('click', { bubbles: true }));
   const items = [...doc.querySelectorAll('[role^="menuitem"]')];
   assert.deepEqual(items.map(el => el.textContent), ['On words', 'On the whole page']);
   await fire(items[0]!, new dom.window.MouseEvent('click', { bubbles: true }));
@@ -464,7 +466,7 @@ test('PassageCommentPane: newest first by default, New comment on words or the w
   await act(async () => { current!.controller.startMode('page'); });
   await settle();
   const box = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
-  assert.equal(doc.querySelector('.nui-comment-new-title')!.textContent, 'New comment');
+  assert.equal(doc.querySelector('.nui-comment-new-box')!.getAttribute('aria-label'), 'New comment');
   const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!;
   await act(async () => { setter.call(box, 'Whole issue: too long'); box.dispatchEvent(new dom.window.Event('input', { bubbles: true })); });
   await fire(box, new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
@@ -508,7 +510,7 @@ test('PassageCommentBox: pictures and files attach by paste, drop or the papercl
   await settle();
   const box = doc.querySelector('.nui-comment-new-box')!;
   const field = box.querySelector('textarea') as HTMLTextAreaElement;
-  const send = () => [...box.querySelectorAll('button')].find(el => el.textContent?.trim() === 'Send') as HTMLButtonElement;
+  const send = () => box.querySelector('button[aria-label="Send"]') as HTMLButtonElement;
   assert.ok(send().disabled, 'nothing to send yet');
   // Paste a picture in the text, drop a file on the box, pick one with the paperclip.
   const pasted = new dom.window.Event('paste', { bubbles: true, cancelable: true });
@@ -813,8 +815,8 @@ test('The passage pane scrolls its own list, with the toast under it', async () 
   await mount(<Harness />, fakeRuntime(ROWS, []));
   const pane = doc.querySelector('#panel .nui-comment-pane')!;
   const list = pane.querySelector(':scope > [data-comment-scroll]')!;
-  assert.ok(list.querySelector('[data-comment-thread="c1"]'), 'the threads are in the scrolled list');
-  await fire(doc.querySelector('[data-comment-thread="c1"] button[aria-label^="Archive the comment thread: "]')!,
+  assert.ok(list.querySelector('[data-thread="c1"]'), 'the threads are in the scrolled list');
+  await fire(doc.querySelector('[data-thread="c1"] button[aria-label^="Archive the comment thread: "]')!,
     new dom.window.MouseEvent('click', { bubbles: true }));
   const toast = pane.querySelector('.nui-toast-wrap')!;
   assert.equal(toast.parentElement, pane);
@@ -868,7 +870,7 @@ test('revealRequest: a highlight or a field count on the page reveals, a quote i
     await fire(wrap, new dom.window.MouseEvent('click', { bubbles: true, clientX: 60, clientY: 305 }));
     assert.equal(current!.controller.threadKey, 'c1');
     assert.equal(current!.revealRequest, 2, 'a highlight reveals');
-    const quote = [...doc.querySelectorAll('.nui-passage-anchor')].find(el => el.textContent?.includes('Notis Hub'))!;
+    const quote = [...doc.querySelectorAll('.nui-comment-card [data-part="quote"]')].find(el => el.textContent?.includes('Notis Hub'))!;
     await fire(quote, new dom.window.MouseEvent('click', { bubbles: true }));
     assert.equal(current!.controller.threadKey, 'c2');
     assert.equal(current!.revealRequest, 2, 'a quote in the pane does not');
@@ -881,9 +883,9 @@ test('An agent question in a reply shows its answer controls in the passage pane
     createdAt: '2026-11-01T11:00:00.000Z' }), needs: 'choice' as const, options: ['Warm', 'Plain'],
   author: { user_id: 'user-flo', name: 'Flo', you: false }, agent: { name: 'Claude', thread_id: null, row_id: null } };
   await mount(<Harness />, fakeRuntime([...ROWS, ask], calls));
-  const controls = doc.querySelector('[data-comment-thread="c1"] [data-ask="q1"]');
+  const controls = doc.querySelector('[data-thread="c1"] [data-ask="q1"]');
   assert.ok(controls, 'the ask shows under the reply');
-  await fire([...controls!.querySelectorAll('button')].find(el => el.textContent === 'Plain')!,
+  await fire([...controls!.querySelectorAll('.nui-comment-option')].find(el => el.querySelector('.nui-comment-option-label')?.textContent === 'Plain')!,
     new dom.window.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q1', answer: 'Plain' } });
 });

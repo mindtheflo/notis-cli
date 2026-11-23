@@ -24,6 +24,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNotisRuntime } from '../../provider';
 import type { SpaceCommentThreadPick, SpaceCommentThreadRef } from '../../space';
+import { commentDraftKey, hasDraftContent, readCommentDraft, writeCommentDraft } from './commentDrafts';
+import { inheritedCommentState, useCommentHandover } from './handover';
 
 export interface CommentRouting {
   /** True when the host links comment threads to threads: each card shows its Goes to line. */
@@ -191,8 +193,27 @@ export function useCommentRouting(input: {
   /** Roots whose links reads gave up with nothing kept: their Goes to line names nothing until a read answers. */
   const [lostIds, setLostIds] = useState<ReadonlySet<string>>(() => new Set());
   /** The pick for the next new comment of each page (`pickKey`). */
-  const [picks, setPicks] = useState<Readonly<Record<string, SpaceCommentThreadPick>>>({});
+  // Kept with the page's new comment (`commentDrafts`): a view made again (a newer version of the page, a reload of
+  // the browser) finds who the comment being written goes to. Only while that comment has something in it.
+  const toKey = commentDraftKey(pickKey || null, 'to');
+  const viewToken = transport?.viewToken ?? null;
+  const handoverId = `routing\u0000${pickKey}`;
+  const [picks, setPicks] = useState<Readonly<Record<string, SpaceCommentThreadPick>>>(() => {
+    const handed = inheritedCommentState<Readonly<Record<string, SpaceCommentThreadPick>>>(viewToken, handoverId);
+    if (handed) return handed;
+    const stored = readCommentDraft(toKey)?.place as SpaceCommentThreadPick | undefined;
+    const writing = hasDraftContent(readCommentDraft(commentDraftKey(pickKey || null, 'new')))
+      || hasDraftContent(readCommentDraft(commentDraftKey(pickKey || null, 'passage')));
+    return stored && writing ? { [pickKey]: stored } : {};
+  });
+  useCommentHandover<Readonly<Record<string, SpaceCommentThreadPick>>>(viewToken, handoverId, () => picks, setPicks);
   const newPick = picks[pickKey] ?? null;
+  const pickHeld = useRef(false);
+  useEffect(() => {
+    if (!newPick && !pickHeld.current) return;
+    pickHeld.current = Boolean(newPick);
+    writeCommentDraft(toKey, { place: newPick ?? undefined });
+  }, [toKey, newPick]);
   const setNewPick = useCallback((pick: SpaceCommentThreadPick | null, key: string) => setPicks(current => {
     if (pick) return { ...current, [key]: pick };
     if (!(key in current)) return current;

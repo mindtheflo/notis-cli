@@ -240,10 +240,9 @@ export function agentIdentityHeaders(runtime, options = {}) {
   try {
     identity = validateAgentIdentity(raw);
   } catch {
-    // A declaration that breaks the rules is sent as written, with no kept id: where declarations count (unified
-    // comments on) the routes that read them (tools, Space data and actions, document restores and removes) refuse
-    // the call with invalid_agent_identity, reads included; elsewhere it is ignored, so a stray NOTIS_AGENT_NAME never
-    // breaks a person without unified comments.
+    // A declaration that breaks the rules is sent as written, with no kept id: the routes that read declarations
+    // (tools, Space data and actions, document restores and removes) refuse the call with invalid_agent_identity,
+    // reads included. The server is the one judge, so the CLI never refuses it first.
     return rawIdentityHeaders(raw);
   }
   if (!identity) return {};

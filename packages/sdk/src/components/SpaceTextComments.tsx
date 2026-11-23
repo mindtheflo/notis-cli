@@ -2,7 +2,7 @@
 /**
  * Text comments on every Space page (SPC-118 text mode): Comment on selected words (the shared selection bar, next to
  * Cite) and the highlights of the page's open text comments. Both need the host comment store
- * (`runtime.spaceComments`, on while `unified_comments` is); without it the page shows Cite alone and no highlights.
+ * (`runtime.spaceComments`); without it the page shows Cite alone and no highlights.
  *
  * A text comment keeps its words with up to 40 characters before and after them. The highlights find those words
  * again in the page as it is now (white space ignored, the surrounding words telling apart several matches); words
@@ -138,10 +138,19 @@ function usePageTextComments(transport: SpaceCommentsTransport | undefined): Spa
     if (!store) { setRows([]); return undefined; }
     let live = true;
     let seq = 0;
+    // The Space home: its open comments are among the Space's open threads, which the home's pane reads by thread
+    // (`threads`). The highlights read that same copy, never every comment of the home (Done and deleted ones too).
+    // A host without that read, or whose server cannot answer it (null), lists the home as before.
+    let byThread = page === null && typeof store.threads === 'function';
+    const list = (mine: number) => store.list({ page }).then(answer => {
+      if (live && mine === seq) setRows(Array.isArray(answer?.comments) ? answer.comments : []);
+    }, () => undefined);
     const read = () => {
       const mine = ++seq;
-      store.list({ page }).then(answer => {
-        if (live && mine === seq) setRows(Array.isArray(answer?.comments) ? answer.comments : []);
+      if (!byThread || !store.threads) { void list(mine); return; }
+      store.threads({}).then(answer => {
+        if (!answer) { byThread = false; void list(mine); return; }
+        if (live && mine === seq) setRows((Array.isArray(answer.comments) ? answer.comments : []).filter(row => row.page_key == null));
       }, () => undefined);
     };
     // The first read waits for the page to go idle: a Space open never contends with the highlights' read and drawing
@@ -152,7 +161,7 @@ function usePageTextComments(transport: SpaceCommentsTransport | undefined): Spa
     const idleRead = idleWindow ? idleWindow.requestIdleCallback(read, { timeout: 1500 }) : null;
     const timer = idleWindow ? null : setTimeout(read, 0);
     let stop: (() => void) | undefined;
-    try { stop = store.subscribe({ page }, read); } catch { /* no live feed */ }
+    try { stop = store.subscribe({ page: byThread ? 'all' : page }, read); } catch { /* no live feed */ }
     return () => {
       live = false;
       if (idleRead !== null) cancelIdle?.call(idleWindow, idleRead);

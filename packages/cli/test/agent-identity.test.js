@@ -153,8 +153,8 @@ test('httpRequest sends the declared agent, and a bad declaration as written for
     assert.equal(seen[2][AGENT_NAME_HEADER], 'john-trash');
     assert.ok(seen[2][AGENT_ID_HEADER]);
     assert.equal(seen[3][AGENT_ID_HEADER], seen[2][AGENT_ID_HEADER]);
-    // A name that breaks the rule never stops a command (reads, a person without unified comments): it goes as
-    // written, with no kept id, and the backend answers invalid_agent_identity where declarations count.
+    // A name that breaks the rule is never refused by the CLI: it goes as written, with no kept id, and the backend
+    // answers invalid_agent_identity.
     assert.equal(refused, null);
     assert.equal(seen[4][AGENT_NAME_HEADER], 'Claude%20Code');
     assert.equal(seen[4][AGENT_ID_HEADER], undefined);

@@ -43,7 +43,8 @@ export type { SpaceAgentDeclaration, SpaceItemThread, SpaceAgentQueue, SpaceAgen
   SpaceThreadItemKind, SpaceThreadItem, SpaceThreadItemRun, SpaceThreadItemTransport,
   SpaceCommentSource, SpaceCommentsTransport, SpaceCommentViewer, SpaceCommentThreadRef, SpaceCommentThreadPick,
   SpaceCommentAnchor, SpaceCommentAttachment, SpaceCommentChange, SpaceCommentFile, SpaceCommentInsert, SpaceCommentMode,
-  SpaceCommentNeeds, SpaceCommentPage, SpaceCommentPageKey, SpaceCommentReply, SpaceCommentRow, SpaceCommentStatus } from './space';
+  SpaceCommentNeeds, SpaceCommentPage, SpaceCommentPageKey, SpaceCommentReply, SpaceCommentRow, SpaceCommentStatus,
+  SpaceCommentThreadsAnswer, SpaceCommentThreadsInput } from './space';
 export { SpaceActionError, SpaceNavigationCancelled, isSpaceNavigationCancelled } from './space';
 export { spaceAudience, spaceMarksEditorsOnly, publicSpaceDescriptor, withoutEditorColumns } from './space';
 export type { SpaceAudience, SpaceEditorsOnly, SpaceResourceColumns, EditorOnlyColumns, AudienceRow } from './space';

@@ -180,15 +180,22 @@ function Demo({ ctx, empty = false, draft, routing = false, toolBar }: {
 }
 
 /** The Space home: no scope, so the pane lists every comment of the Space, grouped by page. */
-function HomeDemo({ ctx }: { ctx: Ctx }) {
+function HomeDemo({ ctx, part = false }: { ctx: Ctx; part?: boolean }) {
   const runtime = useMemo(() => commentRuntime(ctx.lang), [ctx.lang]);
   const seeded = useMemo(() => rows(ctx.lang, HOME_SEEDS), [ctx.lang]);
-  return <HostCommentsProvider runtime={runtime} rows={seeded}><HomePane /></HostCommentsProvider>;
+  return <HostCommentsProvider runtime={runtime} rows={seeded}>{part ? <PartPane /> : <HomePane />}</HostCommentsProvider>;
 }
 
 function HomePane() {
   const controller = useComments({ scopeNames: { 'deck-1': 'Q3 review', 'deck-2': 'Launch' } });
   return <div style={{ maxWidth: 360 }}><CommentPane controller={controller} /><HostPanelSlot /></div>;
+}
+
+/** A part of the Space's comments (`only`), every page under its heading, drawn by the host itself. */
+const PART_THREADS = ['h4'];
+function PartPane() {
+  const controller = useComments({ scopeNames: { 'deck-1': 'Q3 review', 'deck-2': 'Launch' }, only: PART_THREADS });
+  return <div style={{ maxWidth: 360 }}><CommentPane controller={controller} groupHeadings="always" /><HostPanelSlot hostDrawn /></div>;
 }
 
 function PicturesDemo({ ctx }: { ctx: Ctx }) {
@@ -294,7 +301,7 @@ export const specimen = defineSpecimen({
   group: 'blocks',
   from: '@notis/sdk/ui',
   covers: ['CommentPane', 'CommentPins', 'CommentFileChips',
-    'CommentAttachButton', 'CommentDropVeil', 'CommentAgentSource', 'CommentAgentBadge', 'CommentToolBar'],
+    'CommentAttachButton', 'CommentDropVeil', 'CommentAgentSource', 'CommentAgentBadge', 'CommentToolBar', 'CommentPaneOutlet'],
   summary: 'Review comments on a page: pins, zones and whole-item comments with replies, pictures and files (pasted, dropped or picked before Send), asks the agent waits on (answered from under a picture), Archive (E) with Undo, the Open, Done and All filter, Edit and Delete by your rights, where a reply goes, the New comment modes and the page tool bar (C), and Copy changes. Each card names the thread that owns it once at its top; a comment an agent wrote is signed with its name (a band name reads "Fred And The Machine") and its harness logo, whose hover card says what it ran on.',
   states: [
     {
@@ -343,6 +350,11 @@ export const specimen = defineSpecimen({
       id: 'space-home',
       label: 'The Space home groups comments by page; an edited comment and a deleted reply',
       render: ctx => <HomeDemo ctx={ctx} />,
+    },
+    {
+      id: 'space-part',
+      label: 'A part of a Space\'s comments (those of one conversation), its page named above it; the host draws the pane itself, so it stays when the page is published again',
+      render: ctx => <HomeDemo ctx={ctx} part />,
     },
     {
       id: 'pictures',
