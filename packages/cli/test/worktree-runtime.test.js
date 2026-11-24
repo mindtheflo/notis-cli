@@ -215,6 +215,28 @@ test('CLI selects the active local-only runtime and ignores inherited remote cre
   });
 });
 
+test('CLI reads the worktree token from notis-runtime-secrets.json of the same dev session', () => {
+  const expectedUserId = '5a41ca1b-0d25-4111-baa3-fcc1a10e3092';
+  // dev.sh now writes a lease without any token; the token lives in its secrets file.
+  const { root, home, context } = makeWorktree('notis-worktree-secrets-', {
+    expectedUserId,
+    devJwt: undefined,
+    lease: { dev_session_id: 'session-a' },
+  });
+  const secretsFile = join(context, 'notis-runtime-secrets.json');
+  writeFileSync(secretsFile, JSON.stringify({ dev_session_id: 'session-b', dev_access_token: makeJwt(expectedUserId) }));
+  const stale = runRuntimeProbe(root, { HOME: home });
+  assert.notEqual(stale.status, 0, 'secrets of another dev session are never borrowed');
+  assert.equal(JSON.parse(stale.stdout).code, 'dev_runtime_unavailable');
+
+  writeFileSync(secretsFile, JSON.stringify({ dev_session_id: 'session-a', dev_access_token: makeJwt(expectedUserId) }));
+  const result = runRuntimeProbe(root, { HOME: home });
+  assert.equal(result.status, 0, result.stderr);
+  const runtime = JSON.parse(result.stdout);
+  assert.equal(runtime.jwt, makeJwt(expectedUserId));
+  assert.equal(runtime.credentialSource, 'worktree');
+});
+
 test('CLI accepts an active worktree supervisor hidden by a sandbox EPERM probe', () => {
   const expectedUserId = 'approved-test-user';
   const inaccessiblePid = 424_242;

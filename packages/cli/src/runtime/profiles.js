@@ -40,6 +40,9 @@ const LEGACY_DESKTOP_PROFILE_KEYS = [
   'desktop_pid',
 ];
 const WORKTREE_RUNTIME_FILENAME = join('.context', 'notis-runtime.json');
+// dev.sh keeps the lease's session tokens beside it in a mode-0600 file whose name says
+// it holds secrets; notis-runtime.json itself holds none.
+const WORKTREE_RUNTIME_SECRETS_FILENAME = 'notis-runtime-secrets.json';
 const WORKTREE_ROUTING_FILENAME = join('.context', 'notis-routing.json');
 // WHATWG URL keeps the brackets of an IPv6 hostname: `new URL('http://[::1]:8123').hostname` is '[::1]'.
 const LOCAL_API_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -341,10 +344,17 @@ export function resolveWorktreeRuntime(startDir = process.cwd()) {
   }
 
   const runtime = readJsonFile(runtimePath);
+  const secrets = readJsonFile(join(dirname(runtimePath), WORKTREE_RUNTIME_SECRETS_FILENAME));
+  // The secrets of this same dev session win; a lease from an older dev.sh still carries
+  // its token itself (kept as a fallback for one release).
+  const sessionSecrets =
+    secrets && runtime && secrets.dev_session_id === runtime.dev_session_id ? secrets : null;
   const apiBase = typeof runtime?.api_base === 'string' ? runtime.api_base.replace(/\/+$/, '') : '';
   const profile = typeof runtime?.profile === 'string' ? runtime.profile.trim() : '';
   const devAccessToken =
-    typeof runtime?.dev_access_token === 'string' ? runtime.dev_access_token.trim() : '';
+    typeof sessionSecrets?.dev_access_token === 'string' && sessionSecrets.dev_access_token.trim()
+      ? sessionSecrets.dev_access_token.trim()
+      : typeof runtime?.dev_access_token === 'string' ? runtime.dev_access_token.trim() : '';
   const desktopDeepLinkScheme =
     typeof runtime?.desktop_deep_link_scheme === 'string'
       ? runtime.desktop_deep_link_scheme.trim()
