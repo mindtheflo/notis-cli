@@ -17,7 +17,7 @@ const EXPOSURES = ['page', 'api', 'agents'];
 const ROLES = ['public', 'viewer', 'editor', 'key'];
 const LEVELS = ['read', 'shell'];
 export const THREAD_OPERATIONS = Object.freeze(['archive', 'unarchive', 'read', 'unread', 'star', 'unstar', 'later', 'back']);
-export const THREAD_HOOK_EVENTS = Object.freeze([...THREAD_OPERATIONS, 'delete']);
+export const THREAD_HOOK_EVENTS = Object.freeze([...THREAD_OPERATIONS, 'delete', 'idle']);
 const FUNCTION_FIELDS = ['description', 'kind', 'input', 'output', 'expose', 'access', 'uses', 'handler'];
 const USES_FIELDS = ['actions', 'cloudComputer', 'threads'];
 // Field names a hook's or a comment option's function must take: the server compares the whole schema.
@@ -109,8 +109,10 @@ export function validateSpaceFunctions(definition, { entry } = {}) {
     if (!hasItems) throw usageError("threadHooks follow the threads this Space's items are attached to: declare threadItems first.");
     for (const [event, name] of Object.entries(threadHooks)) {
       if (typeof name !== 'string' || !Object.hasOwn(functions, name)) throw usageError(`Thread hook ${event} names a function this Space does not declare.`);
-      if (inputFields(functions[name]) !== HOOK_INPUT_FIELDS) {
-        throw usageError(`Function ${name} runs as a thread hook: declare its input as threadHookInput from @notis/sdk.`);
+      const idle = event === 'idle';
+      if (inputFields(functions[name]) !== (idle ? 'actor,event,items,run_id,thread' : HOOK_INPUT_FIELDS)) {
+        const schema = idle ? 'threadIdleInput' : 'threadHookInput';
+        throw usageError(`Function ${name} runs as a thread hook: declare its input as ${schema} from @notis/sdk.`);
       }
     }
   }

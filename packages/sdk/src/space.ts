@@ -1088,7 +1088,7 @@ export interface SpaceDefinition {
   /**
    * The function that runs after a built-in thread action (archive, read, star, Later, delete and their opposites)
    * on a thread one of this Space's items is attached to. The action itself never waits for it. Its `input` is
-   * `threadHookInput`.
+   * `threadHookInput`, or `threadIdleInput` for the idle hook.
    */
   threadHooks?: Partial<Record<import('./functions').SpaceThreadHookEvent, string>>;
   /**

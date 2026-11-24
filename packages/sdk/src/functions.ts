@@ -39,7 +39,7 @@ export type SpaceFunctionRole = 'public' | 'viewer' | 'editor' | 'key';
 /** Notis's built-in thread actions a function may run, only on a thread one of the Space's items is attached to. */
 export type SpaceThreadOperation = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar' | 'later' | 'back';
 /** The built-in thread actions a Space can follow with a function (`threadHooks`). */
-export type SpaceThreadHookEvent = SpaceThreadOperation | 'delete';
+export type SpaceThreadHookEvent = SpaceThreadOperation | 'delete' | 'idle';
 
 export interface SpaceFunctionUses {
   /** This Space's declared `actions`, run through the sealed action pipeline with the caller as the actor. */
@@ -95,6 +95,17 @@ export const threadHookInput = {
   },
 } satisfies SpaceFunctionDeclaration['input'];
 
+/** Input for the idle hook after the thread finishes its current work. */
+export const threadIdleInput = {
+  ...threadHookInput,
+  required: [...threadHookInput.required, 'run_id'],
+  properties: {
+    ...threadHookInput.properties,
+    event: { type: 'string', enum: ['idle'] },
+    run_id: { type: 'string' },
+  },
+} satisfies SpaceFunctionDeclaration['input'];
+
 /**
  * The `input` of the function a thread item kind settles with (`threadItems.<kind>.settle`): copy it as written.
  * Notis runs it once when an item of that kind first reaches a final state, with the item and its thread.
@@ -137,12 +148,16 @@ export interface SpaceFunctionThread {
 }
 /** What a thread hook's function receives: the built-in action that just happened, and who did it. */
 export interface SpaceThreadHookInput {
-  event: SpaceThreadHookEvent;
+  event: Exclude<SpaceThreadHookEvent, 'idle'>;
   /** The person, one of their agents, or Notis itself (an automatic change, or another function's thread action). */
   actor: 'person' | 'agent' | 'notis';
   thread: SpaceFunctionThread;
   /** This Space's items attached to the thread. */
   items: SpaceFunctionThreadItem[];
+}
+export interface SpaceThreadIdleInput extends Omit<SpaceThreadHookInput, 'event'> {
+  event: 'idle';
+  run_id: string;
 }
 /** What a thread item kind's settle function receives: the item that reached a final state, and its thread. */
 export interface SpaceThreadSettleInput {

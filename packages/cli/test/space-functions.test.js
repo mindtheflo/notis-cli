@@ -53,7 +53,7 @@ test('a function outside the contract is refused before the build', () => {
   assert.throws(() => check({ threadHooks: { archive: 'x' } }), /declare functions first/);
 });
 
-test('a Space config takes threadHookInput, threadSettleInput and commentOptionInput from @notis/sdk/config', async () => {
+test('a Space config takes the thread hook, idle and settle schemas and commentOptionInput from @notis/sdk/config', async () => {
   const project = mkdtempSync(join(tmpdir(), 'notis-functions-config-'));
   try {
     // The project's own SDK package, as a scaffold installs it: its built entry holds the schema values.
@@ -62,13 +62,15 @@ test('a Space config takes threadHookInput, threadSettleInput and commentOptionI
     writeFileSync(join(sdk, 'package.json'), JSON.stringify({ name: '@notis/sdk', type: 'module',
       exports: { '.': { node: './index.js' }, './config': './config.ts' } }));
     writeFileSync(join(sdk, 'index.js'), "export const threadHookInput = { type: 'object', hook: true };\n"
+      + "export const threadIdleInput = { type: 'object', idle: true };\n"
       + "export const threadSettleInput = { type: 'object', settle: true };\n"
       + "export const commentOptionInput = { type: 'object', option: true };\n");
     writeFileSync(join(project, 'notis.config.ts'), [
-      "import { defineSpace, threadHookInput, threadSettleInput, commentOptionInput as optionInput } from '@notis/sdk/config';",
-      'export default defineSpace({ hook: threadHookInput, settle: threadSettleInput, option: optionInput });', ''].join('\n'));
+      "import { defineSpace, threadHookInput, threadIdleInput, threadSettleInput, commentOptionInput as optionInput } from '@notis/sdk/config';",
+      'export default defineSpace({ hook: threadHookInput, idle: threadIdleInput, settle: threadSettleInput, option: optionInput });', ''].join('\n'));
     assert.deepEqual(await loadAppConfig(project),
-      { hook: { type: 'object', hook: true }, settle: { type: 'object', settle: true }, option: { type: 'object', option: true } });
+      { hook: { type: 'object', hook: true }, idle: { type: 'object', idle: true },
+        settle: { type: 'object', settle: true }, option: { type: 'object', option: true } });
     writeFileSync(join(project, 'notis.config.ts'), "import { definePage } from '@notis/sdk/config';\nexport default definePage({});\n");
     await assert.rejects(loadAppConfig(project), /Unsupported configuration helper: definePage/);
   } finally { rmSync(project, { recursive: true, force: true }); }
@@ -83,6 +85,7 @@ test('hooks and comment options name functions with their own input', () => {
   assert.throws(() => check(definition({ threadHooks: { rename: 'clean_workspace' } })), /threadHooks/);
   assert.throws(() => check(definition({ threadHooks: { archive: 'missing' } })), /does not declare/);
   assert.throws(() => check(definition({ threadHooks: { archive: 'settle_thread' } })), /threadHookInput/);
+  assert.throws(() => check(definition({ threadHooks: { idle: 'clean_workspace' } })), /threadIdleInput/);
   assert.throws(() => check(definition({ commentOptions: { approve: { label: 'Approve', function: 'settle_thread' } } })), /commentOptionInput/);
   assert.throws(() => check(definition({ commentOptions: { approve: { label: 'Approve', function: 'approve_change' },
     accept: { label: 'Approve', function: 'approve_change' } } })), /repeats/);

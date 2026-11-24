@@ -1,7 +1,7 @@
 export { defineSpace, defineSpaces } from './space';
 export type { SpaceDefinition, SpacesWorkspace, SpaceActionTemplate, SpaceResourceReference, SpaceDatabaseCreate, SpaceStore } from './space';
 export type { SpaceViewParam, SpaceViewParamType, SpaceShows, SpaceMemoryPolicy, SpaceMemorySnapshot, SpaceChrome, SpaceMarkdownInput } from './space';
-export { threadHookInput, threadSettleInput, commentOptionInput } from './functions';
+export { threadHookInput, threadIdleInput, threadSettleInput, commentOptionInput } from './functions';
 export type { SpaceFunctionDeclaration, SpaceFunctionHandler, SpaceFunctionContext } from './functions';
 
 /**
