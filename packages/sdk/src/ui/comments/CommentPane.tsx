@@ -28,7 +28,8 @@
  */
 
 import React, {
-  useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
+  useEffect, useRef, useState, type CSSProperties, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent, type ReactNode,
 } from 'react';
 import type { KeySpec, Words } from '../../words';
 import { ActionToast } from '../actions/ActionToast';
@@ -53,6 +54,7 @@ import { commentDraftKey, readHostDraftFiles, useCommentDraftText, writeHostDraf
 import { useRevealOnOpen } from './scrollReveal';
 import { usePassageChanged } from './textHighlights';
 import { useSwipeDownToDismiss } from '../../interactions/swipeDownToDismiss';
+import { useTextBoxTwoState } from '../../interactions/textBoxTwoState';
 import { CommentAttachButton, CommentDropVeil, CommentFileChips, useCommentFiles, type CommentFilesState } from './commentFiles';
 import { createPortal } from 'react-dom';
 import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
@@ -261,6 +263,31 @@ export interface CommentThreadCardProps {
   onSelect?(thread: CommentThread): void;
 }
 
+const composeOf = (holder: HTMLElement) => holder.querySelector<HTMLElement>('.nui-comment-compose');
+
+/**
+ * The frame of one of the pane's own one-line fields: a reply where the host draws no comment box, and the answer to
+ * a question. On a phone it has the two states of a text box, as the host's boxes (`textBoxTwoState.ts`; drawn in
+ * toolkit.css from `data-composer-state`): one line at rest, a draft folded to its first line; with the focus the text
+ * on top at the full width and the buttons on a line of their own. A computer keeps its one line.
+ */
+function OwnTextBox({ hasDraft, hold = false, children, ...rest }: {
+  hasDraft: boolean;
+  /** Being sent: the field stays in the state it was in. */
+  hold?: boolean;
+  children: ReactNode;
+} & Omit<HTMLAttributes<HTMLDivElement>, 'children'>) {
+  const box = useTextBoxTwoState<HTMLDivElement>({ enabled: true, phoneOnly: true, hasDraft, hold, looksAgain: true, surfaceOf: composeOf });
+  // Folded, the one line is the draft's first: the field goes back to its top.
+  const { state } = box;
+  useEffect(() => {
+    if (state !== 'rest') return;
+    const field = box.bind.ref.current?.querySelector('textarea');
+    if (field) field.scrollTop = 0;
+  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <div {...rest} data-swipe-dismiss="" {...box.bind}>{children}</div>;
+}
+
 /** Your own comment's text, edited in place: Enter saves, Shift+Enter adds a line, Escape cancels. */
 function CommentEditBox({ controller, comment, onDone }: {
   controller: CommentController; comment: CommentRecord; onDone: () => void;
@@ -391,7 +418,7 @@ function CommentAsk({ controller, thread, comment, onOther, enter, mark }: {
           {mark ?? null}
         </p>
       ) : comment.needs === 'input' ? (
-        <div className="nui-comment-ask-answer" data-swipe-dismiss="">
+        <OwnTextBox className="nui-comment-ask-answer" hasDraft={Boolean(answerText.trim())} hold={sending || busy}>
           <div className="nui-comment-compose">
             <textarea ref={answerRef} className="nui-comment-input" value={answerText} rows={1}
               placeholder={controller.say('answerPlaceholder')} aria-label={controller.say('answerPlaceholder')}
@@ -409,7 +436,7 @@ function CommentAsk({ controller, thread, comment, onOther, enter, mark }: {
               accept="text/*,.md,.txt,.csv,.json"
               onChange={event => { void attach(event.target.files?.[0]); event.target.value = ''; }} />
           </div>
-        </div>
+        </OwnTextBox>
       ) : rowChoices.length ? (
         <div className="nui-comment-options" role="group" aria-label={needsLabel}>
           {rowChoices.map((choice, index) => {
@@ -888,7 +915,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
       <div className="nui-comment-reply-box" data-hosted={replySlot ? '' : undefined} onClick={stop} onKeyDown={stop}>
         <span ref={replyMarker} className="nui-comment-box-marker" aria-hidden="true" />
         {replySlot ? <slot name={replySlot} /> : (
-        <div className="nui-comment-compose-box" data-swipe-dismiss="" data-dragging={files.dragging ? '' : undefined} {...files.boxHandlers}>
+        <OwnTextBox className="nui-comment-compose-box" hasDraft={Boolean(draft.trim()) || files.drafts.length > 0} hold={sending}
+          data-dragging={files.dragging ? '' : undefined} {...files.boxHandlers}>
           <CommentFileChips controller={controller} files={files} />
           <div className="nui-comment-compose">
             <textarea
@@ -906,7 +934,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
               onClick={() => void send()} />
           </div>
           <CommentDropVeil controller={controller} files={files} />
-        </div>
+        </OwnTextBox>
         )}
       </div>
     </article>

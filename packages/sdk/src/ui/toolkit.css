@@ -1798,6 +1798,24 @@ button.nui-comment-to:hover { background: hsl(var(--foreground) / .1); }
   .nui-comment-compose > .nui-comment-input, .nui-comment-compose > .nui-comment-input:hover { min-height: 40px; padding: 8px 12px;
     border-radius: 20px; }
   .nui-comment-input { box-sizing: border-box; min-height: 44px; padding: 10px 14px; border-radius: 22px; font-size: 16px; }
+  /* The two states of a text box (docs/portal-design-system.md, "Two states of a text box"): on a phone the pane's own
+     one-line fields (a reply where the host draws no comment box, the answer to a question) follow the host's boxes.
+     Their frame carries data-composer-state (CommentPane `OwnTextBox`, interactions/textBoxTwoState.ts). At rest one
+     line, 50px tall (7px around a 36px line), a draft folded to its first line. With the focus the text takes the
+     full width on top and the buttons a line of their own under it, attach on the left and Send on the right: 92px
+     for one line of text, as the chat box. The height follows the state from the same hook. */
+  /* border-box: the height's move between the two states is given in the frame's own measure (padding included). */
+  [data-composer-state] > .nui-comment-compose { box-sizing: border-box; align-items: center; gap: 6px 4px; padding: 7px 6px;
+    border-radius: 25px; }
+  [data-composer-state] > .nui-comment-compose > .nui-comment-input,
+  [data-composer-state] > .nui-comment-compose > .nui-comment-input:hover { min-height: 36px; padding: 6px 14px; border-radius: 18px; }
+  [data-composer-state] > .nui-comment-compose > .nui-comment-icon-btn { width: 36px; min-width: 36px; height: 36px; }
+  [data-composer-state="rest"] > .nui-comment-compose > .nui-comment-input { height: 36px; max-height: 36px; overflow: hidden;
+    white-space: nowrap; }
+  [data-composer-state="open"] > .nui-comment-compose { flex-wrap: wrap; }
+  [data-composer-state="open"] > .nui-comment-compose > .nui-comment-input,
+  [data-composer-state="open"] > .nui-comment-compose > .nui-comment-input:hover { flex: 1 0 100%; padding-inline: 4px; }
+  [data-composer-state="open"] > .nui-comment-compose > .nui-comment-icon-btn:last-child { margin-inline-start: auto; }
   .nui-comment-file { height: 44px; }
   .nui-comment-file-btn { width: 40px; height: 40px; border-radius: 50%; }
   .nui-comment-tool { width: 40px; height: 40px; }

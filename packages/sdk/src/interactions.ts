@@ -51,3 +51,14 @@ export {
   installSwipeDownToDismiss,
   useSwipeDownToDismiss,
 } from './interactions/swipeDownToDismiss';
+export {
+  TEXT_BOX_FOLD_DELAY_MS,
+  TEXT_BOX_OUTSIDE_PARTS,
+  TEXT_BOX_STATE_MS,
+  foldOnceFocusLeft,
+  textBoxOpen,
+  useHeightFollowsState,
+  useTextBoxTwoState,
+  useWideScreen,
+} from './interactions/textBoxTwoState';
+export type { TextBoxTwoState, TextBoxTwoStateOptions } from './interactions/textBoxTwoState';
