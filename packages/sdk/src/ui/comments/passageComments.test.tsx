@@ -346,6 +346,32 @@ test('CommentableRichText: the Comment button goes with its selection, and comes
   assert.equal(button(label), undefined);
 });
 
+test('CommentableRichText: a whole paragraph selected by clicking, ending at the next block, keeps Comment on its words (MGR-610)', async () => {
+  await mount(<Harness rich={<div>Hi there, this week brings three new things.</div>} />, fakeRuntime(ROWS, []));
+  const text = doc.querySelector('.nui-passage-rich-text > div')!;
+  // The next block, right after the text's own box.
+  const after = doc.createElement('p');
+  after.textContent = 'Outside the text';
+  text.parentElement!.insertAdjacentElement('afterend', after);
+  try {
+    // Three clicks (or a double click that selects a sentence) end the browser's range at the next block's start.
+    const range = doc.createRange();
+    range.setStart(text.firstChild!, 0);
+    range.setEnd(after, 0);
+    const selection = dom.window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await fire(text, new dom.window.MouseEvent('mouseup', { bubbles: true }));
+    await fire(doc as unknown as Element, new dom.window.Event('selectionchange'));
+    const comment = button('Comment on the selected text');
+    assert.ok(comment, 'the paragraph offers Comment');
+    await fire(comment!, new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(current!.draft?.quote, 'Hi there, this week brings three new things.');
+  } finally {
+    after.remove();
+  }
+});
+
 test('On a touch screen the Comment button comes back once the selection handles stop moving (SPC-470)', async () => {
   const win = dom.window as unknown as { matchMedia?: (query: string) => unknown };
   const saved = win.matchMedia;

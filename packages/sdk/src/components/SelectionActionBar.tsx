@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useToolkitLocale } from '../ui/engine/hooks';
 import type { Words } from '../words/types';
+import { trimRange } from './selectionRange';
 
 /**
  * The floating bar on selected text (truths PRT-087, PRT-090, PRT-094): one dark labelled pill at the end of the
@@ -149,7 +150,8 @@ export function useSelectionAnchor(root: RefObject<HTMLElement | null>, options:
     const selection = selectionIn(node);
     if (!selection?.rangeCount || selection.isCollapsed || !selection.toString().trim()) return null;
     const live = selection.getRangeAt(0);
-    let range: Range | null = live.cloneRange();
+    // A paragraph selection ends at the next block's start, often outside the surface: read it up to its last word.
+    let range: Range | null = trimRange(live.cloneRange());
     const clipped = !node.contains(range.startContainer) || !node.contains(range.endContainer);
     if (clipped) {
       // A selection in another tree (the page around a Space's shadow root) cannot be compared with this one.

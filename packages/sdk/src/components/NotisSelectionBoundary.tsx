@@ -3,6 +3,7 @@ import React, { useCallback } from 'react';
 import { useNotisRuntime } from '../provider';
 import type { ContextResource, ContextSelection, NotisRuntime } from '../runtime';
 import { newSelectionId } from './selectionId';
+import { trimRange } from './selectionRange';
 
 export const NOTIS_CONTEXT_CLIPBOARD_TYPE = 'application/x-notis-context+json';
 
@@ -14,10 +15,10 @@ export interface NotisSelectionBoundaryProps {
 }
 
 /** The selection's markup for other paste targets: hidden parts dropped, links made absolute. */
-function selectionHtml(selection: Selection): string {
+function selectionHtml(ranges: Range[]): string {
   if (typeof document === 'undefined') return '';
   const container = document.createElement('div');
-  for (let index = 0; index < selection.rangeCount; index += 1) container.appendChild(selection.getRangeAt(index).cloneContents());
+  for (const range of ranges) container.appendChild(range.cloneContents());
   container.querySelectorAll('[hidden],script,style,template').forEach(node => node.remove());
   container.querySelectorAll('[href],[src]').forEach(node => {
     for (const name of ['href', 'src']) {
@@ -48,18 +49,25 @@ export function addCopiedSelectionToClipboard(
   if (event.clipboardData.getData(NOTIS_CONTEXT_CLIPBOARD_TYPE)) return null;
   const scope = boundary.getRootNode() as ShadowRoot & { getSelection?: () => Selection | null };
   const selection = scope?.getSelection?.() || window.getSelection();
-  if (!selection || !boundary.contains(selection.anchorNode) || !boundary.contains(selection.focusNode)) return null;
+  if (!selection?.rangeCount) return null;
+  // A paragraph selected by clicking ends at the next block's start, often past the boundary: its words are still here.
+  const live = selection.getRangeAt(0);
+  const range = trimRange(live);
+  if (!boundary.contains(range.startContainer) || !boundary.contains(range.endContainer)) return null;
   const editorWrote = event.nativeEvent?.defaultPrevented ?? event.defaultPrevented;
   const wrotePlain = editorWrote ? event.clipboardData.getData('text/plain') : '';
   // A handler that cancelled the copy and wrote nothing at all blocked it: quote nothing.
   if (editorWrote && !wrotePlain && !event.clipboardData.getData('text/html')) return null;
-  const text = wrotePlain || selection.toString();
+  // A paragraph selected by clicking is copied as its words, without the next block it reaches into.
+  const trimmed = range !== live && selection.rangeCount === 1;
+  const ranges = trimmed ? [range] : Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index));
+  const text = wrotePlain || (trimmed ? range.toString() : selection.toString());
   if (!text.trim()) return null;
 
   const payload: ContextSelection = { ...context, id: newSelectionId(), text };
   if (!editorWrote) {
     // Keep the copied formatting (links, bold, tables) for every other paste target.
-    const html = selectionHtml(selection);
+    const html = selectionHtml(ranges);
     event.clipboardData.setData('text/plain', text);
     if (html) event.clipboardData.setData('text/html', html);
     event.preventDefault();

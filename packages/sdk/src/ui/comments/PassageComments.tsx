@@ -35,6 +35,7 @@ import {
   PASSAGE_COMMENT_EVENT, SELECTION_BAR_COMMENTS_ATTR, locatePassage, passageAt, type PassageAnchor,
 } from './passageModel';
 import { createPortal } from 'react-dom';
+import { trimRange } from '../../components/selectionRange';
 import { markHostPane, useHostCommentSource, useHostComments } from './hostComments';
 import { useHandedPaneKey } from './handover';
 import { usePaneOutlet } from './paneOutlet';
@@ -347,15 +348,17 @@ function ShownCommentableRichText({ comments, field, children, className }: Comm
     if (!box || !root) return;
     const holder = textHolder(root);
     const selection = selectionOf(root);
-    const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    const live = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    // A paragraph selection ends at the next block's start, outside this text: read it up to its last word.
+    const range = live && trimRange(live);
     readEnds.current = null;
-    if (!range || range.collapsed || !holder.contains(range.startContainer) || !holder.contains(range.endContainer)) {
+    if (!live || !range || range.collapsed || !holder.contains(range.startContainer) || !holder.contains(range.endContainer)) {
       setSelected(null);
       return;
     }
     // The Space page's selection bar shows Comment next to Cite for this text: no second button (SPC-487).
     if (box.closest(`[${SELECTION_BAR_COMMENTS_ATTR}]`)) { setSelected(null); return; }
-    readEnds.current = endsOf(range);
+    readEnds.current = endsOf(live);
     const all = textNodes(holder);
     const { start, end } = rangeOffsets(holder, range);
     const passage = passageAt(all.text, start, end);
