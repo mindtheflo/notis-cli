@@ -33,6 +33,11 @@ export interface ShortcutDefinition {
   allowRepeat?: boolean;
   preventDefault?: boolean;
   stopPropagation?: boolean;
+  /**
+   * Set by a collection that binds its clear key only while something is selected: the binding itself says the
+   * selection is not empty, whichever items are drawn (a windowed list draws only the rows on screen).
+   */
+  whileSelected?: boolean;
   onTrigger: (event: KeyboardEvent) => void | Promise<void>;
 }
 
@@ -223,7 +228,7 @@ function consumeShortcut(event: KeyboardEvent, definition: ShortcutDefinition): 
 // rendered and none selected, leave Escape to the enclosing surface (the Portal
 // closes its frontmost layer, then returns to Inbox).
 function isEmptyCollectionClear(shortcut: ShortcutDefinition, ownerDocument: Document, event: KeyboardEvent): boolean {
-  if (event.key !== 'Escape' || shortcut.id !== 'collection.clear') return false;
+  if (event.key !== 'Escape' || shortcut.id !== 'collection.clear' || shortcut.whileSelected) return false;
   const items = collectionItems(ownerDocument).filter((item) => isInteractionElementVisible(item as HTMLElement));
   return items.length > 0 && !items.some((item) => item.getAttribute('aria-selected') === 'true');
 }

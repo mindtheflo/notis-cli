@@ -31,6 +31,8 @@ import { useLongPressSelection } from './useLongPressSelection';
 import { useMarqueeSelection, type SelectionMarqueeRect } from './useMarqueeSelection';
 
 export const COLLECTION_ITEM_ATTRIBUTE = 'data-notis-collection-item-id';
+/** Frames a revealed item is waited for before its focus is given up (about a third of a second). */
+const REVEAL_FOCUS_FRAMES = 20;
 const LEGACY_ROW_ATTRIBUTE = 'data-notis-row-id';
 const INTERACTIVE_SELECTOR = 'button, a, input, textarea, select, [role="button"], [contenteditable]:not([contenteditable="false"])';
 
@@ -105,6 +107,11 @@ export interface UseCollectionInteractionsOptions<T> {
   shortcutPriority?: number;
   resolveNextId?: (context: CollectionNavigationContext<T>) => string | null;
   onActiveItemChange?: (id: string | null) => void;
+  /**
+   * For a view that draws only part of its items (the rows on screen): brings an item into view so it is drawn.
+   * Called when the item to focus has no element; the controller then focuses it as soon as it is drawn.
+   */
+  revealItem?: (id: string) => void;
   actions?: CollectionAction<T>[];
 }
 
@@ -226,6 +233,7 @@ export function useCollectionInteractions<T>(
     shortcutPriority = 0,
     resolveNextId,
     onActiveItemChange,
+    revealItem,
     actions: actionDefinitions = [],
   } = options;
 
@@ -254,6 +262,7 @@ export function useCollectionInteractions<T>(
   const onActiveItemChangeRef = useRef(onActiveItemChange);
   const onActivateRef = useRef(onActivate);
   const resolveNextIdRef = useRef(resolveNextId);
+  const revealItemRef = useRef(revealItem);
   const containerRef = useRef<HTMLElement | null>(null);
   const [containerElement, setContainerElement] = useState<HTMLElement | null>(null);
   const setContainerRef = useCallback((node: HTMLElement | null) => {
@@ -279,6 +288,7 @@ export function useCollectionInteractions<T>(
   onActiveItemChangeRef.current = onActiveItemChange;
   onActivateRef.current = onActivate;
   resolveNextIdRef.current = resolveNextId;
+  revealItemRef.current = revealItem;
 
   const itemById = useMemo(() => new Map(items.map((item) => [getId(item), item])), [getId, items]);
   const selectableIds = useMemo(
@@ -449,13 +459,52 @@ export function useCollectionInteractions<T>(
     }
   }, [commitSelection, selectableIds, setActive, setAnchor]);
 
+  const pendingRevealRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (pendingRevealRef.current !== null) cancelAnimationFrame(pendingRevealRef.current);
+  }, []);
   const focusItem = useCallback((id: string) => {
-    const nodes = containerRef.current?.querySelectorAll<HTMLElement>(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
-    const node = nodes ? Array.from(nodes).find(
-      (candidate) => candidate.getAttribute(COLLECTION_ITEM_ATTRIBUTE) === id && isInteractionElementVisible(candidate),
-    ) : null;
-    node?.focus({ preventScroll: true });
-    node?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    if (pendingRevealRef.current !== null) {
+      cancelAnimationFrame(pendingRevealRef.current);
+      pendingRevealRef.current = null;
+    }
+    const find = () => {
+      const nodes = containerRef.current?.querySelectorAll<HTMLElement>(`[${COLLECTION_ITEM_ATTRIBUTE}]`);
+      return nodes ? Array.from(nodes).find(
+        (candidate) => candidate.getAttribute(COLLECTION_ITEM_ATTRIBUTE) === id && isInteractionElementVisible(candidate),
+      ) ?? null : null;
+    };
+    const focus = (node: HTMLElement) => {
+      node.focus({ preventScroll: true });
+      node.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    };
+    const node = find();
+    if (node) { focus(node); return; }
+    // A view that draws only the items on screen: ask it to draw this one, then focus it once it is there.
+    // Another focus, the active item moving on, or the person putting focus somewhere else (a field, another
+    // surface) drops the wait.
+    if (!revealItemRef.current || typeof requestAnimationFrame !== 'function') return;
+    // Focus is read in the page and, for a view drawn in a shadow root, inside that root too: the page only sees
+    // the root's host there.
+    const ownerDocument = containerRef.current?.ownerDocument;
+    const root = containerRef.current?.getRootNode();
+    const focusPlace = () => [
+      ownerDocument?.activeElement ?? null,
+      root && root !== ownerDocument && 'activeElement' in root ? (root as ShadowRoot).activeElement : null,
+    ] as const;
+    const before = focusPlace();
+    revealItemRef.current(id);
+    let frames = REVEAL_FOCUS_FRAMES;
+    const retry = () => {
+      pendingRevealRef.current = null;
+      if (activeIdRef.current !== id) return;
+      const now = focusPlace();
+      if ((now[0] && now[0] !== before[0] && now[0] !== ownerDocument?.body) || (now[1] && now[1] !== before[1])) return;
+      const revealed = find();
+      if (revealed) { focus(revealed); return; }
+      if (--frames > 0) pendingRevealRef.current = requestAnimationFrame(retry);
+    };
+    pendingRevealRef.current = requestAnimationFrame(retry);
   }, []);
 
   const focusPointerItem = useCallback((id: string) => {
@@ -545,7 +594,10 @@ export function useCollectionInteractions<T>(
     const extendUp = filterShortcutKeys(keyboard.extendPrevious, (key) => !key.toLowerCase().endsWith('arrowleft'));
     // An empty collection has nothing to dismiss. Let the enclosing surface
     // own Escape (for example Desktop's final Inbox navigation layer).
-    add('collection.clear', 'Clear selection', selectedIds.size > 0 ? keyboard.clear : false, clear);
+    // Bound only while something is selected, so the engine clears it whether or not a selected item is drawn.
+    if (selectedIds.size > 0 && keyboard.clear) {
+      definitions.push({ id: 'collection.clear', label: 'Clear selection', keys: keyboard.clear, onTrigger: clear, whileSelected: true });
+    }
     add('collection.select-all', 'Select all visible items', selectionMode === 'none' ? false : keyboard.selectAll, selectAll);
     add('collection.toggle', 'Toggle active item', selectionMode === 'none' ? false : keyboard.toggle, () => {
       const id = activeIdRef.current ?? anchorIdRef.current;
