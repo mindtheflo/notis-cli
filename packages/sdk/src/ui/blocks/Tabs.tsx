@@ -288,6 +288,7 @@ export function TabRow<V extends string>({
   const focusNext = useRef<string | null>(null);
   const widths = useRef(new Map<string, number>());
   const moreWidth = useRef(MORE_GUESS);
+  const fontsSeen = useRef(false);
   // The pills the row has room for (undefined: all of them), measured from every pill drawn once.
   const [fit, setFit] = useState<number | undefined>(undefined);
   const sizeKey = items.map((item) => [item.id, t(item.label), item.count ?? '',
@@ -340,10 +341,24 @@ export function TabRow<V extends string>({
     setFit((prev) => (prev === next ? prev : next));
   }, []);
 
+  // A row shown again (a kept page React hid with Activity and reveals) re-runs its effects with nothing changed. The
+  // first effect after a reveal skips the measuring below: reading widths there would force the whole revealed page's
+  // first layout inside the commit (~70 ms on a warm rail mode switch); the ResizeObserver set up again below reports
+  // the row once the browser has laid it out, and refits then.
+  const mountedOnce = useRef(false);
+  const revealed = useRef(false);
+  useIsoLayoutEffect(() => {
+    if (mountedOnce.current) revealed.current = true;
+    mountedOnce.current = true;
+  }, []);
+
   // Every render: note the drawn pills' widths (all of them after a label or count changed), then fold to the room.
   // A squeezed active pill counts at its whole width (the part its cut label hides added back): its cut width would
   // make the row look roomy, unfold, fold again and never settle.
   useIsoLayoutEffect(() => {
+    const reveal = revealed.current;
+    revealed.current = false;
+    if (reveal && !measuring && typeof ResizeObserver !== 'undefined') return;
     const strip = stripRef.current;
     const laidOut = !!strip?.parentElement?.parentElement && strip.parentElement.parentElement.clientWidth > 0;
     if (measuring) widths.current.clear();
@@ -365,8 +380,15 @@ export function TabRow<V extends string>({
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => refit()) : null;
     observer?.observe(row);
     let alive = true;
-    // Web fonts change every pill's width: draw them all once more.
-    void row.ownerDocument.fonts?.ready.then(() => { if (alive) setMeasuredKey(null); });
+    // Web fonts change every pill's width: draw them all once more, once per row. A row shown again keeps its widths
+    // (they were taken with the fonts it has now) instead of drawing every pill twice more on each reveal.
+    if (!fontsSeen.current) {
+      void row.ownerDocument.fonts?.ready.then(() => {
+        if (!alive) return;
+        fontsSeen.current = true;
+        setMeasuredKey(null);
+      });
+    }
     return () => { alive = false; observer?.disconnect(); };
   }, [refit]);
 

@@ -2,7 +2,7 @@ import { dom } from '../testDom';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { act, useState, type ReactNode } from 'react';
+import { Activity, act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { KeyboardEngine, KeyboardEngineCore } from '../engine';
@@ -257,6 +257,66 @@ test('TabRow fold: the pills the row has no room for go into More, the active on
       if (descriptor) Object.defineProperty(proto, name, descriptor);
       else delete (proto as unknown as Record<string, unknown>)[name];
     }
+  }
+});
+
+test('TabRow shown again (Activity reveal): no width read in the commit; the ResizeObserver refits after layout', async () => {
+  const proto = dom.window.HTMLElement.prototype;
+  const saved = ['offsetWidth', 'clientWidth'].map((name) => [name, Object.getOwnPropertyDescriptor(proto, name)] as const);
+  const g = globalThis as unknown as Record<string, unknown>;
+  const savedObserver = g.ResizeObserver;
+  const savedFonts = Object.getOwnPropertyDescriptor(doc, 'fonts');
+  let reads = 0;
+  let room = 300;
+  Object.defineProperty(proto, 'offsetWidth', {
+    configurable: true,
+    get(this: HTMLElement) { reads += 1; return this.dataset.itemId !== undefined ? 80 : this.classList.contains('nui-tabrow-more') ? 72 : 0; },
+  });
+  Object.defineProperty(proto, 'clientWidth', {
+    configurable: true, get(this: HTMLElement) { reads += 1; return this.classList.contains('nui-tabrow') ? room : 0; },
+  });
+  // Fonts already loaded: their promise settles at once, as in a page that has been up for a while.
+  Object.defineProperty(doc, 'fonts', { configurable: true, value: { ready: Promise.resolve() } });
+  const observers = new Set<{ fire: () => void }>();
+  g.ResizeObserver = class {
+    private readonly entry: { fire: () => void };
+    constructor(callback: () => void) { this.entry = { fire: callback }; }
+    observe() { observers.add(this.entry); }
+    disconnect() { observers.delete(this.entry); }
+  };
+  try {
+    const Page = ({ mode }: { mode: 'visible' | 'hidden' }) => (
+      <Activity mode={mode}><Harness role="filter" start="spam" /></Activity>
+    );
+    await mount(<Page mode="visible" />);
+    assert.deepEqual(pillIds(), ['inbox', 'spam'], 'folded to the room on the first mount');
+    assert.ok(reads > 0, 'the first mount measures');
+
+    const rerender = async (mode: 'visible' | 'hidden') => {
+      await act(async () => {
+        root!.render(<KeyboardEngine host="preview" locale="en" platform="mac" engine={engine} document={doc} strict><Page mode={mode} /></KeyboardEngine>);
+      });
+    };
+    await rerender('hidden');
+    assert.equal(observers.size, 0, 'a hidden row stops observing');
+    reads = 0;
+    await rerender('visible');
+    assert.equal(reads, 0, 'a reveal reads no width in the commit (it would force the page layout) and draws no pill again');
+    assert.deepEqual(pillIds(), ['inbox', 'spam'], 'the last fold is kept');
+    assert.equal(observers.size, 1, 'the row observes its size again');
+
+    // The browser lays the revealed page out and reports the row: it refits to the room it has now.
+    room = 400;
+    await act(async () => { for (const observer of observers) observer.fire(); });
+    assert.ok(reads > 0, 'the observer callback measures');
+    assert.deepEqual(pillIds(), ['inbox', 'later', 'waiting', 'done', 'spam']);
+  } finally {
+    for (const [name, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(proto, name, descriptor);
+      else delete (proto as unknown as Record<string, unknown>)[name];
+    }
+    if (savedObserver === undefined) delete g.ResizeObserver; else g.ResizeObserver = savedObserver;
+    if (savedFonts) Object.defineProperty(doc, 'fonts', savedFonts); else delete (doc as unknown as Record<string, unknown>).fonts;
   }
 });
 
