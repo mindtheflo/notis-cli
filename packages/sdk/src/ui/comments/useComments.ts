@@ -169,7 +169,11 @@ export interface UseCommentsOptions {
   only?: readonly string[] | null;
 }
 
-export interface CommentController {
+/**
+ * The comment controller. Its actions are on `actions` and, the same functions, on the controller itself
+ * (`controller.answer`, `controller.reply`, ...): a page that draws its own controls may call either (SPC-1465).
+ */
+export interface CommentController extends CommentActions {
   comments: CommentRecord[];
   /** Threads in the scope, deleted ones left out, in anchor order. */
   threads: CommentThread[];
@@ -1471,7 +1475,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     filter: effectiveFilter, setFilter, statusFilter, setStatusFilter, counts, scopeCounts, waitingFilter, setWaitingFilter, waits, waitingCount,
     wholeSpace, groupOf,
     threadKey, setThreadKey, selectThread, revealThread, revealRequest,
-    actions, viewer, canEdit, canDelete, canWrite, routing,
+    ...actions, actions, viewer, canEdit, canDelete, canWrite, routing,
     modes, commentMode, startMode, cancelMode, startItems, placeText, startAnchor, toolBar, setToolBar,
     commenting, setCommenting, toggleCommenting, draftPin, draftScope, placePin, placePinFromEvent, cancelPin, sendNew, sendAt,
     deleting: null, cancelDelete: noop, confirmDelete,

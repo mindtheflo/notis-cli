@@ -915,3 +915,53 @@ test('An agent question in a reply shows its answer controls in the passage pane
     new dom.window.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q1', answer: 'Plain' } });
 });
+
+/**
+ * A question block a Space page draws itself (the spec Spaces' "Decision"): one button per option. Pages written
+ * before and after `actions` call the controller's own `answer` or `actions.answer`; both answer (SPC-1405).
+ */
+function PageAskBlock({ via }: { via: 'controller' | 'actions' }) {
+  const comments = usePassageComments({ fields: FIELDS, values: VALUES,
+    scope: { id: 'issue-1', recordKey: PAGE, name: '10.26', checkpoint: null } });
+  current = comments;
+  const asks = comments.threads(null).flatMap(thread => [thread.root, ...thread.replies])
+    .filter(comment => comment.needs === 'choice' || comment.needs === 'check');
+  return (
+    <div>
+      <PassageCommentPane comments={comments} order="reading" />
+      {asks.map(ask => (
+        <section key={ask.recordKey} data-page-ask={ask.recordKey}>
+          {ask.answer ? <p data-answered>{ask.answer}</p> : ask.options.map(option => (
+            <button key={option} type="button" data-page-option={option}
+              onClick={() => (via === 'controller' ? comments.controller : comments.controller.actions).answer(ask, option)}>
+              {option}
+            </button>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+for (const via of ['controller', 'actions'] as const) {
+  test(`A page-drawn question block answers through ${via === 'controller' ? 'controller.answer' : 'controller.actions.answer'}`, async () => {
+    const calls: Call[] = [];
+    const ask = { ...row('q9', { body: 'Which layout?', field: 'bodyEn', quote: 'three new things' }), needs: 'choice' as const,
+      options: ['A (Recommended)', 'B'], author: { user_id: 'user-flo', name: 'Flo', you: false },
+      agent: { name: 'the-null-pointer-sisters', thread_id: null, row_id: null } };
+    const errors: unknown[] = [];
+    const onError = (event: ErrorEvent) => { errors.push(event.error ?? event.message); event.preventDefault(); };
+    dom.window.addEventListener('error', onError);
+    try {
+      await mount(<PageAskBlock via={via} />, fakeRuntime([...ROWS, ask], calls));
+      const option = doc.querySelector('[data-page-ask="q9"] [data-page-option="B"]');
+      assert.ok(option, 'the page draws the question with its options');
+      await fire(option!, new dom.window.MouseEvent('click', { bubbles: true }));
+    } finally {
+      dom.window.removeEventListener('error', onError);
+    }
+    assert.deepEqual(errors, [], 'the tap throws nothing');
+    assert.deepEqual(writes(calls, 'answer'), [{ id: 'q9', answer: 'B' }], 'the answer is sent');
+    assert.equal(doc.querySelector('[data-page-ask="q9"] [data-answered]')?.textContent, 'B', 'the block shows the answer');
+  });
+}
