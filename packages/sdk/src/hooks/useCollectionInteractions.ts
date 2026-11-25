@@ -105,6 +105,11 @@ export interface UseCollectionInteractionsOptions<T> {
   shortcuts?: Partial<CollectionKeyboardShortcuts>;
   shortcutScope?: ShortcutScope;
   shortcutPriority?: number;
+  /**
+   * Picks the item a key moves to; null keeps the linear step. It may return an id the list no longer shows (an item
+   * the person visited that has since left it): that id becomes active and is reported to onActiveIdChange with
+   * reason 'navigate', with no row to focus.
+   */
   resolveNextId?: (context: CollectionNavigationContext<T>) => string | null;
   onActiveItemChange?: (id: string | null) => void;
   /**
@@ -333,8 +338,9 @@ export function useCollectionInteractions<T>(
     });
   }, [controlledSelectedIds, getItemsForIds, selectionMode]);
 
-  const setActive = useCallback((id: string | null, reason: CollectionInteractionReason = 'activate') => {
-    const next = id && selectableIdsRef.current.includes(id) ? id : null;
+  // `unlisted`: a resolver led to an item the list no longer shows (moveActive); it becomes active as it is.
+  const setActive = useCallback((id: string | null, reason: CollectionInteractionReason = 'activate', unlisted = false) => {
+    const next = id && (unlisted || selectableIdsRef.current.includes(id)) ? id : null;
     if (activeIdRef.current === next) return;
     // A click or focus further up or down sets the way; keys set it themselves (moveActive), a wrap included.
     const travel = reason === 'items-changed' || reason === 'navigate' ? null : travelBetween(selectableIdsRef.current, activeIdRef.current, next);
@@ -527,7 +533,8 @@ export function useCollectionInteractions<T>(
 
   const moveActive = useCallback((direction: CollectionNavigationDirection, extend = false) => {
     const ids = selectableIdsRef.current;
-    if (ids.length === 0) return;
+    // An empty list may still lead somewhere through the resolver (items that left it).
+    if (ids.length === 0 && (extend || !resolveNextIdRef.current)) return;
     const current = activeIdRef.current;
     const forward = direction === 'next' || direction === 'down' || direction === 'right';
     // Range gestures follow the displayed order, independent of asymmetric grid geometry.
@@ -537,6 +544,17 @@ export function useCollectionInteractions<T>(
       items: itemsRef.current,
       orderedIds: ids,
     }) ?? null;
+    if (next && !extend && next !== current && !ids.includes(next)
+      && !itemsRef.current.some((item) => getIdRef.current(item) === next)) {
+      // The resolver led to an item the list no longer shows (one the person visited that has since left it): it
+      // becomes the active item without a row to focus, and the next step goes on from it through the resolver.
+      keyboardRangeBaseRef.current = new Set();
+      travelRef.current = forward ? 'next' : 'previous';
+      droppedActiveIdRef.current = next;
+      setAnchor(next, 'navigate');
+      setActive(next, 'navigate', true);
+      return;
+    }
     const place = activePlaceRef.current;
     if (!next && current && place?.id === current && !ids.includes(current)) {
       // The active item left the list (it is still open beside it): the nearest item still listed that way.
