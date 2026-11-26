@@ -146,7 +146,7 @@ rather than from a copy.
   `arrow-clockwise`, `arrow-counter-clockwise`, `arrow-left`,
   `arrow-square-out`, `arrows-clockwise`, `arrows-left-right`, `arrows-out`,
   `caret-down`, `caret-left`, `caret-right`, `caret-up`, `chart-line-up`,
-  `chat-circle-text`, `chats`, `check`, `check-circle`, `check-circle-fill`,
+  `chat-circle-dots`, `chat-circle-text`, `chats`, `check`, `check-circle`, `check-circle-fill`,
   `circle`, `circle-dashed`, `circle-half`, `circle-three-quarter`,
   `clipboard-text`, `clock`, `clock-countdown`, `copy`, `corners-out`,
   `dots-three`, `download-simple`, `envelope-open`, `envelope-simple`, `file`,
