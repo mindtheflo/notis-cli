@@ -91,6 +91,9 @@ export const COMMENT_WORDS = Object.freeze({
   deleteComment: w('Delete this comment', 'Supprimer ce commentaire'),
   threadDeleted: w('Comment thread deleted.', 'Fil de commentaires supprimé.'),
   commentDeleted: w('Comment deleted', 'Commentaire supprimé'),
+  // Earlier replies fold into this one line; a press opens them (SPC-1630).
+  earlierReply: w('1 earlier reply', '1 réponse précédente'),
+  earlierReplies: w('{n} earlier replies', '{n} réponses précédentes'),
   commentDeletedToast: w('Comment deleted.', 'Commentaire supprimé.'),
   edit: w('Edit', 'Modifier'),
   editRoot: w('Edit comment', 'Modifier le commentaire'),

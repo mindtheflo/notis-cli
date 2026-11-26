@@ -440,8 +440,13 @@ async function threadMenu(threadKey: string): Promise<Record<string, HTMLElement
   return Object.fromEntries([...doc.querySelectorAll('[role="menu"] [data-thread-action]')].map(el =>
     [el.getAttribute('data-thread-action')!, el.closest('[role^="menuitem"]') as HTMLElement]));
 }
+/** Opens every card's "N earlier replies" line, so the replies before the latest are on screen (SPC-1630). */
+async function openEarlier(): Promise<void> {
+  for (const line of [...doc.querySelectorAll<HTMLElement>('[data-part="earlier-replies"]')]) await click(line);
+}
 /** Opens a reply's "..." and returns its entries by action: copy-link, edit, delete. */
 async function replyMenu(commentKey: string): Promise<Record<string, HTMLElement>> {
+  if (!doc.querySelector(`[data-comment="${commentKey}"]`)) await openEarlier();
   await click(doc.querySelector(`[data-comment="${commentKey}"] [data-part="reply-more"]`)!);
   return Object.fromEntries([...doc.querySelectorAll('[role="menu"] [data-reply-action]')].map(el =>
     [el.getAttribute('data-reply-action')!, el.closest('[role^="menuitem"]') as HTMLElement]));
@@ -840,6 +845,10 @@ test('The card: where it sits first with Done and "..." at its top right, two li
     ['done', 'thread-more']);
   assert.equal(top.querySelector('[data-part="done"]')!.getAttribute('aria-label'), 'Archive the comment thread: Mine');
   assert.equal(top.querySelector('[data-part="thread-more"]')!.getAttribute('aria-label'), 'More for the comment thread: Mine');
+  // Only the latest reply shows; the one before it folds into one line (SPC-1630). Opened, each comment shows.
+  assert.equal(card.querySelector('[data-comment="m2"]'), null);
+  assert.equal(card.querySelector('[data-part="earlier-replies"]')!.textContent, '1 earlier reply');
+  await openEarlier();
   // Each comment: the avatar, then two lines (the name, then the time), then its "..." on a reply.
   const entry = (key: string) => card.querySelector(`[data-comment="${key}"]`)!;
   assert.deepEqual([...entry('m1').children].map(el => el.className), ['nui-comment-entry-head', 'nui-comment-entry-main']);
@@ -865,6 +874,8 @@ test('The card: where it sits first with Done and "..." at its top right, two li
 
   // French: the menus read in French too.
   await mount(<Harness {...base} />, fakeRuntime(rows, [], { comments: linked, locale: 'fr' }), 'fr');
+  assert.equal(doc.querySelector('[data-part="earlier-replies"]')!.textContent, '1 réponse précédente');
+  await openEarlier();
   assert.equal(doc.querySelector('[data-comment="m2"] [data-part="reply-more"]')!.getAttribute('aria-label'), 'Plus pour la réponse\u202f: Agreed');
   assert.equal((await replyMenu('m2'))['copy-link']!.textContent, 'Copier le lien');
   await closeMenu();
@@ -3344,6 +3355,60 @@ test('Consecutive deleted replies read as one Comment deleted line', async () =>
   await mount(<Harness {...base} />, fakeRuntime(rows, []));
   assert.equal(doc.querySelectorAll('[data-thread="d1"] .nui-comment-deleted').length, 2, 'd2 and d3 merge; d5 stands alone');
   assert.ok(doc.querySelector('[data-comment="d4"]'));
+});
+
+test('Only the latest reply shows: earlier replies fold into one line that opens them, and nothing folds under the reader (SPC-1630)', async () => {
+  const rows = [
+    row('f1', { body: 'Root', slide: 'slide-1', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('f2', { body: 'First', author: 'Claude', slide: 'slide-1', thread: 'f1', createdAt: '2026-10-21T10:00:00.000Z' }),
+    row('f3', { body: 'Gone', author: 'Claude', slide: 'slide-1', thread: 'f1', status: 'Deleted', createdAt: '2026-10-21T10:30:00.000Z' }),
+    row('f4', { body: 'Which one?', author: 'Claude', slide: 'slide-1', thread: 'f1', needs: 'choice', options: 'A | B',
+      createdAt: '2026-10-21T11:00:00.000Z' }),
+    row('f5', { body: 'Second', author: 'Claude', slide: 'slide-1', thread: 'f1', createdAt: '2026-10-21T12:00:00.000Z' }),
+    row('f6', { body: 'Latest', author: 'Claude', slide: 'slide-1', thread: 'f1', createdAt: '2026-10-21T13:00:00.000Z' }),
+    row('f7', { body: 'x', author: 'Claude', slide: 'slide-1', thread: 'f1', status: 'Deleted', createdAt: '2026-10-21T14:00:00.000Z' }),
+  ];
+  await mount(<Harness {...base} />, fakeRuntime(rows, []));
+  const card = doc.querySelector('[data-thread="f1"]')!;
+  const shown = () => [...card.querySelectorAll('.nui-comment-entry')].map(el =>
+    el.getAttribute('data-comment') ?? (el.querySelector('[data-part="earlier-replies"]') ? 'fold' : 'deleted'));
+  // The root, one line for First (the deleted line after it folds too), the open question, then every reply after it:
+  // the line only takes the replies before the first one that stays, so nothing is hidden between two shown replies.
+  assert.deepEqual(shown(), ['f1', 'fold', 'f4', 'f5', 'f6', 'deleted']);
+  const line = card.querySelector<HTMLElement>('[data-part="earlier-replies"]')!;
+  assert.equal(line.textContent, '1 earlier reply');
+  // It sits right under the first comment; opening it moves the focus to the card, so the keys keep working.
+  assert.equal(line.closest('li')!.previousElementSibling!.getAttribute('data-comment'), 'f1');
+  await click(line);
+  assert.equal(doc.activeElement, card, 'the line leaves and the focus goes to the card');
+  assert.deepEqual(shown(), ['f1', 'f2', 'deleted', 'f4', 'f5', 'f6', 'deleted']);
+  assert.equal(card.querySelector('[data-part="earlier-replies"]'), null, 'once opened, the replies stay open');
+  // Without the question, First and Second fold together.
+  const plain = rows.filter(entry => entry.id !== 'f4');
+  await mount(<Harness {...base} />, fakeRuntime(plain, []));
+  assert.equal(doc.querySelector('[data-part="earlier-replies"]')!.textContent, '2 earlier replies');
+  // A link to an earlier reply (a push, a chat pill) keeps it in view.
+  await mount(<Harness {...base} focusKey="f2" />, fakeRuntime(plain, []));
+  assert.ok(doc.querySelector('[data-comment="f2"]'), 'the reply a link names never folds');
+  assert.equal(doc.querySelector('[data-part="earlier-replies"]'), null);
+  // The answer to the first comment's question stays under it, so "Answered below" points at something.
+  const asked = [
+    row('a1', { body: 'Which colour?', author: 'Claude', slide: 'slide-1', needs: 'input', answer: 'Blue', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('a2', { body: 'Blue', slide: 'slide-1', thread: 'a1', answerTo: 'a1', createdAt: '2026-10-21T10:00:00.000Z' }),
+    row('a3', { body: 'Done, it is blue', author: 'Claude', slide: 'slide-1', thread: 'a1', createdAt: '2026-10-21T11:00:00.000Z' }),
+    row('a4', { body: 'Anything else?', author: 'Claude', slide: 'slide-1', thread: 'a1', createdAt: '2026-10-21T12:00:00.000Z' }),
+  ];
+  await mount(<Harness {...base} />, fakeRuntime(asked, []));
+  assert.ok(doc.querySelector('[data-comment="a2"]'), 'an answer to the first comment never folds');
+  assert.equal(doc.querySelector('[data-part="earlier-replies"]'), null);
+  // A reply already on screen never folds when a newer one arrives.
+  await mount(<Harness {...base} />, fakeRuntime(rows.slice(0, 2), []));
+  assert.ok(doc.querySelector('[data-comment="f2"]'), 'a lone reply is the latest: nothing folds');
+  // A thread with one reply, or none, draws no line.
+  assert.equal(doc.querySelector('[data-part="earlier-replies"]'), null);
+  const css = readFileSync(new URL('../toolkit.css', import.meta.url), 'utf8');
+  assert.match(css, /\.nui-comment-earlier \{[^}]*color: hsl\(var\(--muted-foreground\)\);/);
+  assert.match(css, /@media \(pointer: coarse\) \{ \.nui-comment-earlier \{ min-height: 44px; \} \}/, 'a 44 px tap target on touch');
 });
 
 test('French: a chip label keeps a narrow space before its colon, and conversation for manager threads', async () => {

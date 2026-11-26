@@ -829,6 +829,40 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
     </span>
   );
 
+  // Only the latest reply shows; the replies before it fold into one line that opens them (SPC-1630, Flo's pick C).
+  // "Latest" is the last reply still there: deleted lines after it stay beside it. Only the replies before the first
+  // one that must stay fold, so the line never hides a reply between two shown ones. A reply stays when it still asks
+  // something, answers the first comment, carries the read mark, is being edited, is the one a link names, was already
+  // on screen or arrived after the card did, so nothing disappears under the reader; a fold of deleted lines only is
+  // not drawn.
+  const [showEarlier, setShowEarlier] = useState(false);
+  const shownReplies = useRef(new Set<string>());
+  const replyRuns = commentReplyRuns(replies);
+  const runKey = (run: (typeof replyRuns)[number]) => (run.deleted ? run.replies[0]! : run.reply).recordKey;
+  // Replies that arrive while the card is on screen (your own included) show where they land.
+  const foundReplies = useRef<Set<string> | null>(null);
+  if (!foundReplies.current) foundReplies.current = new Set(replies.map(reply => reply.recordKey));
+  const answersRoot = (reply: CommentRecord) => !reply.agent && (reply.answerTo ? reply.answerTo === root.recordKey
+    : root.needs === 'input' && Boolean(root.answer) && clipCommentAnswer(reply.body.trim()) === root.answer!.trim());
+  const staysOpen = (run: (typeof replyRuns)[number]) => shownReplies.current.has(runKey(run))
+    || !foundReplies.current!.has(runKey(run))
+    || (run.deleted ? run.replies : [run.reply]).some(reply => reply.recordKey === controller.linkKey)
+    || (!run.deleted && ((run.reply.needs !== 'none' && !run.reply.answer) || answersRoot(run.reply)
+      || markOn?.key === run.reply.recordKey || editing === run.reply.recordKey));
+  let latest = replyRuns.length - 1;
+  while (latest > 0 && replyRuns[latest]!.deleted) latest -= 1;
+  let foldEnd = 0;
+  if (!showEarlier) while (foldEnd < latest && !staysOpen(replyRuns[foldEnd]!)) foldEnd += 1;
+  const folded = replyRuns.slice(0, foldEnd).filter(run => !run.deleted).length;
+  const shownRuns = folded ? replyRuns.slice(foldEnd) : replyRuns;
+  // The fold line leaves once pressed: the focus goes to the card, so the keys keep working.
+  const openEarlier = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setShowEarlier(true);
+    cardRef.current?.focus({ preventScroll: true });
+  };
+  for (const run of shownRuns) shownReplies.current.add(runKey(run));
+
   const entry = (comment: CommentRecord, isRoot: boolean) => (
     <li key={comment.recordKey} className="nui-comment-entry" data-comment={comment.recordKey} data-root={isRoot ? '' : undefined}>
       {/* Two lines beside the avatar: the name, then the agent's thread and the time in a quieter line. */}
@@ -901,7 +935,14 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
 
       <ol className="nui-comment-entries">
         {entry(root, true)}
-        {commentReplyRuns(replies).map(run => run.deleted ? (
+        {folded ? (
+          <li key="earlier" className="nui-comment-entry" data-earlier="">
+            <button type="button" className="nui-comment-earlier" data-part="earlier-replies" onClick={openEarlier}>
+              {folded === 1 ? controller.say('earlierReply') : controller.say('earlierReplies', { n: String(folded) })}
+            </button>
+          </li>
+        ) : null}
+        {shownRuns.map(run => run.deleted ? (
           // Deleted replies leave one line per run, so the replies after them still read (SPC-127).
           <li key={run.replies[0]!.recordKey} className="nui-comment-entry" data-deleted="">
             <p className="nui-comment-deleted">{controller.say('commentDeleted')}</p>

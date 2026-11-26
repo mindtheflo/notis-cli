@@ -1733,6 +1733,11 @@ button.nui-comment-to:hover { background: hsl(var(--foreground) / .1); }
 .nui-comment-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .nui-comment-edited { color: hsl(var(--muted-foreground)); font-size: 12px; }
 .nui-comment-deleted { margin: 0; color: hsl(var(--muted-foreground)); font-size: 12px; font-style: italic; }
+/* "2 earlier replies": the replies before the latest, folded into one quiet line that opens them. */
+.nui-comment-earlier { align-self: flex-start; margin: 0; padding: 2px 0; border: 0; background: none;
+  color: hsl(var(--muted-foreground)); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.nui-comment-earlier:hover { color: hsl(var(--foreground)); text-decoration: underline; }
+@media (pointer: coarse) { .nui-comment-earlier { min-height: 44px; } }
 
 .nui-comment-toolbar { display: inline-flex; align-items: center; gap: 2px; box-sizing: border-box; max-width: 100%; padding: 4px;
   border-radius: 999px;
@@ -1783,7 +1788,7 @@ button.nui-comment-to:hover { background: hsl(var(--foreground) / .1); }
   :is(.nui-comment-agent, .nui-comment-to, .nui-comment-filter) {
     font-size: 15px; line-height: 20px; }
   :is(.nui-comment-meta, .nui-comment-agent-thread, .nui-comment-caption, .nui-comment-new-items, .nui-comment-group,
-    .nui-comment-edited, .nui-comment-deleted, .nui-comment-file, .nui-comment-toolbar-hint) { font-size: 13px; line-height: 18px; }
+    .nui-comment-edited, .nui-comment-deleted, .nui-comment-earlier, .nui-comment-file, .nui-comment-toolbar-hint) { font-size: 13px; line-height: 18px; }
   :is(.nui-comment-agent .nui-icon,
     .nui-comment-caption .nui-icon, .nui-comment-pane .nui-runtime-logo, .nui-comment-pane .nui-runtime-glyph) { width: 16px; height: 16px; }
   .nui-comment-count { min-width: 22px; padding: 0 7px; font-size: 12px; line-height: 22px; }

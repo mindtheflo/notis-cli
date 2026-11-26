@@ -244,6 +244,8 @@ export interface CommentController extends CommentActions {
    * on each increase and the pane scrolls the thread into view; picking inside the pane leaves it as it is.
    */
   revealRequest: number;
+  /** The comment a link names (a push, a chat pill), or null: its card keeps it in view (SPC-1630). */
+  linkKey?: string | null;
 
   actions: CommentActions;
   /** The signed-in viewer from the host (name and Space edit rights), or null while unknown. */
@@ -1507,7 +1509,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     scope, anchors, anchorKey, anchor,
     filter: effectiveFilter, setFilter, pageFilter: pageKey ? (spaceWide ? 'space' : 'page') : null, setPageFilter, statusFilter, setStatusFilter, counts, scopeCounts, waitingFilter, setWaitingFilter, waits, waitingCount,
     wholeSpace, groupOf,
-    threadKey, setThreadKey, selectThread, revealThread, revealRequest,
+    threadKey, setThreadKey, selectThread, revealThread, revealRequest, linkKey,
     ...actions, actions, viewer, canEdit, canDelete, canWrite, routing,
     modes, commentMode, startMode, cancelMode, startItems, placeText, startAnchor, toolBar, setToolBar,
     commenting, setCommenting, toggleCommenting, draftPin, draftScope, placePin, placePinFromEvent, cancelPin, sendNew, sendAt,
