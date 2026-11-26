@@ -94,7 +94,7 @@ test('the comment pane\'s own one-line fields take the two states on a phone, dr
   const pane = readFileSync(new URL('../ui/comments/CommentPane.tsx', import.meta.url), 'utf8');
   assert.match(pane, /useTextBoxTwoState<HTMLDivElement>\(\{ enabled: true, phoneOnly: true, hasDraft, hold, looksAgain: true, surfaceOf: composeOf \}\)/);
   assert.match(pane, /<OwnTextBox className="nui-comment-compose-box"/, 'a reply where the host draws no box');
-  assert.match(pane, /<OwnTextBox className="nui-comment-ask-answer"/, 'the answer to a question');
+  assert.doesNotMatch(pane, /nui-comment-ask-answer/, 'a question has no field of its own: the reply box answers it');
   assert.match(pane, /data-swipe-dismiss="" \{\.\.\.box\.bind\}/, 'a swipe down puts the keyboard away there too');
   const css = readFileSync(new URL('../ui/toolkit.css', import.meta.url), 'utf8');
   const phone = css.slice(css.indexOf('/* Phone sizing (docs/portal-design-system.md, "Phone sizing")'));

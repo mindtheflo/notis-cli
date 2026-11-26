@@ -83,6 +83,12 @@ with choices (`needs: "choice"`) shows one row per option, like a question in
 a conversation: keep each option a short name, name the one you recommend in
 `recommended` (it gets the Recommended tag and Enter picks it) and say what
 an option means in one line with `option_details` (`{"<option>": "<line>"}`).
+When your question is settled somewhere else (in a conversation, another
+comment thread, a merged change), close it yourself with `answer` on that
+question, using the option that was decided (or the decision in a few words
+for `input`), then reply with where it was decided. A reply alone leaves the
+question waiting in everyone's list. Only close a question with a decision a
+person made: never pick the answer for them.
 `list` on a whole Space answers its open comment threads, newest first and
 each with its replies, 50 at a time (`status` `done` or `all` for the others,
 `next` back as `before` for the ones after, `counts` for the totals), never

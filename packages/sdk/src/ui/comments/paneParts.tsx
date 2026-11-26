@@ -18,8 +18,8 @@ import type { SpaceCommentThreadRef } from '../../space';
 import type { CommentWordKey } from './commentWords';
 import { archiveThenNext, notifyReviewRunAction } from './reviewRun';
 import { revealInScroller } from './scrollReveal';
-import { elsewhere, outsideClaim } from './useCommentRouting';
-import { CommentHarnessLogo, isHarness } from './agentRuntime';
+import { elsewhere, outsideClaim, pickMentionText } from './useCommentRouting';
+import { COMMENT_HARNESS_NAMES, CommentHarnessLogo, isHarness } from './agentRuntime';
 import type { CommentMode } from './commentModel';
 import type { CommentController, CommentStatusView } from './useComments';
 import { commentsShadowHost, useWaitingCommentCount } from './hostPanel';
@@ -64,10 +64,12 @@ export interface CommentPaneBarProps {
  *
  * - New comment starts the Space's one mode at once, or opens a menu of its modes, with "Comment on all of <item>"
  *   first on a page with items.
- * - Filter holds both choices: which comment threads ("Waiting for you" first, the only one with a number, then Open,
- *   Done and All) and where (this item or all items, on a page with items). No totals.
- * - A second row shows only while the filter is not the usual one (open threads, this item): one chip per choice that
- *   differs, and a press on it puts that choice back.
+ * - Waiting for you is a toggle on the row with its number (the only one: no totals), as Focus mode in the Manager. The
+ *   host says whether a pane starts with it on (`SpaceCommentsTransport.waitingFirst`, the person's Focus mode setting).
+ * - "..." holds the rarer choices: Open, Done or All; where (this page or the whole Space on a record page; this item or
+ *   all items, on a page with items); then what the Space adds to its panel.
+ * - A second row shows only while those choices are not the usual ones (open threads, this page, this item): one chip
+ *   per choice that differs, and a press on it puts that choice back.
  */
 export function CommentPaneBar({ controller, rootRef, showCopy = true, waitingCount: listed = controller.waitingCount, runCount = null }: CommentPaneBarProps) {
   // In the host panel the number is the host's own (what waits in the Space on screen), the same as on its switch.
@@ -82,8 +84,13 @@ export function CommentPaneBar({ controller, rootRef, showCopy = true, waitingCo
   const statusLabel = (value: CommentStatusView) => controller.say(value === 'open' ? 'open' : value === 'done' ? 'resolvedFilter' : 'all');
   const scoped = anchors.length > 0;
   const widened = scoped && filter !== 'anchor';
-  const filtered = waitingFilter || statusFilter !== 'open' || widened;
-  const shownStatus = waitingFilter ? controller.say('waitingForYou') : statusLabel(statusFilter);
+  const spaceWide = controller.pageFilter === 'space';
+  // Waiting for you shows on its own toggle only, in a review run too (Flo, 2026-11-25: "I don't like the filter
+  // displayed like this"): the run's count is on its bar. A chip says only a choice of "...".
+  const runWaiting = waitingFilter && runCount != null;
+  const statusChip = !waitingFilter && statusFilter !== 'open';
+  const filtered = statusChip || (widened && !runWaiting) || spaceWide;
+  const shownStatus = statusLabel(statusFilter);
   const newLabel = controller.say('newCommentMenu');
   const wholeAnchor = scoped && controller.anchor ? controller.anchor : null;
   const oneMode = modes.length === 1 && !wholeAnchor ? modes[0]! : null;
@@ -117,29 +124,40 @@ export function CommentPaneBar({ controller, rootRef, showCopy = true, waitingCo
             ))}
           </Menu>
         )}
-        <Menu align="end" label={controller.words.filter} accelerators={false}
+        {/* Waiting for you is a toggle on the row, as Focus mode in the Manager: on, the list is what waits for you; off,
+            the open comment threads. It is the only number: no totals. */}
+        <Tooltip label={controller.say('waitingForYou')}>
+          <button type="button" className="nui-comment-bar-btn" data-part="waiting-toggle" aria-pressed={waitingFilter}
+            data-count={waitingCount > 0 ? '' : undefined}
+            aria-label={waitingCount > 0 ? `${controller.say('waitingForYou')}, ${controller.say('waitingCount', { n: waitingCount })}` : controller.say('waitingForYou')}
+            onClick={() => controller.setWaitingFilter(!waitingFilter)}>
+            <Icon name="chat-circle-dots" />
+            {waitingCount > 0 ? <span className="nui-comment-count" data-waiting="" aria-hidden="true">{waitingCount}</span> : null}
+          </button>
+        </Tooltip>
+        {/* The rarer choices sit in "...": Open, Done or All, where (this page or the whole Space, this item or all
+            items), then what the Space adds to its panel. */}
+        <Menu align="end" label={controller.words.paneMore} accelerators={false}
           trigger={(
-            <button type="button" className="nui-comment-bar-btn" data-part="filter-button" data-active={filtered ? '' : undefined}
+            <button type="button" className="nui-comment-bar-btn" data-part="more-button" data-active={filtered ? '' : undefined}
               data-filter={waitingFilter ? 'waiting' : statusFilter}
-              aria-label={controller.say('filterLabel', { filter: controller.say('filter'), status: shownStatus })}>
-              <Icon name="funnel-simple" />
+              aria-label={controller.say('paneMore')}>
+              <Icon name="dots-three" />
             </button>
           )}>
-          {/* The only entry with a number: what waits for you. Totals show nowhere. */}
-          <Menu.Item checked={waitingFilter} onSelect={() => controller.setWaitingFilter(true)}>
-            <span className="nui-comment-filter-item" data-filter="waiting">
-              <span>{controller.say('waitingForYou')}</span>
-              {waitingCount > 0 ? (
-                <span className="nui-comment-count" data-waiting=""
-                  aria-label={controller.say('waitingCount', { n: waitingCount })}>{waitingCount}</span>
-              ) : null}
-            </span>
-          </Menu.Item>
           {STATUS_VIEWS.map(value => (
             <Menu.Item key={value} checked={!waitingFilter && statusFilter === value} onSelect={() => controller.setStatusFilter(value)}>
               <span className="nui-comment-filter-item" data-filter={value}><span>{statusLabel(value)}</span></span>
             </Menu.Item>
           ))}
+          {controller.pageFilter ? <Menu.Separator /> : null}
+          {controller.pageFilter ? (['page', 'space'] as const).map(value => (
+            <Menu.Item key={`page-${value}`} checked={controller.pageFilter === value} onSelect={() => controller.setPageFilter(value)}>
+              <span className="nui-comment-filter-item" data-scope={value}>
+                <span>{controller.say(value === 'page' ? 'thisPage' : 'wholeSpace')}</span>
+              </span>
+            </Menu.Item>
+          )) : null}
           {scoped ? <Menu.Separator /> : null}
           {scoped ? (['anchor', 'all'] as const).map(value => (
             <Menu.Item key={`scope-${value}`} checked={filter === value} onSelect={() => controller.setFilter(value)}>
@@ -148,14 +166,8 @@ export function CommentPaneBar({ controller, rootRef, showCopy = true, waitingCo
               </span>
             </Menu.Item>
           )) : null}
-        </Menu>
-        {showCopy ? (
-          <Menu align="end" label={controller.words.paneMore} accelerators={false}
-            trigger={(
-              <button type="button" className="nui-comment-bar-btn" data-part="more-button" aria-label={controller.say('paneMore')}>
-                <Icon name="dots-three" />
-              </button>
-            )}>
+          {showCopy ? <Menu.Separator /> : null}
+          {showCopy ? (
             <Menu.Item icon="copy" disabled={!changeCount || controller.copying}
               onSelect={() => void controller.copyChanges(rootRef.current)}>
               <span className="nui-comment-filter-item" data-part="copy-changes">
@@ -163,21 +175,28 @@ export function CommentPaneBar({ controller, rootRef, showCopy = true, waitingCo
                 {changeCount ? <span className="nui-comment-count">{changeCount}</span> : null}
               </span>
             </Menu.Item>
-          </Menu>
-        ) : null}
+          ) : null}
+        </Menu>
         <slot name="trail" />
       </div>
       {filtered ? (
         <div className="nui-comment-chips" data-part="filter-chips">
-          {waitingFilter || statusFilter !== 'open' ? (
-            <button type="button" className="nui-comment-chip" data-chip={waitingFilter ? 'waiting' : statusFilter}
+          {statusChip ? (
+            <button type="button" className="nui-comment-chip" data-chip={statusFilter}
               aria-label={controller.say('removeFilter', { filter: shownStatus })}
               onClick={() => controller.setStatusFilter('open')}>
-              <span data-part="chip-label">{waitingFilter && runCount ? controller.say('waitingCount', { n: runCount }) : shownStatus}</span>
+              <span data-part="chip-label">{shownStatus}</span>
               <Icon name="x" />
             </button>
           ) : null}
-          {widened && !(waitingFilter && runCount != null) ? (
+          {spaceWide ? (
+            <button type="button" className="nui-comment-chip" data-chip="whole-space"
+              aria-label={controller.say('removeFilter', { filter: controller.say('wholeSpace') })}
+              onClick={() => controller.setPageFilter('page')}>
+              <span>{controller.say('wholeSpace')}</span><Icon name="x" />
+            </button>
+          ) : null}
+          {widened && !runWaiting ? (
             <button type="button" className="nui-comment-chip" data-chip="all-items"
               aria-label={controller.say('removeFilter', { filter: controller.say('allItems') })}
               onClick={() => controller.setFilter('anchor')}>
@@ -235,14 +254,84 @@ export function commentThreadName(controller: CommentController, thread: SpaceCo
     : { title: controller.say('goesToNew'), to: controller.say('toNew'), pending: true };
 }
 
+/** An @mention in a comment's words, as the server reads it (space_comments._MENTION). */
+const MENTION = /(?<![\p{L}\p{N}_@])@([^\s@,.;:!?()[\]{}"'<>]{1,80})/gu;
+
+/** A name as an @ token reads it (space_comments.mention_slug): lowercase, other characters one hyphen. */
+function mentionForms(text: string): string[] {
+  const slug = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+  return slug ? [slug, slug.replace(/-/g, '')] : [];
+}
+
+/** The @ tokens that name a harness ("@claude", "@codex", "@notis"), by id and by label. */
+const HARNESS_FORMS = new Set(Object.entries(COMMENT_HARNESS_NAMES).flatMap(([id, label]) =>
+  [...mentionForms(id), ...mentionForms(id.split('_')[0]!), ...mentionForms(label)]));
+
+/**
+ * The people a comment is for when its @mentions name only the Space's people (SPC-1540): it wakes no agent, it waits
+ * for them. Their first names, in the order written; null when it has no @, when an @ names an agent (a harness, or an
+ * agent that wrote on this page) or someone the Space's people (`viewer.people`, for an editor) do not include: the
+ * comment then goes where it goes today.
+ */
+export function commentForPeople(controller: CommentController, text: string): string[] | null {
+  const people = controller.viewer?.people;
+  if (!people?.length || !text.includes('@')) return null;
+  const tokens = [...text.matchAll(MENTION)].map(match => match[1]!).filter(token => mentionForms(token).length);
+  if (!tokens.length) return null;
+  const agents = new Set(controller.comments.flatMap(comment => comment.agent ? mentionForms(comment.agent.name) : []));
+  const byForm = new Map<string, string>();
+  for (const name of people) {
+    const first = name.trim().split(/\s+/)[0] ?? '';
+    for (const form of [...mentionForms(name), ...mentionForms(first)]) if (!byForm.has(form)) byForm.set(form, first);
+  }
+  const named: string[] = [];
+  for (const token of tokens) {
+    const forms = mentionForms(token);
+    if (forms.some(form => agents.has(form) || HARNESS_FORMS.has(form))) return null;
+    const person = forms.map(form => byForm.get(form)).find(Boolean);
+    if (!person) return null;
+    if (!named.includes(person)) named.push(person);
+  }
+  return named;
+}
+
+/** "Florian", "Florian and Ed", "Florian, Ed and Sam", in the pane's language. */
+function sayNames(controller: CommentController, names: readonly string[]): string {
+  if (names.length < 2) return names[0] ?? '';
+  return controller.say('namesAnd', { names: names.slice(0, -1).join(', '), last: names[names.length - 1]! });
+}
+
+/**
+ * Under a reply box whose words @mention only people (SPC-1540): "For Florian · wakes no agent". Nothing otherwise.
+ */
+export function CommentForPeopleNote({ controller, text }: { controller: CommentController; text: string }) {
+  const people = commentForPeople(controller, text);
+  if (!people) return null;
+  return (
+    <p className="nui-comment-unread" data-part="for-people" role="status">
+      <Icon name="chat-circle-text" />{controller.say('forPeople', { names: sayNames(controller, people) })}
+    </p>
+  );
+}
+
 /**
  * The "To <thread>" chip of a new comment (SPC-117): the thread picked, else the best match, else "To a new thread";
  * "Choose a thread" when the best match could not be read. A click opens the @ thread picker, at any time. Nothing on a host without best matches or the picker. A long name
- * ends with an ellipsis (never cut mid-word without one); its title attribute has it in full.
+ * ends with an ellipsis (never cut mid-word without one); its title attribute has it in full. When the words being
+ * written @mention only people (`text`, SPC-1540) it reads "To Florian · wakes no agent" instead: no agent wakes.
  */
-export function CommentToChip({ controller }: { controller: CommentController }) {
+export function CommentToChip({ controller, text = '', onMention }: {
+  controller: CommentController; text?: string;
+  /** An agent outside Notis picked: the box writes its @ in front of the words (SPC-1546). */
+  onMention?: (mention: string) => void;
+}) {
   const ref = useRef<HTMLButtonElement>(null);
   const routing = controller.routing;
+  const people = commentForPeople(controller, text);
+  if (people) {
+    const to = controller.say('toPeople', { names: sayNames(controller, people) });
+    return <span className="nui-comment-to" data-part="to-chip" data-people="" title={to}><span>{to}</span></span>;
+  }
   if (!routing.hasBestMatch && !routing.canPick && !routing.newPick) return null;
   // The best match could not be read: the chip offers the picker without naming a thread (never "To a new thread").
   const unread = !routing.newPick && routing.bestMatchLost === true;
@@ -252,7 +341,11 @@ export function CommentToChip({ controller }: { controller: CommentController })
   return (
     <button ref={ref} type="button" className="nui-comment-to" data-part="to-chip" title={`${named.to}. ${controller.say('pickThread')}`}
       aria-label={`${named.to}. ${controller.say('pickThread')}`}
-      onClick={event => { stop(event); if (ref.current) void routing.pickForNew(ref.current); }}>
+      onClick={event => {
+        stop(event);
+        if (!ref.current) return;
+        void routing.pickForNew(ref.current).then(pick => { const mention = pickMentionText(pick); if (mention) onMention?.(mention); });
+      }}>
       <Icon name="arrow-bend-up-right" /><span>{named.to}</span>
     </button>
   );
@@ -260,16 +353,18 @@ export function CommentToChip({ controller }: { controller: CommentController })
 
 /**
  * For a new comment's text box: an @ typed in the empty box opens the thread picker instead of writing the @. A pick
- * leaves the box empty; dismissing the picker (Escape) puts the @ back with the caret after it, so "@Alice" still
- * mentions someone. `setValue` writes the box's text.
+ * leaves the box empty, but an agent outside Notis picked writes its @ ("@fred-and-the-machine ", SPC-1546); dismissing
+ * the picker (Escape) puts the @ back with the caret after it, so "@Alice" still mentions someone. `setValue` writes
+ * the box's text.
  */
 export function useAtThreadPicker(controller: CommentController) {
   const { routing } = controller;
   return useCallback((value: string, field: HTMLElement, setValue?: (value: string) => void): string => {
     if (value === '@' && routing.canPick) {
       void routing.pickForNew(field).then(pick => {
-        if (pick || !setValue) return;
-        setValue('@');
+        const mention = pickMentionText(pick);
+        if ((pick && !mention) || !setValue) return;
+        setValue(mention ?? '@');
         // After React writes the @ back: the caret goes after it.
         setTimeout(() => {
           if (!(field instanceof field.ownerDocument.defaultView!.HTMLTextAreaElement) || !field.isConnected) return;

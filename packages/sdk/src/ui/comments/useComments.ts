@@ -41,6 +41,9 @@ import { useCommentRouting, type CommentRouting } from './useCommentRouting';
 export type CommentAnchorFilter = 'anchor' | 'all';
 /** Open threads (default), archived ones (Done) or both (SPC-126): what the pane shows. */
 export type CommentStatusView = 'open' | 'done' | 'all';
+
+/** Where a record page's pane lists from (`CommentController.pageFilter`). */
+export type CommentPageFilter = 'page' | 'space';
 /** A status filter as `setStatusFilter` takes it: 'resolved' is an older name of 'done' and reads as 'done'. */
 export type CommentStatusFilter = CommentStatusView | 'resolved';
 
@@ -84,7 +87,7 @@ export type CommentAttachMode = 'on' | 'off' | 'checking';
 export interface CommentActions {
   /**
    * Adds a reply, with the files already uploaded for it. It answers `answers` (an input ask on the first comment or a
-   * reply), else the latest open input ask in the thread; an archived thread stays archived (the server brings it back
+   * reply, or a check or choice the person pressed Other on), else the latest open input ask in the thread; an archived thread stays archived (the server brings it back
    * when a reply waits for someone). True once saved.
    */
   reply(thread: CommentThread, body: string, files?: readonly CommentFile[], answers?: CommentRecord): Promise<boolean>;
@@ -196,6 +199,12 @@ export interface CommentController extends CommentActions {
 
   filter: CommentAnchorFilter;
   setFilter(filter: CommentAnchorFilter): void;
+  /**
+   * Where the pane lists from on a record page: 'page' (its own comments, the usual) or 'space' (the whole Space,
+   * grouped by page). Null where the pane already shows the whole Space. A new comment stays on the page either way.
+   */
+  pageFilter: CommentPageFilter | null;
+  setPageFilter(filter: CommentPageFilter): void;
   /** What the pane shows: never 'resolved' (typed wide so older comparisons with 'resolved' still compile). */
   statusFilter: CommentStatusFilter;
   /** 'resolved' is read as 'done'. */
@@ -489,6 +498,8 @@ export const COMMENT_DONE_PAGE = 50;
  * threads once the Filter asks for them, only the threads named (`only`), and the thread of a linked comment.
  */
 interface CommentWindow {
+  /** The record page whose threads are read; null: the whole Space. */
+  page: string | null;
   done: number;
   only: readonly string[] | null;
   include: string | null;
@@ -504,8 +515,8 @@ type CommentWindowFacts = Pick<SpaceCommentThreadsAnswer, 'counts' | 'numbers' |
  * The store reader: the rows of `page`, listed again whenever the host signals a change. Results that come back out
  * of order are dropped (only the latest list counts). Without a transport: nothing, never loading.
  *
- * With `wanted` (a whole Space) and a host that reads by thread, only the threads the pane lists are read
- * (`threads`); the host says null when its server cannot, and the reader goes back to `list` for good.
+ * With `wanted` (a whole Space, or a record page's threads) and a host that reads by thread, only the threads the pane
+ * lists are read (`threads`); the host says null when its server cannot, and the reader goes back to `list` for good.
  */
 function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCommentPageKey, live: boolean,
   wanted: CommentWindow | null = null) {
@@ -522,7 +533,7 @@ function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCom
   const bounded = Boolean(wanted) && !whole && typeof host?.threads === 'function';
   const wantedRef = useRef(wanted);
   wantedRef.current = wanted;
-  const wantedKey = bounded && wanted ? `${wanted.done}|${wanted.include ?? ''}|${wanted.only ? wanted.only.join('\n') : '\u0000'}` : '';
+  const wantedKey = bounded && wanted ? `${wanted.page ?? ''}|${wanted.done}|${wanted.include ?? ''}|${wanted.only ? wanted.only.join('\n') : '\u0000'}` : '';
   const relist = useCallback(async () => {
     const transport = hostRef.current;
     if (!transport) return undefined;
@@ -531,7 +542,8 @@ function useCommentRows(host: SpaceCommentsTransport | undefined, page: SpaceCom
     try {
       const asked = bounded ? wantedRef.current : null;
       if (asked && transport.threads) {
-        const answer = await transport.threads({ done: asked.done, only: asked.only, include: asked.include ? [asked.include] : [] });
+        const answer = await transport.threads({ done: asked.done, only: asked.only, include: asked.include ? [asked.include] : [],
+          ...(asked.page ? { page: asked.page } : {}) });
         if (answer) {
           if (mine !== seq.current) return answer;
           setState({ key: pageKey, rows: Array.isArray(answer.comments) ? answer.comments : [], hasData: true, error: null,
@@ -621,6 +633,11 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   [hostPage?.recordKey, hostPage?.name]);
   const scope = options.scope === undefined ? hostScope : options.scope;
   const pageKey = scope?.recordKey ?? null;
+  // The Filter widens a record page's list to the whole Space; another page puts it back to that page's own.
+  const [wideOn, setWideOn] = useState<string | null>(null);
+  const spaceWide = Boolean(pageKey) && wideOn === pageKey;
+  const readScope = spaceWide ? null : scope;
+  const setPageFilter = useCallback((next: CommentPageFilter) => { setWideOn(next === 'space' ? pageKey : null); }, [pageKey]);
   const view = hostPage?.view ?? null;
   const me = viewer?.name ?? '';
   const canWrite = Boolean(host) && Boolean(viewer);
@@ -640,20 +657,20 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   const latest = useRef(options);
   latest.current = options;
 
-  // A page lists its own comments. The Space home lists the Space's threads: the open ones, the Done ones a page at a
-  // time once the Filter shows them, only the ones named (`only`), and the one a link opens, never every comment of
-  // the Space (a host without that read answers them all, as before).
+  // The Space home lists the Space's threads, and a record page its own (SPC-1530): the open ones, the Done ones a
+  // page at a time once the Filter shows them, only the ones named (`only`), and the one a link opens, never every
+  // comment of the Space or of the page (a host without that read answers them all, as before).
   const [doneWanted, setDoneWanted] = useState(0);
   const urlFocus = useCommentFocusParam();
   const focusKey = options.focusKey === undefined ? urlFocus : options.focusKey;
   const linkKey = focusKey ?? options.linkKey ?? null;
   const onlyThreads = options.only ?? null;
   const onlyKey = onlyThreads ? onlyThreads.join('\n') : null;
-  const wholeSpaceRead = scope == null;
-  const wanted = useMemo<CommentWindow | null>(() => (wholeSpaceRead
-    ? { done: doneWanted, only: onlyKey === null ? null : onlyKey ? onlyKey.split('\n') : [], include: linkKey } : null),
-  [wholeSpaceRead, doneWanted, onlyKey, linkKey]);
-  const store = useCommentRows(host, scope ? scope.recordKey : 'all', live, wanted);
+  const readPage = readScope ? readScope.recordKey : null;
+  const wanted = useMemo<CommentWindow | null>(() => ({ page: readPage, done: doneWanted,
+    only: onlyKey === null ? null : onlyKey ? onlyKey.split('\n') : [], include: linkKey }),
+  [readPage, doneWanted, onlyKey, linkKey]);
+  const store = useCommentRows(host, readScope ? readScope.recordKey : 'all', live, wanted);
   const facts = store.facts;
   const refetch = store.relist;
   const refetchRef = useRef(refetch);
@@ -698,10 +715,11 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   }, [store.rows]);
 
   const scopeKey = scope ? `${scope.id}|${scope.recordKey}` : null;
-  const inScope = useMemo(() => comments.filter(comment => inCommentScope(comment, scope)),
+  const readScopeKey = readScope ? scopeKey : null;
+  const inScope = useMemo(() => comments.filter(comment => inCommentScope(comment, readScope)),
     // The scope is compared by identity of its record, not of the object a render builds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [comments, scopeKey]);
+    [comments, readScopeKey]);
   // `only` is compared by what it lists, not by the array a render builds (`onlyKey`).
   const threads = useMemo(() => {
     const listed = commentThreads(inScope, anchors).filter(thread => thread.root.status !== 'Deleted');
@@ -798,7 +816,8 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   const handed = useRef(inheritedCommentState<CommentPaneHandover>(viewToken, handoverId)).current;
   const [filter, setFilter] = useState<CommentAnchorFilter>(handed?.filter ?? 'anchor');
   const [statusFilter, setStatusFilterState] = useState<CommentStatusView>(handed?.statusFilter ?? 'open');
-  const [waitingFilter, setWaitingFilterState] = useState(handed?.waitingFilter ?? false);
+  // A pane starts on what waits for you when the host says so (the person's Focus mode setting), else on the open threads.
+  const [waitingFilter, setWaitingFilterState] = useState(handed?.waitingFilter ?? host?.waitingFirst ?? false);
   const setStatusFilter = useCallback((value: CommentStatusFilter) => {
     setStatusFilterState(value === 'resolved' ? 'done' : value);
     // Open, Done and All are the other choices of the same menu: picking one leaves "Waiting for you".
@@ -947,7 +966,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   }, [focusKey, threads, anchors, anchorKey, revealThread, doneUnread, readFailed]);
 
   // Grouping on the Space home: the page a thread is on, numbered in the order pages first come.
-  const wholeSpace = scope == null;
+  const wholeSpace = readScope == null;
   const pageNumbers = useMemo(() => {
     const numbers = new Map<string, number>();
     for (const thread of threads) {
@@ -1154,10 +1173,12 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       const { root } = thread;
       if (root.recordKey.startsWith('draft-') || (!body.trim() && !files.length)) return false;
       const at = new Date().toISOString();
-      // The reply answers the latest open input ask in the thread: the first comment's, or an agent reply's.
-      const open = (item: CommentRecord) => item.needs === 'input' && !item.answer && item.status !== 'Deleted'
-        && !item.recordKey.startsWith('draft-');
-      const asking = answers && open(answers) ? answers : [...thread.replies].reverse().concat(root).find(open);
+      // The reply answers the question it was written for (`answers`: an input ask, or a check or choice after Other),
+      // else the latest open input ask in the thread: the first comment's, or an agent reply's.
+      const unanswered = (item: CommentRecord) => !item.answer && item.status !== 'Deleted' && !item.recordKey.startsWith('draft-');
+      const open = (item: CommentRecord) => item.needs === 'input' && unanswered(item);
+      const asking = answers && answers.needs !== 'none' && unanswered(answers) ? answers
+        : [...thread.replies].reverse().concat(root).find(open);
       const answer = asking ? clipCommentAnswer(body.trim() || files.map(file => file.name).join(', ')) : null;
       // The one reply names the ask in `answer_to`: the server records it as the ask's answer, sends it to the asking
       // agent's thread only (never the comment thread's first link, W1) and re-arms nobody's waiting inbox with it (W3).
@@ -1472,7 +1493,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
   return {
     comments: inScope, threads, visibleThreads, changes, checkpoint, isNew, threadsOn, numberOf,
     scope, anchors, anchorKey, anchor,
-    filter: effectiveFilter, setFilter, statusFilter, setStatusFilter, counts, scopeCounts, waitingFilter, setWaitingFilter, waits, waitingCount,
+    filter: effectiveFilter, setFilter, pageFilter: pageKey ? (spaceWide ? 'space' : 'page') : null, setPageFilter, statusFilter, setStatusFilter, counts, scopeCounts, waitingFilter, setWaitingFilter, waits, waitingCount,
     wholeSpace, groupOf,
     threadKey, setThreadKey, selectThread, revealThread, revealRequest,
     ...actions, actions, viewer, canEdit, canDelete, canWrite, routing,

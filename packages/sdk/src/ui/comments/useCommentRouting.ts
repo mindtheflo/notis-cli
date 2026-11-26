@@ -49,16 +49,22 @@ export interface CommentRouting {
   /** True when the host answers best matches: the new comment box shows its To chip. */
   hasBestMatch: boolean;
   /** The thread the next new comment goes to, when picked with the chip or @; null: the best match. */
-  newPick: SpaceCommentThreadPick | null;
+  newPick: SpaceCommentThreadDestination | null;
   /** True when the host has the @ thread picker. */
   canPick: boolean;
   /** True when the host can link a comment thread to a thread: the Goes to line shows Change. */
   canLink: boolean;
-  /** Opens the picker for the next new comment, under `anchor`. Resolves with the pick, or null when dismissed. */
+  /**
+   * Opens the picker for the next new comment, under `anchor`. Resolves with the pick, or null when dismissed. A
+   * `mention` pick (an agent outside Notis, SPC-1546) is not kept as the destination: the caller writes its @.
+   */
   pickForNew(anchor: HTMLElement): Promise<SpaceCommentThreadPick | null>;
   clearPick(): void;
-  /** Change: opens the picker for a thread's replies and links the pick as where they go. */
-  change(rootKey: string, anchor: HTMLElement): Promise<void>;
+  /**
+   * Change: opens the picker for a thread's replies and links the pick as where they go. Resolves with the @ to write
+   * into the reply when an agent outside Notis was picked (nothing is linked for it, SPC-1546), else null.
+   */
+  change(rootKey: string, anchor: HTMLElement): Promise<string | null>;
   /** Links a new comment thread, once its first comment is saved, to the pick or the best match. */
   linkNew(rootKey: string): Promise<void>;
   /** True while a pick for this thread is being linked: its Goes to line already names it. */
@@ -102,8 +108,24 @@ export function clearCommentRoutingCache() {
 }
 
 /** A thread a pick names: a new thread pick is a pending ref of its harness until the first wake starts it. */
-function refOfPick(pick: SpaceCommentThreadPick): SpaceCommentThreadRef {
+function refOfPick(pick: SpaceCommentThreadDestination): SpaceCommentThreadRef {
   return 'newThread' in pick ? { threadId: null, title: '', harness: pick.newThread, status: 'pending' } : pick;
+}
+
+/** A pick that names where the comment goes (a thread, a new thread): every pick but an outside agent's `mention`. */
+export type SpaceCommentThreadDestination = Exclude<SpaceCommentThreadPick, { mention: string }>;
+
+/**
+ * The @ a picked agent outside Notis writes into the comment ("@fred-and-the-machine "), else null (SPC-1546): such a
+ * pick links nothing, its @ reaches the agent the way any @ of it does (SPC-1540).
+ */
+export function pickMentionText(pick: SpaceCommentThreadPick | null | undefined): string | null {
+  return pick && 'mention' in pick && typeof pick.mention === 'string' && pick.mention.trim() ? `@${pick.mention.trim()} ` : null;
+}
+
+/** `text` with the picked agent's @ in front, once (a draft that already starts with it is kept). */
+export function withPickMention(text: string, mention: string): string {
+  return text.startsWith(mention.trim()) ? text : `${mention}${text}`;
 }
 
 /** The same thread: by id, and for pending new threads (no id yet) by harness. */
@@ -198,15 +220,15 @@ export function useCommentRouting(input: {
   const toKey = commentDraftKey(pickKey || null, 'to');
   const viewToken = transport?.viewToken ?? null;
   const handoverId = `routing\u0000${pickKey}`;
-  const [picks, setPicks] = useState<Readonly<Record<string, SpaceCommentThreadPick>>>(() => {
-    const handed = inheritedCommentState<Readonly<Record<string, SpaceCommentThreadPick>>>(viewToken, handoverId);
+  const [picks, setPicks] = useState<Readonly<Record<string, SpaceCommentThreadDestination>>>(() => {
+    const handed = inheritedCommentState<Readonly<Record<string, SpaceCommentThreadDestination>>>(viewToken, handoverId);
     if (handed) return handed;
-    const stored = readCommentDraft(toKey)?.place as SpaceCommentThreadPick | undefined;
+    const stored = readCommentDraft(toKey)?.place as SpaceCommentThreadDestination | undefined;
     const writing = hasDraftContent(readCommentDraft(commentDraftKey(pickKey || null, 'new')))
       || hasDraftContent(readCommentDraft(commentDraftKey(pickKey || null, 'passage')));
     return stored && writing ? { [pickKey]: stored } : {};
   });
-  useCommentHandover<Readonly<Record<string, SpaceCommentThreadPick>>>(viewToken, handoverId, () => picks, setPicks);
+  useCommentHandover<Readonly<Record<string, SpaceCommentThreadDestination>>>(viewToken, handoverId, () => picks, setPicks);
   const newPick = picks[pickKey] ?? null;
   const pickHeld = useRef(false);
   useEffect(() => {
@@ -214,7 +236,7 @@ export function useCommentRouting(input: {
     pickHeld.current = Boolean(newPick);
     writeCommentDraft(toKey, { place: newPick ?? undefined });
   }, [toKey, newPick]);
-  const setNewPick = useCallback((pick: SpaceCommentThreadPick | null, key: string) => setPicks(current => {
+  const setNewPick = useCallback((pick: SpaceCommentThreadDestination | null, key: string) => setPicks(current => {
     if (pick) return { ...current, [key]: pick };
     if (!(key in current)) return current;
     const next = { ...current };
@@ -401,7 +423,7 @@ export function useCommentRouting(input: {
     if (!host?.pickThread) return null;
     try {
       const pick = await host.pickThread({ anchor, current: pickId(newPick) ?? bestMatch?.threadId ?? null });
-      if (pick) setNewPick(pick, pickKey);
+      if (pick && !pickMentionText(pick)) setNewPick(pick as SpaceCommentThreadDestination, pickKey);
       return pick ?? null;
     } catch (error) {
       console.warn('[comments] thread picker failed', error);
@@ -438,7 +460,7 @@ export function useCommentRouting(input: {
    * Shows the pick at once (saving), links it, then keeps the thread the host answers. A failure puts the links back
    * as they were (unless a newer link came since) and, when `loud`, says so.
    */
-  const linkShown = useCallback(async (rootKey: string, pick: SpaceCommentThreadPick, primary: boolean, loud: boolean) => {
+  const linkShown = useCallback(async (rootKey: string, pick: SpaceCommentThreadDestination, primary: boolean, loud: boolean) => {
     const host = transportRef.current;
     if (!host?.link) return;
     const id = linkId(database, rootKey);
@@ -472,7 +494,7 @@ export function useCommentRouting(input: {
 
   const change = useCallback(async (rootKey: string, anchor: HTMLElement) => {
     const host = transportRef.current;
-    if (!host?.pickThread || !host.link) return;
+    if (!host?.pickThread || !host.link) return null;
     let pick: SpaceCommentThreadPick | null;
     try {
       pick = await host.pickThread({ anchor,
@@ -480,10 +502,13 @@ export function useCommentRouting(input: {
     } catch (error) {
       console.warn('[comments] thread picker failed', error);
       onLinkFailed.current?.();
-      return;
+      return null;
     }
-    if (!pick) return;
-    await linkShown(rootKey, pick, true, true);
+    if (!pick) return null;
+    const mention = pickMentionText(pick);
+    if (mention) return mention;
+    await linkShown(rootKey, pick as SpaceCommentThreadDestination, true, true);
+    return null;
   }, [database, linkShown, knownLinks]);
 
   const linkNew = useCallback(async (rootKey: string) => {

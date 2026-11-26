@@ -109,8 +109,12 @@ export interface HostComposerTo {
   outsideLabel: string;
   /** The app or harness that runs it, for its logo. */
   harness: string | null;
-  /** Opens the picker under `anchor`; true once something was picked. Absent: the pill only says where it goes. */
-  pick?: (anchor: HTMLElement) => Promise<boolean>;
+  /**
+   * Opens the picker under `anchor`; true once something was picked. A string: an agent outside Notis was picked, and
+   * the box writes that @ ("@fred-and-the-machine ") at the start of its text (SPC-1546). Absent: the pill only says
+   * where it goes.
+   */
+  pick?: (anchor: HTMLElement) => Promise<boolean | string>;
   pickLabel: string;
 }
 
@@ -144,6 +148,11 @@ export interface HostComposerProps {
   attach: boolean;
   /** Goes up each time the pane asks for the caret in this box (Other on a question, a key). */
   focusToken: number;
+  /**
+   * A picked agent outside Notis's @ the box writes ("@fred-and-the-machine ", SPC-1546), each time `token` goes up:
+   * the whole text of an empty box, else after the words already written, never twice.
+   */
+  mention?: { token: number; text: string } | null;
   /** A new comment takes the caret as it opens; a reply box waits for a press. */
   autoFocus: boolean;
 }

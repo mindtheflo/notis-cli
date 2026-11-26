@@ -16,7 +16,7 @@ export * from './passageModel';
 export * from './usePassageComments';
 export * from './PassageComments';
 export { COMMENT_FOCUS_PARAM, useCommentFocusParam, useHostComments } from './hostComments';
-export { useCommentRouting, type CommentRouting } from './useCommentRouting';
+export { useCommentRouting, pickMentionText, withPickMention, type CommentRouting, type SpaceCommentThreadDestination } from './useCommentRouting';
 export { commentGroupSlot, type CommentListOptions } from './paneParts';
 // What the host panel around a pane shares with it: the slots the pane leaves and the threads that wait for the viewer.
 export {

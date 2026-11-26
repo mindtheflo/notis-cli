@@ -9,7 +9,8 @@
  *
  * Token selectors (one rule set, both places):
  *   light: :root (Portal document), :host (Space shadow root), [data-notis-theme="light"]
- *   dark:  .dark (Portal document), [data-notis-theme="dark"] (the Space app root, set by SdkPresentation)
+ *   dark:  .dark (Portal document), [data-notis-theme="dark"] (the Space app root, set by SdkPresentation),
+ *          :host([data-notis-theme="dark"]) (a host that draws the toolkit in its own shadow root: the comment pane)
  * In a shadow root :root matches nothing, so :host carries the light defaults and the app root's data-notis-theme
  * re-scopes them for its subtree. Overlay layer roots therefore sit inside [data-notis-app-root] (findLayerRoot).
  * Every use also carries the light value as a var() fallback.
@@ -50,7 +51,7 @@
      that tint over the list and the open row. */
   --nui-pill-info: 221 83% 40%; --nui-pill-success: 142 76% 24%; --nui-pill-warning: 30 95% 28%; --nui-pill-danger: 0 80% 38%;
 }
-.dark, [data-notis-theme="dark"] {
+.dark, [data-notis-theme="dark"], :host([data-notis-theme="dark"]) {
   --nui-a-open: .20;
   --nui-a-sel: .15;
   --nui-a-selopen: .26;
@@ -175,7 +176,7 @@ div.nui-row:has(> .nui-row-main[data-wrap]) .nui-row-more, div.nui-row[data-wrap
 /* Labels that say where the row stands (keepLabels) hold too: the meta start truncates first. */
 .nui-row-labels[data-keep] { flex: 0 0 auto; max-width: 75%; }
 .nui-star { display: inline-flex; flex-shrink: 0; font-size: 14px; color: hsl(32 95% 40%); }
-.dark .nui-star { color: hsl(38 92% 60%); }
+:is(.dark, [data-notis-theme="dark"]) .nui-star, :host([data-notis-theme="dark"]) .nui-star { color: hsl(38 92% 60%); }
 /* A toned label is a small pill, the Badge tints: state is never carried by text colour alone. */
 .nui-row-label[data-tone] { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; margin-right: 4px; border-radius: 5px; font-weight: 500; vertical-align: middle; }
 .nui-row-tags { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; }
@@ -496,7 +497,7 @@ tr.nui-row[data-cursor], tr.nui-row[data-open], tr.nui-row[data-selected] { box-
 .nui-badge[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-badge[data-tone="success"] { background: hsl(var(--nui-st-active, 142 71% 45%) / .14); color: hsl(var(--nui-st-active, 142 71% 45%)); }
 .nui-badge[data-tone="warning"] { background: hsl(38 92% 50% / .16); color: hsl(32 95% 40%); }
-.dark .nui-badge[data-tone="warning"] { color: hsl(38 92% 60%); }
+:is(.dark, [data-notis-theme="dark"]) .nui-badge[data-tone="warning"], :host([data-notis-theme="dark"]) .nui-badge[data-tone="warning"] { color: hsl(38 92% 60%); }
 .nui-badge[data-tone="danger"] { background: hsl(var(--destructive) / .12); color: hsl(var(--nui-tone-danger, var(--destructive))); }
 /* A toned Row label is a pill on the same tints, its text a shade that keeps 4.5:1 on its own tint. */
 .nui-row-label[data-tone="info"] { background: hsl(var(--nui-blue, 217 91% 60%) / .12); color: hsl(var(--nui-pill-info, 221 83% 40%)); }
@@ -1315,6 +1316,11 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
   cursor: pointer; }
 .nui-comment-bar-btn:is(:hover, :focus-visible, [aria-expanded="true"]) { background: hsl(var(--muted)); }
 .nui-comment-bar-btn .nui-icon { width: 16px; height: 16px; }
+/* Waiting for you is a toggle, as Focus mode in the Manager: pressed it keeps a tint, and its number sits beside the
+   icon (the button widens for it). */
+.nui-comment-bar-btn[aria-pressed="true"] { background: hsl(var(--foreground) / .07); }
+.nui-comment-bar-btn[aria-pressed="true"]:is(:hover, :focus-visible) { background: hsl(var(--foreground) / .12); }
+.nui-comment-bar-btn[data-part="waiting-toggle"][data-count] { width: auto; min-width: 32px; gap: 4px; padding: 0 6px 0 8px; }
 /* A filter that is not the usual one says so on its button (a dot) and on the row under it (a chip per choice). */
 .nui-comment-bar-btn[data-active]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 6px; height: 6px;
   border-radius: 50%; background: hsl(var(--primary)); }
@@ -1330,6 +1336,7 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
   .nui-comment-bar-btn { width: 36px; height: 44px; border-radius: 18px; }
   .nui-comment-bar-btn .nui-icon { width: 20px; height: 20px; }
   .nui-comment-bar-btn[data-active]::after { top: 10px; right: 8px; width: 7px; height: 7px; }
+  .nui-comment-bar-btn[data-part="waiting-toggle"][data-count] { min-width: 36px; padding: 0 8px 0 8px; }
   .nui-comment-chips { gap: 8px; padding: 12px 16px 0; }
   .nui-comment-chip { height: 36px; padding: 0 8px 0 14px; border-radius: 18px; font-size: 14px; }
   .nui-comment-chip .nui-icon { width: 16px; height: 16px; }
@@ -1357,7 +1364,9 @@ tr.nui-row[data-drop="after"] > td { box-shadow: inset 0 -2px 0 hsl(var(--nui-bl
 .nui-comment-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px;
   background: hsl(var(--foreground) / .04); cursor: pointer; outline: none; scroll-margin: 12px; }
 .nui-comment-card:hover { background: hsl(var(--foreground) / .06); }
-.nui-comment-card[data-selected] { background: hsl(var(--foreground) / .08); }
+/* The selected card keeps a ring, as a selected tile and the selected pin on the page do: a tint alone is a step from
+   the hover tint, so with the pointer on another card the selection could not be told apart. */
+.nui-comment-card[data-selected] { background: hsl(var(--foreground) / .08); box-shadow: inset 0 0 0 1px hsl(var(--nui-blue, 217 91% 60%) / .5); }
 /* The card: where it sits first (the quoted words, or its place) with Done and "..." at the top right, then each
    comment as two lines beside its avatar (the name, then the agent's thread and the time) with its words, pictures and
    question on the card's full width, then the reply box. */
@@ -1383,7 +1392,7 @@ slot[name="run-bar"]::slotted(:empty) { display: none !important; }
 .nui-comment-pane[data-sheet="half"][data-sheet-drafting] :is(.nui-comment-card, slot[name="after-list"]) { display: none; }
 .nui-comment-pane[data-sheet="half"] > .nui-comment-pane-scroll { gap: 0; padding: 0 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
 .nui-comment-pane[data-sheet="half"] .nui-comment-list { gap: 0; }
-.nui-comment-pane[data-sheet="half"][data-sheet-card] .nui-comment-card { padding: 0; border-radius: 0; background: none; }
+.nui-comment-pane[data-sheet="half"][data-sheet-card] .nui-comment-card { padding: 0; border-radius: 0; background: none; box-shadow: none; }
 .nui-comment-pane[data-sheet="half"][data-sheet-card] .nui-comment-card > slot[name="run-bar"]::slotted(*) { margin: 0 -8px -2px !important; }
 /* The reply box sits right under a question's options: no "Other" row at half. */
 .nui-comment-pane[data-sheet="half"] .nui-comment-option[data-other] { display: none; }
@@ -1477,12 +1486,15 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   text-underline-offset: 2px; }
 .nui-comment-link:hover { text-decoration-color: hsl(var(--primary)); }
 .nui-comment-attachments { display: flex; flex-direction: column; gap: 8px; min-width: 0; cursor: default; }
-.nui-comment-pictures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+/* Pictures share a row only where each keeps 240px: in a side panel they stack, so a screenshot stays readable. */
+.nui-comment-pictures { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 8px; }
 .nui-comment-pictures[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
 .nui-comment-figure { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; margin: 0; }
-.nui-comment-thumb { display: block; padding: 0; border: 0; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 10;
-  background: hsl(var(--foreground) / .05); cursor: zoom-in; }
-.nui-comment-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* A picture keeps its own shape at the tile's full width; a tall one (a phone screenshot) shows its top 360px, the
+   rest one click away, instead of shrinking to a strip inside a fixed 16:10 tile. */
+.nui-comment-thumb { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; overflow: hidden; min-height: 48px;
+  max-height: 360px; background: hsl(var(--foreground) / .05); cursor: zoom-in; }
+.nui-comment-thumb img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: cover; object-position: top; }
 .nui-comment-figure[data-chosen] .nui-comment-thumb { box-shadow: 0 0 0 2px hsl(var(--nui-blue, 217 91% 60%)); }
 .nui-comment-caption { display: flex; align-items: center; gap: 4px; min-width: 0; color: hsl(var(--muted-foreground));
   font-size: 12px; }
@@ -1507,8 +1519,10 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
   padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: hsl(var(--foreground)); font: inherit;
   font-size: 13px; line-height: 20px; text-align: start; cursor: pointer; }
 .nui-comment-option[data-detail] { align-items: flex-start; }
-.nui-comment-option[data-recommended] { background: hsl(var(--accent) / .5); }
-.nui-comment-option:enabled:is(:hover, :focus-visible) { background: hsl(var(--accent) / .6); }
+/* The card is already a tint of the page, so the rows tint over it with the text color (the chat's accent, made for a
+   plain page, is the card's own color in both themes): the recommended row a little, the one under the pointer more. */
+.nui-comment-option[data-recommended] { background: hsl(var(--foreground) / .05); }
+.nui-comment-option:enabled:is(:hover, :focus-visible) { background: hsl(var(--foreground) / .1); }
 .nui-comment-option:disabled { opacity: .6; cursor: default; }
 .nui-comment-option-key { display: flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px;
   border: 1px solid hsl(var(--foreground) / .1); border-radius: 4px; background: hsl(var(--background));
@@ -1531,7 +1545,6 @@ button.nui-comment-agent:hover { background: hsl(var(--muted)); color: hsl(var(-
 
 .nui-comment-answer { display: flex; align-items: center; gap: 6px; margin: 0; color: hsl(var(--muted-foreground)); }
 /* An input ask's own answer field, with Attach and Paste under it. */
-.nui-comment-ask-answer { display: flex; flex-direction: column; gap: 6px; }
 .nui-comment-choices { display: flex; flex-wrap: wrap; gap: 6px; }
 
 

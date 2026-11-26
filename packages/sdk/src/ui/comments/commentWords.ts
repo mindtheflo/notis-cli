@@ -202,12 +202,17 @@ export const COMMENT_WORDS = Object.freeze({
   toNew: w('To a new thread', 'À une nouvelle conversation'),
   toPick: w('Choose a thread', 'Choisis une conversation'),
   toNewHarness: w('To a new {harness} thread', 'À une nouvelle conversation {harness}'),
+  // SPC-1540: words that @mention only people go to them; no agent wakes.
+  toPeople: w('To {names} · wakes no agent', 'À {names} · ne réveille aucun agent'),
+  forPeople: w('For {names} · wakes no agent', 'Pour {names} · ne réveille aucun agent'),
+  namesAnd: w('{names} and {last}', '{names} et {last}'),
   pickThread: w('Choose the thread this comment goes to', 'Choisir la conversation où va ce commentaire'),
   // While a picked thread is being linked: the Goes to line already names it.
   linking: w('Saving where this goes', 'Enregistrement de la destination'),
   // Grouping on the Space home (SPC-116).
   pageN: w('Page {n}', 'Page {n}'),
   wholeSpace: w('This Space', 'Ce Space'),
+  thisPage: w('This page', 'Cette page'),
   // Comment modes (SPC-118).
   newCommentMenu: w('New comment', 'Nouveau commentaire'),
   modeText: w('On words', 'Sur des mots'),

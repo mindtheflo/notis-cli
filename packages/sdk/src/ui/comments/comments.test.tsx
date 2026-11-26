@@ -114,6 +114,15 @@ test('commentFromRow reads a store row: page, anchors, place, options and the au
   assert.deepEqual(home.scopeIds, [], 'a comment on the Space home is on no page');
 });
 
+test('commentFromRow reads a time comment\'s range, and the items marker attribute is data-comment-anchor', () => {
+  const ranged = commentFromRow({ ...row('t1', { body: 'Cut this part' }), mode: 'time', time_start: 30, time_end: 45 });
+  assert.equal(ranged.time, 30);
+  assert.equal(ranged.timeEnd, 45);
+  const moment = commentFromRow({ ...row('t2', { body: 'Here' }), mode: 'time', time_start: 12.5 });
+  assert.equal(moment.timeEnd, null, 'a moment has no end: it holds until the next time comment');
+  assert.equal(ui.COMMENT_ANCHOR_ATTR, 'data-comment-anchor');
+});
+
 test('commentFromRow: a row an agent wrote shows the agent\'s stamped name, its thread and what it ran on', () => {
   const signed = commentFromRow(row('s1', { body: 'Done', agent: { name: 'fred-and-the-machine', thread_id: 'thread-1',
     runtime: { provider: 'codex', label: 'Codex', model: null, intelligence: 'high', effort: null, speed: null } } }));
@@ -392,14 +401,14 @@ const optionLabels = (root: ParentNode = doc) => [...root.querySelectorAll('.nui
 const option = (label: string, root: ParentNode = doc) => [...root.querySelectorAll('.nui-comment-option')]
   .find(el => el.querySelector('.nui-comment-option-label')?.textContent === label) as HTMLButtonElement | undefined;
 
-/** A button of the pane's one header row: `new-comment-button`, `filter-button` or `more-button`. */
+/** A button of the pane's one header row: `new-comment-button`, `waiting-toggle` or `more-button`. */
 const barButton = (part: string) => doc.querySelector(`.nui-comment-bar [data-part="${part}"]`) as HTMLButtonElement | null;
-/** Opens the filter menu (unless it is open) and picks Waiting for you, Open, Done or All. */
+/** Opens the pane's "..." (unless it is open): Open, Done, All and the scope. */
 async function openFilterMenu() {
-  if (!doc.querySelector('.nui-comment-filter-item[data-filter]')) await click(barButton('filter-button')!);
+  if (!doc.querySelector('.nui-comment-filter-item[data-filter]')) await click(barButton('more-button')!);
 }
 /** Picks This item or All items in the filter menu. */
-async function pickScope(scope: 'anchor' | 'all') {
+async function pickScope(scope: 'anchor' | 'all' | 'page' | 'space') {
   await openFilterMenu();
   const item = doc.querySelector(`[role^="menuitem"] .nui-comment-filter-item[data-scope="${scope}"]`)?.closest('[role^="menuitem"]');
   assert.ok(item, `the filter menu offers the scope ${scope}`);
@@ -412,7 +421,12 @@ async function pickNewComment(label: string) {
   assert.ok(item, `the New comment menu offers "${label}"`);
   await click(item!);
 }
+/** Waiting for you is the row's toggle (turned on); Open, Done and All are in "...". */
 async function pickFilter(filter: 'waiting' | 'open' | 'done' | 'all') {
+  if (filter === 'waiting') {
+    if (barButton('waiting-toggle')!.getAttribute('aria-pressed') !== 'true') await click(barButton('waiting-toggle')!);
+    return;
+  }
   await openFilterMenu();
   const item = doc.querySelector(`[role^="menuitem"] .nui-comment-filter-item[data-filter="${filter}"]`)?.closest('[role^="menuitem"]');
   assert.ok(item, `the filter menu offers ${filter}`);
@@ -455,10 +469,10 @@ async function replyAction(commentKey: string, action: string) {
   await click(entry!);
 }
 
-/** The filter menu's entries in order, each with the number it shows (null: none). */
+/** The status and scope entries of "..." in order, each with the number it shows (null: none). */
 const filterEntries = async () => {
   await openFilterMenu();
-  const entries = [...doc.querySelectorAll('.nui-comment-filter-item')].map(el =>
+  const entries = [...doc.querySelectorAll('.nui-comment-filter-item:is([data-filter], [data-scope])')].map(el =>
     [el.getAttribute('data-filter') ?? `scope:${el.getAttribute('data-scope')}`, el.querySelector('.nui-comment-count')?.textContent ?? null]);
   await key(doc.activeElement ?? doc.body, 'Escape');
   return entries;
@@ -501,17 +515,23 @@ test('CommentPane: threads of this anchor, pins, replies and the asks', async ()
   assert.ok(!controller!.isNew(rootOf('c2')), 'an answered ask is no longer new');
 });
 
-test('CommentPane: one header row; the filter holds Waiting for you (the only number), Open, Done, All and the scope; a chip says an unusual filter', async () => {
+test('CommentPane: one header row; Waiting for you is a toggle on it (the only number); "..." holds Open, Done, All and the scope; a chip says an unusual choice', async () => {
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
-  // The one row: the host's switch (lead slot), New comment, Filter, "...", then the host's close button (trail slot).
+  // The one row: the host's switch (lead slot), New comment, the Waiting for you toggle, "...", then the host's close
+  // button (trail slot). No funnel menu (Flo, 2026-11-25: a toggle that fits on the button line).
   const bar = doc.querySelector('.nui-comment-bar')!;
   assert.deepEqual([...bar.children].map(el => el.tagName === 'SLOT' ? `slot:${el.getAttribute('name')}` : el.getAttribute('data-part') ?? el.className),
-    ['slot:lead', 'nui-comment-bar-gap', 'new-comment-button', 'filter-button', 'more-button', 'slot:trail']);
+    ['slot:lead', 'nui-comment-bar-gap', 'new-comment-button', 'waiting-toggle', 'more-button', 'slot:trail']);
   assert.equal(doc.querySelector('.nui-comment-chips'), null, 'no second row while the filter is the usual one');
-  assert.equal(barButton('filter-button')!.hasAttribute('data-active'), false);
+  assert.equal(barButton('more-button')!.hasAttribute('data-active'), false);
+  const toggle = barButton('waiting-toggle')!;
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false', 'off by default without a host setting');
+  assert.equal(toggle.querySelector('.nui-comment-count')!.textContent, '1', 'the only number: what waits for you');
+  assert.equal(toggle.getAttribute('aria-label'), 'Waiting for you, 1 waiting');
   assert.deepEqual(await filterEntries(),
-    [['waiting', '1'], ['open', null], ['done', null], ['all', null], ['scope:anchor', null], ['scope:all', null]],
-    'Waiting for you comes first and is the only entry with a number: no totals');
+    [['open', null], ['done', null], ['all', null], ['scope:page', null], ['scope:space', null],
+      ['scope:anchor', null], ['scope:all', null]],
+    'no totals in "..."');
   assert.equal(controller!.waitingCount, 1, 'the open question of slide 1');
 
   // Where: all items.
@@ -519,20 +539,21 @@ test('CommentPane: one header row; the filter holds Waiting for you (the only nu
   assert.deepEqual(cards(), ['c3', 'c2', 'c1'], 'flat, the newest thread first (a new reply does not move c1)');
   assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => [el.getAttribute('data-chip'), el.textContent]), [['all-items', 'All items']],
     'one line says the filter is not the usual one');
-  assert.ok(barButton('filter-button')!.hasAttribute('data-active'));
+  assert.ok(barButton('more-button')!.hasAttribute('data-active'));
   // Which: Done, All, Waiting for you.
   await pickFilter('done');
   assert.deepEqual(cards(), ['c4'], 'deleted threads never show');
-  assert.equal(barButton('filter-button')!.getAttribute('aria-label'), 'Show comments: Done');
   assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => el.textContent), ['Done', 'All items']);
   await pickFilter('all');
   assert.deepEqual(cards(), ['c3', 'c2', 'c1', 'c4']);
   await pickFilter('waiting');
   assert.deepEqual(cards(), ['c3', 'c2'], 'only what waits for you, on every item while All items is on');
   assert.equal(controller!.statusFilter, 'open');
-  assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => el.getAttribute('data-chip')), ['waiting', 'all-items']);
-  // A press on a chip removes that choice.
-  await click(doc.querySelector('.nui-comment-chip[data-chip="waiting"]')!);
+  assert.equal(barButton('waiting-toggle')!.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => el.getAttribute('data-chip')), ['all-items'],
+    'the toggle says Waiting for you: no chip repeats it');
+  // A second press on the toggle turns it off; a press on a chip removes that choice.
+  await click(barButton('waiting-toggle')!);
   assert.equal(controller!.waitingFilter, false);
   assert.deepEqual(cards(), ['c3', 'c2', 'c1']);
   await click(doc.querySelector('.nui-comment-chip[data-chip="all-items"]')!);
@@ -543,12 +564,27 @@ test('CommentPane: one header row; the filter holds Waiting for you (the only nu
   assert.match(doc.querySelector('.nui-comment-empty')!.textContent!, /No comments here yet/);
 });
 
+test('The pane opens on Waiting for you when the host says so (the person\'s Focus mode setting), and the toggle turns it off', async () => {
+  const comments: Partial<SpaceCommentsTransport> = { waitingFirst: true };
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
+  assert.equal(controller!.waitingFilter, true);
+  assert.equal(barButton('waiting-toggle')!.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(cards(), ['c2'], 'only what waits: the open question of slide 1');
+  assert.equal(doc.querySelector('.nui-comment-chips'), null, 'the toggle says it: no second row');
+  await click(barButton('waiting-toggle')!);
+  assert.equal(controller!.waitingFilter, false);
+  assert.deepEqual(cards(), ['c2', 'c1']);
+
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments: { waitingFirst: false } }));
+  assert.equal(barButton('waiting-toggle')!.getAttribute('aria-pressed'), 'false', 'Focus mode off: every open thread');
+});
+
 test('Waiting for you lists what the host says waits (a mention, a question, a reply in your thread), and empties in its own words', async () => {
   setWaitingCommentThreads(['c1', 'c3']);
   try {
     await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
     assert.equal(controller!.waitingCount, 1, 'c1 on this item; c3 sits on another');
-    assert.deepEqual((await filterEntries())[0], ['waiting', '1']);
+    assert.equal(barButton('waiting-toggle')!.querySelector('.nui-comment-count')!.textContent, '1');
     await pickFilter('waiting');
     assert.deepEqual(cards(), ['c1'], "the host's list wins over the pane's own guess (c2's open question)");
     await pickScope('all');
@@ -1032,6 +1068,68 @@ test('New comment: a To chip names the best match, @ or the chip picks another, 
   assert.equal(doc.querySelector('[data-part="to-chip"]'), null, 'no best match, no chip');
 });
 
+test('Words that @mention only people: the To chip and the reply box say who it is for and that no agent wakes (SPC-1540)', async () => {
+  const comments: Partial<SpaceCommentsTransport> = {
+    viewer: { name: 'Flo', canEditSpace: true, id: 'user-flo', people: ['Florian Pariset', 'Ed'] },
+    bestMatch: async () => ({ threadId: 't-best', title: 'Deck polish' }),
+  };
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments }));
+  await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+  await settle();
+  const chip = () => doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!;
+  const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, 'Hi @florian what do you think? cc @ed');
+  assert.equal(chip().textContent, 'To Florian and Ed · wakes no agent');
+  assert.equal(chip().tagName, 'SPAN', 'nothing to pick: no agent wakes');
+  // An @ of a harness, or of someone who is not one of the Space's people: where it goes today.
+  await type(field, '@florian and @claude, propose another');
+  assert.match(chip().textContent!, /To Deck polish/);
+  await type(field, '@florian and @someone');
+  assert.match(chip().textContent!, /To Deck polish/);
+  await type(field, 'No mention');
+  assert.match(chip().textContent!, /To Deck polish/);
+
+  const reply = () => doc.querySelector('[data-thread="c1"] .nui-comment-compose-box textarea') as HTMLTextAreaElement;
+  const note = () => doc.querySelector('[data-thread="c1"] [data-part="for-people"]');
+  await type(reply(), '@Ed can you check?');
+  assert.equal(note()?.textContent, 'For Ed · wakes no agent');
+  await type(reply(), '@ed @codex can you check?');
+  assert.equal(note(), null);
+
+  // A Site reader is told no people: the chip never says it.
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments: { ...comments, viewer: { name: 'Flo', canEditSpace: false } } }));
+  await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+  await settle();
+  await type(doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement, '@florian what do you think?');
+  assert.match(chip().textContent!, /To Deck polish/);
+});
+
+test('Where the host draws the comment boxes, words that @mention only people say under the box that no agent wakes (SPC-1540)', async () => {
+  const comments: Partial<SpaceCommentsTransport> = {
+    viewer: { name: 'Flo', canEditSpace: true, id: 'user-flo', people: ['Florian Pariset', 'Ed'] },
+    bestMatch: async () => ({ threadId: 't-best', title: 'Deck polish' }),
+  };
+  const stopHost = registerHostComposerHost();
+  const boxOf = (kind: 'new' | 'reply') => listHostComposers().find(item => item.props().kind === kind)!;
+  try {
+    // The pane in the panel's shadow root, as the Portal shows it: the host draws its boxes.
+    await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { comments: { ...runPanel, ...comments } }));
+    await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+    await settle();
+    const newNote = () => runRoot().querySelector('.nui-comment-new-box [data-part="for-people"]');
+    assert.equal(newNote(), null, 'nothing before the words name anyone');
+    await act(async () => { boxOf('new').props().onText('@florian what do you think?'); });
+    await settle();
+    assert.equal(newNote()?.textContent, 'For Florian · wakes no agent');
+    assert.match(boxOf('new').props().to?.label ?? '', /Deck polish/, 'the host\'s To pill is left alone while typing');
+    await act(async () => { boxOf('new').props().onText('@florian @claude what do you think?'); });
+    await settle();
+    assert.equal(newNote(), null, 'a harness named: it goes where it goes today');
+  } finally {
+    stopHost();
+  }
+});
+
 test('The Space home (no scope) groups threads by page; a scoped pane lists them flat', async () => {
   const rows = [
     row('g1', { body: 'On deck one', createdAt: '2026-10-21T09:00:00.000Z' }),
@@ -1049,6 +1147,40 @@ test('The Space home (no scope) groups threads by page; a scoped pane lists them
 
   await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
   assert.equal(doc.querySelectorAll('.nui-comment-group').length, 0, 'a scoped pane is flat');
+});
+
+test('On a record page the Filter widens to the whole Space, grouped by page; a chip says so and puts the page back', async () => {
+  const rows = [
+    row('p1', { body: 'On this page', createdAt: '2026-10-21T09:00:00.000Z' }),
+    row('p2', { body: 'On the launch deck', createdAt: '2026-10-21T12:00:00.000Z', page: 'deck-2' }),
+  ];
+  const calls: Call[] = [];
+  await mount(<Harness pins={false} scope={scope} scopeNames={{ 'deck-2': 'Launch deck', [PAGE]: 'Q4 review' }} />, fakeRuntime(rows, calls));
+  assert.equal(controller!.pageFilter, 'page', 'a record page lists its own comments first');
+  assert.deepEqual(cards(), ['p1']);
+  assert.equal(doc.querySelector('.nui-comment-chips'), null);
+  await pickScope('space');
+  assert.equal(controller!.pageFilter, 'space');
+  assert.equal(controller!.wholeSpace, true);
+  assert.deepEqual(cards(), ['p2', 'p1'], 'every page of the Space, newest first');
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-group')].map(el => el.textContent), ['Launch deck', 'Q4 review']);
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-chip')].map(el => [el.getAttribute('data-chip'), el.textContent]),
+    [['whole-space', 'This Space']]);
+  assert.ok(barButton('more-button')!.hasAttribute('data-active'));
+  await click(doc.querySelector('.nui-comment-chip[data-chip="whole-space"]')!);
+  assert.equal(controller!.pageFilter, 'page');
+  assert.deepEqual(cards(), ['p1']);
+  assert.equal(doc.querySelector('.nui-comment-chips'), null, 'the usual filter again');
+
+  // The Space home already lists the whole Space: no page choice there.
+  await mount(<Harness pins={false} />, fakeRuntime(rows, []));
+  assert.equal(controller!.pageFilter, null);
+  assert.deepEqual((await filterEntries()).map(entry => entry[0]), ['open', 'done', 'all']);
+
+  // French words.
+  await mount(<Harness pins={false} scope={scope} />, fakeRuntime(rows, [], { locale: 'fr' }), 'fr');
+  await openFilterMenu();
+  assert.deepEqual([...doc.querySelectorAll('.nui-comment-filter-item[data-scope]')].map(el => el.textContent), ['Cette page', 'Ce Space']);
 });
 
 test('A part of a Space\'s comments: only the threads named are listed, counted and walked, each page under a heading with the host\'s slot', async () => {
@@ -1544,9 +1676,8 @@ test('French words through the SDK words mechanism, and a Space wording override
   await mount(<Harness {...base} words={{ thisAnchor: { en: 'This slide', fr: 'Cette diapositive' } }} />,
     fakeRuntime(ROWS, [], { locale: 'fr' }), 'fr');
   assert.equal(doc.querySelector('.nui-comment-pane')!.getAttribute('aria-label'), 'Commentaires');
-  assert.equal(barButton('filter-button')!.getAttribute('aria-label'), 'Afficher les commentaires\u202f: Ouverts');
+  assert.equal(barButton('waiting-toggle')!.getAttribute('aria-label'), 'En attente de toi, 1 en attente');
   await openFilterMenu();
-  assert.match(doc.body.textContent!, /En attente de toi/);
   assert.match(doc.body.textContent!, /Cette diapositive/, 'the Space names its own scope in the filter');
   await key(doc.activeElement ?? doc.body, 'Escape');
   assert.ok(doc.querySelector('button[aria-label^="Archiver le fil de commentaires"]'));
@@ -1950,7 +2081,7 @@ async function openNewBox() {
   return doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
 }
 
-test('Drafts outlive the pane: a new comment with its picture, a reply and an answer come back after the page leaves', async () => {
+test('Drafts outlive the pane: a new comment with its picture and a reply come back after the page leaves', async () => {
   const calls: Call[] = [];
   const files = fakeFiles();
   const rows = [...ROWS, row('ask', { body: 'Which label?', author: 'Claude', slide: 'slide-1', thread: 'c1', needs: 'input',
@@ -1962,8 +2093,6 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   await paste(field, [picture()]);
   const reply = () => doc.querySelector('[data-thread="c1"] .nui-comment-compose-box textarea') as HTMLTextAreaElement;
   await type(reply(), 'Half a reply');
-  const answer = () => doc.querySelector('[data-ask="ask"] textarea') as HTMLTextAreaElement;
-  await type(answer(), 'Half an answer');
 
   // Another Space opens: the whole page unmounts (its controller too), then comes back.
   await rerender(<div />, runtime);
@@ -1975,7 +2104,6 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   assert.equal(chip.getAttribute('data-state'), 'ready', 'the uploaded picture is still attached');
   assert.equal(files.uploads.length, 1, 'and not uploaded again');
   assert.equal(reply().value, 'Half a reply');
-  assert.equal(answer().value, 'Half an answer');
 
   // Sending forgets the draft; dropping the new comment (the cross on its pill line, or Escape) forgets it.
   await click(doc.querySelector('[data-thread="c1"] .nui-comment-compose-box button[aria-label="Send"]')!);
@@ -1985,8 +2113,7 @@ test('Drafts outlive the pane: a new comment with its picture, a reply and an an
   await rerender(<Harness {...base} />, runtime);
   assert.equal(doc.querySelector('.nui-comment-new-box'), null, 'a cancelled new comment stays gone');
   assert.equal(reply().value, '', 'a sent reply is not brought back');
-  assert.equal(answer(), null, 'the reply answered the thread\'s open ask (answer_to): its own field is gone');
-  assert.equal(writes(calls, 'reply')[0]!.input.answer_to, 'ask');
+  assert.equal(writes(calls, 'reply')[0]!.input.answer_to, 'ask', 'the reply answered the thread\'s open ask');
   await act(async () => { controller!.placePin('sk1', 0.2, 0.2); });
   assert.equal((doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement).value, '', 'a new comment starts empty');
   assert.equal(doc.querySelector('.nui-comment-new-box .nui-comment-file'), null);
@@ -2514,7 +2641,14 @@ test('The pane in the host panel: no browser button borders, quiet buttons, one-
   assert.match(rule('.nui-comment-input'), /background: hsl\(var\(--foreground\) \/ \.05\);/, 'an edit field keeps its fill');
   // A question has no tinted box: its options are rows, the asker's pick tinted.
   assert.doesNotMatch(rule('.nui-comment-ask'), /background/);
-  assert.match(rule('.nui-comment-option[data-recommended]'), /background: hsl\(var\(--accent\) \/ \.5\);/);
+  // The rows tint over the card with the text colour: the chat's accent is the card's own colour in both themes, so a
+  // hovered row and the recommended one showed nothing.
+  assert.match(rule('.nui-comment-option[data-recommended]'), /background: hsl\(var\(--foreground\) \/ \.05\);/);
+  assert.match(rule('.nui-comment-option:enabled:is(:hover, :focus-visible)'), /background: hsl\(var\(--foreground\) \/ \.1\);/,
+    'the row under the pointer shows');
+  assert.doesNotMatch(css, /\.nui-comment-option[^{]*\{[^}]*--accent/, 'no accent tint on a card');
+  // The selected card keeps a ring, so it still shows while the pointer tints another card.
+  assert.match(rule('.nui-comment-card[data-selected]'), /box-shadow: inset 0 0 0 1px hsl\(var\(--nui-blue, 217 91% 60%\) \/ \.5\);/);
 });
 
 test('All items: a comment on one item names it by its title, like a comment on several, else the Space label (SPC-490)', async () => {
@@ -2723,6 +2857,35 @@ test('The To chip: "To a new thread" without a best match, clickable at any time
   await type(next, '@');
   await settle();
   assert.equal(next.value, '@', 'a dismissed picker puts the @ back, for a mention');
+});
+
+test('An agent outside Notis picked from the Agents list writes its @ into the comment and links nothing (SPC-1546)', async () => {
+  const linked: unknown[] = [];
+  const comments: Partial<SpaceCommentsTransport> = {
+    bestMatch: async () => ({ threadId: 't-best', title: 'Deck polish' }),
+    pickThread: async () => ({ mention: 'fred-and-the-machine' }),
+    link: async input => { linked.push(input); return null; },
+  };
+  const calls: Call[] = [];
+  const runtime = fakeRuntime(ROWS, calls, { comments });
+  await mount(<Harness {...base} />, runtime);
+  await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+  await settle();
+  const chip = () => doc.querySelector('.nui-comment-new-box [data-part="to-chip"]')!;
+  const field = doc.querySelector('.nui-comment-new-box textarea') as HTMLTextAreaElement;
+  await type(field, '@');
+  await settle();
+  assert.equal(field.value, '@fred-and-the-machine ', 'the @ typed in the empty box becomes the agent\'s @');
+  assert.equal(controller!.routing.newPick, null, 'it is not kept as where the comment goes');
+  assert.match(chip().textContent!, /To Deck polish/);
+  await type(field, 'please check');
+  await click(chip());
+  await settle();
+  assert.equal(field.value, '@fred-and-the-machine please check', 'picked again from the chip, the @ is not written twice');
+  await key(field, 'Enter');
+  assert.equal(writes(calls, 'insert').length, 1);
+  assert.deepEqual(linked, [{ rootId: storeOf(runtime).rows.at(-1)!.id, pick: { threadId: 't-best', title: 'Deck polish' } }],
+    'only the best match is linked, as for any comment; the @ reaches the agent outside Notis');
 });
 
 test('Tool bar and empty states: the idle hint follows the modes, Done is empty in its own words, names are unique', async () => {
@@ -2989,22 +3152,64 @@ test('On a phone, starting a mode that points at the page asks the host to show 
   }
 });
 
-test('An input ask is answered from its own field, and the answer goes back as one reply naming its ask', async () => {
+/** Answers a card's waiting input ask the one way there is: its reply box, then Enter. */
+async function replyInCard(threadKey: string, text: string) {
+  const box = doc.querySelector(`[data-thread="${threadKey}"] .nui-comment-reply-box textarea`) as HTMLTextAreaElement;
+  assert.ok(box, `the card ${threadKey} has its reply box`);
+  await type(box, text);
+  await key(box, 'Enter');
+}
+
+test('An input ask has no field of its own: the card\'s reply box answers it, as one reply naming its ask', async () => {
   const calls: Call[] = [];
   const rows = [row('i1', { body: 'Which title do you want?', author: 'Claude', slide: 'slide-1', needs: 'input',
     createdAt: '2026-10-21T09:00:00.000Z' })];
   const runtime = fakeRuntime(rows, calls);
   await mount(<Harness {...base} />, runtime);
-  const field = doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement;
-  assert.ok(field, 'the answer field shows in the card');
-  await type(field, 'Shorter');
-  await click(button('Send the answer')!);
+  assert.equal(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]'), null,
+    'no answer field, no Attach or Paste text on the card (Flo, 2026-11-25: redundant with the normal text box)');
+  assert.equal(doc.querySelectorAll('[data-thread="i1"] textarea').length, 1, 'one text box: the reply box');
+  await replyInCard('i1', 'Shorter');
   assert.deepEqual(calls.map(call => call.op), ['reply'], 'one write: the server records the ask\'s answer from answer_to');
   assert.equal(calls[0]!.input.root_id, 'i1');
   assert.equal(calls[0]!.input.answer_to, 'i1');
   assert.equal(calls[0]!.input.body, 'Shorter');
   assert.equal(storeOf(runtime).rows.find(item => item.id === 'i1')!.answer, 'Shorter');
-  assert.equal(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]'), null, 'the ask reads answered');
+  assert.ok(doc.querySelector('[data-thread="i1"] .nui-comment-answer'), 'the ask reads answered');
+});
+
+test('Other on a choice or a check, by its row or its number: the reply sent next is that question\'s answer in the person\'s words', async () => {
+  for (const [needs, options, how] of [['choice', 'Serif | Sans', 'row'], ['check', '', 'number']] as const) {
+    const calls: Call[] = [];
+    const rows = [row('q1', { body: 'Which font?', author: 'Claude', slide: 'slide-1', needs, ...(options ? { options } : {}),
+      createdAt: '2026-10-21T09:00:00.000Z' })];
+    const runtime = fakeRuntime(rows, calls);
+    await mount(<Harness {...base} />, runtime);
+    const card = () => doc.querySelector('[data-thread="q1"]') as HTMLElement;
+    if (how === 'row') await click(card().querySelector('.nui-comment-option[data-other]') as HTMLElement);
+    else { card().focus(); await settle(); await key(card(), '3'); }
+    assert.equal(calls.length, 0, `${needs}: Other alone answers nothing`);
+    await replyInCard('q1', 'Didot, in small caps');
+    assert.deepEqual(calls.map(call => call.op), ['reply'], `${needs}: one write, the reply`);
+    assert.equal(calls[0]!.input.answer_to, 'q1', `${needs}: the reply names its question, so it stops waiting`);
+    assert.equal(storeOf(runtime).rows.find(item => item.id === 'q1')!.answer, 'Didot, in small caps');
+    assert.match(card().querySelector('.nui-comment-answer')!.textContent!, /Answered below/, `${needs}: the question reads answered`);
+    assert.equal(card().querySelector('.nui-comment-options'), null, `${needs}: no more rows`);
+  }
+  // R after Other opens a plain reply: the Other picked earlier is dropped.
+  const dropped: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime([row('q3', { body: 'Which font?', author: 'Claude', slide: 'slide-1',
+    needs: 'choice', options: 'Serif | Sans' })], dropped));
+  await click(doc.querySelector('[data-thread="q3"] .nui-comment-option[data-other]') as HTMLElement);
+  await act(async () => { doc.querySelector('[data-thread="q3"]')!.dispatchEvent(new dom.window.CustomEvent("notis-comment-reply")); });
+  await replyInCard('q3', 'A question first');
+  assert.equal('answer_to' in writes(dropped, 'reply')[0]!.input, false, 'R after Other is a plain reply');
+  // A plain reply on a choice never answers it.
+  const plain: Call[] = [];
+  await mount(<Harness {...base} />, fakeRuntime([row('q2', { body: 'Which font?', author: 'Claude', slide: 'slide-1',
+    needs: 'choice', options: 'Serif | Sans' })], plain));
+  await replyInCard('q2', 'Why these two?');
+  assert.equal('answer_to' in writes(plain, 'reply')[0]!.input, false, 'a reply without Other is a reply');
 });
 
 test('C1: the reply that shows an input answer always names its ask in answer_to; a plain reply names none', async () => {
@@ -3012,8 +3217,7 @@ test('C1: the reply that shows an input answer always names its ask in answer_to
   const rows = [row('i1', { body: 'Which title do you want?', author: 'Claude', slide: 'slide-1', needs: 'input',
     createdAt: '2026-10-21T09:00:00.000Z' })];
   await mount(<Harness {...base} />, fakeRuntime(rows, calls));
-  await type(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement, 'Shorter');
-  await click(button('Send the answer')!);
+  await replyInCard('i1', 'Shorter');
   assert.equal(writes(calls, 'reply')[0]!.input.answer_to, 'i1', 'the server routes it to the asker and counts it as the answer');
   const plain: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime([row('p1', { body: 'Tighten', slide: 'slide-1' })], plain));
@@ -3066,8 +3270,7 @@ test('B4: an input answer shows on its ask at once, while the one reply naming i
   const runtime = fakeRuntime(rows, calls);
   await mount(<Harness {...base} />, runtime);
   const held = storeOf(runtime).hold('reply');
-  await type(doc.querySelector('[data-thread="i1"] textarea[aria-label="Your answer"]') as HTMLTextAreaElement, 'Shorter');
-  await click(button('Send the answer')!);
+  await replyInCard('i1', 'Shorter');
   await settle();
   assert.deepEqual(calls.map(call => call.op), ['reply'], 'no separate answer write');
   assert.match(doc.querySelector('[data-thread="i1"] .nui-comment-answer')!.textContent!, /Shorter|Answered below/,
@@ -3113,12 +3316,14 @@ test('Consecutive deleted replies read as one Comment deleted line', async () =>
   assert.ok(doc.querySelector('[data-comment="d4"]'));
 });
 
-test('French: the filter label keeps a narrow space before its colon, and conversation for manager threads', async () => {
+test('French: a chip label keeps a narrow space before its colon, and conversation for manager threads', async () => {
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => ({ c1: [{ threadId: null, title: '', harness: 'claude', status: 'pending' }] }),
   };
   await mount(<Harness {...base} />, fakeRuntime(ROWS, [], { locale: 'fr', comments }), 'fr');
-  assert.match(barButton('filter-button')!.getAttribute('aria-label')!, / : Ouverts$/);
+  await pickFilter('done');
+  assert.match(doc.querySelector('.nui-comment-chip[data-chip="done"]')!.getAttribute('aria-label')!, /filtre : Terminés$/);
+  await pickFilter('open');
   await click(barButton('more-button')!);
   assert.match(doc.body.textContent!, /Copier les changements depuis le dernier tour/);
   await key(doc.activeElement ?? doc.body, 'Escape');
@@ -3182,7 +3387,7 @@ test('Z undoes a Done from the pane even when the host holds Z at the same scope
 test('E and Shift+E are taken by the pane while focus is in it, even with no card focused', async () => {
   const calls: Call[] = [];
   await mount(<Harness {...base} />, fakeRuntime(ROWS, calls));
-  const filter = barButton('filter-button') as HTMLElement;
+  const filter = barButton('waiting-toggle') as HTMLElement;
   filter.focus();
   for (const shift of [false, true]) {
     const event = new dom.window.KeyboardEvent('keydown', { key: shift ? 'E' : 'e', shiftKey: shift, bubbles: true, cancelable: true });
@@ -3596,9 +3801,8 @@ test('An agent question in a reply gets its answer controls, and the answer goes
   assert.ok(doc.querySelector('[data-thread="q1"] [data-ask="q2"]'), 'the choice ask shows under its reply');
   await click(option('Green', doc.querySelector('[data-ask="q2"]')!)!);
   assert.deepEqual(calls.at(-1), { op: 'answer', input: { id: 'q2', answer: 'Green' } });
-  const field = doc.querySelector('[data-ask="q3"] textarea') as HTMLTextAreaElement;
-  await type(field, 'Revenue');
-  await click(doc.querySelector('[data-ask="q3"] button[aria-label="Send the answer"]')!);
+  assert.equal(doc.querySelector('[data-ask="q3"] textarea'), null, 'the input ask has no field: the reply box answers it');
+  await replyInCard('q1', 'Revenue');
   const [reply] = writes(calls, 'reply');
   assert.equal(reply!.input.answer_to, 'q3', 'the input ask answered is that reply');
   assert.equal(reply!.input.root_id, 'q1');
@@ -3730,6 +3934,23 @@ async function withRun(options: { waiting: string[]; advance: boolean; hasNext?:
   }
 }
 
+test('Review run on a page where nothing waits: widening the list to the whole Space never selects a card of another page by itself', async () => {
+  const rows = [
+    row('h1', { body: 'Done here', status: 'Resolved', createdAt: '2026-10-21T08:00:00.000Z' }),
+    row('o1', { body: 'Waits on the deck', createdAt: '2026-10-21T09:00:00.000Z', page: 'deck-2', needs: 'check', author: 'Claude' }),
+  ];
+  await withRun({ waiting: ['o1'], advance: false, hasNext: true, rows }, async (events) => {
+    assert.equal(controller!.threadKey, null, 'nothing waits on this page: nothing selected');
+    await act(async () => { controller!.setPageFilter('space'); });
+    await settle();
+    await settle();
+    assert.equal(controller!.pageFilter, 'space');
+    assert.ok(runCards().includes('o1'), 'the other page\'s waiting card is listed');
+    assert.equal(controller!.threadKey, null, 'the person widened the list: the run does not cross to the other page');
+    assert.equal(events.filter(event => event.type === 'selected').length, 0);
+  });
+});
+
 test('Review run: it opens on what waits with the first card selected, and J, K and the bar step through the cards', async () => {
   await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false, hasNext: true }, async (events) => {
     assert.equal(controller!.waitingFilter, true, 'the run turns "Waiting for you" on');
@@ -3742,14 +3963,14 @@ test('Review run: it opens on what waits with the first card selected, and J, K 
     assert.equal(about, runRoot().querySelector('.nui-comment-card[data-selected] :is([data-part="quote"], [data-part="place"])')!.textContent,
       'and what the selected card is about, for the one line of a phone\'s sheet');
     assert.equal(runRoot().querySelector('.nui-comment-pane')!.hasAttribute('data-run'), true);
-    assert.equal(runRoot().querySelector('.nui-comment-chip[data-chip="waiting"]')!.textContent, '3 waiting',
-      'the chip says how many wait in the run, and counts down');
-    // The Filter's Waiting for you shows the host's own number (what waits in the Space), the same as on its switch.
+    assert.equal(runRoot().querySelector('.nui-comment-chips, .nui-comment-chip'), null,
+      'no chip repeats the pressed toggle: the run\'s count is on its bar');
+    assert.equal(runRoot().querySelector('.nui-comment-bar [data-part="waiting-toggle"]')!.getAttribute('aria-pressed'), 'true');
+    // The Waiting for you toggle shows the host's own number (what waits in the Space), the same as on its switch.
     await act(async () => { setWaitingCommentCount(7); });
-    await click(runRoot().querySelector('.nui-comment-bar [data-part="filter-button"]')!);
-    assert.equal(runRoot().querySelector('.nui-comment-filter-item[data-filter="waiting"] .nui-comment-count')!.textContent, '7',
+    await settle();
+    assert.equal(runRoot().querySelector('.nui-comment-bar [data-part="waiting-toggle"] .nui-comment-count')!.textContent, '7',
       'one meaning: the number on the switch, never the count of this page alone');
-    await key(runRoot().activeElement ?? doc.body, 'Escape');
     await act(async () => { setWaitingCommentCount(null); });
 
     await key(doc.body, 'j');
@@ -3830,7 +4051,8 @@ test('A phone\'s comments sheet: the host says its height, and at half the pane 
   // Low: the host draws its one line. Half: only the selected card, flat, no header row, no Other row.
   assert.match(css, /\.nui-comment-pane\[data-sheet="low"\] \{ display: none; \}/);
   assert.match(css, /\.nui-comment-pane\[data-sheet="half"\] > :is\(\.nui-comment-bar, \.nui-comment-chips\),[\s\S]*?\.nui-comment-pane\[data-sheet="half"\]\[data-sheet-card\] \.nui-comment-card:not\(\[data-selected\]\),[\s\S]*?\{ display: none; \}/);
-  assert.match(css, /\.nui-comment-pane\[data-sheet="half"\]\[data-sheet-card\] \.nui-comment-card \{ padding: 0; border-radius: 0; background: none; \}/);
+  assert.match(css, /\.nui-comment-pane\[data-sheet="half"\]\[data-sheet-card\] \.nui-comment-card \{ padding: 0; border-radius: 0; background: none; box-shadow: none; \}/,
+    'the card at half is the sheet itself: no tint and no selection ring');
   assert.match(css, /\.nui-comment-pane\[data-sheet="half"\] \.nui-comment-option\[data-other\] \{ display: none; \}/);
   // While the reply is written: the quoted words and the box.
   assert.match(css, /:host\(\[data-writing\]\) \.nui-comment-pane\[data-sheet="half"\] :is\(\.nui-comment-entries, \.nui-comment-actions\) \{ display: none; \}/);
@@ -4045,12 +4267,12 @@ test('Review run: Z is the toast\'s Undo and nothing else: after an answer it ch
   });
 });
 
-test('Review run: removing the "n waiting" chip, or picking another filter, leaves the run', async () => {
+test('Review run: turning the Waiting for you toggle off, or picking another filter, leaves the run', async () => {
   await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false }, async (events) => {
     assert.equal(controller!.waitingFilter, true);
     events.length = 0;
-    await click(runRoot().querySelector('.nui-comment-chip[data-chip="waiting"]')!);
-    assert.equal(controller!.waitingFilter, false, 'a tap on the chip shows all comments again');
+    await click(runRoot().querySelector('.nui-comment-bar [data-part="waiting-toggle"]')!);
+    assert.equal(controller!.waitingFilter, false, 'a press on the toggle shows all comments again');
     assert.deepEqual(events, [{ type: 'leave' }], 'and the host hears that the run is left');
   });
   await withRun({ waiting: ['c1', 'c2', 'c3'], advance: false }, async (events) => {

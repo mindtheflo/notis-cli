@@ -309,7 +309,7 @@ export interface ReviewRunPaneView {
   running: boolean;
   /** Attributes for the pane's root element. */
   attrs: Record<string, string | undefined>;
-  /** The count the "n waiting" chip shows while a run is going; null: the chip reads "Waiting for you". */
+  /** What waits in the run while it is going (its bar says it; the pane keeps the item scope it set); null: no run. */
   count: number | null;
 }
 
@@ -382,7 +382,7 @@ export function useReviewRunPane({ controller, rootRef, threads, drafting, askin
   const lastDone = useRef<string | null>(null);
   // The card the start picked, until the person moves: a list that fills in after the start (the host's read of what
   // waits lands a moment later) may put another card first, and the run starts on the first one, never the second.
-  const startPick = useRef<{ key: string | null; at: number } | null>(null);
+  const startPick = useRef<{ key: string | null; at: number; scope: string | null } | null>(null);
   const waitingIds = useWaitingCommentThreads();
   const waitingOn = controller.waitingFilter;
 
@@ -536,7 +536,7 @@ export function useReviewRunPane({ controller, rootRef, threads, drafting, askin
       if (!keys.length && waitingIds === null) return;
       consumed.current = run.startToken;
       const key = run.startKey && keys.includes(run.startKey) ? run.startKey : keys[0];
-      startPick.current = { key: key ?? null, at: Date.now() };
+      startPick.current = { key: key ?? null, at: Date.now(), scope: live.current.controller.pageFilter };
       if (key) select(key, 'next', 'start');
       else { live.current.controller.setThreadKey(null); emitReviewRunEvent({ type: 'end', advance: false }); }
     };
@@ -549,11 +549,15 @@ export function useReviewRunPane({ controller, rootRef, threads, drafting, askin
   useEffect(() => {
     const pick = startPick.current;
     if (!pick || !run.active || !waitingOn) return;
-    if (Date.now() - pick.at > START_SETTLE_MS || controller.threadKey !== pick.key) { startPick.current = null; return; }
+    // The person widened the list to the whole Space (or back): what fills in now is their pick, not a late start, so
+    // the run never crosses to another page by itself.
+    if (Date.now() - pick.at > START_SETTLE_MS || controller.threadKey !== pick.key || controller.pageFilter !== pick.scope) {
+      startPick.current = null; return;
+    }
     const keys = cardKeys();
     const key = run.startKey && keys.includes(run.startKey) ? run.startKey : keys[0];
     if (!key || key === pick.key) return;
-    startPick.current = { key, at: pick.at };
+    startPick.current = { key, at: pick.at, scope: pick.scope };
     select(key, 'next', 'start');
   });
 
@@ -639,7 +643,8 @@ export function useReviewRunPane({ controller, rootRef, threads, drafting, askin
       // A button keeps its own Enter and Space (an option row, the bar); the card and the page give theirs to the run.
       const onControl = Boolean(element?.closest('button, a[href], [role="button"]')) && !element?.matches('.nui-comment-card');
       const ask = now.controller.canWrite ? now.asking(thread) : null;
-      const reply = () => cardOf(thread.root.recordKey)?.dispatchEvent(new view.CustomEvent('notis-comment-reply', { bubbles: false }));
+      const reply = (other?: string) => cardOf(thread.root.recordKey)?.dispatchEvent(
+        new view.CustomEvent('notis-comment-reply', { bubbles: false, detail: other ? { other } : null }));
       if (key === 'Enter') {
         if (onControl || !ask?.recommended) return;
         take();
@@ -654,7 +659,7 @@ export function useReviewRunPane({ controller, rootRef, threads, drafting, askin
         if (position <= ask.options.length) {
           notifyReviewRunAction({ kind: 'answered', key: thread.root.recordKey,
             saved: now.controller.actions.answer(ask.comment, ask.options[position - 1]!) });
-        } else reply();
+        } else reply(ask.comment.recordKey);
         return;
       }
       if (key === 'r') {

@@ -363,6 +363,11 @@ export interface SpaceCommentThreadsInput {
   only?: readonly string[] | null;
   /** Comments whose threads come too, whatever their status and their place in the list (a link to one comment). */
   include?: readonly string[];
+  /**
+   * The record page whose threads are read (its key); absent, null or 'all': the whole Space. Counts and pin numbers
+   * are then the page's, and nothing of the Space's other pages is read.
+   */
+  page?: string | null;
 }
 
 /** What a bounded read answers. */
@@ -545,13 +550,27 @@ export interface SpaceCommentsTransport {
    * being placed) from the old view's token to the new one's (`handOverCommentState`). Absent: nothing is handed.
    */
   viewToken?: object;
+  /**
+   * Whether a comment pane starts on Waiting for you (what waits for the viewer) rather than on the open comment threads:
+   * the Portal passes the person's Focus mode setting, the one the Manager opens with. Absent: the open threads.
+   */
+  waitingFirst?: boolean;
 }
 /**
  * The viewer as comments see them. `id` (their user id), when the host gives it, tells their comments by the row's
  * author (`author.user_id`) when a row does not say `author.you`, so a renamed person keeps Edit and Delete. The host
- * maps the server's `viewer` answer (`{ user_id, name, can_edit_space }`) to this shape.
+ * maps the server's `viewer` answer (`{ user_id, name, can_edit_space, people }`) to this shape.
  */
-export interface SpaceCommentViewer { name: string; canEditSpace: boolean; id?: string | null }
+export interface SpaceCommentViewer {
+  name: string;
+  canEditSpace: boolean;
+  id?: string | null;
+  /**
+   * The names of the Space's people, for an editor: a comment whose @mentions name only them wakes no agent (SPC-1540),
+   * and the new comment box says so. Absent: the box never says it.
+   */
+  people?: readonly string[];
+}
 /**
  * A manager thread a comment thread is linked to. `subagent` names the subagent a reply goes back to, when one wrote it.
  * `threadId: null` with `status: 'pending'` is a "New <harness> thread" pick not started yet: the first wake
@@ -578,7 +597,12 @@ export interface SpaceCommentThreadRef {
   threadName?: string | null;
   readAt?: string | null;
 }
-export type SpaceCommentThreadPick = SpaceCommentThreadRef | { newThread: string };
+/**
+ * What the thread picker gives back: a thread (or a pending new one), a new thread on a harness, or `mention`, an agent
+ * outside Notis picked from the Agents list (SPC-1546). Nothing is linked for it: its @ (the band name, "fred-and-the-
+ * machine") is written into the comment, which reaches it the way any @ of it does (SPC-1540) and wakes nobody.
+ */
+export type SpaceCommentThreadPick = SpaceCommentThreadRef | { newThread: string } | { mention: string };
 /**
  * A long-running program the Space keeps up on the viewer's cloud computer while the page is on screen (a dev
  * server, a media server). It runs with `bash -lc`, listens on `127.0.0.1:$PORT`, and gets `HOST`,

@@ -64,7 +64,8 @@ function boundedHost(rows: readonly SpaceCommentRow[], options: { page?: number;
     if (gate) await gate;
     const custom = options.answer?.(input);
     if (custom !== undefined) return custom;
-    const all = store.rows;
+    // A record page's read holds that page's threads alone (SPC-1530).
+    const all = input.page ? store.rows.filter(row => row.page_key === input.page) : store.rows;
     const roots = all.filter(row => !row.thread_root_id && row.status !== 'deleted');
     const newest = [...roots].sort((left, right) => (left.created_at < right.created_at ? 1 : -1));
     const open = newest.filter(row => row.status === 'open');
@@ -182,7 +183,13 @@ async function click(el: Element) {
   await settle();
 }
 async function pickFilter(filter: 'waiting' | 'open' | 'done' | 'all') {
-  if (!doc.querySelector('.nui-comment-filter-item[data-filter]')) await click(doc.querySelector('.nui-comment-bar [data-part="filter-button"]')!);
+  const toggle = doc.querySelector('.nui-comment-bar [data-part="waiting-toggle"]')!;
+  if (filter === 'waiting') {
+    if (toggle.getAttribute('aria-pressed') !== 'true') await click(toggle);
+    await settle(6);
+    return;
+  }
+  if (!doc.querySelector('.nui-comment-filter-item[data-filter]')) await click(doc.querySelector('.nui-comment-bar [data-part="more-button"]')!);
   const item = doc.querySelector(`[role^="menuitem"] .nui-comment-filter-item[data-filter="${filter}"]`)?.closest('[role^="menuitem"]');
   assert.ok(item, `the filter menu offers ${filter}`);
   await click(item!);
@@ -391,13 +398,36 @@ test('a host whose server cannot read by thread answers the whole Space, as befo
   assert.equal(more(), null);
 });
 
-test('a page of a Space still reads its own comments whole', async () => {
+test('a record page reads its own threads by thread too: its open ones, its Done ones a page at a time, never every comment (SPC-1530)', async () => {
   const rows = spaceRows(30);
   const bounded = boundedHost(rows);
   await mount(<Harness scope={{ id: PAGE_A, recordKey: PAGE_A, name: 'A', checkpoint: null }} />, bounded.runtime);
-  assert.equal(bounded.asked.length, 0, 'a page is not read by thread');
-  assert.equal(bounded.store.reads(), 1);
-  assert.equal(cards().length, rows.filter(row => !row.thread_root_id && row.page_key === PAGE_A && row.status === 'open').length);
+  assert.equal(bounded.store.reads(), 0, 'the page is never listed whole');
+  assert.ok(bounded.asked.length >= 1);
+  assert.ok(bounded.asked.every(input => input.page === PAGE_A), 'every read names the page');
+  assert.equal(bounded.asked[0].done ?? 0, 0, 'no Done thread is read before the Filter asks for one');
+  const own = (status: string) => rows.filter(row => !row.thread_root_id && row.page_key === PAGE_A && row.status === status).length;
+  assert.equal(cards().length, own('open'), 'the page\'s open threads show');
+  await pickFilter('done');
+  assert.equal(cards().length, own('archived'), 'Done shows the page\'s Done threads');
+  assert.ok(bounded.asked.some(input => input.page === PAGE_A && (input.done ?? 0) > 0), 'read once the Filter asked');
+  assert.equal(bounded.store.reads(), 0);
+});
+
+test('widening a record page\'s list to the whole Space reads the Space\'s threads, still by thread', async () => {
+  const rows = spaceRows(30);
+  const bounded = boundedHost(rows);
+  let controller: CommentController | null = null;
+  function Wide() {
+    controller = useComments({ scope: { id: PAGE_A, recordKey: PAGE_A, name: 'A', checkpoint: null } });
+    return <CommentPane controller={controller} />;
+  }
+  await mount(<Wide />, bounded.runtime);
+  await act(async () => { controller!.setPageFilter('space'); });
+  await settle();
+  assert.equal(bounded.store.reads(), 0);
+  assert.ok(bounded.asked.some(input => !input.page), 'the whole Space is read by thread');
+  assert.equal(cards().length, rows.filter(row => !row.thread_root_id && row.status === 'open').length);
 });
 
 test('with comments off for the person the host gives no comment store: no pane is drawn and nothing is read', async () => {

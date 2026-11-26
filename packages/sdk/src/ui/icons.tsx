@@ -37,6 +37,8 @@ const SHAPES: Record<string, Shape> = {
   flask: <path {...S} d="M6 2h4M6.8 2v4.3l-3.6 6.2a1 1 0 00.9 1.5h7.8a1 1 0 00.9-1.5L9.2 6.3V2M4.6 10.2h6.8" />,
   copy: <path {...S} d="M6.5 5.5h5a1 1 0 011 1v5a1 1 0 01-1 1h-5a1 1 0 01-1-1v-5a1 1 0 011-1zM10.5 5.5v-1a1 1 0 00-1-1h-5a1 1 0 00-1 1v5a1 1 0 001 1h1" />,
   'chat-circle-text': <path {...S} d="M4.7 13.1A5.8 5.8 0 102.9 11.3L2.3 13.7zM6 7h4M6 9.3h3" />,
+  // The Focus mode icon of the Manager (Phosphor ChatCircleDots): what waits for you.
+  'chat-circle-dots': <><path {...S} d="M4.7 13.1A5.8 5.8 0 102.9 11.3L2.3 13.7z" /><circle {...F} cx="5.6" cy="8" r=".8" /><circle {...F} cx="8" cy="8" r=".8" /><circle {...F} cx="10.4" cy="8" r=".8" /></>,
   trash: <path {...S} d="M2.5 4h11M6.5 2.5h3M4 4l.6 9a.5.5 0 00.5.5h5.8a.5.5 0 00.5-.5L12 4M6.5 6.5v4.5M9.5 6.5v4.5" />,
   'circle-half': <g><circle {...S} cx="8" cy="8" r="6" /><path {...F} d="M8 2a6 6 0 010 12z" /></g>,
   'circle-three-quarter': <g><circle {...S} cx="8" cy="8" r="6" /><path {...F} d="M8 8V2a6 6 0 11-6 6z" /></g>,

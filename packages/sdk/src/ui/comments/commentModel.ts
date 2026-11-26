@@ -12,6 +12,7 @@
  * | status            | status             | open, archived, deleted read as Open, Resolved (shown Done), Deleted. |
  * | x, y, w, h        | x, y, w, h         | A pin (x, y) or a zone (w, h too), 0 to 1 of the anchor.            |
  * | time_start        | time               | Seconds into a recording (time mode).                               |
+ * | time_end          | timeEnd            | Where a time comment's range ends, when it has one.                 |
  * | field, quote, ... | passage            | The words a text comment sits on.                                   |
  *
  * `Resolved` is shown as Done (archived, SPC-124); `Deleted` keeps the row: a deleted first comment hides its whole
@@ -46,6 +47,8 @@ export interface CommentRecord {
   editedAt?: string | null;
   /** Seconds into a recording, for a comment in time mode. */
   time?: number | null;
+  /** Where a time comment's range ends, in seconds (null: it runs until the next time comment starts). */
+  timeEnd?: number | null;
   /** On a reply that answers an ask, the ask's record key, from the Answer to column (null: none). */
   answerTo?: string | null;
   /**
@@ -298,7 +301,7 @@ export function commentFromRow(input: SpaceCommentRow | Readonly<Record<string, 
     change, changedAt: str(row.changed_at) || null,
     example: row.example === true, createdAt: str(row.created_at) || null,
     attachments: status === 'Deleted' ? [] : commentAttachmentList(row.attachments),
-    editedAt, time: num(row.time_start), answerTo: str(row.answer_to).trim() || null,
+    editedAt, time: num(row.time_start), timeEnd: num(row.time_end), answerTo: str(row.answer_to).trim() || null,
     agent,
     createdByYou: typeof authorOf?.you === 'boolean' ? authorOf.you : null,
     createdBy: str(authorOf?.user_id) || null,
@@ -564,6 +567,15 @@ export function applyCommentPatches(comments: readonly CommentRecord[], patches:
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The attribute a Space puts on each element that draws an item a comment can sit on (a row, a card, a slide), with
+ * the item's record key as its value: `<li data-comment-anchor={row.id}>`. An items comment's key is in its
+ * `anchor_keys`, so the host finds the element again: the Comments list follows the item the reader is on, and
+ * picking the comment scrolls the item into view. An item without the attribute still has its comment, without
+ * either.
+ */
+export const COMMENT_ANCHOR_ATTR = 'data-comment-anchor';
 
 /** The two answers of a check ask, stored in English and shown in the reader's language. */
 export const COMMENT_CHECK_ANSWERS = ['Looks good', 'Undo'] as const;

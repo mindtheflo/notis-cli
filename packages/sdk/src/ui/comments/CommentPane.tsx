@@ -47,7 +47,7 @@ import {
   COMMENT_HARNESS_NAMES, CommentAgentRuntimeCard, CommentHarnessLogo, commentAgentRuntimeView, isHarness, type CommentHarness,
 } from './agentRuntime';
 import {
-  COMMENT_CHECK_ANSWERS, COMMENT_TEXT_FILE, agentDisplayName, clipCommentAnswer, commentAttachmentFor, commentBodyParts, commentRelativeTime, commentReplyRuns, formatCommentTime,
+  COMMENT_CHECK_ANSWERS, agentDisplayName, clipCommentAnswer, commentAttachmentFor, commentBodyParts, commentRelativeTime, commentReplyRuns, formatCommentTime,
   commentAnchorsOf, isCommentZone, scrollCommentIntoView, type CommentAnchor, type CommentAttachment, type CommentRecord, type CommentThread,
 } from './commentModel';
 import { commentDraftKey, readHostDraftFiles, useCommentDraftText, writeHostDraftFiles } from './commentDrafts';
@@ -64,11 +64,11 @@ import { usePaneOutlet } from './paneOutlet';
 import { archiveThenNext, holdReviewRunKeys, notifyReviewRunAction, useNextCardComesIntoPlace, useReviewRunPane } from './reviewRun';
 import {
   COMMENT_MODE_ICON, COMMENT_MODE_WORD, commentHarnessName, commentOutsideClaim, commentOutsideName, commentOutsideUnread,
-  commentThreadName, CommentListLoading, CommentListMore, CommentModeHint, CommentPaneKeys, CommentThreadList, CommentPaneBar, CommentToChip,
+  commentThreadName, CommentListLoading, CommentListMore, CommentModeHint, CommentPaneKeys, CommentThreadList, CommentPaneBar, CommentToChip, CommentForPeopleNote,
   commentIdleHint, commentItemNames, useAtThreadPicker, usePaneFocusKeeper, useThreadScroller,
   type CommentListOptions,
 } from './paneParts';
-import { elsewhere, outsideClaim } from './useCommentRouting';
+import { elsewhere, outsideClaim, pickMentionText, withPickMention } from './useCommentRouting';
 import type { CommentController, CommentFile } from './useComments';
 
 // ---------------------------------------------------------------------------
@@ -350,8 +350,9 @@ export function commentWaitingChoices(thread: CommentThread): { comment: Comment
  *
  * A check or a choice reads like a question in a conversation: one row per option, each with its number, a short line
  * under it when the asker gave one (`optionDetails`) and the Recommended tag on the asker's pick (`recommended`), then
- * Other, which opens the reply box for the person's own words. An input ask is answered from its own field: the answer
- * goes back as a reply and fills that comment's Answer.
+ * Other, which opens the reply box for the person's own words: the reply sent from it answers the question (`answer_to`).
+ * An input ask has no field of its own: the card's reply box
+ * answers it (`actions.reply` names the latest open input ask), and the reply fills that comment's Answer.
  */
 function CommentAsk({ controller, thread, comment, onOther, enter, mark }: {
   controller: CommentController; thread: CommentThread; comment: CommentRecord;
@@ -368,42 +369,20 @@ function CommentAsk({ controller, thread, comment, onOther, enter, mark }: {
     const saved = actions.answer(comment, choice);
     notifyReviewRunAction({ kind: 'answered', key: thread.root.recordKey, saved });
   };
-  // The answer being typed is kept while the pane is away, like a reply (`commentDrafts`).
-  const [answerText, setAnswerText] = useCommentDraftText(comment.needs === 'input' && !comment.answer
-    ? commentDraftKey(controller.draftScope, `answer:${comment.recordKey}`) : null);
-  const [sending, setSending] = useState(false);
-  const answerRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   if (comment.needs === 'none') return null;
   const busy = controller.busy.has(comment.recordKey);
   const needsLabel = comment.needs === 'check' ? controller.say('needCheck')
     : comment.needs === 'choice' ? controller.say('needChoice') : controller.say('needInput');
   const choices = askChoices(comment);
   const waiting = comment.needs !== 'input' && !comment.answer;
-  // An input ask's answer is the person's reply under it (SPC-113 wakes the agent from it): the ask says it was answered
-  // and shows the text only when no reply in the thread carries it.
-  const answeredBelow = comment.needs === 'input' && Boolean(comment.answer) && thread.replies.some(reply =>
+  // An input ask's answer, or a check's or a choice's written after Other, is the person's reply under it (SPC-113 wakes
+  // the agent from it): the ask says it was answered and shows the text only when no reply in the thread carries it.
+  const answeredBelow = Boolean(comment.answer) && thread.replies.some(reply =>
     reply.status !== 'Deleted' && !reply.agent && (reply.answerTo ? reply.answerTo === comment.recordKey
-      : clipCommentAnswer(reply.body.trim()) === comment.answer.trim()));
+      : comment.needs === 'input' && clipCommentAnswer(reply.body.trim()) === comment.answer.trim()));
   // Options named like a picture are answered from under it, inside the ask; the rows below keep the others.
   const rowChoices = choices.filter(option => !commentAttachmentFor(option, comment.attachments));
   const pictureAsk = rowChoices.length < choices.length;
-  const canAnswer = Boolean(answerText.trim()) && !sending && controller.canWrite;
-  const sendAnswer = async () => {
-    if (!canAnswer) return;
-    setSending(true);
-    const ok = await actions.reply(thread, answerText.trim(), [], comment);
-    setSending(false);
-    if (ok) { setAnswerText(''); notifyReviewRunAction({ kind: 'answered', key: thread.root.recordKey }); }
-  };
-  const attach = async (file: File | undefined) => {
-    if (!file) return;
-    if (!(file.type.startsWith('text/') || COMMENT_TEXT_FILE.test(file.name))) { actions.notify(controller.words.textOnly); return; }
-    const content = (await file.text()).slice(0, 8000);
-    const current = answerRef.current?.value ?? answerText;
-    setAnswerText(`${current ? `${current}\n\n` : ''}${file.name}\n${content}`);
-    answerRef.current?.focus();
-  };
   return (
     <div className="nui-comment-ask" data-ask={comment.recordKey} data-needs={comment.needs} onClick={stop} onKeyDown={stop}>
       {pictureAsk ? (
@@ -417,26 +396,6 @@ function CommentAsk({ controller, thread, comment, onOther, enter, mark }: {
             : controller.say('sent', { answer: answerLabel(controller, comment.answer).replace(/[\s.,;:!?…]+$/, '') })}</span>
           {mark ?? null}
         </p>
-      ) : comment.needs === 'input' ? (
-        <OwnTextBox className="nui-comment-ask-answer" hasDraft={Boolean(answerText.trim())} hold={sending || busy}>
-          <div className="nui-comment-compose">
-            <textarea ref={answerRef} className="nui-comment-input" value={answerText} rows={1}
-              placeholder={controller.say('answerPlaceholder')} aria-label={controller.say('answerPlaceholder')}
-              onChange={event => setAnswerText(event.target.value)}
-              onKeyDown={event => { if (sendsOnEnter(event)) { event.preventDefault(); void sendAnswer(); } }} />
-            <IconAction label={controller.say('sendAnswer')} icon="paper-plane-right" disabled={!canAnswer}
-              onClick={() => void sendAnswer()} />
-          </div>
-          <div className="nui-comment-choices">
-            <Button size="sm" variant="secondary" disabled={busy} icon="paperclip"
-              onClick={() => fileRef.current?.click()}>{controller.words.attach}</Button>
-            <Button size="sm" variant="secondary" disabled={busy} icon="clipboard-text"
-              onClick={() => answerRef.current?.focus()}>{controller.words.paste}</Button>
-            <input ref={fileRef} type="file" className="nui-sr-only" tabIndex={-1} aria-hidden="true"
-              accept="text/*,.md,.txt,.csv,.json"
-              onChange={event => { void attach(event.target.files?.[0]); event.target.value = ''; }} />
-          </div>
-        </OwnTextBox>
       ) : rowChoices.length ? (
         <div className="nui-comment-options" role="group" aria-label={needsLabel}>
           {rowChoices.map((choice, index) => {
@@ -583,6 +542,9 @@ function threadPlace(controller: CommentController, thread: CommentThread, showA
   return item || controller.say('placeWholePage');
 }
 
+/** Per reply draft key: the question whose Other the person pressed, so the reply sent next answers it. */
+const armedOther = new Map<string, string>();
+
 /**
  * One comment thread as a card, the same in every comments list:
  *
@@ -608,6 +570,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
   // The reply being written, and its files, are kept while the pane is away (`commentDrafts`): another Space, a page
   // over the view or another brief unmounts the card, and the reply comes back with it.
   const replyKey = commentDraftKey(controller.draftScope, `reply:${root.recordKey}`);
+  // Where an Other the person pressed is kept (`armedOther`): with the draft's key, else the card's.
+  const otherKey = replyKey ?? `reply:${root.recordKey}`;
   const [draft, setDraft] = useCommentDraftText(replyKey);
   // What the reply box holds now, read after a failed save (the person may have typed on while it was sent).
   const draftNow = useRef(draft);
@@ -642,20 +606,43 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
     // attached files stay until the save succeeds.
     const text = draft.trim();
     setDraft('');
-    const ok = await actions.reply(thread, text, files.ready);
+    const ok = await actions.reply(thread, text, files.ready, otherAnswers());
     setSending(false);
-    if (ok) { files.clear(); notifyReviewRunAction({ kind: 'replied', key: root.recordKey }); }
+    if (ok) { armedOther.delete(otherKey); files.clear(); notifyReviewRunAction({ kind: 'replied', key: root.recordKey }); }
     else setDraft(draftNow.current.trim() ? `${text}\n${draftNow.current}` : text);
   };
   // Other on a question, and its number: the reply box takes the caret, whoever draws it.
   const [focusToken, setFocusToken] = useState(0);
+  // A picked agent outside Notis's @ for a reply box the host draws (its text is the host's, SPC-1546).
+  const [replyMention, setReplyMention] = useState<{ token: number; text: string } | null>(null);
   const openReply = () => { setFocusToken(value => value + 1); replyRef.current?.focus({ preventScroll: true }); };
-  // The review run's R key (and its number for Other) asks the card for its reply box.
+  // Other on a question (its row or its number): the reply written next answers that question in the person's own
+  // words (`answer_to`), so it stops waiting like a picked option does. The choice is kept with the reply's draft key, so
+  // it comes back with the draft after the card leaves; it holds only while that question is the thread's newest open one.
+  const openOther = (ask: CommentRecord) => { armedOther.set(otherKey, ask.recordKey); openReply(); };
+  const otherAnswers = () => {
+    const key = armedOther.get(otherKey);
+    if (!key) return undefined;
+    const items = [root, ...thread.replies];
+    const at = items.findIndex(item => item.recordKey === key);
+    const open = (item: CommentRecord) => item.needs !== 'none' && !item.answer && item.status !== 'Deleted';
+    const ask = at >= 0 ? items[at] : undefined;
+    if (ask && open(ask) && !items.slice(at + 1).some(open)) return ask;
+    armedOther.delete(otherKey);
+    return undefined;
+  };
+  // The review run's R key (and its number for Other, which names its question) asks the card for its reply box.
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return undefined;
-    card.addEventListener('notis-comment-reply', openReply);
-    return () => card.removeEventListener('notis-comment-reply', openReply);
+    const onReply = (event: Event) => {
+      // R opens a plain reply: it drops an Other picked earlier.
+      const other = (event as CustomEvent<{ other?: string } | null>).detail?.other;
+      if (other) armedOther.set(otherKey, other); else armedOther.delete(otherKey);
+      openReply();
+    };
+    card.addEventListener('notis-comment-reply', onReply);
+    return () => card.removeEventListener('notis-comment-reply', onReply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const answer = (comment: CommentRecord, choice: string) => {
@@ -681,7 +668,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
       if (position && position <= asking.options.length + 1) {
         event.preventDefault(); event.stopPropagation();
         if (position <= asking.options.length) answer(asking.comment, asking.options[position - 1]!);
-        else openReply();
+        else openOther(asking.comment);
         return;
       }
     }
@@ -721,7 +708,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
     kind: 'reply', placeholder: replyLabel, label: replyLabel, quote: null, place: null,
     to: holder ? {
       label: holder.to, outside: holder.outside, outsideLabel: controller.say('outsideNotis'), harness: holder.harness,
-      pick: canChange ? anchor => controller.routing.change(root.recordKey, anchor).then(() => true) : undefined,
+      pick: canChange ? anchor => controller.routing.change(root.recordKey, anchor).then(mention => mention ?? true) : undefined,
       pickLabel: controller.say('changeWho'),
     } : null,
     initialText: draft, onText: setDraft,
@@ -729,14 +716,14 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
     initialFiles: readHostDraftFiles(replyKey), onFiles: picked => writeHostDraftFiles(replyKey, picked),
     send: (text, picked) => withUploads(controller, picked, async uploaded => {
       setSending(true);
-      const ok = await actions.reply(thread, text.trim(), uploaded);
+      const ok = await actions.reply(thread, text.trim(), uploaded, otherAnswers());
       setSending(false);
-      if (ok) { setDraft(''); writeHostDraftFiles(replyKey, []); notifyReviewRunAction({ kind: 'replied', key: root.recordKey }); }
+      if (ok) { armedOther.delete(otherKey); setDraft(''); writeHostDraftFiles(replyKey, []); notifyReviewRunAction({ kind: 'replied', key: root.recordKey }); }
       return ok;
     }),
     dismiss: () => undefined,
-    canWrite: controller.canWrite, attach: controller.attach === 'on', focusToken, autoFocus: false,
-  }, [replyLabel, holder?.to, holder?.outside, holder?.harness, canChange, controller.canWrite, controller.attach, focusToken]);
+    canWrite: controller.canWrite, attach: controller.attach === 'on', focusToken, autoFocus: false, mention: replyMention,
+  }, [replyLabel, holder?.to, holder?.outside, holder?.harness, canChange, controller.canWrite, controller.attach, focusToken, replyMention]);
   // The Notis thread a reply goes to, opened in Chat from "..." (never an agent outside Notis: it has none here).
   const goesTo = holder && !holder.outside ? controller.routing.goesTo(root.recordKey) : null;
   const openThreadId = goesTo?.threadId ?? null;
@@ -786,7 +773,17 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
         ) : null}
         {canChange ? (
           <Menu.Item icon="arrow-bend-up-right" disabled={controller.routing.saving?.(root.recordKey)}
-            onSelect={() => { if (actionsRef.current) void controller.routing.change(root.recordKey, actionsRef.current); }}>
+            onSelect={() => {
+              if (!actionsRef.current) return;
+              // An agent outside Notis picked: its @ goes in front of the reply (SPC-1546).
+              void controller.routing.change(root.recordKey, actionsRef.current)
+                .then(mention => {
+                  if (!mention) return;
+                  // The host's box writes it (its text is its own); the pane's own box takes it in its draft.
+                  if (replySlot) setReplyMention(current => ({ token: (current?.token ?? 0) + 1, text: mention }));
+                  else setDraft(withPickMention(draftNow.current, mention));
+                });
+            }}>
             <span data-thread-action="change">{controller.say('changeWho')}</span>
           </Menu.Item>
         ) : null}
@@ -862,7 +859,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
           : <CommentBody body={comment.body} />}
         {comment.needs !== 'none' && pictureAskOf(comment) ? null : <CommentAttachments controller={controller} comment={comment} />}
         {/* An agent's question in a reply is answered here too, like one on the first comment. */}
-        <CommentAsk controller={controller} thread={thread} comment={comment} onOther={openReply}
+        <CommentAsk controller={controller} thread={thread} comment={comment} onOther={() => openOther(comment)}
           enter={selected && asking?.comment === comment}
           mark={markOn?.key === comment.recordKey && markOn.where === 'answer' ? readMark : null} />
       </div>
@@ -911,6 +908,8 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
         ) : entry(run.reply, false))}
       </ol>
 
+      {/* Words that @mention only people wake no agent (SPC-1540): "For Ed · wakes no agent". */}
+      <CommentForPeopleNote controller={controller} text={draft} />
       {/* Where a reply goes is said once, here: "Reply to The Paper Lanterns". */}
       <div className="nui-comment-reply-box" data-hosted={replySlot ? '' : undefined} onClick={stop} onKeyDown={stop}>
         <span ref={replyMarker} className="nui-comment-box-marker" aria-hidden="true" />
@@ -980,7 +979,7 @@ function newCommentTo(controller: CommentController): HostComposerTo | null {
       : unread ? controller.say('toPick') : commentThreadName(controller, pick).to,
     outside, outsideLabel: controller.say('outsideNotis'),
     harness: ref?.harness ?? (pick && 'newThread' in pick ? pick.newThread : null),
-    pick: routing.canPick ? anchor => routing.pickForNew(anchor).then(picked => Boolean(picked)) : undefined,
+    pick: routing.canPick ? anchor => routing.pickForNew(anchor).then(picked => pickMentionText(picked) ?? Boolean(picked)) : undefined,
     pickLabel: controller.say('pickThread'),
   };
 }
@@ -1060,11 +1059,17 @@ export function NewCommentFrame({ controller, label, quote, place, where, body, 
     <div ref={boxRef} className="nui-comment-new-box" data-swipe-dismiss="" role="group" aria-label={label} data-hosted={slot ? '' : undefined}
       data-dragging={!slot && files.dragging ? '' : undefined} {...(slot ? {} : files.boxHandlers)}>
       <span ref={marker} className="nui-comment-box-marker" aria-hidden="true" />
-      {slot ? <slot name={slot} /> : (
+      {slot ? (
+        <>
+          <slot name={slot} />
+          {/* The host draws the To pill; words that @mention only people say here that no agent wakes (SPC-1540). */}
+          <CommentForPeopleNote controller={controller} text={body} />
+        </>
+      ) : (
         <>
           {/* Where it goes, then what it is on: the pills of the box, never a title or a quote box of their own. */}
           <div className="nui-comment-box-pills" data-part="box-pills">
-            <CommentToChip controller={controller} />
+            <CommentToChip controller={controller} text={body} onMention={mention => setBody(withPickMention(body, mention))} />
             {quote ? (
               <span className="nui-comment-pill" data-pill="quote" title={quote}><Icon name={COMMENT_MODE_ICON.text} /><span>{quote}</span></span>
             ) : place ? (
