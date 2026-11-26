@@ -433,7 +433,7 @@ test('widening a record page\'s list to the whole Space reads the Space\'s threa
 test('with comments off for the person the host gives no comment store: no pane is drawn and nothing is read', async () => {
   const rows = spaceRows(30);
   const bounded = boundedHost(rows, { params: { comment: 't2' } });
-  // The host leaves `spaceComments` out of the runtime (the comments flag is off for the person, a Site, a link).
+  // The host leaves `spaceComments` out of the runtime (a Site, a link, a preview: no signed-in shell turned comments on).
   const { spaceComments: _off, ...runtime } = bounded.runtime as unknown as Record<string, unknown>;
   await mount(<Harness />, runtime as unknown as NotisRuntime);
   await settle(6);
