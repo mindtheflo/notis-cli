@@ -722,8 +722,9 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
       return ok;
     }),
     dismiss: () => undefined,
-    canWrite: controller.canWrite, attach: controller.attach === 'on', focusToken, autoFocus: false, mention: replyMention,
-  }, [replyLabel, holder?.to, holder?.outside, holder?.harness, canChange, controller.canWrite, controller.attach, focusToken, replyMention]);
+    canWrite: controller.canWrite, attach: controller.attach === 'on', transcribe: controller.transcribe ?? null, focusToken,
+    autoFocus: false, mention: replyMention,
+  }, [replyLabel, holder?.to, holder?.outside, holder?.harness, canChange, controller.canWrite, controller.attach, controller.transcribe, focusToken, replyMention]);
   // The Notis thread a reply goes to, opened in Chat from "..." (never an agent outside Notis: it has none here).
   const goesTo = holder && !holder.outside ? controller.routing.goesTo(root.recordKey) : null;
   const openThreadId = goesTo?.threadId ?? null;
@@ -1037,8 +1038,9 @@ export function NewCommentFrame({ controller, label, quote, place, where, body, 
       if (ok) writeHostDraftFiles(draftKey, []);
       return ok;
     }),
-    dismiss: drop, canWrite: controller.canWrite, attach: controller.attach === 'on', focusToken: 0, autoFocus: true,
-  }, [where, label, to?.label, to?.outside, to?.harness, Boolean(to?.pick), quote, place, controller.canWrite, controller.attach]);
+    dismiss: drop, canWrite: controller.canWrite, attach: controller.attach === 'on', transcribe: controller.transcribe ?? null,
+    focusToken: 0, autoFocus: true,
+  }, [where, label, to?.label, to?.outside, to?.harness, Boolean(to?.pick), quote, place, controller.canWrite, controller.attach, controller.transcribe]);
   useEffect(() => { if (!slot) ref.current?.focus({ preventScroll: true }); }, [where, slot]);
   // The box opens at the top of the list: a list scrolled down scrolls up to show it whole, with its pills.
   useRevealOnOpen(boxRef, where);

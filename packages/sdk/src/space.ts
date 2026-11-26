@@ -493,6 +493,11 @@ export interface SpaceCommentsTransport {
   /** The largest file `upload` takes, in bytes. Default `SPACE_FILE_MAX_BYTES`. */
   maxFileBytes?: number;
   /**
+   * The words of a recording made with the comment box's microphone (signed-in people only; the host bills it to
+   * them). Throws when nothing could be written out. Absent: the box has no microphone.
+   */
+  transcribe?(input: { audio: Blob; name?: string }): Promise<{ text: string }>;
+  /**
    * Opens the host's new comment on `anchor` (Comment on a text selection): the Comments panel opens with the
    * comment's place shown in its box. The host first offers it to the source it shows (`SpaceCommentSource.start`).
    * `page_key` and `view` default to the page the host shows.

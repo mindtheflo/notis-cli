@@ -327,6 +327,11 @@ export interface CommentController extends CommentActions {
   uploadFile(file: File, options?: { onProgress?(sent: number, total: number): void; signal?: AbortSignal }): Promise<CommentFile>;
   /** A shown picture failed to load (its signed address expired): reads the comments again, at most twice a minute. */
   refreshFiles(): void;
+  /**
+   * The words of a recording, for the host's comment box microphone (SPC-1570); null where the host cannot write
+   * recordings out (the box then has no microphone).
+   */
+  transcribe?: ((audio: Blob) => Promise<string>) | null;
 
   /** Copies the digest and records the checkpoint. `host` is the Space's own element, for the selection fallback. */
   copyChanges(host: HTMLElement | null): Promise<boolean>;
@@ -1446,6 +1451,13 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
       type: result.type, size: result.size };
   }, []);
 
+  const canTranscribe = Boolean(host?.transcribe) && canUpload;
+  const transcribe = useMemo(() => (canTranscribe ? async (audio: Blob) => {
+    const transport = hostRef.current;
+    if (!transport?.transcribe) throw new SpaceFileError('Recordings cannot be written out here.', 'voice_unavailable');
+    return (await transport.transcribe({ audio })).text;
+  } : null), [canTranscribe]);
+
   const refreshedAt = useRef(0);
   const refreshFiles = useCallback(() => {
     if (Date.now() - refreshedAt.current < 30000) return;
@@ -1500,7 +1512,7 @@ export function useComments(options: UseCommentsOptions = {}): CommentController
     modes, commentMode, startMode, cancelMode, startItems, placeText, startAnchor, toolBar, setToolBar,
     commenting, setCommenting, toggleCommenting, draftPin, draftScope, placePin, placePinFromEvent, cancelPin, sendNew, sendAt,
     deleting: null, cancelDelete: noop, confirmDelete,
-    attach, maxFileBytes, uploadFile, refreshFiles,
+    attach, maxFileBytes, uploadFile, refreshFiles, transcribe,
     zones, dragZone, zoneHandlers,
     copyChanges, copying,
     busy, now, toaster: shownToaster, words, say, locale, me, signed, openThread, showOnPage,

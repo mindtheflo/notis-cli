@@ -146,6 +146,11 @@ export interface HostComposerProps {
   canWrite: boolean;
   /** Whether files can be attached here. */
   attach: boolean;
+  /**
+   * The words of a recording (SPC-1570): the box shows a microphone when it is given, and sends what comes back as
+   * the comment's words, after any typed before.
+   */
+  transcribe?: ((audio: Blob) => Promise<string>) | null;
   /** Goes up each time the pane asks for the caret in this box (Other on a question, a key). */
   focusToken: number;
   /**

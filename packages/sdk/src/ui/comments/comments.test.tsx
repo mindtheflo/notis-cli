@@ -2205,6 +2205,36 @@ test('The host\'s comment box keeps its files: a reply\'s after the page leaves,
   }
 });
 
+test('Voice comments: the host\'s comment boxes get a microphone only where the host writes recordings out (SPC-1570)', async () => {
+  const files = fakeFiles();
+  const heard: Blob[] = [];
+  const withVoice = withFiles(fakeRuntime(ROWS, [], { comments: runPanel }), files);
+  (withVoice as unknown as { commentsExtra: Partial<SpaceCommentsTransport> }).commentsExtra.transcribe = async ({ audio }) => {
+    heard.push(audio);
+    return { text: 'Make the header darker.' };
+  };
+  const stopHost = registerHostComposerHost();
+  const boxOf = (kind: 'new' | 'reply') => listHostComposers().find(item => item.props().kind === kind)!;
+  try {
+    await mount(<Harness {...base} />, withVoice);
+    const transcribe = boxOf('reply').props().transcribe;
+    assert.ok(transcribe, 'a reply box gets the host\'s transcription');
+    const audio = new Blob(['sound'], { type: 'audio/webm' });
+    assert.equal(await transcribe!(audio), 'Make the header darker.');
+    assert.deepEqual(heard, [audio], 'the recording went to the host once');
+    await act(async () => { controller!.placePin('sk1', 0.4, 0.3); });
+    await settle();
+    assert.ok(boxOf('new').props().transcribe, 'and a new comment\'s box too');
+
+    // A host that writes no recordings out (a Site, a preview, an older Portal): the boxes have no microphone.
+    await rerender(<div />, withVoice);
+    await rerender(<Harness {...base} />, withFiles(fakeRuntime(ROWS, [], { comments: runPanel }), files));
+    assert.equal(boxOf('reply').props().transcribe, null);
+  } finally {
+    stopHost();
+  }
+});
+
 test('Drafts on two pages keep their own files when the mounted box moves from one page to the other', async () => {
   const files = fakeFiles();
   const runtime = withFiles(fakeRuntime(ROWS, []), files);
