@@ -86,10 +86,13 @@ export function isActivatable(element: Element | null): boolean {
     'button, a[href], [role="button"], [role="switch"], [role="checkbox"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], summary, input[type="checkbox"], input[type="radio"]') !== null;
 }
 
-/** Arrows inside these move the control itself. */
+/**
+ * Arrows inside these move the control itself. `data-notis-arrows="own"` marks a piece that moves its own focus with
+ * the arrows (the Comments panel's cards), so the page's arrow shortcuts never take them.
+ */
 export function ownsArrows(element: Element | null): boolean {
   return closestComposed(element,
-    'input[type="range"], [role="slider"], [role="tablist"], [role="radiogroup"], [role="spinbutton"], [role="separator"][tabindex], [role="tree"], [role="grid"]') !== null;
+    'input[type="range"], [role="slider"], [role="tablist"], [role="radiogroup"], [role="spinbutton"], [role="separator"][tabindex], [role="tree"], [role="grid"], [data-notis-arrows="own"]') !== null;
 }
 
 /** Elements opt out of every engine key with `data-notis-keys="off"`. */

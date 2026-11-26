@@ -3411,6 +3411,28 @@ test('Only the latest reply shows: earlier replies fold into one line that opens
   assert.match(css, /@media \(pointer: coarse\) \{ \.nui-comment-earlier \{ min-height: 44px; \} \}/, 'a 44 px tap target on touch');
 });
 
+test('Down and Up on a card move to the next and previous card; the page\'s arrow keys never take them (SPC-1631)', async () => {
+  await mount(<Harness {...base} />, fakeRuntime(ROWS, []));
+  let pageArrows = 0;
+  const off = engine.register({ id: 'list.down', keys: ['ArrowDown', 'ArrowUp'], label: { en: 'Move', fr: 'Bouger' }, scope: 'app',
+    run: () => { pageArrows += 1; return true; } }, 'notis');
+  const cards = [...doc.querySelectorAll<HTMLElement>('.nui-comment-card')];
+  assert.ok(cards.length >= 2, 'two cards to move between');
+  await act(async () => { cards[0]!.focus(); });
+  await key(cards[0]!, 'ArrowDown');
+  assert.equal(doc.activeElement, cards[1], 'Down focuses the next card');
+  assert.equal(controller!.threadKey, cards[1]!.dataset.thread, 'and selects it');
+  await key(cards[1]!, 'ArrowUp');
+  assert.equal(doc.activeElement, cards[0], 'Up focuses the previous card');
+  await key(cards[0]!, 'ArrowUp');
+  assert.equal(doc.activeElement, cards[0], 'the first card keeps the focus');
+  assert.equal(pageArrows, 0, 'the page\'s arrow shortcut never ran');
+  // Outside the cards the page keeps its arrows.
+  await key(doc.body, 'ArrowDown');
+  assert.equal(pageArrows, 1);
+  off?.();
+});
+
 test('French: a chip label keeps a narrow space before its colon, and conversation for manager threads', async () => {
   const comments: Partial<SpaceCommentsTransport> = {
     links: async () => ({ c1: [{ threadId: null, title: '', harness: 'claude', status: 'pending' }] }),

@@ -673,6 +673,16 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
       }
     }
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); }
+    // Down and Up move the focus to the next or previous card of this pane, and the selection with it (`onCardFocus`);
+    // the page's own arrow keys (a list's rows) never take them while a card holds the focus (SPC-1631).
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      const card = event.currentTarget;
+      const pane = card.closest('.nui-comment-pane') ?? card.parentElement;
+      const cards = pane ? [...pane.querySelectorAll<HTMLElement>('.nui-comment-card[data-thread]')] : [];
+      const next = cards[cards.indexOf(card) + (event.key === 'ArrowDown' ? 1 : -1)];
+      next?.focus();
+    }
   };
   // Tabbing between cards moves the selected pin with the focus (the page does not move, nothing else changes).
   const onCardFocus = (event: React.FocusEvent<HTMLElement>) => {
@@ -907,6 +917,7 @@ export function CommentThreadCard({ controller, thread, showAnchor = false, pass
       className="nui-comment-card"
       data-thread={root.recordKey}
       data-selected={selected ? '' : undefined}
+      data-notis-arrows="own"
       data-resolved={resolved ? '' : undefined}
       data-outside={outside ? '' : undefined}
       aria-current={selected ? 'true' : undefined}
